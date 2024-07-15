@@ -22,8 +22,12 @@ use once_cell::sync::Lazy;
 
 use crate::types::{
     ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedFileMetadataSchema, CompressedSchema,
-    ConfigurationSchema, MetricSchema, QuerySchema, TagMetadataSchema, UncompressedSchema,
+    ConfigurationSchema, MetricSchema, QueryCompressedSchema, QuerySchema, TagMetadataSchema,
+    UncompressedSchema,
 };
+
+/// Name of the column used to partition the compressed segments.
+pub const FIELD_COLUMN: &str = "field_column";
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for uncompressed data buffers.
 pub static UNCOMPRESSED_SCHEMA: Lazy<UncompressedSchema> = Lazy::new(|| {
@@ -33,9 +37,18 @@ pub static UNCOMPRESSED_SCHEMA: Lazy<UncompressedSchema> = Lazy::new(|| {
     ])))
 });
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed data buffers.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments.
 pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
-    CompressedSchema(Arc::new(Schema::new(vec![
+    let mut query_compressed_schema_fields = QUERY_COMPRESSED_SCHEMA.0.fields().to_vec();
+    let field_column = Arc::new(Field::new(FIELD_COLUMN, DataType::UInt16, false));
+    query_compressed_schema_fields.push(field_column);
+    CompressedSchema(Arc::new(Schema::new(query_compressed_schema_fields)))
+});
+
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments when
+/// executing queries as [`FIELD_COLUMN`] is stored in the Apache Parquet files.
+pub static QUERY_COMPRESSED_SCHEMA: Lazy<QueryCompressedSchema> = Lazy::new(|| {
+    QueryCompressedSchema(Arc::new(Schema::new(vec![
         Field::new("univariate_id", DataType::UInt64, false),
         Field::new("model_type_id", DataType::UInt8, false),
         Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
@@ -53,7 +66,7 @@ pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
 /// `timestamps` and `values` are not included as they are [`DataType::Binary`] and thus their size
 /// depend on which model is selected to represent the values for that compressed segment.
 pub static COMPRESSED_METADATA_SIZE_IN_BYTES: Lazy<usize> = Lazy::new(|| {
-    COMPRESSED_SCHEMA
+    QUERY_COMPRESSED_SCHEMA
         .0
         .fields()
         .iter()
@@ -83,7 +96,7 @@ pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used internally during query processing.
-pub static QUERY_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
+pub static GRID_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
     QuerySchema(Arc::new(Schema::new(vec![
         Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
         Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),

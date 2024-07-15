@@ -23,18 +23,17 @@ use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::SendError;
 use dashmap::DashMap;
-use datafusion::arrow::array::{Array, StringArray};
+use datafusion::arrow::array::StringArray;
 use datafusion::arrow::record_batch::RecordBatch;
+use futures::StreamExt;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
-use object_store::local::LocalFileSystem;
 use object_store::path::{Path, PathPart};
-use object_store::ObjectStore;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
-use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
 use crate::context::Context;
@@ -42,9 +41,9 @@ use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::types::Channels;
 use crate::storage::types::MemoryPool;
 use crate::storage::types::Message;
-use crate::storage::uncompressed_data_buffer::UncompressedDataMultivariate;
 use crate::storage::uncompressed_data_buffer::{
-    UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
+    self, IngestedDataBuffer, UncompressedDataBuffer, UncompressedInMemoryDataBuffer,
+    UncompressedOnDiskDataBuffer,
 };
 use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
 use crate::ClusterMode;
@@ -54,7 +53,7 @@ use crate::ClusterMode;
 pub(super) struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    local_data_folder: Arc<LocalFileSystem>,
+    local_data_folder: Arc<DeltaLake>,
     /// Counter incremented for each [`RecordBatch`] of data points ingested. The value is assigned
     /// to buffers that are created or updated and is used to flush buffers that are no longer used.
     current_batch_index: AtomicU64,
@@ -76,8 +75,8 @@ pub(super) struct UncompressedDataManager {
     cluster_mode: ClusterMode,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the used multivariate memory in bytes, updated every time the used memory changes.
-    pub(super) used_multivariate_memory_metric: Arc<Mutex<Metric>>,
+    /// Metric for the used ingested memory in bytes, updated every time the used memory changes.
+    pub(super) used_ingested_memory_metric: Arc<Mutex<Metric>>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
     pub(super) used_uncompressed_memory_metric: Mutex<Metric>,
     /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
@@ -88,12 +87,12 @@ pub(super) struct UncompressedDataManager {
 
 impl UncompressedDataManager {
     pub(super) fn new(
-        local_data_folder: Arc<LocalFileSystem>,
+        local_data_folder: Arc<DeltaLake>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         cluster_mode: ClusterMode,
-        used_multivariate_memory_metric: Arc<Mutex<Metric>>,
+        used_ingested_memory_metric: Arc<Mutex<Metric>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Self {
         Self {
@@ -105,7 +104,7 @@ impl UncompressedDataManager {
             table_metadata_manager,
             cluster_mode,
             memory_pool,
-            used_multivariate_memory_metric,
+            used_ingested_memory_metric,
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
@@ -116,29 +115,24 @@ impl UncompressedDataManager {
     /// to [`UncompressedDataManager`] which immediately will start compressing them.
     pub(super) async fn initialize(&self, context: &Context) -> Result<(), IOError> {
         let mut initial_disk_space = 0;
+        let local_data_folder = self.local_data_folder.object_store();
 
-        for maybe_spilled_buffer in self
-            .local_data_folder
-            .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
-            .collect::<Vec<_>>()
-            .await
-        {
+        let mut spilled_buffers =
+            local_data_folder.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)));
+        while let Some(maybe_spilled_buffer) = spilled_buffers.next().await {
             let spilled_buffer = maybe_spilled_buffer?;
             let path_parts: Vec<PathPart> = spilled_buffer.location.parts().collect();
 
-            // unwrap() is safe since all spilled buffers are saved in a three part folder structure.
-            let file_name = path_parts.get(2).unwrap().as_ref();
-            let univariate_id = path_parts
-                .get(1)
-                .unwrap()
-                .as_ref()
-                .parse::<u64>()
-                .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
+            // unwrap() is safe since all spilled buffers are partitioned by their tag hash.
+            let tag_hash = path_parts.get(1).unwrap().as_ref().parse::<u64>().unwrap();
 
-            // unwrap() is safe as univariate_id can only exist if it is in the metadata database.
+            // unwrap() is safe since all spilled buffers have a name generated by the system.
+            let file_name = path_parts.get(2).unwrap().as_ref();
+
+            // unwrap() is safe as tag_hash can only exist if it is in the metadata database.
             let table_name = context
                 .table_metadata_manager
-                .univariate_id_to_table_name(univariate_id)
+                .tag_hash_to_table_name(tag_hash)
                 .await
                 .unwrap();
 
@@ -150,17 +144,17 @@ impl UncompressedDataManager {
                 .unwrap();
 
             let buffer = UncompressedOnDiskDataBuffer::try_new(
-                univariate_id,
+                tag_hash,
                 model_table_metadata,
                 self.current_batch_index.load(Ordering::Relaxed),
-                self.local_data_folder.clone(),
+                local_data_folder.clone(),
                 file_name,
             )?;
 
             initial_disk_space += buffer.disk_size().await;
 
             self.channels
-                .univariate_data_sender
+                .uncompressed_data_sender
                 .send(Message::Data(UncompressedDataBuffer::OnDisk(buffer)))
                 .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
         }
@@ -184,27 +178,27 @@ impl UncompressedDataManager {
         loop {
             let message = self
                 .channels
-                .multivariate_data_receiver
+                .ingested_data_receiver
                 .recv()
                 .map_err(|error| error.to_string())?;
 
             match message {
-                Message::Data(uncompressed_data_multivariate) => {
+                Message::Data(ingested_data_buffer) => {
                     runtime
-                        .block_on(self.insert_data_points(uncompressed_data_multivariate))
+                        .block_on(self.insert_data_points(ingested_data_buffer))
                         .map_err(|error| error.to_string())?;
                 }
                 Message::Flush => {
                     self.flush_and_log_errors();
                     self.channels
-                        .univariate_data_sender
+                        .uncompressed_data_sender
                         .send(Message::Flush)
                         .map_err(|error| error.to_string())?;
                 }
                 Message::Stop => {
                     self.flush_and_log_errors();
                     self.channels
-                        .univariate_data_sender
+                        .uncompressed_data_sender
                         .send(Message::Stop)
                         .map_err(|error| error.to_string())?;
                     break;
@@ -215,16 +209,14 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Insert `uncompressed_data_multivariate` into in-memory buffers. If the data points are from
-    /// a multivariate time series, they are first split into multiple univariate time series. These
-    /// univariate time series are then inserted into the storage engine. Returns [`String`] if the
-    /// channel or the metadata database could not be read from.
+    /// Insert `ingested_data_buffer` into in-memory buffers managed by the storage engine. Returns
+    /// [`String`] if the channel or the metadata database could not be read from.
     async fn insert_data_points(
         &self,
-        uncompressed_data_multivariate: UncompressedDataMultivariate,
+        ingested_data_buffer: IngestedDataBuffer,
     ) -> Result<(), String> {
-        let data_points = uncompressed_data_multivariate.multivariate_data_points;
-        let model_table_metadata = uncompressed_data_multivariate.model_table_metadata;
+        let data_points = ingested_data_buffer.data_points;
+        let model_table_metadata = ingested_data_buffer.model_table_metadata;
 
         debug!(
             "Received record batch with {} data points for the table '{}'.",
@@ -247,7 +239,7 @@ impl UncompressedDataManager {
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table_metadata.timestamp_column_index;
-        let timestamps: &TimestampArray = data_points
+        let timestamp_column_array: &TimestampArray = data_points
             .column(timestamp_index)
             .as_any()
             .downcast_ref()
@@ -260,37 +252,16 @@ impl UncompressedDataManager {
             .map(|index| data_points.column(*index).as_any().downcast_ref().unwrap())
             .collect();
 
-        // Prepare the field columns for iteration. The column index is saved with the corresponding
-        // array.
-        let field_column_arrays: Vec<(usize, &ValueArray)> = model_table_metadata
-            .schema
-            .fields()
+        // Prepare the field columns for iteration.
+        let field_column_arrays: Vec<&ValueArray> = model_table_metadata
+            .field_column_indices
             .iter()
-            .filter_map(|field| {
-                let index = model_table_metadata
-                    .schema
-                    .index_of(field.name().as_str())
-                    .unwrap();
-
-                // Field columns are the columns that are not the timestamp column or one of the tag
-                // columns.
-                let not_timestamp_column = index != model_table_metadata.timestamp_column_index;
-                let not_tag_column = !model_table_metadata.tag_column_indices.contains(&index);
-
-                if not_timestamp_column && not_tag_column {
-                    Some((
-                        index,
-                        data_points.column(index).as_any().downcast_ref().unwrap(),
-                    ))
-                } else {
-                    None
-                }
-            })
+            .map(|index| data_points.column(*index).as_any().downcast_ref().unwrap())
             .collect();
 
-        // For each data point, generate a hash from the tags, extract the individual fields, and
-        // insert them into the storage engine.
-        for (index, timestamp) in timestamps.iter().enumerate() {
+        // For each data point, compute a hash from the tags and pass the fields to the storage
+        // engine so they can be added to the appropriate [`UncompressedDataBuffer`].
+        for (index, timestamp) in timestamp_column_array.iter().enumerate() {
             let tag_values: Vec<String> = tag_column_arrays
                 .iter()
                 .map(|array| array.value(index).to_string())
@@ -314,24 +285,19 @@ impl UncompressedDataManager {
                 }
             }
 
-            // For each field column, generate the 64-bit univariate id, and append the current
-            // timestamp and the field's value into the in-memory buffer for the univariate id.
-            for (field_index, field_column_array) in &field_column_arrays {
-                let univariate_id = tag_hash | *field_index as u64;
-                let value = field_column_array.value(index);
+            let mut values = field_column_arrays.iter().map(|array| array.value(index));
 
-                // unwrap() is safe to use since the timestamps array cannot contain null values.
-                buffers_are_spilled |= self
-                    .insert_data_point(
-                        univariate_id,
-                        timestamp.unwrap(),
-                        value,
-                        model_table_metadata.clone(),
-                        current_batch_index,
-                    )
-                    .await
-                    .map_err(|error| error.to_string())?
-            }
+            // unwrap() is safe to use since the timestamps array cannot contain null values.
+            buffers_are_spilled |= self
+                .insert_data_point(
+                    tag_hash,
+                    timestamp.unwrap(),
+                    &mut values,
+                    model_table_metadata.clone(),
+                    current_batch_index,
+                )
+                .await
+                .map_err(|error| error.to_string())?
         }
 
         // Unused buffers are purposely only finished at the end of insert_data_points() so that the
@@ -342,14 +308,14 @@ impl UncompressedDataManager {
             .map_err(|error| error.to_string())?;
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_multivariate_memory_metric
+        self.used_ingested_memory_metric
             .lock()
             .unwrap()
             .append(-(data_points.get_array_memory_size() as isize), true);
 
         // Return the memory used by the data points to the pool right before they are de-allocated.
         self.memory_pool
-            .adjust_multivariate_memory(data_points.get_array_memory_size() as isize);
+            .adjust_ingested_memory(data_points.get_array_memory_size() as isize);
 
         // Print a single warning if any buffers are spilled so ingestion can be optimized.
         if buffers_are_spilled {
@@ -359,23 +325,20 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Insert a single data point into the in-memory buffer for `univariate_id` if one exists. If
-    /// the buffer has been spilled, read it back into memory. If no buffer exists for
-    /// `univariate_id`, allocate a new buffer that will be compressed within the error bound in
+    /// Insert a single data point into the in-memory buffer for `tag_hash` if one exists. If the
+    /// buffer has been spilled, read it back into memory. If no buffer exists for `tag_hash`,
+    /// allocate a new buffer that will be compressed within the error bound in
     /// `model_table_metadata`. Returns [`true`] if a buffer was spilled, [`false`] if not, and
     /// [`IOError`] if the error bound cannot be retrieved from the [`TableMetadataManager`].
     async fn insert_data_point(
         &self,
-        univariate_id: u64,
+        tag_hash: u64,
         timestamp: Timestamp,
-        value: Value,
+        values: &mut dyn Iterator<Item = Value>,
         model_table_metadata: Arc<ModelTableMetadata>,
         current_batch_index: u64,
     ) -> Result<bool, IOError> {
-        debug!(
-            "Inserting data point ({}, {}) into uncompressed data buffer for {}.",
-            timestamp, value, univariate_id
-        );
+        debug!("Add data point at {timestamp} to uncompressed data buffer for {tag_hash}.");
 
         // Track if any buffers are spilled during ingestion so this information can be returned to
         // insert_data_points() and a warning printed once per batch instead of once per data point.
@@ -386,13 +349,16 @@ impl UncompressedDataManager {
         let mut buffer_is_full = false;
 
         // Insert the data point into an existing in-memory buffer if one exists.
-        let buffer_is_in_memory = if let Some(mut univariate_id_buffer) = self
-            .uncompressed_in_memory_data_buffers
-            .get_mut(&univariate_id)
+        let buffer_is_in_memory = if let Some(mut tag_hash_buffer) =
+            self.uncompressed_in_memory_data_buffers.get_mut(&tag_hash)
         {
-            debug!("Found existing in-memory buffer for {}.", univariate_id);
-            let uncompressed_in_memory_data_buffer = univariate_id_buffer.value_mut();
-            uncompressed_in_memory_data_buffer.insert_data(current_batch_index, timestamp, value);
+            debug!("Found existing in-memory buffer for {tag_hash}.");
+            let uncompressed_in_memory_data_buffer = tag_hash_buffer.value_mut();
+            uncompressed_in_memory_data_buffer.insert_data_point(
+                current_batch_index,
+                timestamp,
+                values,
+            );
             buffer_is_full = uncompressed_in_memory_data_buffer.is_full();
             true
         } else {
@@ -406,21 +372,23 @@ impl UncompressedDataManager {
             // references into any of the maps as it may be necessary to spill an in-memory buffer
             // to do so. Thus, a combination of remove() and insert() may be called on the maps.
             buffers_are_spilled |= self
-                .reserve_uncompressed_memory_for_in_memory_data_buffer()
+                .reserve_uncompressed_memory_for_in_memory_data_buffer(
+                    model_table_metadata.field_column_indices.len(),
+                )
                 .await?;
 
             // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-            let reserved_memory = UncompressedInMemoryDataBuffer::memory_size();
+            let memory_to_reserve = uncompressed_data_buffer::compute_memory_size(
+                model_table_metadata.field_column_indices.len(),
+            );
             self.used_uncompressed_memory_metric
                 .lock()
                 .unwrap()
-                .append(reserved_memory as isize, true);
+                .append(memory_to_reserve as isize, true);
 
             // Two ifs are needed until if-let chains is implemented in Rust stable, see eRFC 2497.
-            if let Some(univariate_id_buffer) =
-                self.uncompressed_on_disk_data_buffers.get(&univariate_id)
-            {
-                let uncompressed_on_disk_data_buffer = univariate_id_buffer.value();
+            if let Some(tag_hash_buffer) = self.uncompressed_on_disk_data_buffers.get(&tag_hash) {
+                let uncompressed_on_disk_data_buffer = tag_hash_buffer.value();
 
                 // Reading the buffer into memory deletes the on-disk buffer's file on disk and
                 // read_apache_parquet() cannot take self as an argument due to how it is used.
@@ -435,65 +403,58 @@ impl UncompressedDataManager {
                     .read_from_apache_parquet(current_batch_index)
                     .await?;
 
-                uncompressed_in_memory_data_buffer.insert_data(
+                uncompressed_in_memory_data_buffer.insert_data_point(
                     current_batch_index,
                     timestamp,
-                    value,
+                    values,
                 );
 
                 buffer_is_full = uncompressed_in_memory_data_buffer.is_full();
 
                 // The read-only reference must be dropped before the map can be modified.
-                mem::drop(univariate_id_buffer);
-                self.uncompressed_on_disk_data_buffers
-                    .remove(&univariate_id);
+                mem::drop(tag_hash_buffer);
+                self.uncompressed_on_disk_data_buffers.remove(&tag_hash);
                 self.uncompressed_in_memory_data_buffers
-                    .insert(univariate_id, uncompressed_in_memory_data_buffer);
+                    .insert(tag_hash, uncompressed_in_memory_data_buffer);
             } else {
-                debug!(
-                    "Could not find buffer for {}. Creating Buffer.",
-                    univariate_id
-                );
+                debug!("Creating Buffer for {tag_hash} as none currently exists.");
 
                 let mut uncompressed_in_memory_data_buffer = UncompressedInMemoryDataBuffer::new(
-                    univariate_id,
+                    tag_hash,
                     model_table_metadata,
                     current_batch_index,
                 );
 
                 debug!(
                     "Created buffer for {}. Remaining reserved bytes: {}.",
+                    tag_hash,
                     self.memory_pool.remaining_uncompressed_memory_in_bytes(),
-                    univariate_id
                 );
 
-                uncompressed_in_memory_data_buffer.insert_data(
+                uncompressed_in_memory_data_buffer.insert_data_point(
                     current_batch_index,
                     timestamp,
-                    value,
+                    values,
                 );
 
                 self.uncompressed_in_memory_data_buffers
-                    .insert(univariate_id, uncompressed_in_memory_data_buffer);
+                    .insert(tag_hash, uncompressed_in_memory_data_buffer);
             }
         }
 
         // Transfer the full buffer to the compressor.
         if buffer_is_full {
-            debug!(
-                "Buffer for {} is full, moving it to the channel of finished buffers.",
-                univariate_id
-            );
+            debug!("Buffer for {tag_hash} is full, transferring it to the compressor.");
 
             // unwrap() is safe as this is only reachable if the buffer exists in the HashMap.
-            let (_univariate_id, full_uncompressed_in_memory_data_buffer) = self
+            let (_tag_hash, full_uncompressed_in_memory_data_buffer) = self
                 .uncompressed_in_memory_data_buffers
-                .remove(&univariate_id)
+                .remove(&tag_hash)
                 .unwrap();
 
             return self
                 .channels
-                .univariate_data_sender
+                .uncompressed_data_sender
                 .send(Message::Data(UncompressedDataBuffer::InMemory(
                     full_uncompressed_in_memory_data_buffer,
                 )))
@@ -514,12 +475,15 @@ impl UncompressedDataManager {
     /// simple, it spills a random buffer and does not check if the last uncompressed in-memory data
     /// buffer has been read from the channel but is not yet compressed. Returns [`true`] if a
     /// buffer was spilled, [`false`] if not, and [`IOError`] if spilling fails.
-    async fn reserve_uncompressed_memory_for_in_memory_data_buffer(&self) -> Result<bool, IOError> {
+    async fn reserve_uncompressed_memory_for_in_memory_data_buffer(
+        &self,
+        number_of_fields: usize,
+    ) -> Result<bool, IOError> {
         // It is not guaranteed that compressing the data buffers in the channel releases any memory
         // as all the data buffers that are waiting to be compressed may all be stored on disk.
         if self.memory_pool.wait_for_uncompressed_memory_until(
-            UncompressedInMemoryDataBuffer::memory_size(),
-            || self.channels.univariate_data_sender.is_empty(),
+            uncompressed_data_buffer::compute_memory_size(number_of_fields),
+            || self.channels.uncompressed_data_sender.is_empty(),
         ) {
             Ok(false)
         } else {
@@ -531,9 +495,9 @@ impl UncompressedDataManager {
     /// Spill a random [`UncompressedInMemoryDataBuffer`]. Returns an [`IOError`] if no data buffers
     /// are currently in memory or if the writing to disk fails.
     async fn spill_in_memory_data_buffer(&self) -> Result<(), IOError> {
-        // Extract univariate_id but drop the reference to the map element as remove()
-        // may deadlock if called when holding any sort of reference into the map.
-        let univariate_id = {
+        // Extract tag_hash but drop the reference to the map element as remove() may deadlock if
+        // called when holding any sort of reference into the map.
+        let tag_hash = {
             *self
                 .uncompressed_in_memory_data_buffers
                 .iter()
@@ -542,15 +506,15 @@ impl UncompressedDataManager {
                 .key()
         };
 
-        // unwrap() is safe as univariate_id was just extracted from the map.
+        // unwrap() is safe as tag_hash was just extracted from the map.
         let mut uncompressed_in_memory_data_buffer = self
             .uncompressed_in_memory_data_buffers
-            .remove(&univariate_id)
+            .remove(&tag_hash)
             .unwrap()
             .1;
 
         let maybe_uncompressed_on_disk_data_buffer = uncompressed_in_memory_data_buffer
-            .spill_to_apache_parquet(self.local_data_folder.clone())
+            .spill_to_apache_parquet(self.local_data_folder.object_store())
             .await;
 
         // If an error occurs the in-memory buffer must be re-added to the map before returning.
@@ -558,13 +522,13 @@ impl UncompressedDataManager {
             Ok(uncompressed_on_disk_data_buffer) => uncompressed_on_disk_data_buffer,
             Err(error) => {
                 self.uncompressed_in_memory_data_buffers
-                    .insert(univariate_id, uncompressed_in_memory_data_buffer);
+                    .insert(tag_hash, uncompressed_in_memory_data_buffer);
                 return Err(error);
             }
         };
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
+        let freed_memory = uncompressed_in_memory_data_buffer.memory_size();
         self.used_uncompressed_memory_metric
             .lock()
             .unwrap()
@@ -579,7 +543,7 @@ impl UncompressedDataManager {
             .append(disk_size as isize, true);
 
         self.uncompressed_on_disk_data_buffers
-            .insert(univariate_id, uncompressed_on_disk_data_buffer);
+            .insert(tag_hash, uncompressed_on_disk_data_buffer);
 
         // Add the size of the in-memory data buffer back to the remaining reserved bytes.
         self.memory_pool
@@ -598,112 +562,101 @@ impl UncompressedDataManager {
     async fn finish_unused_buffers(&self, current_batch_index: u64) -> Result<(), IOError> {
         debug!("Freeing memory by finishing in-memory and on-disk buffers that are not used.");
 
-        // In-memory univariate ids are copied to prevent multiple concurrent borrows to the map.
-        let univariate_ids_of_unused_in_memory_buffers = self
+        // In-memory tag hashes are copied to prevent multiple concurrent borrows to the map.
+        let tag_hashes_of_unused_in_memory_buffers = self
             .uncompressed_in_memory_data_buffers
             .iter()
             .filter(|kv| kv.value().is_unused(current_batch_index))
             .map(|kv| *kv.key())
             .collect::<Vec<u64>>();
 
-        for univariate_id in univariate_ids_of_unused_in_memory_buffers {
-            // unwrap() is safe as the univariate_ids were just extracted from the map.
-            let (_univariate_id, uncompressed_in_memory_data_buffer) = self
+        for tag_hash in tag_hashes_of_unused_in_memory_buffers {
+            // unwrap() is safe as the tag hashes were just extracted from the map.
+            let (_tag_hash, uncompressed_in_memory_data_buffer) = self
                 .uncompressed_in_memory_data_buffers
-                .remove(&univariate_id)
+                .remove(&tag_hash)
                 .unwrap();
 
             self.channels
-                .univariate_data_sender
+                .uncompressed_data_sender
                 .send(Message::Data(UncompressedDataBuffer::InMemory(
                     uncompressed_in_memory_data_buffer,
                 )))
                 .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
 
-            debug!(
-                "Finished in-memory buffer for {} as it is no longer used.",
-                univariate_id
-            );
+            debug!("Finished in-memory buffer for {tag_hash} as it is no longer used.",);
         }
 
-        // On-disk univariate ids are copied to prevent multiple borrows to the map the same time.
-        let univariate_ids_of_unused_on_disk_buffers = self
+        // On-disk tag hashes are copied to prevent multiple borrows to the map the same time.
+        let tag_hashes_of_unused_on_disk_buffers = self
             .uncompressed_on_disk_data_buffers
             .iter()
             .filter(|kv| kv.value().is_unused(current_batch_index))
             .map(|kv| *kv.key())
             .collect::<Vec<u64>>();
 
-        for univariate_id in univariate_ids_of_unused_on_disk_buffers {
-            // unwrap() is safe as the univariate_ids were just extracted from the map.
-            let (_univariate_id, uncompressed_on_disk_data_buffer) = self
+        for tag_hash in tag_hashes_of_unused_on_disk_buffers {
+            // unwrap() is safe as the tag hashes were just extracted from the map.
+            let (_tag_hash, uncompressed_on_disk_data_buffer) = self
                 .uncompressed_on_disk_data_buffers
-                .remove(&univariate_id)
+                .remove(&tag_hash)
                 .unwrap();
 
             self.channels
-                .univariate_data_sender
+                .uncompressed_data_sender
                 .send(Message::Data(UncompressedDataBuffer::OnDisk(
                     uncompressed_on_disk_data_buffer,
                 )))
                 .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
 
-            debug!(
-                "Finished on-disk buffer for {} as it is no longer used.",
-                univariate_id
-            );
+            debug!("Finished on-disk buffer for {tag_hash} as it is no longer used.",);
         }
 
         Ok(())
     }
 
     /// Compress the uncompressed data buffers that the [`UncompressedDataManager`] is currently
-    /// managing, and return the compressed buffers and their univariate ids. Writes a log message
-    /// if a [`Message`] cannot be sent to [`CompressedDataManager`](super::CompressedDataManager).
+    /// managing. Writes a log message if a [`Message`] cannot be sent to
+    /// [`CompressedDataManager`](super::CompressedDataManager).
     fn flush_and_log_errors(&self) {
         if let Err(error) = self.flush() {
-            error!(
-                "Failed to flush data in uncompressed data manager due to: {}",
-                error
-            );
+            error!("Failed to flush data in uncompressed data manager due to: {error}");
         }
     }
 
     /// Send the uncompressed data buffers that the [`UncompressedDataManager`] is managing to the
     /// compressor. Returns [`SendError`] if a [`Message`] cannot be sent to the compressor.
     fn flush(&self) -> Result<(), SendError<Message<UncompressedDataBuffer>>> {
-        // In-memory univariate ids are copied to prevent multiple concurrent borrows to the map.
-        let in_memory_univariate_ids: Vec<u64> = self
+        // In-memory tag hashes are copied to prevent multiple concurrent borrows to the map.
+        let in_memory_tag_hashes: Vec<u64> = self
             .uncompressed_in_memory_data_buffers
             .iter()
             .map(|kv| *kv.key())
             .collect();
 
-        for univariate_id in in_memory_univariate_ids {
-            if let Some((_univariate_id, buffer)) = self
-                .uncompressed_in_memory_data_buffers
-                .remove(&univariate_id)
+        for tag_hash in in_memory_tag_hashes {
+            if let Some((_tag_hashes, buffer)) =
+                self.uncompressed_in_memory_data_buffers.remove(&tag_hash)
             {
                 self.channels
-                    .univariate_data_sender
+                    .uncompressed_data_sender
                     .send(Message::Data(UncompressedDataBuffer::InMemory(buffer)))?;
             }
         }
 
-        // On-disk univariate ids are copied to prevent multiple concurrent borrows to the map.
-        let on_disk_univariate_ids: Vec<u64> = self
+        // On-disk tag hashes are copied to prevent multiple concurrent borrows to the map.
+        let on_disk_tag_hashes: Vec<u64> = self
             .uncompressed_on_disk_data_buffers
             .iter()
             .map(|kv| *kv.key())
             .collect();
 
-        for univariate_id in on_disk_univariate_ids {
-            if let Some((_univariate_id, buffer)) = self
-                .uncompressed_on_disk_data_buffers
-                .remove(&univariate_id)
+        for tag_hashes in on_disk_tag_hashes {
+            if let Some((_tag_hashes, buffer)) =
+                self.uncompressed_on_disk_data_buffers.remove(&tag_hashes)
             {
                 self.channels
-                    .univariate_data_sender
+                    .uncompressed_data_sender
                     .send(Message::Data(UncompressedDataBuffer::OnDisk(buffer)))?;
             }
         }
@@ -717,7 +670,7 @@ impl UncompressedDataManager {
         loop {
             let message = self
                 .channels
-                .univariate_data_receiver
+                .uncompressed_data_receiver
                 .recv()
                 .map_err(|error| error.to_string())?;
 
@@ -754,54 +707,65 @@ impl UncompressedDataManager {
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<(), SendError<Message<CompressedSegmentBatch>>> {
-        let (
-            memory_use,
-            disk_use,
-            maybe_data_points,
-            univariate_id,
-            error_bound,
-            model_table_metadata,
-        ) = match uncompressed_data_buffer {
-            UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
-                UncompressedInMemoryDataBuffer::memory_size(),
-                0,
-                uncompressed_in_memory_data_buffer.record_batch().await,
-                uncompressed_in_memory_data_buffer.univariate_id(),
-                uncompressed_in_memory_data_buffer.error_bound(),
-                uncompressed_in_memory_data_buffer
-                    .model_table_metadata()
-                    .clone(),
-            ),
-            UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
-                0,
-                uncompressed_on_disk_data_buffer.disk_size().await,
-                uncompressed_on_disk_data_buffer.record_batch().await,
-                uncompressed_on_disk_data_buffer.univariate_id(),
-                uncompressed_on_disk_data_buffer.error_bound(),
-                uncompressed_on_disk_data_buffer
-                    .model_table_metadata()
-                    .clone(),
-            ),
-        };
+        let (memory_use, disk_use, maybe_data_points, tag_hash, model_table_metadata) =
+            match uncompressed_data_buffer {
+                UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
+                    uncompressed_in_memory_data_buffer.memory_size(),
+                    0,
+                    uncompressed_in_memory_data_buffer.record_batch().await,
+                    uncompressed_in_memory_data_buffer.tag_hash(),
+                    uncompressed_in_memory_data_buffer
+                        .model_table_metadata()
+                        .clone(),
+                ),
+                UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
+                    0,
+                    uncompressed_on_disk_data_buffer.disk_size().await,
+                    uncompressed_on_disk_data_buffer.record_batch().await,
+                    uncompressed_on_disk_data_buffer.tag_hash(),
+                    uncompressed_on_disk_data_buffer
+                        .model_table_metadata()
+                        .clone(),
+                ),
+            };
 
         let data_points = maybe_data_points.map_err(|_| {
             SendError(Message::Data(CompressedSegmentBatch::new(
-                univariate_id,
                 model_table_metadata.clone(),
-                RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone()),
+                vec![RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone())],
             )))
         })?;
-        let uncompressed_timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
-        let uncompressed_values = modelardb_common::array!(data_points, 1, ValueArray);
 
-        // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
-        let compressed_segments = modelardb_compression::try_compress(
-            univariate_id,
-            error_bound,
-            uncompressed_timestamps,
-            uncompressed_values,
-        )
-        .unwrap();
+        let uncompressed_timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
+
+        let compressed_segments = model_table_metadata
+            .field_column_indices
+            .iter()
+            .enumerate()
+            .map(|(value_index, field_column_index)| {
+                // One is added to value_index as the first array contains the timestamps.
+                let uncompressed_values =
+                    modelardb_common::array!(data_points, value_index + 1, ValueArray);
+                let univariate_id = tag_hash | *field_column_index as u64;
+                let error_bound = model_table_metadata.error_bounds[*field_column_index];
+
+                // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
+                modelardb_compression::try_compress(
+                    univariate_id,
+                    error_bound,
+                    uncompressed_timestamps,
+                    uncompressed_values,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        self.channels
+            .compressed_data_sender
+            .send(Message::Data(CompressedSegmentBatch::new(
+                model_table_metadata.clone(),
+                compressed_segments,
+            )))?;
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_uncompressed_memory_metric
@@ -815,17 +779,11 @@ impl UncompressedDataManager {
             .unwrap()
             .append(-(disk_use as isize), true);
 
-        // Add the size of the segment back to the remaining reserved bytes.
+        // Add the size of the uncompressed buffer back to the remaining reserved bytes.
         self.memory_pool
             .adjust_uncompressed_memory(memory_use as isize);
 
-        self.channels
-            .compressed_data_sender
-            .send(Message::Data(CompressedSegmentBatch::new(
-                univariate_id,
-                model_table_metadata,
-                compressed_segments,
-            )))
+        Ok(())
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
@@ -856,12 +814,11 @@ mod tests {
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
-    use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
     use modelardb_common::types::{ServerMode, TimestampBuilder, ValueBuilder};
-    use object_store::ObjectStore;
+    use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
@@ -869,20 +826,20 @@ mod tests {
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
     use crate::DataFolders;
 
-    const UNIVARIATE_ID: u64 = 9674644176454356993;
+    const TAG_HASH: u64 = 9674644176454356993;
 
     // Tests for UncompressedDataManager.
     #[tokio::test]
     async fn test_can_compress_existing_on_disk_data_buffers_when_initializing() {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         // Create a context with a storage engine.
         let context = Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                &DataFolders {
+                DataFolders {
                     local_data_folder: local_data_folder.clone(),
                     remote_data_folder: None,
                     query_data_folder: local_data_folder,
@@ -912,23 +869,21 @@ mod tests {
 
         sleep(Duration::from_millis(250)).await;
 
-        for _ in 0..2 {
-            storage_engine
-                .uncompressed_data_manager
-                .spill_in_memory_data_buffer()
-                .await
-                .unwrap();
-        }
+        storage_engine
+            .uncompressed_data_manager
+            .spill_in_memory_data_buffer()
+            .await
+            .unwrap();
 
-        // Compress the spilled buffers and sleep to allow the compression thread to finish.
-        let result = storage_engine.initialize(&context).await;
-        assert!(result.is_ok());
+        // Compress the spilled buffer and sleep to allow the compression thread to finish.
+        assert!(storage_engine.initialize(&context).await.is_ok());
         sleep(Duration::from_millis(250)).await;
 
-        // The two spilled buffers should be deleted and the content should be compressed.
+        // The spilled buffer should be deleted and the content should be compressed.
         let spilled_buffers = storage_engine
             .uncompressed_data_manager
             .local_data_folder
+            .object_store()
             .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
             .await;
@@ -942,7 +897,7 @@ mod tests {
                 .unwrap()
                 .values()
                 .occupied_len(),
-            2
+            1
         );
     }
 
@@ -953,16 +908,15 @@ mod tests {
             create_managers(&temp_dir).await;
 
         let data = uncompressed_data(1, model_table_metadata.schema.clone());
-        let uncompressed_data_multivariate =
-            UncompressedDataMultivariate::new(model_table_metadata, data);
+        let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
-        // Two separate builders are created since the inserted data has two field columns.
-        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 2);
+        // Only a single data buffer is created despite the inserted data containing two field columns.
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(
             data_manager
                 .ingested_data_points_metric
@@ -981,16 +935,15 @@ mod tests {
             create_managers(&temp_dir).await;
 
         let data = uncompressed_data(2, model_table_metadata.schema.clone());
-        let uncompressed_data_multivariate =
-            UncompressedDataMultivariate::new(model_table_metadata, data);
+        let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
-        // Since the tag is different for each data point, 4 separate buffers should be created.
-        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 4);
+        // Since the tag is different for the two data points, two data buffers should be created.
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 2);
         assert_eq!(
             data_manager
                 .ingested_data_points_metric
@@ -1003,7 +956,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remaining_multivariate_memory_increased_after_processing_record_batch() {
+    async fn test_remaining_ingested_memory_increased_after_processing_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, model_table_metadata) =
             create_managers(&temp_dir).await;
@@ -1011,35 +964,34 @@ mod tests {
         let data = uncompressed_data(2, model_table_metadata.schema.clone());
         let data_size = data.get_array_memory_size();
 
-        // Simulate StorageEngine decrementing multivariate memory when receiving multivariate data.
-        let multivariate_memory_before = data_manager
+        // Simulate StorageEngine decrementing ingested memory when receiving ingested data.
+        let ingested_memory_before = data_manager
             .memory_pool
-            .remaining_multivariate_memory_in_bytes();
+            .remaining_ingested_memory_in_bytes();
 
         data_manager
-            .used_multivariate_memory_metric
+            .used_ingested_memory_metric
             .lock()
             .unwrap()
             .append(data.get_array_memory_size() as isize, true);
 
-        let uncompressed_data_multivariate =
-            UncompressedDataMultivariate::new(model_table_metadata, data);
+        let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
         assert_eq!(
             data_manager
                 .memory_pool
-                .remaining_multivariate_memory_in_bytes(),
-            multivariate_memory_before + data_size as isize
+                .remaining_ingested_memory_in_bytes(),
+            ingested_memory_before + data_size as isize
         );
 
         assert_eq!(
             data_manager
-                .used_multivariate_memory_metric
+                .used_ingested_memory_metric
                 .lock()
                 .unwrap()
                 .values()
@@ -1074,15 +1026,15 @@ mod tests {
         let (_metadata_manager, mut data_manager, model_table_metadata) =
             create_managers(&temp_dir).await;
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
 
         assert!(data_manager
             .uncompressed_in_memory_data_buffers
-            .contains_key(&UNIVARIATE_ID));
+            .contains_key(&TAG_HASH));
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&UNIVARIATE_ID)
+                .get(&TAG_HASH)
                 .unwrap()
                 .len(),
             1
@@ -1095,21 +1047,21 @@ mod tests {
         let (_metadata_manager, mut data_manager, model_table_metadata) =
             create_managers(&temp_dir).await;
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
         assert!(data_manager
             .uncompressed_in_memory_data_buffers
-            .contains_key(&UNIVARIATE_ID));
+            .contains_key(&TAG_HASH));
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&UNIVARIATE_ID)
+                .get(&TAG_HASH)
                 .unwrap()
                 .len(),
             2
@@ -1122,7 +1074,7 @@ mod tests {
         let (_metadata_manager, mut data_manager, model_table_metadata) =
             create_managers(&temp_dir).await;
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
@@ -1130,17 +1082,17 @@ mod tests {
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 0);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 1);
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
         assert!(data_manager
             .uncompressed_in_memory_data_buffers
-            .contains_key(&UNIVARIATE_ID));
+            .contains_key(&TAG_HASH));
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&UNIVARIATE_ID)
+                .get(&TAG_HASH)
                 .unwrap()
                 .len(),
             2
@@ -1179,19 +1131,18 @@ mod tests {
         )
         .unwrap();
 
-        let uncompressed_data_multivariate =
-            UncompressedDataMultivariate::new(model_table_metadata.clone(), data);
+        let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata.clone(), data);
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
-        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 2);
-        assert_eq!(data_manager.channels.univariate_data_receiver.len(), 0);
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
+        assert_eq!(data_manager.channels.uncompressed_data_receiver.len(), 0);
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&4940964593210619905)
+                .get(&4940964593210619904)
                 .unwrap()
                 .len(),
             3
@@ -1199,16 +1150,16 @@ mod tests {
 
         // Insert using insert_data_points() to finish unused buffers.
         let empty_record_batch = RecordBatch::new_empty(model_table_metadata.schema.clone());
-        let uncompressed_data_multivariate =
-            UncompressedDataMultivariate::new(model_table_metadata, empty_record_batch);
+        let ingested_data_buffer =
+            IngestedDataBuffer::new(model_table_metadata, empty_record_batch);
 
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 0);
-        assert_eq!(data_manager.channels.univariate_data_receiver.len(), 2);
+        assert_eq!(data_manager.channels.uncompressed_data_receiver.len(), 1);
     }
 
     #[tokio::test]
@@ -1220,13 +1171,13 @@ mod tests {
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             &model_table_metadata,
-            UNIVARIATE_ID,
+            TAG_HASH,
         )
         .await;
 
         assert!(data_manager
             .channels
-            .univariate_data_receiver
+            .uncompressed_data_receiver
             .try_recv()
             .is_ok());
     }
@@ -1241,19 +1192,19 @@ mod tests {
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
             &mut data_manager,
             &model_table_metadata,
-            UNIVARIATE_ID,
+            TAG_HASH,
         )
         .await;
 
         assert!(data_manager
             .channels
-            .univariate_data_receiver
+            .uncompressed_data_receiver
             .try_recv()
             .is_ok());
 
         assert!(data_manager
             .channels
-            .univariate_data_receiver
+            .uncompressed_data_receiver
             .try_recv()
             .is_ok());
     }
@@ -1266,7 +1217,7 @@ mod tests {
 
         assert!(data_manager
             .channels
-            .univariate_data_receiver
+            .uncompressed_data_receiver
             .try_recv()
             .is_err());
     }
@@ -1279,17 +1230,19 @@ mod tests {
         let reserved_memory = data_manager
             .memory_pool
             .remaining_uncompressed_memory_in_bytes() as usize;
+        let number_of_fields = model_table_metadata.field_column_indices.len();
 
         // Insert messages into the storage engine until all the memory is used and the next
         // message inserted would block the thread until the data messages have been processed.
-        let number_of_buffers = reserved_memory / UncompressedInMemoryDataBuffer::memory_size();
-        for univariate_id in 0..number_of_buffers {
+        let number_of_buffers =
+            reserved_memory / uncompressed_data_buffer::compute_memory_size(number_of_fields);
+        for tag_hash in 0..number_of_buffers {
             // Allocate many buffers that are never finished.
             insert_data_points(
                 1,
                 &mut data_manager,
                 &model_table_metadata.clone(),
-                univariate_id as u64,
+                tag_hash as u64,
             )
             .await;
         }
@@ -1300,16 +1253,16 @@ mod tests {
             number_of_buffers
         );
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
-        assert_eq!(data_manager.channels.univariate_data_receiver.len(), 0);
+        assert_eq!(data_manager.channels.uncompressed_data_receiver.len(), 0);
         assert!(
             data_manager
                 .memory_pool
                 .remaining_uncompressed_memory_in_bytes()
-                < UncompressedInMemoryDataBuffer::memory_size() as isize
+                < uncompressed_data_buffer::compute_memory_size(number_of_fields) as isize
         );
 
         // If there is enough memory to hold n full buffers, n + 1 are needed to spill a buffer.
-        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
 
         // One of the buffers should be spilled due to the memory limit being exceeded.
         assert_eq!(
@@ -1317,11 +1270,12 @@ mod tests {
             number_of_buffers
         );
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 1);
-        assert_eq!(data_manager.channels.univariate_data_receiver.len(), 0);
+        assert_eq!(data_manager.channels.uncompressed_data_receiver.len(), 0);
 
-        // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
+        // The UncompressedDataBuffer should be spilled to tag hash in the uncompressed folder.
         let spilled_buffers = data_manager
             .local_data_folder
+            .object_store()
             .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
             .await;
@@ -1338,7 +1292,7 @@ mod tests {
             .memory_pool
             .remaining_uncompressed_memory_in_bytes();
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
 
         assert!(
             reserved_memory
@@ -1369,7 +1323,7 @@ mod tests {
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             &model_table_metadata,
-            UNIVARIATE_ID,
+            TAG_HASH,
         ));
 
         let remaining_memory = data_manager
@@ -1378,7 +1332,7 @@ mod tests {
 
         data_manager
             .channels
-            .univariate_data_sender
+            .uncompressed_data_sender
             .send(Message::Stop)
             .unwrap();
         data_manager.process_compressor_messages(runtime).unwrap();
@@ -1432,12 +1386,12 @@ mod tests {
 
         data_manager
             .channels
-            .univariate_data_sender
+            .uncompressed_data_sender
             .send(Message::Stop)
             .unwrap();
         data_manager
             .channels
-            .univariate_data_sender
+            .uncompressed_data_sender
             .send(Message::Data(UncompressedDataBuffer::OnDisk(
                 spilled_buffer,
             )))
@@ -1489,7 +1443,7 @@ mod tests {
             1,
             &mut data_manager,
             &model_table_metadata.clone(),
-            UNIVARIATE_ID,
+            TAG_HASH,
         )
         .await;
 
@@ -1513,13 +1467,7 @@ mod tests {
         );
 
         // Insert data that should force the existing data to now be spilled.
-        insert_data_points(
-            1,
-            &mut data_manager,
-            &model_table_metadata,
-            UNIVARIATE_ID + 1,
-        )
-        .await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH + 1).await;
 
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 1);
@@ -1530,17 +1478,17 @@ mod tests {
         count: usize,
         data_manager: &mut UncompressedDataManager,
         model_table_metadata: &Arc<ModelTableMetadata>,
-        univariate_id: u64,
+        tag_hash: u64,
     ) {
-        let value: Value = 30.0;
+        let values: &[Value] = &[37.0, 73.0];
         let current_batch_index = 0;
 
         for i in 0..count {
             data_manager
                 .insert_data_point(
-                    univariate_id,
+                    tag_hash,
                     i as i64,
-                    value,
+                    &mut values.iter().copied(),
                     model_table_metadata.clone(),
                     current_batch_index,
                 )
@@ -1565,6 +1513,9 @@ mod tests {
                 .unwrap(),
         );
 
+        let local_data_folder =
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+
         // Ensure the expected metadata is available through the metadata manager.
         let model_table_metadata = test::model_table_metadata();
 
@@ -1579,16 +1530,16 @@ mod tests {
             .unwrap();
 
         let memory_pool = Arc::new(MemoryPool::new(
-            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES,
+            test::INGESTED_RESERVED_MEMORY_IN_BYTES,
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
         let channels = Arc::new(Channels::new());
 
-        // UncompressedDataManager::try_new() lookup the error bounds for each univariate_id.
+        // UncompressedDataManager::try_new() lookup the error bounds for each tag hash.
         let uncompressed_data_manager = UncompressedDataManager::new(
-            object_store,
+            local_data_folder,
             memory_pool,
             channels,
             metadata_manager.clone(),

@@ -19,37 +19,36 @@
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
-use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::execution::context::SessionState;
 use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
+use datafusion::prelude::{SessionConfig, SessionContext};
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::parser::ValidStatement;
-use modelardb_common::storage;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{metadata, parser};
-use object_store::path::Path;
-use object_store::ObjectStore;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::configuration::ConfigurationManager;
-use crate::query::ModelTable;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER, QUERY_DATA_FOLDER_SCHEME_WITH_HOST};
+use crate::query::model_table::ModelTable;
+use crate::query::table::Table;
+use crate::storage::StorageEngine;
 use crate::{optimizer, ClusterMode, DataFolders};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
+    /// Location of local and remote data.
+    pub data_folders: DataFolders,
     /// Metadata for the tables and model tables in the data folder.
     pub table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
-    /// Main interface for Apache Arrow DataFusion.
+    /// Main interface for Apache DataFusion.
     pub session: SessionContext,
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
@@ -60,12 +59,15 @@ impl Context {
     /// a metadata manager or storage engine could not be created, [`ModelarDbError`] is returned.
     pub async fn try_new(
         runtime: Arc<Runtime>,
-        data_folders: &DataFolders,
+        data_folders: DataFolders,
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
+        // TODO: replace with DeltaLake when merging support for storing metadata in Delta Lake.
+        // unwrap() is safe as the local data folder is always located on the local file system.
+        let local_data_folder = data_folders.local_data_folder.local_file_system().unwrap();
         let table_metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(&data_folders.local_data_folder)
+            metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)
                 .await
                 .map_err(|error| {
                     ModelarDbError::ConfigurationError(format!(
@@ -75,12 +77,11 @@ impl Context {
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            data_folders.local_data_folder.clone(),
             cluster_mode,
             server_mode,
         )));
 
-        let session = Self::create_session_context(data_folders.query_data_folder.clone());
+        let session = Self::create_session_context();
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
@@ -99,6 +100,7 @@ impl Context {
         ));
 
         Ok(Context {
+            data_folders,
             table_metadata_manager,
             configuration_manager,
             session,
@@ -106,19 +108,14 @@ impl Context {
         })
     }
 
-    /// Create a new [`SessionContext`] for interacting with Apache Arrow DataFusion. The
+    /// Create a new [`SessionContext`] for interacting with Apache DataFusion. The
     /// [`SessionContext`] is constructed with the default configuration, default resource managers,
-    /// the local file system and if provided the remote object store as [`ObjectStores`](ObjectStore),
     /// and additional optimizer rules that rewrite simple aggregate queries to be executed directly
     /// on the segments containing metadata and models instead of on reconstructed data points
     /// created from the segments for model tables.
-    fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionContext {
+    fn create_session_context() -> SessionContext {
         let session_config = SessionConfig::new();
         let session_runtime = Arc::new(RuntimeEnv::default());
-
-        // unwrap() is safe as QUERY_DATA_FOLDER_SCHEME_WITH_HOST is a const containing a URL.
-        let object_store_url = QUERY_DATA_FOLDER_SCHEME_WITH_HOST.try_into().unwrap();
-        session_runtime.register_object_store(&object_store_url, query_data_folder);
 
         // Use the add* methods instead of the with* methods as the with* methods replace the built-ins.
         // See: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
@@ -150,11 +147,11 @@ impl Context {
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
-                self.register_and_save_table(&name, sql, schema).await?;
+                self.register_and_save_table(&name, sql, schema, context)
+                    .await?;
             }
             ValidStatement::CreateModelTable(model_table_metadata) => {
-                self.check_if_table_exists(&model_table_metadata.name)
-                    .await?;
+                self.check_if_table_exists(&model_table_metadata.name).await?;
                 self.register_and_save_model_table(model_table_metadata, sql, context)
                     .await?;
             }
@@ -163,45 +160,29 @@ impl Context {
         Ok(())
     }
 
-    /// Create a normal table, register it with Apache Arrow DataFusion's catalog, and save it to
-    /// the [`TableMetadataManager`]. If the table exists, the Apache Parquet file cannot be created,
-    /// or if the table cannot be saved to the [`TableMetadataManager`], return [`ModelarDbError`] error.
+    /// Create a normal table, register it with Apache DataFusion's catalog, and save it to the
+    /// [`TableMetadataManager`]. `context` is needed as an argument instead of using `self` to
+    /// avoid having to copy the context when registering normal tables. If the table exists or if
+    /// the table cannot be saved to the [`TableMetadataManager`], return [`ModelarDbError`] error.
     async fn register_and_save_table(
         &self,
         table_name: &str,
         sql: &str,
         schema: Schema,
+        context: &Arc<Context>,
     ) -> Result<(), ModelarDbError> {
-        let configuration_manager = self.configuration_manager.read().await;
-
-        // Create an empty Apache Parquet file to save the schema.
-        let folder_path = Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}"));
-        let file_path = Path::from(format!("{folder_path}/empty_for_schema.parquet"));
-        let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-
-        storage::write_record_batch_to_apache_parquet_file(
-            &file_path,
-            &empty_batch,
-            None,
-            &(configuration_manager.local_data_folder.clone() as Arc<dyn ObjectStore>),
-        )
-        .await
-        .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-        // unwrap() is safe since the path is generated internally and cannot contain invalid characters.
-        let table_path = configuration_manager
+        // Create an empty Delta Lake table.
+        let delta_table = self.data_folders
             .local_data_folder
-            .path_to_filesystem(&folder_path)
-            .unwrap();
-
-        // Save the table in the Apache Arrow Datafusion catalog.
-        self.session
-            .register_parquet(
-                table_name,
-                table_path.to_str().unwrap(),
-                ParquetReadOptions::default(),
-            )
+            .create_delta_lake_table(table_name, &schema)
             .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        // Register the table with Apache DataFusion.
+        let table = Arc::new(Table::new(delta_table, context.storage_engine.clone()));
+
+        self.session
+            .register_table(table_name, table)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Persist the new table to the metadata database.
@@ -215,17 +196,24 @@ impl Context {
         Ok(())
     }
 
-    /// Create a model table, register it with Apache Arrow DataFusion's catalog, and save it to
-    /// the [`TableMetadataManager`]. `context` is needed as an argument instead of using `self` to avoid
-    /// having to copy the context when registering model tables. If the table exists or if the
-    /// table cannot be saved to the [`TableMetadataManager`], return [`ModelarDbError`] error.
+    /// Create a model table, register it with Apache DataFusion's catalog, and save it to the
+    /// [`TableMetadataManager`]. `context` is needed as an argument instead of using `self` to
+    /// avoid having to copy the context when registering model tables. If the table exists or if
+    /// the table cannot be saved to the [`TableMetadataManager`], return [`ModelarDbError`] error.
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,
         sql: &str,
         context: &Arc<Context>,
     ) -> Result<(), ModelarDbError> {
-        // Save the model table in the Apache Arrow DataFusion catalog.
+        // Create an empty Delta Lake table.
+        self.data_folders
+            .local_data_folder
+            .create_delta_lake_model_table(&model_table_metadata.name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        // Register the table with Apache DataFusion.
         let model_table_metadata = Arc::new(model_table_metadata);
 
         self.session
@@ -242,39 +230,36 @@ impl Context {
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
+
         Ok(())
     }
 
-    /// For each table saved in the metadata database, register the table in Apache Arrow
-    /// DataFusion. If the tables could not be retrieved from the metadata database or a table
-    /// could not be registered, return [`ModelarDbError`].
-    pub async fn register_tables(&self) -> Result<(), ModelarDbError> {
+    /// For each normal table saved in the metadata database, register the normal table in Apache
+    /// DataFusion. `context` is needed as an argument instead of using `self` to avoid having to
+    /// copy the context when registering normal tables. If the normal tables could not be retrieved
+    /// from the metadata database or a normal table could not be registered, return
+    /// [`ModelarDbError`].
+    pub async fn register_tables(&self, context: &Arc<Context>) -> Result<(), ModelarDbError> {
         let table_names = self
             .table_metadata_manager
             .table_names()
             .await
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
-        let configuration_manager = self.configuration_manager.read().await;
-
         for table_name in table_names {
             // Compute the path to the folder containing data for the table.
-            let folder_path = Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}"));
-
-            // unwrap() is safe since the path is generated internally and cannot contain invalid characters.
-            let table_folder_path = configuration_manager
+            let delta_table = self
+                .data_folders
                 .local_data_folder
-                .path_to_filesystem(&folder_path)
-                .unwrap();
+                .delta_table(&table_name)
+                .await
+                .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+
+            let table = Arc::new(Table::new(delta_table, context.storage_engine.clone()));
 
             // unwrap() is safe since the path is created from the table name which is valid UTF-8.
             self.session
-                .register_parquet(
-                    &table_name,
-                    table_folder_path.to_str().unwrap(),
-                    ParquetReadOptions::default(),
-                )
-                .await
+                .register_table(&table_name, table)
                 .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
             info!("Registered table '{table_name}'.");
@@ -284,10 +269,10 @@ impl Context {
     }
 
     /// For each model table saved in the metadata database, register the model table in Apache
-    /// Arrow DataFusion. `context` is needed as an argument instead of using `self` to avoid
-    /// having to copy the context when registering model tables. If the model tables could not be
-    /// retrieved from the metadata database or a model table could not be registered,
-    /// return [`ModelarDbError`].
+    /// DataFusion. `context` is needed as an argument instead of using `self` to avoid having to
+    /// copy the context when registering model tables. If the model tables could not be retrieved
+    /// from the metadata database or a model table could not be registered, return
+    /// [`ModelarDbError`].
     pub async fn register_model_tables(
         &self,
         context: &Arc<Context>,
@@ -402,8 +387,7 @@ impl Context {
 mod tests {
     use super::*;
 
-    use modelardb_common::test;
-    use object_store::local::LocalFileSystem;
+    use modelardb_common::{storage::DeltaLake, test};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -427,12 +411,12 @@ mod tests {
             .await
             .unwrap();
 
-        // An Apache Parquet file should be created to save the schema.
+        // A Delta Lake log should be created to save the schema.
         let folder_path = temp_dir
             .path()
-            .join(COMPRESSED_DATA_FOLDER)
+            .join("compressed")
             .join("table_name")
-            .join("empty_for_schema.parquet");
+            .join("_delta_log");
 
         assert!(folder_path.exists());
 
@@ -440,7 +424,7 @@ mod tests {
         let table_names = context.table_metadata_manager.table_names().await.unwrap();
         assert!(table_names.contains(&"table_name".to_owned()));
 
-        // The table should be registered in the Apache Arrow DataFusion catalog.
+        // The table should be registered in the Apache DataFusion catalog.
         assert!(context.check_if_table_exists("table_name").await.is_err());
     }
 
@@ -482,7 +466,7 @@ mod tests {
             test::model_table_metadata().name
         );
 
-        // The model table should be registered in the Apache Arrow DataFusion catalog.
+        // The model table should be registered in the Apache DataFusion catalog.
         assert!(context
             .check_if_table_exists(test::MODEL_TABLE_NAME)
             .await
@@ -518,11 +502,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Create a new context to clear the Apache Arrow Datafusion catalog.
+        // Create a new context to clear the Apache Datafusion catalog.
         let context_2 = create_context(&temp_dir).await;
 
-        // Register the table with Apache Arrow DataFusion.
-        context_2.register_tables().await.unwrap();
+        // Register the table with Apache DataFusion.
+        context_2.register_tables(&context).await.unwrap();
     }
 
     #[tokio::test]
@@ -540,7 +524,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Register the model table with Apache Arrow DataFusion.
+        // Register the model table with Apache DataFusion.
         context.register_model_tables(&context).await.unwrap();
     }
 
@@ -650,12 +634,12 @@ mod tests {
     /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                &DataFolders {
+                DataFolders {
                     local_data_folder: local_data_folder.clone(),
                     remote_data_folder: None,
                     query_data_folder: local_data_folder,

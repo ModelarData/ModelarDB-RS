@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::storage::DeltaLake;
 use object_store::ObjectStore;
 
 use crate::metadata::MetadataManager;
@@ -31,15 +32,15 @@ pub struct RemoteDataFolder {
     /// Connection information saved as bytes to make it possible to transfer the information using
     /// Arrow Flight.
     connection_info: Vec<u8>,
-    /// Folder for storing Apache Parquet files in a remote object store.
-    object_store: Arc<dyn ObjectStore>,
+    /// Remote object store for storing data and metadata in Apache Parquet files.
+    delta_lake: Arc<DeltaLake>,
 }
 
 impl RemoteDataFolder {
-    pub fn new(connection_info: Vec<u8>, object_store: Arc<dyn ObjectStore>) -> Self {
+    pub fn new(connection_info: Vec<u8>, delta_lake: Arc<DeltaLake>) -> Self {
         Self {
             connection_info,
-            object_store,
+            delta_lake,
         }
     }
 
@@ -47,8 +48,12 @@ impl RemoteDataFolder {
         &self.connection_info
     }
 
-    pub fn object_store(&self) -> &Arc<dyn ObjectStore> {
-        &self.object_store
+    pub fn delta_lake(&self) -> Arc<DeltaLake> {
+        self.delta_lake.clone()
+    }
+
+    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
+        self.delta_lake.object_store()
     }
 }
 

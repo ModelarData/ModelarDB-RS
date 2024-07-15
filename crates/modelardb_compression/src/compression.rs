@@ -262,7 +262,8 @@ mod tests {
     use super::*;
 
     use arrow::array::{
-        ArrayBuilder, BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array,
+        ArrayBuilder, BinaryArray, Float32Array, UInt64Array, UInt64Builder,
+        UInt8Array,
     };
     use modelardb_common::array;
     use modelardb_common::test::data_generation::{self, ValuesStructure};

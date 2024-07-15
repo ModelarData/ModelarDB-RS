@@ -21,6 +21,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use arrow::datatypes::TimeUnit;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::common::{DFSchema, DataFusionError, ToDFSchema};
 use datafusion::config::ConfigOptions;
@@ -401,9 +402,24 @@ pub fn semantic_checks_for_create_table(
                 .build_schema(columns)
                 .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
+            // SqlToRel.build() is hard coded to create Timestamp(TimeUnit::Nanosecond, TimeZone)
+            // but Delta Lake currently only supports Timestamp(TimeUnit::Microsecond, TimeZone).
+            let supported_fields = schema
+                .all_fields()
+                .iter()
+                .map(|field| match field.data_type() {
+                    DataType::Timestamp(_time_unit, timezone) => {
+                        let data_type =
+                            DataType::Timestamp(TimeUnit::Microsecond, timezone.clone());
+                        Field::new(field.name(), data_type, field.is_nullable())
+                    }
+                    _data_type => (*field).clone(),
+                })
+                .collect::<Vec<Field>>();
+
             Ok(ValidStatement::CreateTable {
                 name: normalized_name,
-                schema,
+                schema: Schema::new(supported_fields),
             })
         }
     } else {

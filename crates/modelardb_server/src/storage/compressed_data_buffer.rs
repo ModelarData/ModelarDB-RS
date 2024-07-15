@@ -15,59 +15,43 @@
 
 //! Buffer for compressed segments from the same table.
 
-use std::io::Error as IOError;
+use std::io::{Error as IOError, ErrorKind};
 use std::sync::Arc;
 
-use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::{metadata, storage};
-use object_store::local::LocalFileSystem;
-use object_store::path::Path;
-use object_store::ObjectStore;
 
 /// Compressed segments representing data points from a column in a model table as one
 /// [`RecordBatch`].
 #[derive(Clone, Debug)]
 pub(super) struct CompressedSegmentBatch {
-    /// Univariate id that uniquely identifies the univariate time series the compressed segments
-    /// represents data points for.
-    univariate_id: u64,
     /// Metadata of the model table to insert the data points into.
-    model_table_metadata: Arc<ModelTableMetadata>,
+    pub(super) model_table_metadata: Arc<ModelTableMetadata>,
     /// Compressed segments representing the data points to insert.
-    pub(super) compressed_segments: RecordBatch,
+    pub(super) compressed_segments: Vec<RecordBatch>,
 }
 
 impl CompressedSegmentBatch {
     pub(super) fn new(
-        univariate_id: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
-        compressed_segments: RecordBatch,
+        compressed_segments: Vec<RecordBatch>,
     ) -> Self {
         Self {
-            univariate_id,
             model_table_metadata,
             compressed_segments,
         }
     }
 
-    /// Return the name of the table the buffer stores data for.
-    pub(super) fn model_table_name(&self) -> String {
-        self.model_table_metadata.name.clone()
-    }
-
-    /// Return the index of the column the buffer stores data for.
-    pub(super) fn column_index(&self) -> u16 {
-        metadata::univariate_id_to_column_index(self.univariate_id)
+    /// Return the name of the table the batch stores data for.
+    pub(super) fn model_table_name(&self) -> &str {
+        &self.model_table_metadata.name
     }
 }
 
-/// A single compressed buffer, containing one or more compressed segments for a column in a model
-/// table as one or more [RecordBatches](RecordBatch) and providing functionality for appending
-/// segments and saving all segments to a single Apache Parquet file.
+/// A single compressed buffer, containing one or more compressed segments for a time series in a
+/// model table as one or more [RecordBatches](RecordBatch) per column and providing functionality
+/// for appending segments and saving all segments to a single Apache Parquet file.
 pub(super) struct CompressedDataBuffer {
     /// Compressed segments that make up the compressed data in the [`CompressedDataBuffer`].
     compressed_segments: Vec<RecordBatch>,
@@ -78,47 +62,42 @@ pub(super) struct CompressedDataBuffer {
 impl CompressedDataBuffer {
     pub(super) fn new() -> Self {
         Self {
-            compressed_segments: Vec::new(),
+            compressed_segments: vec![],
             size_in_bytes: 0,
         }
     }
 
     /// Append `compressed_segments` to the [`CompressedDataBuffer`] and return the size of
-    /// `compressed_segments` in bytes. It is assumed that `compressed_segments` is sorted by time.
-    pub(super) fn append_compressed_segments(&mut self, compressed_segments: RecordBatch) -> usize {
-        let segment_size = Self::size_of_compressed_segments(&compressed_segments);
+    /// `compressed_segments` in bytes if their schema is [`COMPRESSED_SCHEMA`], otherwise
+    /// [`IOError`] is returned.
+    pub(super) fn append_compressed_segments(
+        &mut self,
+        mut compressed_segments: Vec<RecordBatch>,
+    ) -> Result<usize, IOError> {
+        if compressed_segments
+            .iter()
+            .any(|compressed_segments| compressed_segments.schema() != COMPRESSED_SCHEMA.0)
+        {
+            return Err(IOError::new(
+                ErrorKind::InvalidInput,
+                "Compressed segments must all use COMPRESSED_SCHEMA.".to_owned(),
+            ));
+        }
 
-        self.compressed_segments.push(compressed_segments);
-        self.size_in_bytes += segment_size;
+        let mut compressed_segments_size = 0;
+        for compressed_segment_batch in compressed_segments.drain(0..) {
+            compressed_segments_size +=
+                Self::size_of_compressed_segments(&compressed_segment_batch);
+            self.compressed_segments.push(compressed_segment_batch);
+            self.size_in_bytes += compressed_segments_size;
+        }
 
-        segment_size
+        Ok(compressed_segments_size)
     }
 
-    /// If the compressed segments are successfully saved to an Apache Parquet file return a
-    /// [`CompressedFile`] representing the saved file, otherwise return [`IOError`].
-    pub(super) async fn save_to_apache_parquet(
-        &mut self,
-        local_data_folder: &LocalFileSystem,
-        folder_path: &Path,
-    ) -> Result<CompressedFile, IOError> {
-        debug_assert!(
-            !self.compressed_segments.is_empty(),
-            "Cannot save CompressedDataBuffer with no data."
-        );
-
-        // Combine the compressed segments into a single RecordBatch.
-        let batch =
-            compute::concat_batches(&COMPRESSED_SCHEMA.0, &self.compressed_segments).unwrap();
-
-        let file_path = storage::write_compressed_segments_to_apache_parquet_file(
-            folder_path,
-            &batch,
-            local_data_folder,
-        )
-        .await?;
-
-        let object_meta = local_data_folder.head(&file_path).await?;
-        Ok(CompressedFile::from_compressed_data(object_meta, &batch))
+    /// Return the compressed segments as a [`Vec<RecordBatch>`].
+    pub(super) fn record_batches(self) -> Vec<RecordBatch> {
+        self.compressed_segments
     }
 
     /// Return the size in bytes of `compressed_segments`.
@@ -142,52 +121,55 @@ impl CompressedDataBuffer {
 mod tests {
     use super::*;
 
+    use deltalake::arrow::compute;
     use modelardb_common::test;
 
     #[test]
     fn test_can_append_valid_compressed_segments() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
-        compressed_data_buffer.append_compressed_segments(test::compressed_segments_record_batch());
 
-        assert_eq!(compressed_data_buffer.compressed_segments.len(), 1)
+        compressed_data_buffer
+            .append_compressed_segments(vec![
+                test::compressed_segments_record_batch(),
+                test::compressed_segments_record_batch(),
+            ])
+            .unwrap();
+
+        assert_eq!(compressed_data_buffer.compressed_segments.len(), 2);
+        assert_eq!(compressed_data_buffer.compressed_segments[0].num_rows(), 3);
+        assert_eq!(compressed_data_buffer.compressed_segments[1].num_rows(), 3);
     }
 
     #[test]
     fn test_compressed_data_buffer_size_updated_when_appending() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
-        compressed_data_buffer.append_compressed_segments(test::compressed_segments_record_batch());
+
+        compressed_data_buffer
+            .append_compressed_segments(vec![
+                test::compressed_segments_record_batch(),
+                test::compressed_segments_record_batch(),
+            ])
+            .unwrap();
 
         assert!(compressed_data_buffer.size_in_bytes > 0);
     }
 
     #[tokio::test]
-    async fn test_can_save_compressed_data_buffer_to_apache_parquet() {
+    async fn test_can_get_record_batches_from_compressed_data_buffer() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
-        let segment = test::compressed_segments_record_batch();
-        compressed_data_buffer.append_compressed_segments(segment.clone());
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
+        let compressed_segments = vec![
+            test::compressed_segments_record_batch(),
+            test::compressed_segments_record_batch(),
+        ];
         compressed_data_buffer
-            .save_to_apache_parquet(&object_store, &Path::from(""))
-            .await
+            .append_compressed_segments(compressed_segments)
             .unwrap();
 
-        assert_eq!(temp_dir.path().read_dir().unwrap().count(), 1);
-    }
-
-    #[tokio::test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Cannot save CompressedDataBuffer with no data.")]
-    async fn test_panic_if_saving_empty_compressed_data_buffer_to_apache_parquet() {
-        let object_store = LocalFileSystem::new();
-        let mut empty_compressed_data_buffer = CompressedDataBuffer::new();
-
-        empty_compressed_data_buffer
-            .save_to_apache_parquet(&object_store, &Path::from(""))
-            .await
-            .unwrap();
+        let record_batches = compressed_data_buffer.record_batches();
+        let record_batch =
+            compute::concat_batches(&record_batches[0].schema(), &record_batches).unwrap();
+        assert_eq!(record_batch.num_columns(), 11);
+        assert_eq!(record_batch.num_rows(), 6);
     }
 
     #[test]

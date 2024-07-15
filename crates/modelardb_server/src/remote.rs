@@ -43,6 +43,7 @@ use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
+use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::{ServerMode, TimestampBuilder};
 use modelardb_common::{arguments, metadata, remote};
 use tokio::runtime::Runtime;
@@ -553,13 +554,16 @@ impl FlightService for FlightServiceHandler {
                 ));
             }
 
-            let (object_store, _offset_data) =
-                arguments::parse_object_store_arguments(&action.body).await?;
+            let delta_lake = Arc::new(
+                DeltaLake::try_remote_from_connection_info(&action.body)
+                    .await
+                    .map_err(|error| Status::internal(error.to_string()))?,
+            );
 
             // Update the object store used for data transfers.
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine
-                .update_remote_data_folder(object_store)
+                .update_remote_data_folder(delta_lake)
                 .await
                 .map_err(|error| {
                     Status::internal(format!("Could not update remote data folder: {error}"))

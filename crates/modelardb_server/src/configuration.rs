@@ -21,7 +21,6 @@ use std::sync::Arc;
 
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
-use object_store::local::LocalFileSystem;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
@@ -30,8 +29,6 @@ use crate::ClusterMode;
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
 pub struct ConfigurationManager {
-    /// Folder for storing metadata and Apache Parquet files on the local file system.
-    pub(crate) local_data_folder: Arc<LocalFileSystem>,
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
     pub(crate) cluster_mode: ClusterMode,
@@ -60,11 +57,7 @@ pub struct ConfigurationManager {
 }
 
 impl ConfigurationManager {
-    pub fn new(
-        local_data_folder: Arc<LocalFileSystem>,
-        cluster_mode: ClusterMode,
-        server_mode: ServerMode,
-    ) -> Self {
+    pub fn new(cluster_mode: ClusterMode, server_mode: ServerMode) -> Self {
         let multivariate_reserved_memory_in_bytes =
             env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
                 .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
@@ -84,7 +77,6 @@ impl ConfigurationManager {
             .map_or(None, |value| Some(value.parse().unwrap()));
 
         Self {
-            local_data_folder,
             cluster_mode,
             server_mode,
             multivariate_reserved_memory_in_bytes,
@@ -234,6 +226,7 @@ mod tests {
 
     use arrow_flight::flight_service_client::FlightServiceClient;
     use modelardb_common::metadata;
+    use modelardb_common::storage::DeltaLake;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
@@ -397,10 +390,9 @@ mod tests {
         Arc<RwLock<StorageEngine>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)
+        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -413,20 +405,23 @@ mod tests {
             None,
         );
 
+        let local_data_folder =
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            local_data_folder.clone(),
             ClusterMode::MultiNode(manager),
             ServerMode::Edge,
         )));
 
         let target_dir = tempfile::tempdir().unwrap();
-        let target_fs = LocalFileSystem::new_with_prefix(target_dir.path()).unwrap();
+        let target_fs =
+            Arc::new(DeltaLake::try_from_local_path(target_dir.path().to_str().unwrap()).unwrap());
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 local_data_folder,
-                Some(Arc::new(target_fs)),
+                Some(target_fs),
                 &configuration_manager,
                 Arc::new(metadata_manager),
             )

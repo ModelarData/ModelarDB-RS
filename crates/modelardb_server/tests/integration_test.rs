@@ -35,7 +35,7 @@ use datafusion::arrow::array::{
     Array, Float64Array, ListArray, StringArray, UInt32Array, UInt64Array,
 };
 use datafusion::arrow::compute;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecond};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
 use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
@@ -69,6 +69,9 @@ const TIME_SERIES_TEST_LENGTH: usize = 5000;
 /// Minimum length of each segment in a time series generated for integration tests. The maximum
 /// length is `2 * SEGMENT_TEST_MINIMUM_LENGTH`.
 const SEGMENT_TEST_MINIMUM_LENGTH: usize = 50;
+
+/// Expected size of the uncompressed data buffers produced in the integration tests.
+const UNCOMPRESSED_BUFFER_SIZE: usize = 1835008;
 
 /// The different types of tables used in the integration tests.
 enum TableType {
@@ -295,7 +298,7 @@ impl TestContext {
         let time_series_len = uncompressed_timestamps.len();
 
         let mut fields = vec![
-            Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
+            Field::new("timestamp", DataType::Timestamp(Microsecond, None), false),
             Field::new("field_one", DataType::Float32, false),
             Field::new("field_two", DataType::Float32, false),
             Field::new("field_three", DataType::Float32, false),
@@ -610,7 +613,7 @@ fn test_can_get_schema() {
     assert_eq!(
         schema,
         Schema::new(vec![
-            Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
+            Field::new("timestamp", DataType::Timestamp(Microsecond, None), false),
             Field::new("field_one", DataType::Float32, false),
             Field::new("field_two", DataType::Float32, false),
             Field::new("field_three", DataType::Float32, false),
@@ -670,7 +673,7 @@ fn test_can_collect_metrics() {
     // Check that all metrics are present in the response.
     let metrics_array = modelardb_common::array!(metrics, 0, StringArray);
 
-    assert_eq!(metrics_array.value(0), "used_multivariate_memory");
+    assert_eq!(metrics_array.value(0), "used_ingested_memory");
     assert_eq!(metrics_array.value(1), "used_uncompressed_memory");
     assert_eq!(metrics_array.value(2), "used_compressed_memory");
     assert_eq!(metrics_array.value(3), "ingested_data_points");
@@ -679,8 +682,8 @@ fn test_can_collect_metrics() {
     // Check that the metrics are populated when ingesting and flushing.
     let values_array = modelardb_common::array!(metrics, 2, ListArray);
 
-    // The used_multivariate_memory metric should record when data is received and ingested.
-    let multivariate_data_size = test::MULTIVARIATE_DATA_SIZE as u32;
+    // The used_ingested_memory metric should record when data is received and ingested.
+    let ingested_buffer_size = test::INGESTED_BUFFER_SIZE as u32;
     assert_eq!(
         values_array
             .value(0)
@@ -688,11 +691,11 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[multivariate_data_size, 0]
+        &[ingested_buffer_size, 0]
     );
 
     // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
-    let uncompressed_buffer_size = test::UNCOMPRESSED_BUFFER_SIZE as u32;
+    let uncompressed_buffer_size = UNCOMPRESSED_BUFFER_SIZE as u32;
     assert_eq!(
         values_array
             .value(1)
@@ -700,23 +703,12 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[
-            uncompressed_buffer_size,
-            uncompressed_buffer_size * 2,
-            uncompressed_buffer_size * 3,
-            uncompressed_buffer_size * 4,
-            uncompressed_buffer_size * 5,
-            uncompressed_buffer_size * 4,
-            uncompressed_buffer_size * 3,
-            uncompressed_buffer_size * 2,
-            uncompressed_buffer_size,
-            0,
-        ]
+        &[uncompressed_buffer_size, 0]
     );
 
     // The amount of bytes used for compressed memory changes depending on the compression, so we
     // can only check that the metric is populated when compressing and when flushing.
-    assert_eq!(values_array.value(2).len(), 10);
+    assert_eq!(values_array.value(2).len(), 2);
 
     // The ingested_data_points metric should record the single request to ingest data points.
     assert_eq!(
@@ -731,7 +723,7 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for disk space changes depending on the compression, so we
     // can only check that the metric is populated when initializing and when flushing.
-    assert_eq!(values_array.value(4).len(), 11);
+    assert_eq!(values_array.value(4).len(), 3);
 }
 
 #[test]
@@ -879,9 +871,9 @@ fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
     let mut test_context = TestContext::new();
 
     let time_series_with_tag_one: RecordBatch =
-        TestContext::generate_time_series_with_tag(false, None, Some("tag_one"));
+        TestContext::generate_time_series_with_tag(false, None, Some("a"));
     let time_series_with_tag_two: RecordBatch =
-        TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
+        TestContext::generate_time_series_with_tag(false, None, Some("b"));
     let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
     ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::ModelTable);
@@ -893,6 +885,12 @@ fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
         .unwrap();
 
     let expected = compute::concat_batches(&time_series[0].schema(), time_series).unwrap();
+
+    // More specific asserts are included before checking the results sets to simplify debugging.
+    assert_eq!(expected.num_columns(), 7);
+    assert_eq!(expected.num_columns(), query_result.num_columns());
+    assert_eq!(expected.num_columns(), query_result.num_columns());
+    assert_eq!(expected.num_rows(), query_result.num_rows());
     assert_eq!(expected, query_result);
 }
 
