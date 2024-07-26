@@ -21,13 +21,12 @@ mod remote;
 mod types;
 
 use std::env;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use modelardb_common::arguments::{
     argument_to_connection_info, collect_command_line_arguments, validate_remote_data_folder,
 };
 use modelardb_common::storage::DeltaLake;
-use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
@@ -39,8 +38,8 @@ use crate::remote::start_apache_arrow_flight_server;
 use crate::types::{RemoteDataFolder, RemoteMetadataManager};
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9998 is used.
-pub static PORT: Lazy<u16> =
-    Lazy::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
+pub static PORT: LazyLock<u16> =
+    LazyLock::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
 
 /// Provides access to the managers components.
 pub struct Context {

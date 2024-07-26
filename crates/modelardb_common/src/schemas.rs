@@ -16,9 +16,9 @@
 //! The schemas used throughout the system.
 
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
-use once_cell::sync::Lazy;
 
 use crate::types::{
     ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedFileMetadataSchema, CompressedSchema,
@@ -30,7 +30,7 @@ use crate::types::{
 pub const FIELD_COLUMN: &str = "field_column";
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for uncompressed data buffers.
-pub static UNCOMPRESSED_SCHEMA: Lazy<UncompressedSchema> = Lazy::new(|| {
+pub static UNCOMPRESSED_SCHEMA: LazyLock<UncompressedSchema> = LazyLock::new(|| {
     UncompressedSchema(Arc::new(Schema::new(vec![
         Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
         Field::new("values", ArrowValue::DATA_TYPE, false),
@@ -38,7 +38,7 @@ pub static UNCOMPRESSED_SCHEMA: Lazy<UncompressedSchema> = Lazy::new(|| {
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments.
-pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
+pub static COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
     let mut query_compressed_schema_fields = QUERY_COMPRESSED_SCHEMA.0.fields().to_vec();
     let field_column = Arc::new(Field::new(FIELD_COLUMN, DataType::UInt16, false));
     query_compressed_schema_fields.push(field_column);
@@ -47,7 +47,7 @@ pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments when
 /// executing queries as [`FIELD_COLUMN`] is stored in the Apache Parquet files.
-pub static QUERY_COMPRESSED_SCHEMA: Lazy<QueryCompressedSchema> = Lazy::new(|| {
+pub static QUERY_COMPRESSED_SCHEMA: LazyLock<QueryCompressedSchema> = LazyLock::new(|| {
     QueryCompressedSchema(Arc::new(Schema::new(vec![
         Field::new("univariate_id", DataType::UInt64, false),
         Field::new("model_type_id", DataType::UInt8, false),
@@ -65,7 +65,7 @@ pub static QUERY_COMPRESSED_SCHEMA: Lazy<QueryCompressedSchema> = Lazy::new(|| {
 /// Minimum size of the metadata required for a compressed segment. Meaning that the sizes of
 /// `timestamps` and `values` are not included as they are [`DataType::Binary`] and thus their size
 /// depend on which model is selected to represent the values for that compressed segment.
-pub static COMPRESSED_METADATA_SIZE_IN_BYTES: Lazy<usize> = Lazy::new(|| {
+pub static COMPRESSED_METADATA_SIZE_IN_BYTES: LazyLock<usize> = LazyLock::new(|| {
     QUERY_COMPRESSED_SCHEMA
         .0
         .fields()
@@ -75,7 +75,7 @@ pub static COMPRESSED_METADATA_SIZE_IN_BYTES: Lazy<usize> = Lazy::new(|| {
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for internally collected metrics.
-pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {
+pub static METRIC_SCHEMA: LazyLock<MetricSchema> = LazyLock::new(|| {
     MetricSchema(Arc::new(Schema::new(vec![
         Field::new("metric", DataType::Utf8, false),
         Field::new(
@@ -96,7 +96,7 @@ pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used internally during query processing.
-pub static GRID_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
+pub static GRID_SCHEMA: LazyLock<QuerySchema> = LazyLock::new(|| {
     QuerySchema(Arc::new(Schema::new(vec![
         Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
         Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
@@ -105,7 +105,7 @@ pub static GRID_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for the configuration.
-pub static CONFIGURATION_SCHEMA: Lazy<ConfigurationSchema> = Lazy::new(|| {
+pub static CONFIGURATION_SCHEMA: LazyLock<ConfigurationSchema> = LazyLock::new(|| {
     ConfigurationSchema(Arc::new(Schema::new(vec![
         Field::new("setting", DataType::Utf8, false),
         Field::new("value", DataType::UInt64, true),
@@ -113,7 +113,7 @@ pub static CONFIGURATION_SCHEMA: Lazy<ConfigurationSchema> = Lazy::new(|| {
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for tag metadata.
-pub static TAG_METADATA_SCHEMA: Lazy<TagMetadataSchema> = Lazy::new(|| {
+pub static TAG_METADATA_SCHEMA: LazyLock<TagMetadataSchema> = LazyLock::new(|| {
     TagMetadataSchema(Arc::new(Schema::new(vec![
         Field::new("table_name", DataType::Utf8, false),
         Field::new("hash", DataType::UInt64, false),
@@ -123,16 +123,17 @@ pub static TAG_METADATA_SCHEMA: Lazy<TagMetadataSchema> = Lazy::new(|| {
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed file metadata.
-pub static COMPRESSED_FILE_METADATA_SCHEMA: Lazy<CompressedFileMetadataSchema> = Lazy::new(|| {
-    CompressedFileMetadataSchema(Arc::new(Schema::new(vec![
-        Field::new("table_name", DataType::Utf8, false),
-        Field::new("field_column", DataType::UInt64, false),
-        Field::new("file_path", DataType::Utf8, false),
-        Field::new("size", DataType::UInt64, false),
-        Field::new("created_at", DataType::Int64, false),
-        Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("min_value", ArrowValue::DATA_TYPE, false),
-        Field::new("max_value", ArrowValue::DATA_TYPE, false),
-    ])))
-});
+pub static COMPRESSED_FILE_METADATA_SCHEMA: LazyLock<CompressedFileMetadataSchema> =
+    LazyLock::new(|| {
+        CompressedFileMetadataSchema(Arc::new(Schema::new(vec![
+            Field::new("table_name", DataType::Utf8, false),
+            Field::new("field_column", DataType::UInt64, false),
+            Field::new("file_path", DataType::Utf8, false),
+            Field::new("size", DataType::UInt64, false),
+            Field::new("created_at", DataType::Int64, false),
+            Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("min_value", ArrowValue::DATA_TYPE, false),
+            Field::new("max_value", ArrowValue::DATA_TYPE, false),
+        ])))
+    });

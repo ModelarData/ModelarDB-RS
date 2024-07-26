@@ -148,9 +148,11 @@ where
     /// * The table_metadata table contains the metadata for tables.
     /// * The model_table_metadata table contains the main metadata for model tables.
     /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
-    /// model table that contains the time series with that tag hash.
+    ///   model table that contains the time series with that tag hash.
     /// * The model_table_field_columns table contains the name, index, error bound value, whether
-    /// error bound is relative, and generation expression of the field columns in each model table.
+    ///   error bound is relative, and generation expression of the field columns in each model
+    ///   table.
+    ///
     /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
     pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
         let strict = self.metadata_database_type.strict();
@@ -1168,13 +1170,12 @@ pub fn normalize_name(name: &str) -> String {
 mod tests {
     use super::*;
 
-    use std::sync::Arc;
+    use std::sync::{Arc, LazyLock};
 
     use chrono::SubsecRound;
     use datafusion::arrow::array::ArrowPrimitiveType;
     use datafusion::arrow::datatypes::{Field, Schema};
     use futures::TryStreamExt;
-    use once_cell::sync::Lazy;
     use proptest::{collection, num, prop_assert_eq, proptest};
     use sqlx::Row;
     use tempfile::TempDir;
@@ -1184,7 +1185,7 @@ mod tests {
     use crate::test;
     use crate::types::ArrowValue;
 
-    static SEVEN_COMPRESSED_FILES: Lazy<Vec<CompressedFile>> = Lazy::new(|| {
+    static SEVEN_COMPRESSED_FILES: LazyLock<Vec<CompressedFile>> = LazyLock::new(|| {
         vec![
             create_compressed_file(0, 0, 37.0, 73.0),
             create_compressed_file(0, Timestamp::MAX, 37.0, 73.0),

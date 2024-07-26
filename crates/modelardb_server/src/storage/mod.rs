@@ -29,7 +29,7 @@ mod uncompressed_data_manager;
 
 use std::env;
 use std::io::{Error as IOError, ErrorKind};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::array::UInt32Array;
@@ -41,7 +41,6 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::TimestampArray;
-use once_cell::sync::Lazy;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -65,7 +64,7 @@ const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
 /// [`Value`](modelardb_common::types::Value). Note that the resulting size of the buffer has to be
 /// a multiple of 64 bytes to avoid the actual capacity being larger than the requested due to
 /// internal alignment when allocating memory for the two array builders.
-pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: Lazy<usize> = Lazy::new(|| {
+pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: LazyLock<usize> = LazyLock::new(|| {
     env::var("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY").map_or(64 * 1024, |value| {
         let parsed = value.parse::<usize>().unwrap();
 

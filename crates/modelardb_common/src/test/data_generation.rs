@@ -19,8 +19,8 @@ use std::env;
 use std::iter;
 use std::num::ParseIntError;
 use std::ops::Range;
+use std::sync::LazyLock;
 
-use once_cell::sync::Lazy;
 use rand::distributions::Uniform;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -31,7 +31,7 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, ValueArray, Valu
 /// One randomly generated seed is used to ensure new data is generated each time the tests are
 /// executed while also allowing the tests to be repeated by assigning a previously generated seed
 /// to the `MODELARDB_TEST_SEED` environment variable as 32 bytes, each separated by a space.
-static RANDOM_NUMBER_SEED: Lazy<[u8; 32]> = Lazy::new(|| {
+static RANDOM_NUMBER_SEED: LazyLock<[u8; 32]> = LazyLock::new(|| {
     match env::var("MODELARDB_TEST_SEED") {
         Ok(seed) => {
             let message = "MODELARDB_TEST_SEED must be 32 bytes, each separated by a space.";
@@ -223,11 +223,11 @@ pub fn generate_timestamps(length: usize, irregular: bool) -> TimestampArray {
 /// [ThreadRng](rand::rngs::ThreadRng). The amount of values to be generated will match `timestamps`
 /// and their structure will match `values_structure`:
 /// - If `values_structure` is `Constant`, a single value is generated and repeated with a random
-/// value in the associated range multiplied with each value if it is not [`None`].
+///   value in the associated range multiplied with each value if it is not [`None`].
 /// - If `values_structure` is `Linear`, a sequence of increasing or decreasing values are generated
-/// with a random value in the associated range multiplied with each value if it is not [`None`].
+///   with a random value in the associated range multiplied with each value if it is not [`None`].
 /// - If `values_structure` is `Random`, a sequence of random values in the associated range are
-/// generated.
+///   generated.
 pub fn generate_values(
     uncompressed_timestamps: &[Timestamp],
     values_structure: ValuesStructure,
@@ -274,7 +274,9 @@ fn randomize_and_collect_iterator(
     let mut std_rng = create_random_number_generator();
     if let Some(noise_range) = maybe_noise_range {
         let distribution = Uniform::from(noise_range);
-        values.map(|value| value + std_rng.sample(distribution)).collect()
+        values
+            .map(|value| value + std_rng.sample(distribution))
+            .collect()
     } else {
         values.collect()
     }

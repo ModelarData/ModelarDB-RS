@@ -16,11 +16,10 @@
 //! Implementation of types which allows both normal tables and model tables to be added to Apache
 //! DataFusion. This allows them to be queried and small amounts of data to be added with INSERT.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
 use deltalake::arrow::compute::SortOptions;
-use once_cell::sync::Lazy;
 
 // grid_exec and sorted_join_exec are pub(crate) so the rules added to Apache DataFusion's physical
 // optimizer can access them.
@@ -41,7 +40,7 @@ pub(crate) mod table;
 /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
 /// [`sorted_join_exec::SortedJoinExec`] receives from its inputs all contain data points for the
 /// same time interval and that they are sorted the same.
-static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
+static QUERY_ORDER_SEGMENT: LazyLock<Vec<PhysicalSortExpr>> = LazyLock::new(|| {
     let sort_options = SortOptions {
         descending: false,
         nulls_first: false,
@@ -68,7 +67,7 @@ static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
 /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
 /// [`sorted_join_exec::SortedJoinExec`] receives from its inputs all contain data points for the
 /// same time interval and that they are sorted the same.
-static QUERY_ORDER_DATA_POINT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
+static QUERY_ORDER_DATA_POINT: LazyLock<Vec<PhysicalSortExpr>> = LazyLock::new(|| {
     let sort_options = SortOptions {
         descending: false,
         nulls_first: false,
