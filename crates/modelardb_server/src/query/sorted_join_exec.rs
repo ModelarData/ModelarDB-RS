@@ -101,6 +101,11 @@ impl SortedJoinExec {
 }
 
 impl ExecutionPlan for SortedJoinExec {
+    /// Return the name of the [`ExecutionPlan`].
+    fn name(&self) -> &str {
+        Self::static_name()
+    }
+
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
@@ -195,7 +200,7 @@ impl DisplayAs for SortedJoinExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "SortedJoinExec")
+        write!(f, "{}", self.name())
     }
 }
 

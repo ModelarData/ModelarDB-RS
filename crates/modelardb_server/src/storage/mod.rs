@@ -35,7 +35,7 @@ use std::thread::{self, JoinHandle};
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use deltalake::DeltaTableError;
+use deltalake_core::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;

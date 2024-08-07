@@ -27,8 +27,7 @@ use std::mem;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{
-    ArrayRef, BinaryArray, Float32Array, Float64Array, Int64Array, UInt64Array,
-    UInt8Array,
+    ArrayRef, BinaryArray, Float32Array, Float64Array, Int64Array, UInt64Array, UInt8Array,
 };
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -36,9 +35,12 @@ use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
 use datafusion::datasource::physical_plan::parquet::ParquetExec;
 use datafusion::error::{DataFusionError, Result};
+use datafusion::functions_aggregate::average::Avg;
+use datafusion::functions_aggregate::count::Count;
+use datafusion::functions_aggregate::sum::Sum;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
-use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
+use datafusion::physical_plan::expressions::{self, Max, Min};
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::udaf::AggregateFunctionExpr;
 use datafusion::physical_plan::{
@@ -202,11 +204,22 @@ fn try_rewrite_aggregate_exprs(
             .as_any()
             .downcast_ref::<AggregateFunctionExpr>()
         {
-            // A sum aggregate query can be an AggregateFunctionExpr instead of simply Sum.
+            // An aggregate query can be an AggregateFunctionExpr instead of built-in aggregate.
             let aggregate_function_expr_name = aggregate_function_expr.fun().name();
             match aggregate_function_expr_name {
-                "SUM" => {
+                "count" => rewritten_aggregate_exprs
+                    .push(ModelAggregateExpr::new(ModelAggregateType::Count)),
+                "min" => {
+                    rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Min))
+                }
+                "max" => {
+                    rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Max))
+                }
+                "sum" => {
                     rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Sum))
+                }
+                "avg" => {
+                    rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Avg))
                 }
                 _ => {
                     return Err(DataFusionError::Internal(format!(

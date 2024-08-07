@@ -405,7 +405,7 @@ pub fn semantic_checks_for_create_table(
             // SqlToRel.build() is hard coded to create Timestamp(TimeUnit::Nanosecond, TimeZone)
             // but Delta Lake currently only supports Timestamp(TimeUnit::Microsecond, TimeZone).
             let supported_fields = schema
-                .all_fields()
+                .flattened_fields()
                 .iter()
                 .map(|field| match field.data_type() {
                     DataType::Timestamp(_time_unit, timezone) => {
@@ -714,7 +714,7 @@ fn extract_generation_exprs_for_all_columns(
 
                 // unwrap() is safe as the loop iterates over the columns in the schema.
                 let source_columns = expr
-                    .to_columns()?
+                    .column_refs()
                     .iter()
                     .map(|column| df_schema.index_of_column(column).unwrap())
                     .collect();
