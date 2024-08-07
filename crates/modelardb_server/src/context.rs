@@ -302,7 +302,7 @@ impl Context {
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
     /// * [`None`] if a table with the name `table_name` exists.
     /// * [`ModelarDbError`] if the default catalog, the default schema, a table with the name
-    /// `table_name`, or a model table with the name `table_name` does not exist.
+    ///   `table_name`, or a model table with the name `table_name` does not exist.
     pub async fn model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,

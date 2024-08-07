@@ -63,9 +63,9 @@ impl MetadataManager {
     /// If they do not already exist, create the tables that are specific to the manager metadata
     /// database.
     /// * The manager_metadata table contains metadata for the manager itself. It is assumed that
-    /// this table will only have a single row since there can only be a single manager.
+    ///   this table will only have a single row since there can only be a single manager.
     /// * The nodes table contains metadata for each node that is controlled by the manager.
-    /// If the tables exist or were created, return [`Ok`], otherwise return [`sqlx::Error`].
+    ///   If the tables exist or were created, return [`Ok`], otherwise return [`sqlx::Error`].
     async fn create_manager_metadata_database_tables(&self) -> Result<(), sqlx::Error> {
         let mut transaction = self.metadata_database_pool.begin().await?;
 

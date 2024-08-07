@@ -26,13 +26,12 @@ mod remote;
 mod storage;
 
 use std::env;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
-use once_cell::sync::Lazy;
 use sqlx::Postgres;
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -44,8 +43,8 @@ use crate::manager::Manager;
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9999 is used.
-pub static PORT: Lazy<u16> =
-    Lazy::new(|| env::var("MODELARDBD_PORT").map_or(9999, |value| value.parse().unwrap()));
+pub static PORT: LazyLock<u16> =
+    LazyLock::new(|| env::var("MODELARDBD_PORT").map_or(9999, |value| value.parse().unwrap()));
 
 /// The different possible modes that a ModelarDB server can be deployed in, assigned when the
 /// server is started.

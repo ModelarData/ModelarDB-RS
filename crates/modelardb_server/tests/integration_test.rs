@@ -962,13 +962,13 @@ fn ingest_time_series_and_flush_data(
 /// `error_bound` of an equivalent query executed on data points reconstructed from the segments by:
 /// 1. Generating a multivariate time series with one tag and ingesting it into a model table.
 /// 2. Creating an equivalent query from `segment_query` that the optimizer cannot rewrite, so it is
-/// executed on segments.
+///    executed on segments.
 /// 3. Executing `segment_query` and the new equivalent query against the model table containing the
-/// generated time series.
+///    generated time series.
 /// 4. Comparing the query plans of `segment_query` and the new equivalent query to ensure the first
-/// query was rewritten by the optimizer and the other query was not.
+///    query was rewritten by the optimizer and the other query was not.
 /// 5. Comparing the results of `segment_query` and the new equivalent query to ensure they are
-/// within `error_bound`.
+///    within `error_bound`.
 fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) {
     let mut test_context = TestContext::new();
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
