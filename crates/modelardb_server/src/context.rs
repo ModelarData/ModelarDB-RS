@@ -414,7 +414,7 @@ mod tests {
         // A Delta Lake log should be created to save the schema.
         let folder_path = temp_dir
             .path()
-            .join("compressed")
+            .join("tables")
             .join("table_name")
             .join("_delta_log");
 

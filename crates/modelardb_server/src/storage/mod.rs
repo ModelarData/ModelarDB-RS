@@ -57,7 +57,7 @@ use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::ClusterMode;
 
 /// The folder storing spilled uncompressed data buffers in the local data folder.
-const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
+const UNCOMPRESSED_DATA_FOLDER: &str = "buffers";
 
 /// The capacity of each uncompressed data buffer as the number of elements in the buffer where each
 /// element is a [`Timestamp`](modelardb_common::types::Timestamp) and a
