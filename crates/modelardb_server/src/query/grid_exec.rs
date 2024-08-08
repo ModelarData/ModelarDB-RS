@@ -46,6 +46,7 @@ use datafusion::physical_plan::{
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_common::schemas::GRID_SCHEMA;
+use modelardb_common::storage;
 use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
 
@@ -263,6 +264,9 @@ impl GridStream {
             .baseline_metrics
             .elapsed_compute()
             .timer();
+
+        // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
+        let batch = storage::univariate_ids_int64_to_uint64(batch);
 
         // Retrieve the arrays from batch and cast them to their concrete type.
         modelardb_common::arrays!(

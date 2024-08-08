@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::RecordBatch;
+use arrow::array::{Int64Array, RecordBatch, UInt64Array};
 use arrow::compute;
 use arrow::datatypes::{Field, Schema};
 use datafusion::parquet::arrow::async_reader::{
@@ -42,7 +42,9 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::arguments::decode_argument;
-use crate::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
+use crate::schemas::{
+    COMPRESSED_SCHEMA, DISK_COMPRESSED_SCHEMA, FIELD_COLUMN, QUERY_COMPRESSED_SCHEMA,
+};
 
 /// The folder storing compressed data in the data folders.
 const COMPRESSED_DATA_FOLDER: &str = "tables";
@@ -186,7 +188,7 @@ impl DeltaLake {
     ) -> Result<DeltaTable, DeltaTableError> {
         self.create_partitioned_delta_lake_table(
             table_name,
-            &COMPRESSED_SCHEMA.0,
+            &DISK_COMPRESSED_SCHEMA.0,
             &[FIELD_COLUMN.to_owned()],
         )
         .await
@@ -243,8 +245,11 @@ impl DeltaLake {
     pub async fn write_compressed_segments_to_model_table(
         &self,
         table_name: &str,
-        compressed_segments: Vec<RecordBatch>,
+        mut compressed_segments: Vec<RecordBatch>,
     ) -> Result<DeltaTable, DeltaTableError> {
+        // Reinterpret univariate_ids from uint64 to int64 to fix #187 as a stopgap until #197.
+        univariate_ids_uint64_to_int64(&mut compressed_segments);
+
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
             SortingColumn::new(0, false, false),
@@ -328,6 +333,34 @@ pub async fn extract_azure_blob_storage_arguments(
     let (container_name, offset_data) = decode_argument(offset_data)?;
 
     Ok((account, access_key, container_name, offset_data))
+}
+
+/// Reinterpret the bits used for univariate ids in column zero in `compressed_segments` from
+/// [`uint64`] to [`int64`] as the Delta Lake Protocol does not support unsigned integers.
+fn univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
+    for record_batch in compressed_segments {
+        let mut columns = record_batch.columns().to_vec();
+        let univariate_ids = crate::array!(record_batch, 0, UInt64Array);
+        let signed_univariate_ids: Int64Array =
+            univariate_ids.unary(|value| i64::from_ne_bytes(value.to_ne_bytes()));
+        columns[0] = Arc::new(signed_univariate_ids);
+
+        // unwrap() is safe as columns are constructs to match DISK_COMPRESSED_SCHEMA.
+        *record_batch = RecordBatch::try_new(DISK_COMPRESSED_SCHEMA.0.clone(), columns).unwrap();
+    }
+}
+
+/// Reinterpret the bits used for univariate ids in column zero in `compressed_segments` from
+/// [`int64`] to [`uint64`] as the Delta Lake Protocol does not support unsigned integers.
+pub fn univariate_ids_int64_to_uint64(compressed_segments: &RecordBatch) -> RecordBatch {
+    let mut columns = compressed_segments.columns().to_vec();
+    let signed_univariate_ids = crate::array!(compressed_segments, 0, Int64Array);
+    let univariate_ids: UInt64Array =
+        signed_univariate_ids.unary(|value| u64::from_ne_bytes(value.to_ne_bytes()));
+    columns[0] = Arc::new(univariate_ids);
+
+    // unwrap() is safe as columns are constructs to match DISK_COMPRESSED_SCHEMA.
+    RecordBatch::try_new(QUERY_COMPRESSED_SCHEMA.0.clone(), columns).unwrap()
 }
 
 /// Read all rows from the Apache Parquet file at the location given by `file_path` in
