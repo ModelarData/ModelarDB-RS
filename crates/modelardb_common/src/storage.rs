@@ -45,7 +45,7 @@ use crate::arguments::decode_argument;
 use crate::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 
 /// The folder storing compressed data in the data folders.
-const COMPRESSED_DATA_FOLDER: &str = "compressed";
+const COMPRESSED_DATA_FOLDER: &str = "tables";
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
@@ -638,7 +638,7 @@ mod tests {
         let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
         write_compressed_segments_to_apache_parquet_file(
-            "compressed",
+            COMPRESSED_DATA_FOLDER,
             test::MODEL_TABLE_NAME,
             0,
             compressed_segments,
