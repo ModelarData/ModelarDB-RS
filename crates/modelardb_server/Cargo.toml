@@ -31,7 +31,7 @@ crossbeam-channel.workspace = true
 crossbeam-queue.workspace = true
 dashmap.workspace = true
 datafusion.workspace = true
-deltalake = { workspace = true, features = ["datafusion"] }
+deltalake-core = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }

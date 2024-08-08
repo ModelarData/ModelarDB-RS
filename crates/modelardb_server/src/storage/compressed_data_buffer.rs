@@ -121,7 +121,7 @@ impl CompressedDataBuffer {
 mod tests {
     use super::*;
 
-    use deltalake::arrow::compute;
+    use deltalake_core::arrow::compute;
     use modelardb_common::test;
 
     #[test]

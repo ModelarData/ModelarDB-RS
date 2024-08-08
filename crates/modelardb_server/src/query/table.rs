@@ -27,7 +27,7 @@ use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::{Expr, LogicalPlan, TableProviderFilterPushDown};
 use datafusion::physical_plan::insert::DataSinkExec;
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
-use deltalake::{arrow::datatypes::SchemaRef, DeltaTable};
+use deltalake_core::{arrow::datatypes::SchemaRef, DeltaTable};
 use tokio::sync::RwLock;
 use tonic::async_trait;
 

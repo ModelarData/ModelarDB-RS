@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
-use deltalake::DeltaTableError;
+use deltalake_core::DeltaTableError;
 use modelardb_common::storage::DeltaLake;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
