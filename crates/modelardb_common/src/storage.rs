@@ -335,8 +335,8 @@ pub async fn extract_azure_blob_storage_arguments(
     Ok((account, access_key, container_name, offset_data))
 }
 
-/// Reinterpret the bits used for univariate ids in column zero in `compressed_segments` from
-/// [`uint64`] to [`int64`] as the Delta Lake Protocol does not support unsigned integers.
+/// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
+/// [`UInt64Array`] to [`Int64Array`] as the Delta Lake Protocol does not support unsigned integers.
 fn univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
     for record_batch in compressed_segments {
         let mut columns = record_batch.columns().to_vec();
@@ -350,8 +350,8 @@ fn univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
     }
 }
 
-/// Reinterpret the bits used for univariate ids in column zero in `compressed_segments` from
-/// [`int64`] to [`uint64`] as the Delta Lake Protocol does not support unsigned integers.
+/// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
+/// [`Int64Array`] to [`UInt64Array`] as the Delta Lake Protocol does not support unsigned integers.
 pub fn univariate_ids_int64_to_uint64(compressed_segments: &RecordBatch) -> RecordBatch {
     let mut columns = compressed_segments.columns().to_vec();
     let signed_univariate_ids = crate::array!(compressed_segments, 0, Int64Array);
