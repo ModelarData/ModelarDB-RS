@@ -337,6 +337,8 @@ pub async fn extract_azure_blob_storage_arguments(
 
 /// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
 /// [`UInt64Array`] to [`Int64Array`] as the Delta Lake Protocol does not support unsigned integers.
+/// `compressed_segments` is modified in-place as `univariate_ids_uint64_to_int64()` is designed to
+/// be used by `write_compressed_segments_to_model_table()` which owns `compressed_segments`.
 fn univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
     for record_batch in compressed_segments {
         let mut columns = record_batch.columns().to_vec();
@@ -345,13 +347,18 @@ fn univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
             univariate_ids.unary(|value| i64::from_ne_bytes(value.to_ne_bytes()));
         columns[0] = Arc::new(signed_univariate_ids);
 
-        // unwrap() is safe as columns are constructs to match DISK_COMPRESSED_SCHEMA.
+        // unwrap() is safe as columns is constructed to match DISK_COMPRESSED_SCHEMA.
         *record_batch = RecordBatch::try_new(DISK_COMPRESSED_SCHEMA.0.clone(), columns).unwrap();
     }
 }
 
 /// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
 /// [`Int64Array`] to [`UInt64Array`] as the Delta Lake Protocol does not support unsigned integers.
+/// Returns a new [`RecordBatch`] with the univariate ids stored in an [`UInt64Array`] as
+/// `univariate_ids_int64_to_uint64()` is designed to be used by
+/// [`futures::stream::Stream::poll_next()`] and
+/// [`datafusion::physical_plan::PhysicalExpr::evaluate()`] and
+/// [`datafusion::physical_plan::PhysicalExpr::evaluate()`] borrows `compressed_segments` immutably.
 pub fn univariate_ids_int64_to_uint64(compressed_segments: &RecordBatch) -> RecordBatch {
     let mut columns = compressed_segments.columns().to_vec();
     let signed_univariate_ids = crate::array!(compressed_segments, 0, Int64Array);
@@ -359,7 +366,7 @@ pub fn univariate_ids_int64_to_uint64(compressed_segments: &RecordBatch) -> Reco
         signed_univariate_ids.unary(|value| u64::from_ne_bytes(value.to_ne_bytes()));
     columns[0] = Arc::new(univariate_ids);
 
-    // unwrap() is safe as columns are constructs to match QUERY_COMPRESSED_SCHEMA.
+    // unwrap() is safe as columns is constructed to match QUERY_COMPRESSED_SCHEMA.
     RecordBatch::try_new(QUERY_COMPRESSED_SCHEMA.0.clone(), columns).unwrap()
 }
 
