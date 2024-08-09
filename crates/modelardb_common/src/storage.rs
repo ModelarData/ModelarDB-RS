@@ -359,7 +359,7 @@ pub fn univariate_ids_int64_to_uint64(compressed_segments: &RecordBatch) -> Reco
         signed_univariate_ids.unary(|value| u64::from_ne_bytes(value.to_ne_bytes()));
     columns[0] = Arc::new(univariate_ids);
 
-    // unwrap() is safe as columns are constructs to match DISK_COMPRESSED_SCHEMA.
+    // unwrap() is safe as columns are constructs to match QUERY_COMPRESSED_SCHEMA.
     RecordBatch::try_new(QUERY_COMPRESSED_SCHEMA.0.clone(), columns).unwrap()
 }
 
@@ -506,9 +506,28 @@ mod tests {
 
     use arrow::datatypes::{Field, Schema};
     use object_store::local::LocalFileSystem;
+    use proptest::num::u64 as ProptestUnivariateId;
+    use proptest::{prop_assert_eq, proptest};
     use tempfile::TempDir;
 
-    use crate::test;
+    use crate::test::{self, compressed_segments_record_batch_with_time};
+
+    // Tests for univariate_ids_uint64_to_int64() and univariate_ids_int64_to_uint64().
+    proptest! {
+    #[test]
+    fn test_univariate_ids_uint64_to_int64_to_uint64(univariate_id in ProptestUnivariateId::ANY) {
+        let record_batch = compressed_segments_record_batch_with_time(univariate_id, 0, 0.0);
+        let mut expected_record_batch = record_batch.clone();
+        expected_record_batch.remove_column(10);
+
+        let mut record_batches = vec![record_batch.clone()];
+        univariate_ids_uint64_to_int64(&mut record_batches);
+        record_batches[0].remove_column(10);
+        let computed_record_batch = univariate_ids_int64_to_uint64(&record_batches[0]);
+
+        prop_assert_eq!(expected_record_batch, computed_record_batch);
+    }
+    }
 
     // Tests for read_record_batch_from_apache_parquet_file().
     #[tokio::test]
