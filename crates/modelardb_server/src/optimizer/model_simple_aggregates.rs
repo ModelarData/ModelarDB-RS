@@ -48,6 +48,7 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue;
 use modelardb_common::types::{ArrowValue, TimestampArray, Value, ValueArray};
+use modelardb_common::storage;
 
 use crate::query::sorted_join_exec::SortedJoinExec;
 
@@ -382,6 +383,9 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+        // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
+        let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
+
         modelardb_common::arrays!(
             record_batch,
             _univariate_ids,
@@ -750,6 +754,9 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+        // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
+        let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
+
         modelardb_common::arrays!(
             record_batch,
             _univariate_ids,
@@ -897,6 +904,9 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+        // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
+        let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
+
         modelardb_common::arrays!(
             record_batch,
             _univariate_ids,
