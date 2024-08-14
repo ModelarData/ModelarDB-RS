@@ -33,7 +33,6 @@ use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::schemas::TAG_METADATA_SCHEMA;
 use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
-use object_store::ObjectStore;
 use tokio::sync::RwLock;
 use tonic::metadata::MetadataMap;
 use tonic::transport::Channel;
@@ -119,11 +118,6 @@ impl Manager {
         } else {
             None
         };
-
-        let (remote_object_store, _offset_data) =
-            arguments::parse_object_store_arguments(offset_data)
-                .await
-                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
         let manager = Manager::new(flight_client, key.to_owned(), maybe_table_metadata_manager);
 

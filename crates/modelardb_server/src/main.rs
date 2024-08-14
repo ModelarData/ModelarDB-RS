@@ -32,8 +32,6 @@ use modelardb_common::arguments::{collect_command_line_arguments, validate_remot
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::types::ServerMode;
 use modelardb_common::storage::DeltaLake;
-use object_store::path::Path;
-use object_store::{local::LocalFileSystem, ObjectStore};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -224,8 +222,8 @@ async fn parse_command_line_arguments(
 /// Return a [`DeltaLake`] created from `local_data_folder` if it exists or a [`String`] if it does
 /// not exist.
 fn create_local_data_lake(local_data_folder: &str) -> Result<Arc<DeltaLake>, String> {
-    let delta_lake = DeltaLake::try_from_local_path(local_data_folder)
-        .map_err(|error| error.to_string())?;
+    let delta_lake =
+        DeltaLake::try_from_local_path(local_data_folder).map_err(|error| error.to_string())?;
     Ok(Arc::new(delta_lake))
 }
 

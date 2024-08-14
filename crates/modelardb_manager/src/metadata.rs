@@ -20,9 +20,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::array::{Array, StringArray};
-use deltalake::datafusion::logical_expr::{col, lit};
-use deltalake::kernel::{DataType, StructField};
-use deltalake::DeltaTableError;
+use deltalake_core::datafusion::logical_expr::{col, lit};
+use deltalake_core::kernel::{DataType, StructField};
+use deltalake_core::DeltaTableError;
 use modelardb_common::array;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::metadata::MetadataDeltaLake;

@@ -26,6 +26,7 @@ use modelardb_common::arguments::{
     argument_to_connection_info, collect_command_line_arguments, validate_remote_data_folder,
 };
 use modelardb_common::storage::DeltaLake;
+use object_store::ObjectStore;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;

@@ -29,8 +29,6 @@ use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
-use object_store::path::Path;
-use object_store::ObjectStore;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
