@@ -37,11 +37,12 @@ use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use tonic::codegen::Bytes;
-use tonic::Status;
 use url::Url;
 use uuid::Uuid;
 
-use crate::arguments::decode_argument;
+use crate::arguments::{
+    decode_argument, extract_azure_blob_storage_arguments, extract_s3_arguments,
+};
 use crate::schemas::{
     COMPRESSED_SCHEMA, DISK_COMPRESSED_SCHEMA, FIELD_COLUMN, QUERY_COMPRESSED_SCHEMA,
 };
@@ -316,40 +317,6 @@ impl DeltaLake {
     fn location_of_metadata_table(&self, table_name: &str) -> String {
         format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
     }
-}
-
-// TODO: replace with arguments.rs when dev/delta-metadata is merged.
-/// Parse the arguments in `data` and return the arguments to connect to an
-/// [`Amazon S3`](object_store::aws::AmazonS3) object store and what is remaining of `data`
-/// after parsing. If `data` is missing arguments, [`Status`] is returned.
-pub async fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
-    let (endpoint, offset_data) = decode_argument(data)?;
-    let (bucket_name, offset_data) = decode_argument(offset_data)?;
-    let (access_key_id, offset_data) = decode_argument(offset_data)?;
-    let (secret_access_key, offset_data) = decode_argument(offset_data)?;
-
-    Ok((
-        endpoint,
-        bucket_name,
-        access_key_id,
-        secret_access_key,
-        offset_data,
-    ))
-}
-
-// TODO: replace with arguments.rs when dev/delta-metadata is merged.
-/// Parse the arguments in `data` and return the arguments to connect to an
-/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
-/// object store and what is remaining of `data` after parsing. If `data` is missing arguments,
-/// [`Status`] is returned.
-pub async fn extract_azure_blob_storage_arguments(
-    data: &[u8],
-) -> Result<(&str, &str, &str, &[u8]), Status> {
-    let (account, offset_data) = decode_argument(data)?;
-    let (access_key, offset_data) = decode_argument(offset_data)?;
-    let (container_name, offset_data) = decode_argument(offset_data)?;
-
-    Ok((account, access_key, container_name, offset_data))
 }
 
 /// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from

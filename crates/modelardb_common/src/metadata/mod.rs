@@ -25,10 +25,10 @@ use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use datafusion::dataframe::DataFrame;
 use datafusion::prelude::SessionContext;
-use deltalake::kernel::StructField;
-use deltalake::operations::create::CreateBuilder;
-use deltalake::protocol::SaveMode;
-use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
+use deltalake_core::kernel::StructField;
+use deltalake_core::operations::create::CreateBuilder;
+use deltalake_core::protocol::SaveMode;
+use deltalake_core::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
 use object_store::path::Path;
 
 use crate::arguments::{
