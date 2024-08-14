@@ -32,6 +32,8 @@ use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 pub struct CompressedFile {
     /// The metadata that describes the file.
     pub file_metadata: ObjectMeta,
+    // Index of the field in the query schema.
+    pub query_schema_index: u16,
     /// Timestamp of the first data point in the file.
     pub(super) start_time: Timestamp,
     /// Timestamp of the last data point in the file.
@@ -45,6 +47,7 @@ pub struct CompressedFile {
 impl CompressedFile {
     pub fn new(
         file_metadata: ObjectMeta,
+        query_schema_index: u16,
         start_time: Timestamp,
         end_time: Timestamp,
         min_value: Value,
@@ -52,6 +55,7 @@ impl CompressedFile {
     ) -> Self {
         CompressedFile {
             file_metadata,
+            query_schema_index,
             start_time,
             end_time,
             min_value,
@@ -60,7 +64,11 @@ impl CompressedFile {
     }
 
     /// Convert the given [`ObjectMeta`] and [`RecordBatch`] to a [`CompressedFile`].
-    pub fn from_compressed_data(file_metadata: ObjectMeta, batch: &RecordBatch) -> Self {
+    pub fn from_compressed_data(
+        file_metadata: ObjectMeta,
+        query_schema_index: u16,
+        batch: &RecordBatch,
+    ) -> Self {
         // unwrap() is safe as None is only returned if all the values are None.
         let start_time = aggregate::min(array!(batch, 2, TimestampArray)).unwrap();
         let end_time = aggregate::max(array!(batch, 3, TimestampArray)).unwrap();
@@ -74,6 +82,7 @@ impl CompressedFile {
 
         Self {
             file_metadata,
+            query_schema_index,
             start_time,
             end_time,
             min_value,
@@ -128,9 +137,13 @@ mod tests {
             version: None,
         };
 
-        let compressed_file =
-            CompressedFile::from_compressed_data(object_meta, &compressed_segments_record_batch());
+        let compressed_file = CompressedFile::from_compressed_data(
+            object_meta,
+            0,
+            &compressed_segments_record_batch(),
+        );
 
+        assert_eq!(compressed_file.query_schema_index, 0);
         assert_eq!(compressed_file.start_time, 0);
         assert_eq!(compressed_file.end_time, 5);
         assert_eq!(compressed_file.min_value, 5.2);

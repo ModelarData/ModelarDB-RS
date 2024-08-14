@@ -45,7 +45,8 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-use modelardb_common::schemas::QUERY_SCHEMA;
+use modelardb_common::schemas::GRID_SCHEMA;
+use modelardb_common::storage;
 use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
 
@@ -76,7 +77,7 @@ impl GridExec {
         limit: Option<usize>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
-        let schema = QUERY_SCHEMA.0.clone();
+        let schema = GRID_SCHEMA.0.clone();
 
         // The global order for the data points produced by the set of GridExec instances producing
         // input for a SortedJoinExec must be the same. This is needed because SortedJoinExec
@@ -105,6 +106,11 @@ impl GridExec {
 
 #[async_trait]
 impl ExecutionPlan for GridExec {
+    /// Return the name of the [`ExecutionPlan`].
+    fn name(&self) -> &str {
+        Self::static_name()
+    }
+
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
@@ -197,7 +203,7 @@ impl DisplayAs for GridExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "GridExec: limit={:?}", self.limit)
+        write!(f, "{}: limit={:?}", self.name(), self.limit)
     }
 }
 
@@ -258,6 +264,9 @@ impl GridStream {
             .baseline_metrics
             .elapsed_compute()
             .timer();
+
+        // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
+        let batch = storage::univariate_ids_int64_to_uint64(batch);
 
         // Retrieve the arrays from batch and cast them to their concrete type.
         modelardb_common::arrays!(

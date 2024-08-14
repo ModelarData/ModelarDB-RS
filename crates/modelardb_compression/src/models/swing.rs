@@ -88,14 +88,14 @@ impl Swing {
     /// Swing fits a linear function to a time series segment in three stages:
     /// - (1) When the first data point is received, it is stored in memory.
     /// - (2) When the second data point is received, two linear functions that
-    /// intersect with the first data point are computed to designate the upper
-    /// and lower bounds for the linear functions Swing can fit to the segment.
-    /// From the second data point, the numerator and denominator of
-    /// the slope with minimum MSE is updated.    
+    ///   intersect with the first data point are computed to designate the upper
+    ///   and lower bounds for the linear functions Swing can fit to the segment.
+    ///   From the second data point, the numerator and denominator of
+    ///   the slope with minimum MSE is updated.
     /// - (3) Then for each subsequent data point, Swing determines if the data
-    /// point can be represented by a linear function in the space delimited by
-    /// the upper and lower bounds and updates these bounds if necessary.
-    /// If not, the slope with minimum MSE is identified.
+    ///   point can be represented by a linear function in the space delimited
+    ///   by the upper and lower bounds and updates these bounds if necessary.
+    ///   If not, the slope with minimum MSE is identified.
     ///
     /// For more detail see Algorithm 1 in the [Swing and Slide paper].
     ///

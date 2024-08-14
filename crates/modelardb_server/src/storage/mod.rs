@@ -18,7 +18,7 @@
 //! are full or [`StorageEngine::flush()`] is called, stores the resulting data points compressed as
 //! metadata and models in in-memory buffers to batch them before saving them to immutable Apache
 //! Parquet files. The path to the Apache Parquet files containing relevant compressed data points
-//! for a query can be retrieved by the query engine using [`StorageEngine::compressed_files()`].
+//! for a query can be retrieved by the query engine using [`DeltaLake`].
 
 mod compressed_data_buffer;
 mod compressed_data_manager;
@@ -29,19 +29,19 @@ mod uncompressed_data_manager;
 
 use std::env;
 use std::io::{Error as IOError, ErrorKind};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
+use deltalake_core::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_common::types::{Timestamp, TimestampArray, Value};
-use object_store::local::LocalFileSystem;
-use object_store::{ObjectMeta, ObjectStore};
-use once_cell::sync::Lazy;
+use modelardb_common::storage::DeltaLake;
+use modelardb_common::types::TimestampArray;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::Status;
@@ -52,24 +52,19 @@ use crate::context::Context;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
-use crate::storage::uncompressed_data_buffer::UncompressedDataMultivariate;
+use crate::storage::uncompressed_data_buffer::IngestedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::ClusterMode;
 
-/// The folder storing uncompressed data in the data folders.
-const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
-
-/// The folder storing compressed data in the data folders.
-pub(super) const COMPRESSED_DATA_FOLDER: &str = "compressed";
-
-/// The scheme with host at which the query data folder is stored.
-pub(super) const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
+/// The folder storing spilled uncompressed data buffers in the local data folder.
+const UNCOMPRESSED_DATA_FOLDER: &str = "buffers";
 
 /// The capacity of each uncompressed data buffer as the number of elements in the buffer where each
-/// element is a [`Timestamp`] and a [`Value`](use crate::types::Value). Note that the resulting
-/// size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger
-/// than the requested due to internal alignment when allocating memory for the two array builders.
-pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: Lazy<usize> = Lazy::new(|| {
+/// element is a [`Timestamp`](modelardb_common::types::Timestamp) and a
+/// [`Value`](modelardb_common::types::Value). Note that the resulting size of the buffer has to be
+/// a multiple of 64 bytes to avoid the actual capacity being larger than the requested due to
+/// internal alignment when allocating memory for the two array builders.
+pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: LazyLock<usize> = LazyLock::new(|| {
     env::var("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY").map_or(64 * 1024, |value| {
         let parsed = value.parse::<usize>().unwrap();
 
@@ -104,8 +99,8 @@ impl StorageEngine {
     /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
     pub(super) async fn try_new(
         runtime: Arc<Runtime>,
-        local_data_folder: Arc<LocalFileSystem>,
-        maybe_remote_data_folder: Option<Arc<dyn ObjectStore>>,
+        local_data_folder: Arc<DeltaLake>,
+        maybe_remote_data_folder: Option<Arc<DeltaLake>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         table_metadata_manager: Arc<TableMetadataManager>,
     ) -> Result<Self, IOError> {
@@ -173,21 +168,26 @@ impl StorageEngine {
         }
 
         // Create the compressed data manager.
-        let data_transfer = if let (ClusterMode::MultiNode(manager), Some(remote_data_folder)) = (
+        let data_transfer = if let (ClusterMode::MultiNode(_manager), Some(remote_data_folder)) = (
             &configuration_manager.cluster_mode,
             maybe_remote_data_folder,
         ) {
-            Some(
-                DataTransfer::try_new(
-                    local_data_folder.clone(),
-                    remote_data_folder,
-                    table_metadata_manager.clone(),
-                    manager.clone(),
-                    configuration_manager.transfer_batch_size_in_bytes(),
-                    used_disk_space_metric.clone(),
-                )
-                .await?,
+            let table_names = table_metadata_manager
+                .table_names()
+                .await
+                .map_err(IOError::other)?;
+
+            let data_transfer = DataTransfer::try_new(
+                local_data_folder.clone(),
+                remote_data_folder,
+                table_names,
+                configuration_manager.transfer_batch_size_in_bytes(),
+                used_disk_space_metric.clone(),
             )
+            .await
+            .map_err(IOError::other)?;
+
+            Some(data_transfer)
         } else {
             None
         };
@@ -198,7 +198,6 @@ impl StorageEngine {
             local_data_folder,
             channels.clone(),
             memory_pool.clone(),
-            table_metadata_manager,
             used_disk_space_metric,
         ));
 
@@ -276,7 +275,7 @@ impl StorageEngine {
         &self,
         table_name: &str,
         record_batch: RecordBatch,
-    ) -> Result<(), ParquetError> {
+    ) -> Result<(), DeltaTableError> {
         self.compressed_data_manager
             .insert_record_batch(table_name, record_batch)
             .await
@@ -291,7 +290,7 @@ impl StorageEngine {
     ) -> Result<(), String> {
         // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
         self.memory_pool
-            .wait_for_multivariate_memory(multivariate_data_points.get_array_memory_size());
+            .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size());
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_multivariate_memory_metric.lock().unwrap().append(
@@ -300,8 +299,8 @@ impl StorageEngine {
         );
 
         self.channels
-            .multivariate_data_sender
-            .send(Message::Data(UncompressedDataMultivariate::new(
+            .ingested_data_sender
+            .send(Message::Data(IngestedDataBuffer::new(
                 model_table_metadata,
                 multivariate_data_points,
             )))
@@ -312,7 +311,7 @@ impl StorageEngine {
     /// the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
     pub(super) async fn flush(&self) -> Result<(), String> {
         self.channels
-            .multivariate_data_sender
+            .ingested_data_sender
             .send(Message::Flush)
             .map_err(|error| format!("Unable to flush data in storage engine due to: {}", error))?;
 
@@ -342,7 +341,7 @@ impl StorageEngine {
     /// `self` so it can be called through an Arc.
     pub(super) fn close(&mut self) -> Result<(), String> {
         self.channels
-            .multivariate_data_sender
+            .ingested_data_sender
             .send(Message::Stop)
             .map_err(|error| format!("Unable to stop the storage engine due to: {}", error))?;
 
@@ -361,41 +360,6 @@ impl StorageEngine {
         Ok(())
     }
 
-    /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `column_index`
-    /// in the table with `table_name` and contains compressed segments within the given range of
-    /// time and value. If no files belong to the column at `column_index` for the table with
-    /// `table_name` an empty [`Vec`] is returned, while a
-    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
-    /// * A table with `table_name` does not exist.
-    /// * The compressed files could not be listed.
-    /// * A column with `column_index` does not exist.
-    /// * The end time is before the start time.
-    /// * The max value is smaller than the min value.
-    pub(super) async fn compressed_files(
-        &mut self,
-        table_name: &str,
-        column_index: u16,
-        start_time: Option<Timestamp>,
-        end_time: Option<Timestamp>,
-        min_value: Option<Value>,
-        max_value: Option<Value>,
-        cluster_mode: &ClusterMode,
-        query_data_folder: &Arc<dyn ObjectStore>,
-    ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
-        self.compressed_data_manager
-            .compressed_files(
-                table_name,
-                column_index,
-                start_time,
-                end_time,
-                min_value,
-                max_value,
-                cluster_mode,
-                query_data_folder,
-            )
-            .await
-    }
-
     /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
     /// data points over time. The metrics are returned in tuples with the format (metric_type, (timestamps, values)).
     pub(super) async fn collect_metrics(
@@ -404,7 +368,7 @@ impl StorageEngine {
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
             (
-                MetricType::UsedMultivariateMemory,
+                MetricType::UsedIngestedMemory,
                 self.used_multivariate_memory_metric
                     .lock()
                     .unwrap()
@@ -449,12 +413,14 @@ impl StorageEngine {
     /// a data transfer component does not exist, return [`ModelarDbError].
     pub(super) async fn update_remote_data_folder(
         &mut self,
-        remote_data_folder: Arc<dyn ObjectStore>,
+        remote_data_folder: Arc<DeltaLake>,
     ) -> Result<(), ModelarDbError> {
         let maybe_data_transfer = &mut *self.compressed_data_manager.data_transfer.write().await;
 
         if let Some(data_transfer) = maybe_data_transfer {
-            data_transfer.remote_data_folder = remote_data_folder;
+            data_transfer
+                .update_remote_data_folder(remote_data_folder)
+                .await;
 
             Ok(())
         } else {
@@ -466,7 +432,7 @@ impl StorageEngine {
 
     /// Change the amount of memory for multivariate data in bytes according to `value_change`.
     pub(super) async fn adjust_multivariate_remaining_memory_in_bytes(&self, value_change: isize) {
-        self.memory_pool.adjust_multivariate_memory(value_change)
+        self.memory_pool.adjust_ingested_memory(value_change)
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.

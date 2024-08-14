@@ -20,14 +20,12 @@ mod metadata;
 mod remote;
 
 use std::env;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use modelardb_common::arguments::{
-    argument_to_connection_info, argument_to_remote_object_store, collect_command_line_arguments,
-    validate_remote_data_folder,
+    argument_to_connection_info, collect_command_line_arguments, validate_remote_data_folder,
 };
-use object_store::ObjectStore;
-use once_cell::sync::Lazy;
+use modelardb_common::storage::DeltaLake;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
@@ -39,8 +37,8 @@ use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9998 is used.
-pub static PORT: Lazy<u16> =
-    Lazy::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
+pub static PORT: LazyLock<u16> =
+    LazyLock::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
 
 /// Stores the connection information with the remote data folder to ensure that the information
 /// is consistent with the remote data folder.
@@ -48,15 +46,15 @@ pub struct RemoteDataFolder {
     /// Connection information saved as bytes to make it possible to transfer the information using
     /// Arrow Flight.
     connection_info: Vec<u8>,
-    /// Folder for storing Apache Parquet files in a remote object store.
-    object_store: Arc<dyn ObjectStore>,
+    /// Remote object store for storing data and metadata in Apache Parquet files.
+    delta_lake: Arc<DeltaLake>,
 }
 
 impl RemoteDataFolder {
-    pub fn new(connection_info: Vec<u8>, object_store: Arc<dyn ObjectStore>) -> Self {
+    pub fn new(connection_info: Vec<u8>, delta_lake: Arc<DeltaLake>) -> Self {
         Self {
             connection_info,
-            object_store,
+            delta_lake,
         }
     }
 
@@ -64,8 +62,12 @@ impl RemoteDataFolder {
         &self.connection_info
     }
 
-    pub fn object_store(&self) -> &Arc<dyn ObjectStore> {
-        &self.object_store
+    pub fn delta_lake(&self) -> Arc<DeltaLake> {
+        self.delta_lake.clone()
+    }
+
+    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
+        self.delta_lake.object_store()
     }
 }
 
@@ -101,7 +103,7 @@ fn main() -> Result<(), String> {
     let context = runtime.block_on(async {
         let (metadata_manager, remote_data_folder) =
             parse_command_line_arguments(&arguments).await?;
-        validate_remote_data_folder(remote_data_folder.object_store()).await?;
+        validate_remote_data_folder(&remote_data_folder.delta_lake()).await?;
 
         let nodes = metadata_manager
             .nodes()
@@ -147,7 +149,11 @@ async fn parse_command_line_arguments(
 ) -> Result<(MetadataManager, RemoteDataFolder), String> {
     match arguments {
         &[remote_data_folder] => {
-            let object_store = argument_to_remote_object_store(remote_data_folder)?;
+            let delta_lake = Arc::new(
+                DeltaLake::try_remote_from_connection_info(remote_data_folder.as_bytes())
+                    .await
+                    .map_err(|error| error.to_string())?,
+            );
             let connection_info = argument_to_connection_info(remote_data_folder)?;
 
             let metadata_manager = MetadataManager::try_from_connection_info(&connection_info)
@@ -156,7 +162,7 @@ async fn parse_command_line_arguments(
 
             Ok((
                 metadata_manager,
-                RemoteDataFolder::new(connection_info, object_store),
+                RemoteDataFolder::new(connection_info, delta_lake),
             ))
         }
         _ => {

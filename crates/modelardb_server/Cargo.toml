@@ -31,11 +31,11 @@ crossbeam-channel.workspace = true
 crossbeam-queue.workspace = true
 dashmap.workspace = true
 datafusion.workspace = true
+deltalake-core = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }
 object_store = { workspace = true, features = ["aws", "azure"] }
-once_cell.workspace = true
 parquet = { workspace = true, features = ["object_store"] }
 ringbuf.workspace = true
 snmalloc-rs = { workspace = true, features = ["build_cc"] }

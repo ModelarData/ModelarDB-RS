@@ -241,6 +241,7 @@ async fn execute_and_print_action_command_or_query(
 /// * `CommandStatementUpdate`: Executes a SQL query that does not return a result on the server.
 /// * `FlushMemory`: Flush all data the server currently has in memory to disk.
 /// * `FlushEdge`: Flush all data the server currently has in memory and disk to the object store.
+///
 /// The function returns [`Error`] if the action could not be executed.
 async fn execute_action(
     flight_service_client: &mut FlightServiceClient<Channel>,

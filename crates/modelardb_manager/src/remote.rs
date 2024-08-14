@@ -36,11 +36,12 @@ use arrow_flight::{
 };
 use chrono::{TimeZone, Utc};
 use futures::{stream, Stream, StreamExt};
-use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
+use modelardb_common::arguments::{decode_argument, encode_argument};
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::schemas::{COMPRESSED_FILE_METADATA_SCHEMA, TAG_METADATA_SCHEMA};
+use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::{ServerMode, TimestampArray, ValueArray};
 use modelardb_common::{metadata, parser, remote};
 use object_store::path::Path;
@@ -273,8 +274,10 @@ impl FlightServiceHandler {
                     version: None,
                 };
 
+                // Cast is safe as ModelTableMetadata ensures there are no more than 1024 columns.
                 let compressed_file = CompressedFile::new(
                     file_metadata,
+                    field_column_array.value(row_index) as u16,
                     start_time_array.value(row_index),
                     end_time_array.value(row_index),
                     min_value_array.value(row_index),
@@ -579,11 +582,15 @@ impl FlightService for FlightServiceHandler {
                 )))
             }
         } else if action.r#type == "UpdateRemoteObjectStore" {
-            let (object_store, _offset_data) = parse_object_store_arguments(&action.body).await?;
+            let delta_lake = Arc::new(
+                DeltaLake::try_remote_from_connection_info(&action.body)
+                    .await
+                    .map_err(|error| Status::internal(error.to_string()))?,
+            );
 
             // Create a new remote data folder and update it in the context.
             let mut remote_data_folder = self.context.remote_data_folder.write().await;
-            *remote_data_folder = RemoteDataFolder::new(action.body.clone().into(), object_store);
+            *remote_data_folder = RemoteDataFolder::new(action.body.clone().into(), delta_lake);
 
             // For each node in the cluster, update the remote object store.
             self.context

@@ -33,6 +33,7 @@ use crate::types::CompressedSegmentBatchBuilder;
 /// * Are from same time series.
 /// * Contain the exact same models.
 /// * Are consecutive in terms of time.
+///
 /// Assumes that the segments for each `univariate_id` are sorted by time and if the consecutive
 /// segments A, B, and C exist for a `univariate_id` and the segments A and C are in
 /// `compressed_segments` then B is also in `compressed_segments`. If only A and C are in

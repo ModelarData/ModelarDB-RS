@@ -18,8 +18,9 @@
 use std::debug_assert;
 use std::sync::Arc;
 
-use arrow::array::{BinaryBuilder, Float32Builder, UInt64Builder, UInt8Builder};
+use arrow::array::{BinaryBuilder, Float32Builder, UInt16Builder, UInt64Builder, UInt8Builder};
 use arrow::record_batch::RecordBatch;
+use modelardb_common::metadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
@@ -144,7 +145,7 @@ impl ModelBuilder {
 
 /// A compressed segment being built from metadata and a model.
 pub(crate) struct CompressedSegmentBuilder {
-    /// ID of the model type that created the model in this segment.
+    /// Id of the model type that created the model in this segment.
     pub model_type_id: u8,
     /// Index of the first data point in the `UncompressedDataBuffer` that this segment represents.
     pub start_index: usize,
@@ -400,9 +401,9 @@ impl CompressedSegmentBuilder {
 
 /// A batch of compressed segments being built.
 pub(crate) struct CompressedSegmentBatchBuilder {
-    /// Univariate ids of each compressed segment in the batch.
+    /// Univariate id of each compressed segment in the batch.
     univariate_ids: UInt64Builder,
-    /// Model type ids of each compressed segment in the batch.
+    /// Model type id of each compressed segment in the batch.
     model_type_ids: UInt8Builder,
     /// First timestamp of each compressed segment in the batch.
     start_times: TimestampBuilder,
@@ -425,6 +426,8 @@ pub(crate) struct CompressedSegmentBatchBuilder {
     residuals: BinaryBuilder,
     /// Actual error of each compressed segment in the batch.
     error: Float32Builder,
+    /// Field column of each compressed segment in the batch.
+    field_columns: UInt16Builder,
 }
 
 impl CompressedSegmentBatchBuilder {
@@ -440,6 +443,7 @@ impl CompressedSegmentBatchBuilder {
             values: BinaryBuilder::with_capacity(capacity, capacity),
             residuals: BinaryBuilder::with_capacity(capacity, capacity),
             error: Float32Builder::with_capacity(capacity),
+            field_columns: UInt16Builder::with_capacity(capacity),
         }
     }
 
@@ -457,6 +461,7 @@ impl CompressedSegmentBatchBuilder {
         residuals: &[u8],
         error: f32,
     ) {
+        let field_column_index = metadata::univariate_id_to_column_index(univariate_id);
         self.univariate_ids.append_value(univariate_id);
         self.model_type_ids.append_value(model_type_id);
         self.start_times.append_value(start_time);
@@ -467,6 +472,7 @@ impl CompressedSegmentBatchBuilder {
         self.values.append_value(values);
         self.residuals.append_value(residuals);
         self.error.append_value(error);
+        self.field_columns.append_value(field_column_index);
     }
 
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
@@ -484,6 +490,7 @@ impl CompressedSegmentBatchBuilder {
                 Arc::new(self.values.finish()),
                 Arc::new(self.residuals.finish()),
                 Arc::new(self.error.finish()),
+                Arc::new(self.field_columns.finish()),
             ],
         )
         .unwrap()

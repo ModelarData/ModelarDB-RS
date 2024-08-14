@@ -150,11 +150,11 @@ pub(crate) fn fit_next_model(
 
 /// Create segment(s) that store `maybe_model` and residual values as either:
 /// - One compressed segment that stores `maybe_model` and residuals if the number of
-/// residuals are less than or equal to [`RESIDUAL_VALUES_MAX_LENGTH`].
+///   residuals are less than or equal to [`RESIDUAL_VALUES_MAX_LENGTH`].
 /// - Two compressed segments with the first storing `maybe_model` and the second storing
-/// residuals if the number of residuals are greater than [`RESIDUAL_VALUES_MAX_LENGTH`].
+///   residuals if the number of residuals are greater than [`RESIDUAL_VALUES_MAX_LENGTH`].
 /// - One compressed segment that stores residuals as a single model if `maybe_model` is
-/// [`None`].
+///   [`None`].
 fn store_compressed_segments_with_model_and_or_residuals(
     univariate_id: u64,
     error_bound: ErrorBound,
@@ -262,7 +262,8 @@ mod tests {
     use super::*;
 
     use arrow::array::{
-        ArrayBuilder, BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array,
+        ArrayBuilder, BinaryArray, Float32Array, UInt64Array, UInt64Builder,
+        UInt8Array,
     };
     use modelardb_common::array;
     use modelardb_common::test::data_generation::{self, ValuesStructure};

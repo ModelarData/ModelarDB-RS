@@ -35,9 +35,12 @@ use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
 use datafusion::datasource::physical_plan::parquet::ParquetExec;
 use datafusion::error::{DataFusionError, Result};
+use datafusion::functions_aggregate::average::Avg;
+use datafusion::functions_aggregate::count::Count;
+use datafusion::functions_aggregate::sum::Sum;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
-use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
+use datafusion::physical_plan::expressions::{self, Max, Min};
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::udaf::AggregateFunctionExpr;
 use datafusion::physical_plan::{
@@ -45,6 +48,7 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue;
 use modelardb_common::types::{ArrowValue, TimestampArray, Value, ValueArray};
+use modelardb_common::storage;
 
 use crate::query::sorted_join_exec::SortedJoinExec;
 
@@ -201,11 +205,22 @@ fn try_rewrite_aggregate_exprs(
             .as_any()
             .downcast_ref::<AggregateFunctionExpr>()
         {
-            // A sum aggregate query can be an AggregateFunctionExpr instead of simply Sum.
+            // An aggregate query can be an AggregateFunctionExpr instead of built-in aggregate.
             let aggregate_function_expr_name = aggregate_function_expr.fun().name();
             match aggregate_function_expr_name {
-                "SUM" => {
+                "count" => rewritten_aggregate_exprs
+                    .push(ModelAggregateExpr::new(ModelAggregateType::Count)),
+                "min" => {
+                    rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Min))
+                }
+                "max" => {
+                    rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Max))
+                }
+                "sum" => {
                     rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Sum))
+                }
+                "avg" => {
+                    rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Avg))
                 }
                 _ => {
                     return Err(DataFusionError::Internal(format!(
@@ -368,6 +383,9 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+        // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
+        let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
+
         modelardb_common::arrays!(
             record_batch,
             _univariate_ids,
@@ -736,6 +754,9 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+        // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
+        let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
+
         modelardb_common::arrays!(
             record_batch,
             _univariate_ids,
@@ -883,6 +904,9 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+        // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
+        let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
+
         modelardb_common::arrays!(
             record_batch,
             _univariate_ids,
@@ -1016,6 +1040,7 @@ mod tests {
     use datafusion::physical_plan::filter::FilterExec;
     use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
     use modelardb_common::test;
+		use modelardb_common::storage::DeltaLake;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
     use object_store::path::Path;
@@ -1024,7 +1049,7 @@ mod tests {
 
     use crate::context::Context;
     use crate::query::grid_exec::GridExec;
-    use crate::query::ModelTable;
+    use crate::query::model_table::ModelTable;
     use crate::{ClusterMode, DataFolders};
 
     // Tests for ModelSimpleAggregatesPhysicalOptimizerRule.
@@ -1120,8 +1145,7 @@ mod tests {
         temp_dir: &TempDir,
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let local_data_folder = Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
         let table_metadata_manager = Arc::new(
             TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
                 .await
@@ -1132,7 +1156,7 @@ mod tests {
         let context = Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                &DataFolders {
+                DataFolders {
                     local_data_folder: (local_data_folder.clone(), table_metadata_manager),
                     remote_data_folder: None,
                     query_data_folder: local_data_folder,
@@ -1145,6 +1169,13 @@ mod tests {
         );
 
         let model_table_metadata = test::model_table_metadata_arc();
+
+        context
+            .data_folders
+            .local_data_folder
+            .create_delta_lake_model_table(&model_table_metadata.name)
+            .await
+            .unwrap();
 
         context
             .table_metadata_manager

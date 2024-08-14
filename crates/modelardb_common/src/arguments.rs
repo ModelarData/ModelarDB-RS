@@ -21,9 +21,11 @@ use std::io::Write;
 use std::str;
 use std::sync::Arc;
 
-use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
+use object_store::{path::Path, ObjectStore};
 use tonic::Status;
 use uuid::Uuid;
+
+use crate::storage::DeltaLake;
 
 /// Error to emit when an unknown remote data folder type is used.
 const REMOTE_DATA_FOLDER_ERROR: &str =
@@ -38,29 +40,6 @@ pub fn collect_command_line_arguments(maximum_arguments: usize) -> Vec<String> {
     // is collected to trigger the default pattern when parsing the command line arguments with
     // pattern matching, making it possible to handle errors caused by too many arguments.
     args.by_ref().take(maximum_arguments + 1).collect()
-}
-
-/// Create an [`ObjectStore`] that represents the remote path in `argument`.
-pub fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>, String> {
-    match argument.split_once("://") {
-        Some(("s3", bucket_name)) => {
-            let object_store = AmazonS3Builder::from_env()
-                .with_bucket_name(bucket_name)
-                .build()
-                .map_err(|error| error.to_string())?;
-
-            Ok(Arc::new(object_store))
-        }
-        Some(("azureblobstorage", container_name)) => {
-            let object_store = MicrosoftAzureBuilder::from_env()
-                .with_container_name(container_name)
-                .build()
-                .map_err(|error| error.to_string())?;
-
-            Ok(Arc::new(object_store))
-        }
-        _ => Err(REMOTE_DATA_FOLDER_ERROR.to_owned()),
-    }
 }
 
 /// Create a vector of bytes that represents the connection information to the remote path in `argument`.
@@ -109,9 +88,9 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
 
 /// Validate that the remote data folder can be accessed. If the remote data folder cannot be
 /// accessed, return the error that occurred as a [`String`].
-pub async fn validate_remote_data_folder(
-    remote_data_folder: &Arc<dyn ObjectStore>,
-) -> Result<(), String> {
+pub async fn validate_remote_data_folder(remote_delta_lake: &Arc<DeltaLake>) -> Result<(), String> {
+    let remote_data_folder = remote_delta_lake.object_store();
+
     // Use an UUID for the path to minimize the chance of the path existing in the object store.
     let invalid_path = Uuid::new_v4().to_string();
 
@@ -133,92 +112,6 @@ pub async fn validate_remote_data_folder(
             _ => Err(error.to_string()),
         },
     }
-}
-
-/// Parse the arguments in `data` and return the resulting remote object store and what is remaining
-/// of `data` after parsing. If `data` does not contain valid connection information or the type of
-/// the new remote object store is not "s3" or "azureblobstorage", [`Status`] is returned.
-pub async fn parse_object_store_arguments(
-    data: &[u8],
-) -> Result<(Arc<dyn ObjectStore>, &[u8]), Status> {
-    let (object_store_type, offset_data) = decode_argument(data)?;
-
-    let (object_store, offset_data) = match object_store_type {
-        "s3" => {
-            let (endpoint, bucket_name, access_key_id, secret_access_key, offset_data) =
-                extract_s3_arguments(offset_data).await?;
-
-            let s3: Arc<dyn ObjectStore> = Arc::new(
-                AmazonS3Builder::new()
-                    .with_region("")
-                    .with_allow_http(true)
-                    .with_endpoint(endpoint)
-                    .with_bucket_name(bucket_name)
-                    .with_access_key_id(access_key_id)
-                    .with_secret_access_key(secret_access_key)
-                    .build()
-                    .map_err(|error| Status::invalid_argument(error.to_string()))?,
-            );
-
-            Ok((s3, offset_data))
-        }
-        "azureblobstorage" => {
-            let (account, access_key, container_name, offset_data) =
-                extract_azure_blob_storage_arguments(offset_data).await?;
-
-            let azure_blob_storage: Arc<dyn ObjectStore> = Arc::new(
-                MicrosoftAzureBuilder::new()
-                    .with_account(account)
-                    .with_access_key(access_key)
-                    .with_container_name(container_name)
-                    .build()
-                    .map_err(|error| Status::invalid_argument(error.to_string()))?,
-            );
-
-            Ok((azure_blob_storage, offset_data))
-        }
-        _ => Err(Status::unimplemented(format!(
-            "{object_store_type} is currently not supported."
-        ))),
-    }?;
-
-    validate_remote_data_folder(&object_store)
-        .await
-        .map_err(Status::invalid_argument)?;
-
-    Ok((object_store, offset_data))
-}
-
-/// Parse the arguments in `data` and return the arguments to connect to an
-/// [`Amazon S3`](object_store::aws::AmazonS3) object store and what is remaining of `data`
-/// after parsing. If `data` is missing arguments, [`Status`] is returned.
-pub async fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
-    let (endpoint, offset_data) = decode_argument(data)?;
-    let (bucket_name, offset_data) = decode_argument(offset_data)?;
-    let (access_key_id, offset_data) = decode_argument(offset_data)?;
-    let (secret_access_key, offset_data) = decode_argument(offset_data)?;
-
-    Ok((
-        endpoint,
-        bucket_name,
-        access_key_id,
-        secret_access_key,
-        offset_data,
-    ))
-}
-
-/// Parse the arguments in `data` and return the arguments to connect to an
-/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
-/// object store and what is remaining of `data` after parsing. If `data` is missing arguments,
-/// [`Status`] is returned.
-pub async fn extract_azure_blob_storage_arguments(
-    data: &[u8],
-) -> Result<(&str, &str, &str, &[u8]), Status> {
-    let (account, offset_data) = decode_argument(data)?;
-    let (access_key, offset_data) = decode_argument(offset_data)?;
-    let (container_name, offset_data) = decode_argument(offset_data)?;
-
-    Ok((account, access_key, container_name, offset_data))
 }
 
 /// Convert the given `argument` into bytes that contain the length of the byte representation of
