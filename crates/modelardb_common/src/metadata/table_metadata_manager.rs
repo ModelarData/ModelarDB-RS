@@ -40,7 +40,7 @@ use object_store::ObjectMeta;
 
 use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::metadata::{univariate_id_to_tag_hash, MetadataDeltaLake};
+use crate::metadata::MetadataDeltaLake;
 use crate::test::ERROR_BOUND_ZERO;
 use crate::types::{ErrorBound, Timestamp, Value};
 use crate::{array, parser};
@@ -591,13 +591,9 @@ impl TableMetadataManager {
             || insert_into_hash_table_name_metrics.num_target_rows_inserted > 0)
     }
 
-    /// Return the name of the table that contains the time series with `univariate_id`. Returns a
-    /// [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata delta lake.
-    pub async fn univariate_id_to_table_name(
-        &self,
-        univariate_id: u64,
-    ) -> Result<String, DeltaTableError> {
-        let tag_hash = univariate_id_to_tag_hash(univariate_id);
+    /// Return the name of the table that contains the time series with `tag_hash`. Returns a
+    /// [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata Delta Lake.
+    pub async fn tag_hash_to_table_name(&self, tag_hash: u64) -> Result<String, DeltaTableError> {
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
         let batch = self
@@ -616,7 +612,7 @@ impl TableMetadataManager {
         let table_names = array!(batch, 0, StringArray);
         if table_names.is_empty() {
             Err(DeltaTableError::Generic(format!(
-                "No table contains a time series with univariate ID '{univariate_id}'."
+                "No table contains a time series with tag hash '{tag_hash}'."
             )))
         } else {
             Ok(table_names.value(0).to_owned())
@@ -1135,7 +1131,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_univariate_id_to_table_name() {
+    async fn test_tag_hash_to_table_name() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = test::model_table_metadata();
@@ -1145,7 +1141,7 @@ mod tests {
             .unwrap();
 
         let table_name = metadata_manager
-            .univariate_id_to_table_name(tag_hash)
+            .tag_hash_to_table_name(tag_hash)
             .await
             .unwrap();
 
@@ -1153,7 +1149,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_univariate_id_to_table_name() {
+    async fn test_invalid_tag_hash_to_table_name() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager =
             TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
@@ -1161,7 +1157,7 @@ mod tests {
                 .unwrap();
 
         assert!(metadata_manager
-            .univariate_id_to_table_name(0)
+            .tag_hash_to_table_name(0)
             .await
             .is_err());
     }
