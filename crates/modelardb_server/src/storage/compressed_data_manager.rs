@@ -329,7 +329,8 @@ impl CompressedDataManager {
 mod tests {
     use super::*;
 
-    use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
+    use datafusion::arrow::array::{Array, Int8Array};
+    use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
     use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
@@ -344,7 +345,13 @@ mod tests {
     // Tests for insert_record_batch().
     #[tokio::test]
     async fn test_insert_record_batch() {
-        let record_batch = test::compressed_segments_record_batch();
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "the_column",
+            DataType::Int8,
+            false,
+        )]));
+        let columns: Vec<Arc<dyn Array>> = vec![Arc::new(Int8Array::from(vec![37, 73]))];
+        let record_batch = RecordBatch::try_new(schema, columns).unwrap();
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
         let local_data_folder =

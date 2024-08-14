@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use arrow::array::{Int64Array, RecordBatch, UInt64Array};
 use arrow::compute;
-use arrow::datatypes::{Field, Schema};
+use arrow::datatypes::{DataType, Field, Schema};
 use datafusion::parquet::arrow::async_reader::{
     AsyncFileReader, ParquetObjectReader, ParquetRecordBatchStream,
 };
@@ -203,9 +203,26 @@ impl DeltaLake {
         schema: &Schema,
         partition_columns: &[String],
     ) -> Result<DeltaTable, DeltaTableError> {
+        let is_model_table = partition_columns == [FIELD_COLUMN.to_owned()];
+
         let mut columns: Vec<StructField> = Vec::with_capacity(schema.fields().len());
         for field in schema.fields() {
             let field: &Field = field;
+
+            // Delta Lakes does not support unsigned integers, thus the Apache Arrow types UInt8,
+            // UInt16, UInt32, and UInt64 are converted to Int8, Int16, Int32, and Int64 by
+            // try_into(). To ensure values that are not supported by Delta Lake cannot be inserted
+            // into the table, a table backed by Delta Lake cannot contain unsigned integers.
+            match field.data_type() {
+                _ if is_model_table => {} // Exception for model_type_id and field_column.
+                DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
+                    return Err(DeltaTableError::SchemaMismatch {
+                        msg: "Unsigned integers are not supported.".to_owned(),
+                    })
+                }
+                _ => {} // All possible cases must be handled.
+            }
+
             let struct_field: StructField = field.try_into()?;
             columns.push(struct_field);
         }
