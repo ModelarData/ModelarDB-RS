@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Table metadata manager that includes functionality used to access both the server metadata delta lake
-//! and the manager metadata delta lake. Note that the entire server metadata delta lake can be accessed
-//! through this metadata manager, while it only supports a subset of the manager metadata delta lake.
+//! Table metadata manager that includes functionality used to access both the server metadata Delta Lake
+//! and the manager metadata Delta Lake. Note that the entire server metadata Delta Lake can be accessed
+//! through this metadata manager, while it only supports a subset of the manager metadata Delta Lake.
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
@@ -46,7 +46,7 @@ use crate::types::{ErrorBound, Timestamp, Value};
 use crate::{array, parser};
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
-/// The data that needs to be persisted is stored in the metadata delta lake.
+/// The data that needs to be persisted is stored in the metadata Delta Lake.
 #[derive(Clone)]
 pub struct TableMetadataManager {
     /// Delta lake with functionality to read and write to and from the metadata tables.
@@ -88,7 +88,7 @@ impl TableMetadataManager {
         Ok(table_metadata_manager)
     }
 
-    /// If they do not already exist, create the tables in the metadata delta lake used for table and
+    /// If they do not already exist, create the tables in the metadata Delta Lake used for table and
     /// model table metadata.
     /// * The `table_metadata` table contains the metadata for tables.
     /// * The `model_table_metadata` table contains the main metadata for model tables.
@@ -154,7 +154,7 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Save the created table to the metadata delta lake. This consists of adding a row to the
+    /// Save the created table to the metadata Delta Lake. This consists of adding a row to the
     /// `table_metadata` table with the `name` of the table and the `sql` used to create the table.
     /// If the table metadata was saved, return [`Ok`], otherwise return [`DeltaTableError`].
     pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<(), DeltaTableError> {
@@ -171,7 +171,7 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Return the name of each table currently in the metadata delta lake. Note that this does not
+    /// Return the name of each table currently in the metadata Delta Lake. Note that this does not
     /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
         let batch = self
@@ -183,7 +183,7 @@ impl TableMetadataManager {
         Ok(table_names.iter().flatten().map(String::from).collect())
     }
 
-    /// Save the created model table to the metadata delta lake. This includes creating a tags table
+    /// Save the created model table to the metadata Delta Lake. This includes creating a tags table
     /// for the model table, creating a compressed files table for the model table, adding a row to
     /// the `model_table_metadata` table, and adding a row to the `model_table_field_columns` table
     /// for each field column.
@@ -231,7 +231,7 @@ impl TableMetadataManager {
             )
             .await?;
 
-        // Convert the query schema to bytes, so it can be saved in the metadata delta lake.
+        // Convert the query schema to bytes, so it can be saved in the metadata Delta Lake.
         let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
 
         // Add a new row in the model_table_metadata table to persist the model table.
@@ -309,7 +309,7 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Return the [`ModelTableMetadata`] of each model table currently in the metadata delta lake.
+    /// Return the [`ModelTableMetadata`] of each model table currently in the metadata Delta Lake.
     /// If the [`ModelTableMetadata`] cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn model_table_metadata(
         &self,
@@ -334,7 +334,7 @@ impl TableMetadataManager {
                 .error_bounds(table_name, query_schema.fields().len())
                 .await?;
 
-            // unwrap() is safe as the schema is checked before it is written to the metadata delta lake.
+            // unwrap() is safe as the schema is checked before it is written to the metadata Delta Lake.
             let df_query_schema = query_schema.clone().to_dfschema().unwrap();
             let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
 
@@ -454,7 +454,7 @@ impl TableMetadataManager {
     /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
     /// hash is not in the cache, it is saved to the cache, persisted to the `model_table_tags` table
     /// if it does not already contain it, and persisted to the `model_table_hash_table_name` table if
-    /// it does not already contain it. If the hash was saved to the metadata delta lake, also return
+    /// it does not already contain it. If the hash was saved to the metadata Delta Lake, also return
     /// [`true`]. If the `model_table_tags` or the `model_table_hash_table_name` table cannot
     /// be accessed, [`DeltaTableError`] is returned.
     pub async fn lookup_or_compute_tag_hash(
@@ -470,7 +470,7 @@ impl TableMetadataManager {
         };
 
         // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
-        // one and save it both in the cache and in the metadata delta lake. There is a minor
+        // one and save it both in the cache and in the metadata Delta Lake. There is a minor
         // race condition because the check if a tag hash is in the cache and the addition of the
         // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
         // to possibly be computed more than once, the cache can be used without an explicit lock.
@@ -487,7 +487,7 @@ impl TableMetadataManager {
                 hasher.finish() << 10
             };
 
-            // Save the tag hash in the metadata delta lake and in the cache.
+            // Save the tag hash in the metadata Delta Lake and in the cache.
             // tag_column_indices are computed from the schema, so they can be used with input.
             let tag_columns = model_table_metadata
                 .tag_column_indices
@@ -622,7 +622,7 @@ impl TableMetadataManager {
     /// Return a mapping from tag hashes to the tags in the columns with the names in
     /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
     /// Returns a [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata
-    /// delta lake.
+    /// Delta Lake.
     pub async fn mapping_from_hash_to_tags(
         &self,
         model_table_name: &str,
@@ -827,7 +827,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Retrieve the table from the metadata delta lake.
+        // Retrieve the table from the metadata Delta Lake.
         let batch = metadata_manager
             .metadata_delta_lake
             .query_table(
@@ -1104,7 +1104,7 @@ mod tests {
         assert!(zero_tags_result.is_err());
         assert!(two_tags_result.is_err());
 
-        // The tag hashes should not be saved in either the cache or the metadata delta lake.
+        // The tag hashes should not be saved in either the cache or the metadata Delta Lake.
         assert_eq!(metadata_manager.tag_value_hashes.len(), 0);
 
         let batch = metadata_manager
@@ -1228,7 +1228,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        // Save a model table to the metadata delta lake.
+        // Save a model table to the metadata Delta Lake.
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)

@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Management of the metadata delta lake for the manager. Metadata which is unique to the manager,
+//! Management of the metadata Delta Lake for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
 use std::str::FromStr;
@@ -32,11 +32,11 @@ use uuid::Uuid;
 use crate::cluster::Node;
 
 /// Stores the metadata required for reading from and writing to the tables and model tables and
-/// persisting edges. The data that needs to be persisted is stored in the metadata delta lake.
+/// persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub struct MetadataManager {
     /// Delta lake with functionality to read and write to and from the manager metadata tables.
     metadata_delta_lake: MetadataDeltaLake,
-    /// Metadata manager used to interface with the subset of the manager metadata delta lake
+    /// Metadata manager used to interface with the subset of the manager metadata Delta Lake
     /// related to tables and model tables.
     pub(crate) table_metadata_manager: TableMetadataManager,
 }
@@ -55,7 +55,7 @@ impl MetadataManager {
                 .await?,
         };
 
-        // Create the necessary tables in the metadata delta lake.
+        // Create the necessary tables in the metadata Delta Lake.
         metadata_manager
             .create_manager_metadata_delta_lake_tables()
             .await?;
@@ -64,7 +64,7 @@ impl MetadataManager {
     }
 
     /// If they do not already exist, create the tables that are specific to the manager metadata
-    /// delta lake.
+    /// Delta Lake.
     /// * The `manager_metadata` table contains metadata for the manager itself. It is assumed that
     /// this table will only have a single row since there can only be a single manager.
     /// * The `nodes` table contains metadata for each node that is controlled by the manager.
@@ -94,7 +94,7 @@ impl MetadataManager {
     }
 
     /// Retrieve the key for the manager from the `manager_metadata` table. If a key does not
-    /// already exist, create one and save it to the delta lake. If a key could not be retrieved
+    /// already exist, create one and save it to the Delta Lake. If a key could not be retrieved
     /// or created, return [`DeltaTableError`].
     pub async fn manager_key(&self) -> Result<Uuid, DeltaTableError> {
         let batch = self
@@ -124,7 +124,7 @@ impl MetadataManager {
         }
     }
 
-    /// Save the node to the metadata delta lake and return [`Ok`]. If the node could not be saved,
+    /// Save the node to the metadata Delta Lake and return [`Ok`]. If the node could not be saved,
     /// return [`DeltaTableError`].
     pub async fn save_node(&self, node: &Node) -> Result<(), DeltaTableError> {
         self.metadata_delta_lake
@@ -154,7 +154,7 @@ impl MetadataManager {
     }
 
     /// Return the nodes currently controlled by the manager that have been persisted to the
-    /// metadata delta lake. If the nodes could not be retrieved, [`DeltaTableError`] is returned.
+    /// metadata Delta Lake. If the nodes could not be retrieved, [`DeltaTableError`] is returned.
     pub async fn nodes(&self) -> Result<Vec<Node>, DeltaTableError> {
         let mut nodes: Vec<Node> = vec![];
 

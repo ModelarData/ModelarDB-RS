@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Metadata delta lake that includes functionality to create metadata tables, append data to the
+//! Metadata Delta Lake that includes functionality to create metadata tables, append data to the
 //! created tables, and query the created tables.
 
 use std::collections::HashMap;
@@ -42,14 +42,14 @@ pub mod table_metadata_manager;
 /// The folder storing metadata in the data folders.
 pub const METADATA_FOLDER: &str = "metadata";
 
-/// Provides functionality to create and use metadata tables in a metadata delta lake.
+/// Provides functionality to create and use metadata tables in a metadata Delta Lake.
 #[derive(Clone)]
 pub struct MetadataDeltaLake {
     /// URL to access the base folder of the location where the metadata tables are stored.
     url_scheme: String,
-    /// Storage options used to access delta lake tables in remote object stores.
+    /// Storage options used to access Delta Lake tables in remote object stores.
     storage_options: HashMap<String, String>,
-    /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
+    /// Session used to read from the metadata Delta Lake using Apache Arrow DataFusion.
     session: SessionContext,
 }
 
@@ -125,7 +125,7 @@ impl MetadataDeltaLake {
         })
     }
 
-    /// Use `table_name` to create a delta lake table with `columns` in the location given by
+    /// Use `table_name` to create a Delta Lake table with `columns` in the location given by
     /// `url_scheme` and `storage_options` if it does not already exist. The created table is
     /// registered in the Apache Arrow Datafusion session. If the table could not be created or
     /// registered, return [`DeltaTableError`].
