@@ -115,7 +115,7 @@ impl Context {
     fn create_session_context() -> SessionContext {
         let mut session_state_builder = SessionStateBuilder::new().with_default_features();
 
-        // Uses the rule method instead of the rules method as the rules method replace the built-ins.
+        // Uses the rule method instead of the rules method as the rules method replaces the built-ins.
         for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
             session_state_builder =
                 session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
