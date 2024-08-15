@@ -30,8 +30,9 @@ use std::sync::{Arc, LazyLock};
 
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_common::types::ServerMode;
 use modelardb_common::storage::DeltaLake;
+use modelardb_common::types::ServerMode;
+use object_store::path::Path;
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -160,13 +161,14 @@ async fn parse_command_line_arguments(
     // Match the provided command line arguments to the supported inputs.
     match arguments {
         &["edge", local_data_folder] | &[local_data_folder] => {
-            let local_delta_lake = create_local_data_lake(local_data_folder)?;
+            let (local_delta_lake, table_metadata_manager) =
+                create_local_data_lake(local_data_folder).await?;
 
             Ok((
                 ServerMode::Edge,
                 ClusterMode::SingleNode,
                 DataFolders {
-                    local_data_folder: local_delta_lake.clone(),
+                    local_data_folder: (local_delta_lake.clone(), table_metadata_manager),
                     remote_data_folder: None,
                     query_data_folder: local_delta_lake,
                 },
@@ -178,13 +180,14 @@ async fn parse_command_line_arguments(
                     .await
                     .map_err(|error| error.to_string())?;
 
-            let local_delta_lake = create_local_data_lake(local_data_folder)?;
+            let (local_delta_lake, table_metadata_manager) =
+                create_local_data_lake(local_data_folder).await?;
 
             Ok((
                 ServerMode::Cloud,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
-                    local_data_folder: local_delta_lake,
+                    local_data_folder: (local_delta_lake, table_metadata_manager),
                     remote_data_folder: Some(remote_delta_lake.clone()),
                     query_data_folder: remote_delta_lake,
                 },
@@ -196,13 +199,14 @@ async fn parse_command_line_arguments(
                     .await
                     .map_err(|error| error.to_string())?;
 
-            let local_delta_lake = create_local_data_lake(local_data_folder)?;
+            let (local_delta_lake, table_metadata_manager) =
+                create_local_data_lake(local_data_folder).await?;
 
             Ok((
                 ServerMode::Edge,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
-                    local_data_folder: local_delta_lake.clone(),
+                    local_data_folder: (local_delta_lake.clone(), table_metadata_manager),
                     remote_data_folder: Some(remote_delta_lake),
                     query_data_folder: local_delta_lake,
                 },
@@ -219,12 +223,20 @@ async fn parse_command_line_arguments(
     }
 }
 
-/// Return a [`DeltaLake`] created from `local_data_folder` if it exists or a [`String`] if it does
-/// not exist.
-fn create_local_data_lake(local_data_folder: &str) -> Result<Arc<DeltaLake>, String> {
+// TODO: Maybe replace this with a try_new on DataFolder struct.
+/// Return a [`DeltaLake`] and [`TableMetadataManager`] created from `local_data_folder` if it
+/// exists or a [`String`] if it does not exist.
+async fn create_local_data_lake(
+    local_data_folder: &str,
+) -> Result<(Arc<DeltaLake>, Arc<TableMetadataManager>), String> {
     let delta_lake =
         DeltaLake::try_from_local_path(local_data_folder).map_err(|error| error.to_string())?;
-    Ok(Arc::new(delta_lake))
+
+    let table_metadata_manager = TableMetadataManager::try_from_path(Path::from(local_data_folder))
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok((Arc::new(delta_lake), Arc::new(table_metadata_manager)))
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for

@@ -65,7 +65,6 @@ impl Context {
         let configuration_manager = Arc::new(
             RwLock::new(
                 ConfigurationManager::new(
-                    data_folders.local_data_folder.0.clone(),
                     cluster_mode,
                     server_mode
                 )
@@ -92,6 +91,7 @@ impl Context {
 
         Ok(Context {
             table_metadata_manager: data_folders.local_data_folder.1.clone(),
+            data_folders,
             configuration_manager,
             session,
             storage_engine,
@@ -163,6 +163,7 @@ impl Context {
     ) -> Result<(), ModelarDbError> {
         // Create an empty Delta Lake table.
         let delta_table = self.data_folders.local_data_folder
+            .0
             .create_delta_lake_table(table_name, &schema).await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
@@ -195,6 +196,7 @@ impl Context {
     ) -> Result<(), ModelarDbError> {
         // Create an empty Delta Lake table.
         self.data_folders.local_data_folder
+            .0
             .create_delta_lake_model_table(&model_table_metadata.name).await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
@@ -231,6 +233,7 @@ impl Context {
         for table_name in table_names {
             // Compute the path to the folder containing data for the table.
             let delta_table = self.data_folders.local_data_folder
+                .0
                 .delta_table(&table_name).await
                 .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
