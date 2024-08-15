@@ -18,11 +18,10 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::{ Schema, SchemaRef };
-use datafusion::catalog::schema::SchemaProvider;
-use datafusion::execution::context::SessionState;
-use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::prelude::{ SessionConfig, SessionContext };
+use datafusion::arrow::datatypes::{Schema, SchemaRef};
+use datafusion::catalog::SchemaProvider;
+use datafusion::execution::session_state::SessionStateBuilder;
+use datafusion::prelude::SessionContext;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
@@ -104,16 +103,15 @@ impl Context {
     /// on the segments containing metadata and models instead of on reconstructed data points
     /// created from the segments for model tables.
     fn create_session_context() -> SessionContext {
-        let session_config = SessionConfig::new();
-        let session_runtime = Arc::new(RuntimeEnv::default());
+        let mut session_state_builder = SessionStateBuilder::new().with_default_features();
 
-        // Use the add* methods instead of the with* methods as the with* methods replace the built-ins.
-        // See: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
-        let mut session_state = SessionState::new_with_config_rt(session_config, session_runtime);
+        // Uses the rule method instead of the rules method as the rules method replaces the built-ins.
         for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
-            session_state = session_state.add_physical_optimizer_rule(physical_optimizer_rule);
+            session_state_builder =
+                session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
         }
 
+        let session_state = session_state_builder.build();
         SessionContext::new_with_state(session_state)
     }
 
@@ -142,8 +140,10 @@ impl Context {
                 self.register_and_save_table(&name, sql, schema, context).await?;
             }
             ValidStatement::CreateModelTable(model_table_metadata) => {
-                self.check_if_table_exists(&model_table_metadata.name).await?;
-                self.register_and_save_model_table(model_table_metadata, sql, context).await?;
+                self.check_if_table_exists(&model_table_metadata.name)
+                    .await?;
+                self.register_and_save_model_table(model_table_metadata, sql, context)
+                    .await?;
             }
         }
 
@@ -162,9 +162,12 @@ impl Context {
         context: &Arc<Context>
     ) -> Result<(), ModelarDbError> {
         // Create an empty Delta Lake table.
-        let delta_table = self.data_folders.local_data_folder
-            .0
-            .create_delta_lake_table(table_name, &schema).await
+        let delta_table = self
+            .data_folders
+            .local_data_folder
+						.0
+            .create_delta_lake_table(table_name, &schema)
+            .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Register the table with Apache DataFusion.

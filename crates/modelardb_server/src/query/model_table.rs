@@ -26,13 +26,14 @@ use async_trait::async_trait;
 use datafusion::arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
 };
+use datafusion::catalog::Session;
 use datafusion::common::{Statistics, ToDFSchema};
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileScanConfig, ParquetExec};
 use datafusion::datasource::provider::TableProviderFilterPushDown;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::{ExecutionProps, SessionState};
+use datafusion::execution::context::{ExecutionProps};
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::insert::DataSinkExec;
@@ -367,7 +368,7 @@ impl TableProvider for ModelTable {
     /// the necessary metadata cannot be retrieved.
     async fn scan(
         &self,
-        ctx: &SessionState,
+        state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
@@ -391,7 +392,7 @@ impl TableProvider for ModelTable {
         // Register the object store as done in DeltaTable so paths are from the table root.
         let log_store = delta_table.log_store();
         let object_store_url = log_store.object_store_url();
-        ctx.runtime_env()
+        state.runtime_env()
             .register_object_store(object_store_url.as_ref(), log_store.object_store());
 
         // Ensures a projection is always present for looking up the columns to return.
@@ -564,7 +565,7 @@ impl TableProvider for ModelTable {
     /// [`DataFusionError`] to match the [`TableProvider`] trait.
     async fn insert_into(
         &self,
-        _state: &SessionState,
+        _state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
         _overwrite: bool,
     ) -> Result<Arc<dyn ExecutionPlan>> {

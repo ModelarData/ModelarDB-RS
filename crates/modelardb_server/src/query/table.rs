@@ -20,10 +20,10 @@
 
 use std::{any::Any, sync::Arc};
 
+use datafusion::catalog::Session;
 use datafusion::common::Constraints;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::{Expr, LogicalPlan, TableProviderFilterPushDown};
 use datafusion::physical_plan::insert::DataSinkExec;
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
@@ -96,7 +96,7 @@ impl TableProvider for Table {
     /// the necessary metadata cannot be retrieved.
     async fn scan(
         &self,
-        state: &SessionState,
+        state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
@@ -134,7 +134,7 @@ impl TableProvider for Table {
     /// necessary metadata cannot be retrieved from the metadata database.
     async fn insert_into(
         &self,
-        _state: &SessionState,
+        _state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
         _overwrite: bool,
     ) -> Result<Arc<dyn ExecutionPlan>> {
