@@ -32,8 +32,8 @@ use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use datafusion::sql::TableReference;
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, ColumnOptionDef, DataType as SQLDataType, GeneratedAs,
-    HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TimezoneInfo,
+    ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType, GeneratedAs,
+    HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TableEngine, TimezoneInfo,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
@@ -242,13 +242,14 @@ impl ModelarDbDialect {
     ) -> Statement {
         // Designed to match the Statement::CreateTable created by sqlparser for
         // CREATE TABLE as closely as possible so semantic checks can be shared.
-        Statement::CreateTable {
+        Statement::CreateTable(CreateTable {
             or_replace: false,
             temporary: false,
             external: false,
             global: None,
             if_not_exists: false,
             transient: false,
+            volatile: false,
             name: table_name,
             columns,
             constraints: vec![],
@@ -267,19 +268,32 @@ impl ModelarDbDialect {
             without_rowid: false,
             like: None,
             clone: None,
-            engine: Some(CREATE_MODEL_TABLE_ENGINE.to_owned()),
+            engine: Some(TableEngine {
+                name: CREATE_MODEL_TABLE_ENGINE.to_owned(),
+                parameters: None,
+            }),
             comment: None,
             auto_increment_offset: None,
             default_charset: None,
             collation: None,
             on_commit: None,
             on_cluster: None,
+            primary_key: None,
             order_by: None,
             partition_by: None,
             cluster_by: None,
             options: None,
             strict: false,
-        }
+            copy_grants: false,
+            enable_schema_evolution: None,
+            change_tracking: None,
+            data_retention_time_in_days: None,
+            max_data_extension_time_in_days: None,
+            default_ddl_collation: None,
+            with_aggregation_policy: None,
+            with_row_access_policy: None,
+            with_tags: None,
+        })
     }
 }
 
@@ -351,12 +365,12 @@ pub fn semantic_checks_for_create_table(
     check_unsupported_features_are_disabled(&statement)?;
 
     // An else-clause is not required as statement's type was checked above.
-    if let Statement::CreateTable {
+    if let Statement::CreateTable(CreateTable {
         name,
         columns,
         engine,
         ..
-    } = statement
+    }) = statement
     {
         // Extract the table name from the Statement::CreateTable.
         if name.0.len() > 1 {
@@ -461,13 +475,14 @@ fn semantic_checks_for_create_model_table(
 /// Return [`ParserError`] if [`Statement`] is not a [`Statement::CreateTable`]
 /// or if an unsupported feature is set.
 fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), ParserError> {
-    if let Statement::CreateTable {
+    if let Statement::CreateTable(CreateTable {
         or_replace,
         temporary,
         external,
         global,
         if_not_exists,
         transient,
+        volatile,
         name: _name,
         columns: _columns,
         constraints,
@@ -488,12 +503,22 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         collation,
         on_commit,
         on_cluster,
+        primary_key,
         order_by,
         partition_by,
         cluster_by,
         options,
         strict,
-    } = statement
+        copy_grants,
+        enable_schema_evolution,
+        change_tracking,
+        data_retention_time_in_days,
+        max_data_extension_time_in_days,
+        default_ddl_collation,
+        with_aggregation_policy,
+        with_row_access_policy,
+        with_tags,
+    }) = statement
     {
         check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
         check_unsupported_feature_is_disabled(*temporary, "TEMPORARY")?;
@@ -501,6 +526,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         check_unsupported_feature_is_disabled(global.is_some(), "GLOBAL")?;
         check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
         check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
+        check_unsupported_feature_is_disabled(*volatile, "VOLATILE")?;
         check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
         check_unsupported_feature_is_disabled(
             hive_distribution != &HiveDistributionStyle::NONE,
@@ -530,11 +556,21 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         check_unsupported_feature_is_disabled(collation.is_some(), "Collation")?;
         check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
         check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
+        check_unsupported_feature_is_disabled(primary_key.is_some(), "PRIMARY_KEY")?;
         check_unsupported_feature_is_disabled(order_by.is_some(), "ORDER BY")?;
         check_unsupported_feature_is_disabled(partition_by.is_some(), "PARTITION BY")?;
         check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
         check_unsupported_feature_is_disabled(options.is_some(), "NAME=VALUE")?;
         check_unsupported_feature_is_disabled(*strict, "STRICT")?;
+        check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;
+        check_unsupported_feature_is_disabled(enable_schema_evolution.is_some(), "ENABLE_SCHEMA_EVOLUTION")?;
+        check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
+        check_unsupported_feature_is_disabled(data_retention_time_in_days.is_some(), "DATA_RETENTION_TIME_IN_DAYS")?;
+        check_unsupported_feature_is_disabled(max_data_extension_time_in_days.is_some(), "MAX_DATA_EXTENSION_TIME_IN_DAYS")?;
+        check_unsupported_feature_is_disabled(default_ddl_collation.is_some(), "DEFAULT_DDL_COLLATION")?;
+        check_unsupported_feature_is_disabled(with_aggregation_policy.is_some(), "WITH_AGGREGATION_POLICY")?;
+        check_unsupported_feature_is_disabled(with_row_access_policy.is_some(), "WITH_ROW_ACCESS_POLICY")?;
+        check_unsupported_feature_is_disabled(with_tags.is_some(), "WITH_TAGS")?;
         Ok(())
     } else {
         let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
@@ -838,7 +874,7 @@ mod tests {
                          tag TAG)";
 
         let statement = tokenize_and_parse_sql(sql).unwrap();
-        if let Statement::CreateTable { name, columns, .. } = &statement {
+        if let Statement::CreateTable(CreateTable { name, columns, .. }) = &statement {
             assert_eq!(*name, new_object_name("table_name"));
             let expected_columns = vec![
                 ModelarDbDialect::new_column_def(
