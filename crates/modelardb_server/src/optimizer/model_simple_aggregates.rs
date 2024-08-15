@@ -38,17 +38,18 @@ use datafusion::error::{DataFusionError, Result};
 use datafusion::functions_aggregate::average::Avg;
 use datafusion::functions_aggregate::count::Count;
 use datafusion::functions_aggregate::sum::Sum;
-use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
+use datafusion::functions_aggregate::min_max::{Min, Max};
+use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
-use datafusion::physical_plan::expressions::{self, Max, Min};
+use datafusion::physical_plan::expressions;
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::udaf::AggregateFunctionExpr;
 use datafusion::physical_plan::{
     Accumulator, AggregateExpr, ColumnarValue, ExecutionPlan, PhysicalExpr,
 };
 use datafusion::scalar::ScalarValue;
-use modelardb_common::types::{ArrowValue, TimestampArray, Value, ValueArray};
 use modelardb_common::storage;
+use modelardb_common::types::{ArrowValue, TimestampArray, Value, ValueArray};
 
 use crate::query::sorted_join_exec::SortedJoinExec;
 
