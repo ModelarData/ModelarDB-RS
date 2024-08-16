@@ -31,7 +31,7 @@ use crate::ClusterMode;
 struct DataFolder {
     /// Delta Lake for storing metadata and Apache Parquet files.
     pub delta_lake: Arc<DeltaLake>,
-    /// Metadata manager for providing access to metadata related to tables
+    /// Metadata manager for providing access to metadata related to tables.
     pub table_metadata_manager: Arc<TableMetadataManager>,
 }
 
@@ -104,7 +104,7 @@ impl DataFolders {
     /// Parse the given command line arguments into a [`ServerMode`], a [`ClusterMode`] and an
     /// instance of [`DataFolders`]. If the necessary command line arguments are not provided,
     /// too many arguments are provided, or if the arguments are malformed, [`String`] is returned.
-    async fn try_from_command_line_arguments(
+    pub async fn try_from_command_line_arguments(
         arguments: &[&str],
     ) -> Result<(ServerMode, ClusterMode, Self), String> {
         // Match the provided command line arguments to the supported inputs.

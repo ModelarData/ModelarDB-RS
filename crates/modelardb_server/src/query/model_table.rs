@@ -385,6 +385,7 @@ impl TableProvider for ModelTable {
             .context
             .data_folders
             .query_data_folder
+            .delta_lake
             .delta_table(table_name)
             .await
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
@@ -480,22 +481,15 @@ impl TableProvider for ModelTable {
         )?;
 
         // Compute a mapping from hashes to the requested tag values in the requested order. If the
-        // server is a cloud node, use the table metadata manager for the remote metadata database.
-        let configuration_manager = self.context.configuration_manager.read().await;
-        let hash_to_tags = if let Some(table_metadata_manager) = &configuration_manager
-            .cluster_mode
-            .remote_table_metadata_manager()
-        {
-            table_metadata_manager
-                .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
-                .await
-        } else {
-            self.context
-                .table_metadata_manager
-                .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
-                .await
-        }
-        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+        // server is a cloud node, use the table metadata manager for the remote metadata Delta Lake.
+        let hash_to_tags = self
+            .context
+            .data_folders
+            .query_data_folder
+            .table_metadata_manager
+            .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
+            .await
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         if stored_field_columns_in_projection.is_empty() {
             stored_field_columns_in_projection.push(self.fallback_field_column);

@@ -72,11 +72,11 @@ fn main() -> Result<(), String> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
     let (server_mode, cluster_mode, data_folders) =
-        runtime.block_on(parse_command_line_arguments(&arguments))?;
+        runtime.block_on(DataFolders::try_from_command_line_arguments(&arguments))?;
 
     // If a remote data folder was provided, check that it can be accessed.
-    if let Some(remote_data_folder) = &data_folders.remote_data_folder.0 {
-        runtime.block_on(validate_remote_data_folder(remote_data_folder))?;
+    if let Some(remote_data_folder) = &data_folders.remote_data_folder {
+        runtime.block_on(validate_remote_data_folder(&remote_data_folder.delta_lake))?;
     }
 
     let context = Arc::new(
