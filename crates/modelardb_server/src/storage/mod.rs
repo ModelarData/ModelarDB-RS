@@ -127,7 +127,6 @@ impl StorageEngine {
             channels.clone(),
             table_metadata_manager.clone(),
             maybe_remote_table_metadata_manager,
-            configuration_manager.cluster_mode.clone(),
             used_multivariate_memory_metric.clone(),
             used_disk_space_metric.clone(),
         ));

@@ -20,17 +20,10 @@ use std::sync::Arc;
 use std::{env, str};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{Action, FlightData, FlightDescriptor};
-use datafusion::arrow::array::{StringArray, UInt64Array};
-use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
-use datafusion::arrow::record_batch::RecordBatch;
-use futures::stream;
+use arrow_flight::Action;
 use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::metadata::compressed_file::CompressedFile;
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_common::schemas::TAG_METADATA_SCHEMA;
 use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
 use tokio::sync::RwLock;
@@ -151,92 +144,6 @@ impl Manager {
         for sql in table_sql_queries {
             context.parse_and_create_table(sql, context).await?;
         }
-
-        Ok(())
-    }
-
-    /// Convert the compressed file metadata to a record batch and transfer it to the
-    /// `model_table_name_compressed_files` metadata table in the manager. If the metadata could
-    /// not be transferred, return [`ModelarDbError`].
-    pub async fn transfer_compressed_file_metadata(
-        &self,
-        model_table_name: &str,
-        column_index: usize,
-        compressed_file: CompressedFile,
-    ) -> Result<(), ModelarDbError> {
-        let metadata = compressed_file.to_record_batch(model_table_name, column_index);
-        self.transfer_metadata(metadata, &format!("{model_table_name}_compressed_files"))
-            .await
-    }
-
-    /// Convert the tag metadata to a record batch and transfer it to the `model_table_name_tags`
-    /// metadata table in the manager. If the metadata could not be transferred,
-    /// return [`ModelarDbError`].
-    pub async fn transfer_tag_metadata(
-        &self,
-        model_table_metadata: &ModelTableMetadata,
-        tag_hash: u64,
-        tag_values: &[String],
-    ) -> Result<(), ModelarDbError> {
-        // Convert the tag columns and tag values to strings, so they can be inserted into a record batch.
-        let tag_columns: String = model_table_metadata
-            .tag_column_indices
-            .iter()
-            .map(|index| model_table_metadata.schema.field(*index).name().clone())
-            .collect::<Vec<String>>()
-            .join(",");
-
-        let values = tag_values
-            .iter()
-            .map(|value| format!("'{value}'"))
-            .collect::<Vec<String>>()
-            .join(",");
-
-        // unwrap() is safe since the columns match the schema and all columns are of the same length.
-        let metadata = RecordBatch::try_new(
-            TAG_METADATA_SCHEMA.0.clone(),
-            vec![
-                Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
-                Arc::new(UInt64Array::from(vec![tag_hash])),
-                Arc::new(StringArray::from(vec![tag_columns])),
-                Arc::new(StringArray::from(vec![values])),
-            ],
-        )
-        .unwrap();
-
-        self.transfer_metadata(metadata, &format!("{}_tags", model_table_metadata.name))
-            .await
-    }
-
-    /// Transfer `metadata` to the `metadata_table_name` table in the managers metadata
-    /// database. If `metadata` could not be transferred, return [`ModelarDbError`].
-    async fn transfer_metadata(
-        &self,
-        metadata: RecordBatch,
-        metadata_table_name: &str,
-    ) -> Result<(), ModelarDbError> {
-        // Put the table name in the flight descriptor of the first flight data in the stream.
-        let flight_descriptor = FlightDescriptor::new_path(vec![metadata_table_name.to_owned()]);
-        let mut flight_data = vec![FlightData::new().with_descriptor(flight_descriptor)];
-
-        // Convert the metadata in the record batch to the Arrow IPC format, so it can be transferred.
-        let data_generator = IpcDataGenerator::default();
-        let writer_options = IpcWriteOptions::default();
-        let mut dictionary_tracker = DictionaryTracker::new(false);
-
-        let (_encoded_dictionaries, encoded_batch) = data_generator
-            .encoded_batch(&metadata, &mut dictionary_tracker, &writer_options)
-            .unwrap();
-
-        flight_data.push(encoded_batch.into());
-
-        // Stream the metadata to the Apache Arrow Flight server of the manager.
-        self.flight_client
-            .write()
-            .await
-            .do_put(stream::iter(flight_data))
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
         Ok(())
     }

@@ -46,7 +46,6 @@ use crate::storage::uncompressed_data_buffer::{
     UncompressedOnDiskDataBuffer,
 };
 use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
-use crate::ClusterMode;
 
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When an uncompressed data buffer is finished the data is made available for compression.
@@ -75,8 +74,6 @@ pub(super) struct UncompressedDataManager {
     table_metadata_manager: Arc<TableMetadataManager>,
     /// Management of metadata in the remote data folder.
     maybe_remote_table_metadata_manager: Option<Arc<TableMetadataManager>>,
-    /// The mode of the cluster used to determine the behaviour when inserting data points.
-    cluster_mode: ClusterMode,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used ingested memory in bytes, updated every time the used memory changes.
@@ -96,7 +93,6 @@ impl UncompressedDataManager {
         channels: Arc<Channels>,
         table_metadata_manager: Arc<TableMetadataManager>,
         maybe_remote_table_metadata_manager: Option<Arc<TableMetadataManager>>,
-        cluster_mode: ClusterMode,
         used_ingested_memory_metric: Arc<Mutex<Metric>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Self {
@@ -108,7 +104,6 @@ impl UncompressedDataManager {
             channels,
             table_metadata_manager,
             maybe_remote_table_metadata_manager,
-            cluster_mode,
             memory_pool,
             used_ingested_memory_metric,
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
