@@ -37,8 +37,8 @@ use datafusion::datasource::physical_plan::parquet::ParquetExec;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::functions_aggregate::average::Avg;
 use datafusion::functions_aggregate::count::Count;
+use datafusion::functions_aggregate::min_max::{Max, Min};
 use datafusion::functions_aggregate::sum::Sum;
-use datafusion::functions_aggregate::min_max::{Min, Max};
 use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions;
@@ -1040,8 +1040,8 @@ mod tests {
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
     use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
+    use modelardb_common::storage::DeltaLake;
     use modelardb_common::test;
-		use modelardb_common::storage::DeltaLake;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
     use object_store::path::Path;
@@ -1146,7 +1146,8 @@ mod tests {
         temp_dir: &TempDir,
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
-        let local_data_folder = Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+        let local_data_folder =
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
         let table_metadata_manager = Arc::new(
             TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
                 .await

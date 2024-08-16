@@ -33,7 +33,7 @@ use datafusion::datasource::physical_plan::{FileScanConfig, ParquetExec};
 use datafusion::datasource::provider::TableProviderFilterPushDown;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::{ExecutionProps};
+use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::insert::DataSinkExec;
@@ -392,7 +392,8 @@ impl TableProvider for ModelTable {
         // Register the object store as done in DeltaTable so paths are from the table root.
         let log_store = delta_table.log_store();
         let object_store_url = log_store.object_store_url();
-        state.runtime_env()
+        state
+            .runtime_env()
             .register_object_store(object_store_url.as_ref(), log_store.object_store());
 
         // Ensures a projection is always present for looking up the columns to return.
