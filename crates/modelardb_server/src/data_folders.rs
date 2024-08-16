@@ -183,3 +183,55 @@ impl DataFolders {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for try_from_command_line_arguments().
+    #[tokio::test]
+    async fn test_try_from_empty_command_line_arguments() {
+        assert!(DataFolders::try_from_command_line_arguments(&[])
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_try_from_edge_command_line_arguments_without_manager() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        assert_single_edge_without_remote_data_folder(&["edge", temp_dir_str]).await;
+    }
+
+    #[tokio::test]
+    async fn test_try_from_edge_command_line_arguments_without_server_mode_and_manager() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        assert_single_edge_without_remote_data_folder(&[temp_dir_str]).await;
+    }
+
+    async fn assert_single_edge_without_remote_data_folder(input: &[&str]) {
+        let (server_mode, cluster_mode, data_folders) =
+            DataFolders::try_from_command_line_arguments(input)
+                .await
+                .unwrap();
+
+        assert_eq!(server_mode, ServerMode::Edge);
+        assert_eq!(cluster_mode, ClusterMode::SingleNode);
+        assert!(data_folders.remote_data_folder.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_try_from_incomplete_cloud_command_line_arguments() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        assert!(
+            DataFolders::try_from_command_line_arguments(&["cloud", temp_dir_str])
+                .await
+                .is_err()
+        )
+    }
+}
