@@ -70,7 +70,7 @@ pub struct DataFolders {
     /// Folder for storing metadata and Apache Parquet files on the local file system.
     pub local_data_folder: (Arc<DeltaLake>, Arc<TableMetadataManager>),
     /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: Option<Arc<DeltaLake>>,
+    pub remote_data_folder: (Option<Arc<DeltaLake>>, Option<Arc<TableMetadataManager>>),
     /// Folder from which Apache Parquet files will be read during query execution. It is equivalent
     /// to `local_data_folder` when deployed on the edge and `remote_data_folder` when deployed
     /// in the cloud.
@@ -100,7 +100,7 @@ fn main() -> Result<(), String> {
         runtime.block_on(parse_command_line_arguments(&arguments))?;
 
     // If a remote data folder was provided, check that it can be accessed.
-    if let Some(remote_data_folder) = &data_folders.remote_data_folder {
+    if let Some(remote_data_folder) = &data_folders.remote_data_folder.0 {
         runtime.block_on(validate_remote_data_folder(remote_data_folder))?;
     }
 
@@ -169,7 +169,7 @@ async fn parse_command_line_arguments(
                 ClusterMode::SingleNode,
                 DataFolders {
                     local_data_folder: (local_delta_lake.clone(), table_metadata_manager),
-                    remote_data_folder: None,
+                    remote_data_folder: (None, None),
                     query_data_folder: local_delta_lake,
                 },
             ))
@@ -183,12 +183,17 @@ async fn parse_command_line_arguments(
             let (local_delta_lake, table_metadata_manager) =
                 create_local_data_lake(local_data_folder).await?;
 
+            let remote_table_metadata_manager = manager.table_metadata_manager.clone();
+
             Ok((
                 ServerMode::Cloud,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
                     local_data_folder: (local_delta_lake, table_metadata_manager),
-                    remote_data_folder: Some(remote_delta_lake.clone()),
+                    remote_data_folder: (
+                        Some(remote_delta_lake.clone()),
+                        remote_table_metadata_manager,
+                    ),
                     query_data_folder: remote_delta_lake,
                 },
             ))
@@ -202,12 +207,14 @@ async fn parse_command_line_arguments(
             let (local_delta_lake, table_metadata_manager) =
                 create_local_data_lake(local_data_folder).await?;
 
+            let remote_table_metadata_manager = manager.table_metadata_manager.clone();
+
             Ok((
                 ServerMode::Edge,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
                     local_data_folder: (local_delta_lake.clone(), table_metadata_manager),
-                    remote_data_folder: Some(remote_delta_lake),
+                    remote_data_folder: (Some(remote_delta_lake), remote_table_metadata_manager),
                     query_data_folder: local_delta_lake,
                 },
             ))

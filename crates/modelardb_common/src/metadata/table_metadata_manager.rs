@@ -488,20 +488,8 @@ impl TableMetadataManager {
             };
 
             // Save the tag hash in the metadata Delta Lake and in the cache.
-            // tag_column_indices are computed from the schema, so they can be used with input.
-            let tag_columns = model_table_metadata
-                .tag_column_indices
-                .iter()
-                .map(|index| model_table_metadata.schema.field(*index).name().clone())
-                .collect::<Vec<String>>();
-
             let tag_hash_is_saved = self
-                .save_tag_hash_metadata(
-                    &model_table_metadata.name,
-                    tag_hash,
-                    &tag_columns,
-                    tag_values,
-                )
+                .save_tag_hash_metadata(model_table_metadata, tag_hash, tag_values)
                 .await?;
 
             self.tag_value_hashes.insert(cache_key, tag_hash);
@@ -517,11 +505,17 @@ impl TableMetadataManager {
     /// `model_table_hash_table_name`, [`DeltaTableError`] is returned.
     pub async fn save_tag_hash_metadata(
         &self,
-        table_name: &str,
+        model_table_metadata: &ModelTableMetadata,
         tag_hash: u64,
-        tag_columns: &[String],
         tag_values: &[String],
     ) -> Result<bool, DeltaTableError> {
+        let table_name = model_table_metadata.name.as_str();
+        let tag_columns = &model_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| model_table_metadata.schema.field(*index).name().clone())
+            .collect::<Vec<String>>();
+
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
         // Save the tag hash metadata to the model_table_tags table if it does not already contain it.
@@ -1156,10 +1150,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert!(metadata_manager
-            .tag_hash_to_table_name(0)
-            .await
-            .is_err());
+        assert!(metadata_manager.tag_hash_to_table_name(0).await.is_err());
     }
 
     #[tokio::test]

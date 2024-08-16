@@ -102,6 +102,7 @@ impl StorageEngine {
         maybe_remote_data_folder: Option<Arc<DeltaLake>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         table_metadata_manager: Arc<TableMetadataManager>,
+        maybe_remote_table_metadata_manager: Option<Arc<TableMetadataManager>>,
     ) -> Result<Self, IOError> {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
@@ -125,6 +126,7 @@ impl StorageEngine {
             memory_pool.clone(),
             channels.clone(),
             table_metadata_manager.clone(),
+            maybe_remote_table_metadata_manager,
             configuration_manager.cluster_mode.clone(),
             used_multivariate_memory_metric.clone(),
             used_disk_space_metric.clone(),
