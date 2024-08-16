@@ -35,7 +35,6 @@ use crate::arguments::{
     decode_argument, extract_azure_blob_storage_arguments, extract_s3_arguments,
 };
 
-pub mod compressed_file;
 pub mod model_table_metadata;
 pub mod table_metadata_manager;
 

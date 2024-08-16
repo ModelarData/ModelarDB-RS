@@ -36,13 +36,11 @@ use datafusion::prelude::col;
 use deltalake_core::kernel::{DataType, StructField};
 use deltalake_core::DeltaTableError;
 use object_store::path::Path;
-use object_store::ObjectMeta;
 
-use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataDeltaLake;
 use crate::test::ERROR_BOUND_ZERO;
-use crate::types::{ErrorBound, Timestamp, Value};
+use crate::types::ErrorBound;
 use crate::{array, parser};
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
@@ -184,9 +182,8 @@ impl TableMetadataManager {
     }
 
     /// Save the created model table to the metadata Delta Lake. This includes creating a tags table
-    /// for the model table, creating a compressed files table for the model table, adding a row to
-    /// the `model_table_metadata` table, and adding a row to the `model_table_field_columns` table
-    /// for each field column.
+    /// for the model table, adding a row to the `model_table_metadata` table, and adding a row to
+    /// the `model_table_field_columns` table for each field column.
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
@@ -211,23 +208,6 @@ impl TableMetadataManager {
             .create_delta_lake_table(
                 format!("{}_tags", model_table_metadata.name).as_str(),
                 table_name_tags_columns,
-            )
-            .await?;
-
-        // Create a table_name_compressed_files table to save the metadata of the table's files.
-        self.metadata_delta_lake
-            .create_delta_lake_table(
-                format!("{}_compressed_files", model_table_metadata.name).as_str(),
-                vec![
-                    StructField::new("file_path", DataType::STRING, false),
-                    StructField::new("field_column", DataType::SHORT, false),
-                    StructField::new("size", DataType::LONG, false),
-                    StructField::new("created_at", DataType::LONG, false),
-                    StructField::new("start_time", DataType::LONG, false),
-                    StructField::new("end_time", DataType::LONG, false),
-                    StructField::new("min_value", DataType::FLOAT, false),
-                    StructField::new("max_value", DataType::FLOAT, false),
-                ],
             )
             .await?;
 
@@ -663,40 +643,6 @@ impl TableMetadataManager {
 
         Ok(hash_to_tags)
     }
-
-    // TODO: Remove placeholder method.
-    pub async fn save_compressed_file(
-        &self,
-        _model_table_name: &str,
-        _query_schema_index: usize,
-        _compressed_file: &CompressedFile,
-    ) -> Result<(), DeltaTableError> {
-        Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
-    }
-
-    // TODO: Remove placeholder method.
-    pub async fn replace_compressed_files(
-        &self,
-        _model_table_name: &str,
-        _query_schema_index: usize,
-        _compressed_files_to_delete: &[ObjectMeta],
-        _replacement_compressed_file: Option<&CompressedFile>,
-    ) -> Result<(), DeltaTableError> {
-        Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
-    }
-
-    // TODO: Remove placeholder method.
-    pub async fn compressed_files(
-        &self,
-        _model_table_name: &str,
-        _query_schema_index: usize,
-        _start_time: Option<Timestamp>,
-        _end_time: Option<Timestamp>,
-        _min_value: Option<Value>,
-        _max_value: Option<Value>,
-    ) -> Result<Vec<ObjectMeta>, DeltaTableError> {
-        Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
-    }
 }
 
 impl Debug for TableMetadataManager {
@@ -873,17 +819,6 @@ mod tests {
             .session
             .sql(&format!(
                 "SELECT hash, tag FROM {}_tags",
-                test::MODEL_TABLE_NAME
-            ))
-            .await
-            .is_ok());
-
-        assert!(metadata_manager
-            .metadata_delta_lake
-            .session
-            .sql(&format!(
-                "SELECT file_path, field_column, size, created_at, start_time, end_time, min_value,
-                 max_value FROM {}_compressed_files",
                 test::MODEL_TABLE_NAME
             ))
             .await
