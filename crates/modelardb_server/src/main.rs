@@ -19,6 +19,7 @@
 
 mod configuration;
 mod context;
+mod data_folders;
 mod manager;
 mod optimizer;
 mod query;
@@ -29,14 +30,11 @@ use std::env;
 use std::sync::{Arc, LazyLock};
 
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
-use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_common::storage::DeltaLake;
-use modelardb_common::types::ServerMode;
-use object_store::path::Path;
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::context::Context;
+use crate::data_folders::DataFolders;
 use crate::manager::Manager;
 
 #[global_allocator]
@@ -52,29 +50,6 @@ pub static PORT: LazyLock<u16> =
 pub enum ClusterMode {
     SingleNode,
     MultiNode(Manager),
-}
-
-impl ClusterMode {
-    /// Return the optional remote table metadata manager from the manager interface if the cluster
-    /// mode is `MultiNode`, otherwise return [`None`].
-    fn remote_table_metadata_manager(&self) -> &Option<Arc<TableMetadataManager>> {
-        match self {
-            ClusterMode::SingleNode => &None,
-            ClusterMode::MultiNode(manager) => &manager.table_metadata_manager,
-        }
-    }
-}
-
-/// Folders for storing metadata and Apache Parquet files.
-pub struct DataFolders {
-    /// Folder for storing metadata and Apache Parquet files on the local file system.
-    pub local_data_folder: (Arc<DeltaLake>, Arc<TableMetadataManager>),
-    /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: (Option<Arc<DeltaLake>>, Option<Arc<TableMetadataManager>>),
-    /// Folder from which Apache Parquet files will be read during query execution. It is equivalent
-    /// to `local_data_folder` when deployed on the edge and `remote_data_folder` when deployed
-    /// in the cloud.
-    pub query_data_folder: Arc<DeltaLake>,
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to extract [`DataFolders`],
@@ -152,100 +127,6 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command line arguments into a [`ServerMode`], a [`ClusterMode`] and an instance of
-/// [`DataFolders`]. If the necessary command line arguments are not provided, too many arguments
-/// are provided, or if the arguments are malformed, [`String`] is returned.
-async fn parse_command_line_arguments(
-    arguments: &[&str],
-) -> Result<(ServerMode, ClusterMode, DataFolders), String> {
-    // Match the provided command line arguments to the supported inputs.
-    match arguments {
-        &["edge", local_data_folder] | &[local_data_folder] => {
-            let (local_delta_lake, table_metadata_manager) =
-                create_local_data_lake(local_data_folder).await?;
-
-            Ok((
-                ServerMode::Edge,
-                ClusterMode::SingleNode,
-                DataFolders {
-                    local_data_folder: (local_delta_lake.clone(), table_metadata_manager),
-                    remote_data_folder: (None, None),
-                    query_data_folder: local_delta_lake,
-                },
-            ))
-        }
-        &["cloud", local_data_folder, manager_url] => {
-            let (manager, remote_delta_lake) =
-                Manager::register_node(manager_url, ServerMode::Cloud)
-                    .await
-                    .map_err(|error| error.to_string())?;
-
-            let (local_delta_lake, table_metadata_manager) =
-                create_local_data_lake(local_data_folder).await?;
-
-            let remote_table_metadata_manager = manager.table_metadata_manager.clone();
-
-            Ok((
-                ServerMode::Cloud,
-                ClusterMode::MultiNode(manager),
-                DataFolders {
-                    local_data_folder: (local_delta_lake, table_metadata_manager),
-                    remote_data_folder: (
-                        Some(remote_delta_lake.clone()),
-                        remote_table_metadata_manager,
-                    ),
-                    query_data_folder: remote_delta_lake,
-                },
-            ))
-        }
-        &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
-            let (manager, remote_delta_lake) =
-                Manager::register_node(manager_url, ServerMode::Edge)
-                    .await
-                    .map_err(|error| error.to_string())?;
-
-            let (local_delta_lake, table_metadata_manager) =
-                create_local_data_lake(local_data_folder).await?;
-
-            let remote_table_metadata_manager = manager.table_metadata_manager.clone();
-
-            Ok((
-                ServerMode::Edge,
-                ClusterMode::MultiNode(manager),
-                DataFolders {
-                    local_data_folder: (local_delta_lake.clone(), table_metadata_manager),
-                    remote_data_folder: (Some(remote_delta_lake), remote_table_metadata_manager),
-                    query_data_folder: local_delta_lake,
-                },
-            ))
-        }
-        _ => {
-            // The errors are consciously ignored as the program is terminating.
-            let binary_path = std::env::current_exe().unwrap();
-            let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-            Err(format!(
-                "Usage: {binary_name} [server_mode] local_data_folder [manager_url]."
-            ))
-        }
-    }
-}
-
-// TODO: Maybe replace this with a try_new on DataFolder struct.
-/// Return a [`DeltaLake`] and [`TableMetadataManager`] created from `local_data_folder` if it
-/// exists or a [`String`] if it does not exist.
-async fn create_local_data_lake(
-    local_data_folder: &str,
-) -> Result<(Arc<DeltaLake>, Arc<TableMetadataManager>), String> {
-    let delta_lake =
-        DeltaLake::try_from_local_path(local_data_folder).map_err(|error| error.to_string())?;
-
-    let table_metadata_manager = TableMetadataManager::try_from_path(Path::from(local_data_folder))
-        .await
-        .map_err(|error| error.to_string())?;
-
-    Ok((Arc::new(delta_lake), Arc::new(table_metadata_manager)))
-}
-
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for
 /// the storage engine, flushes the data the storage engine currently buffers, and terminates the
 /// system without releasing the lock.
@@ -261,50 +142,4 @@ fn setup_ctrl_c_handler(context: &Arc<Context>, runtime: &Arc<Runtime>) {
 
         std::process::exit(0)
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Tests for parse_command_line_arguments().
-    #[tokio::test]
-    async fn test_parse_empty_command_line_arguments() {
-        assert!(parse_command_line_arguments(&[]).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_manager() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert_single_edge_without_remote_data_folder(&["edge", temp_dir_str]).await;
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_server_mode_and_manager() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert_single_edge_without_remote_data_folder(&[temp_dir_str]).await;
-    }
-
-    async fn assert_single_edge_without_remote_data_folder(input: &[&str]) {
-        let (server_mode, cluster_mode, data_folders) =
-            parse_command_line_arguments(input).await.unwrap();
-
-        assert_eq!(server_mode, ServerMode::Edge);
-        assert_eq!(cluster_mode, ClusterMode::SingleNode);
-        assert!(data_folders.remote_data_folder.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_parse_incomplete_cloud_command_line_arguments() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert!(parse_command_line_arguments(&["cloud", temp_dir_str])
-            .await
-            .is_err())
-    }
 }
