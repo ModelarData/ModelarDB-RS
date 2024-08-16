@@ -17,16 +17,21 @@
 
 use std::sync::Arc;
 
+use deltalake_core::DeltaTableError;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
+use modelardb_common::types::ServerMode;
+use object_store::path::Path;
+
+use crate::ClusterMode;
 
 /// Folder for storing metadata and Apache Parquet files.
 #[derive(Clone)]
 struct DataFolder {
     /// Delta Lake for storing metadata and Apache Parquet files.
-    delta_lake: Arc<DeltaLake>,
+    pub delta_lake: Arc<DeltaLake>,
     /// Metadata manager for providing access to metadata related to tables
-    table_metadata_manager: Arc<TableMetadataManager>,
+    pub table_metadata_manager: Arc<TableMetadataManager>,
 }
 
 impl DataFolder {
@@ -39,14 +44,35 @@ impl DataFolder {
             table_metadata_manager,
         }
     }
+}
 
-    pub fn delta_lake(&self) -> Arc<DeltaLake> {
-        self.delta_lake.clone()
-    }
+/// Return a [`DataFolder`] created from `local_data_folder`. If the folder does not exist, it is
+/// created. If the folder does not exist and could not be created or if the metadata tables could
+/// not be created, [`DeltaTableError`] is returned.
+async fn create_local_data_folder(local_data_folder: &str) -> Result<DataFolder, DeltaTableError> {
+    let delta_lake = DeltaLake::try_from_local_path(local_data_folder)?;
 
-    pub fn table_metadata_manager(&self) -> Arc<TableMetadataManager> {
-        self.table_metadata_manager.clone()
-    }
+    let table_metadata_manager =
+        TableMetadataManager::try_from_path(Path::from(local_data_folder)).await?;
+
+    Ok(DataFolder::new(
+        Arc::new(delta_lake),
+        Arc::new(table_metadata_manager),
+    ))
+}
+
+/// Return a [`DataFolder`] created from `connection_info`. If the connection information could not
+/// be parsed or if the metadata tables could not be created, [`DeltaTableError`] is returned.
+async fn create_remote_data_folder(connection_info: &[u8]) -> Result<DataFolder, DeltaTableError> {
+    let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
+
+    let remote_table_metadata_manager =
+        TableMetadataManager::try_from_connection_info(connection_info).await?;
+
+    Ok(DataFolder::new(
+        Arc::new(remote_delta_lake),
+        Arc::new(remote_table_metadata_manager),
+    ))
 }
 
 /// Folders for storing metadata and Apache Parquet files locally and remotely.
@@ -60,3 +86,17 @@ pub struct DataFolders {
     /// in the cloud.
     pub query_data_folder: DataFolder,
 }
+
+impl DataFolders {
+    pub fn new(
+        local_data_folder: DataFolder,
+        remote_data_folder: Option<DataFolder>,
+        query_data_folder: DataFolder,
+    ) -> Self {
+        Self {
+            local_data_folder,
+            remote_data_folder,
+            query_data_folder,
+        }
+    }
+
