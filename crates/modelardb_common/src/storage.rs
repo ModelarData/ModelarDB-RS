@@ -16,6 +16,7 @@
 //! Utility functions to read and write Apache Parquet files to and from an object store.
 
 use std::collections::HashMap;
+use std::fs;
 use std::sync::Arc;
 
 use arrow::array::{Int64Array, RecordBatch, UInt64Array};
@@ -66,12 +67,16 @@ pub struct DeltaLake {
 }
 
 impl DeltaLake {
-    /// Create a new [`DeltaLake`] that manages the delta tables in `data_folder_path` if it exists.
-    /// Returns a [`DeltaTableError`] if `data_folder_path` is not accessible.
+    /// Create a new [`DeltaLake`] that manages the delta tables in `data_folder_path`. Returns a
+    /// [`DeltaTableError`] if `data_folder_path` does not exist and could not be created.
     pub fn try_from_local_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
+        // Ensure the directories in the path exists as LocalFileSystem otherwise returns an error.
+        fs::create_dir_all(data_folder_path)
+            .map_err(|error| DeltaTableError::generic(error.to_string()))?;
+
         let local_file_system = Arc::new(
             LocalFileSystem::new_with_prefix(data_folder_path)
-                .map_err(|error| DeltaTableError::ObjectStore { source: error })?,
+                .map_err(|error| DeltaTableError::generic(error.to_string()))?,
         );
 
         Ok(Self {
