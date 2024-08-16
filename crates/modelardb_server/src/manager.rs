@@ -23,8 +23,6 @@ use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
 use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
 use tokio::sync::RwLock;
 use tonic::metadata::MetadataMap;
@@ -42,32 +40,20 @@ pub struct Manager {
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
     key: String,
-    /// Metadata for the tables and model tables in the remote data folder. Note that only cloud
-    /// nodes have access to the remote data folder metadata.
-    pub(crate) table_metadata_manager: Option<Arc<TableMetadataManager>>,
 }
 
 impl Manager {
-    pub fn new(
-        flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
-        key: String,
-        table_metadata_manager: Option<Arc<TableMetadataManager>>,
-    ) -> Self {
-        Self {
-            flight_client,
-            key,
-            table_metadata_manager,
-        }
+    pub fn new(flight_client: Arc<RwLock<FlightServiceClient<Channel>>>, key: String) -> Self {
+        Self { flight_client, key }
     }
 
     /// Register the server as a node in the cluster and retrieve the key and connection information
-    /// from the manager. If the key and connection information could not be retrieved or a
-    /// connection to the metadata database or remote object store could not be established,
+    /// from the manager. If the key and connection information could not be retrieved,
     /// [`ModelarDbError`] is returned.
     pub(crate) async fn register_node(
         manager_url: &str,
         server_mode: ServerMode,
-    ) -> Result<(Self, Arc<DeltaLake>), ModelarDbError> {
+    ) -> Result<(Self, Vec<u8>), ModelarDbError> {
         let flight_client = Arc::new(RwLock::new(
             FlightServiceClient::connect(manager_url.to_owned())
                 .await
@@ -94,27 +80,10 @@ impl Manager {
         let (key, offset_data) = arguments::decode_argument(&message.body)
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        let remote_delta_lake = Arc::new(
-            DeltaLake::try_remote_from_connection_info(offset_data)
-                .await
-                .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?,
-        );
-
-        // Use the connection information to create a metadata manager for the remote object store
-        // if the node is a cloud node.
-        let maybe_table_metadata_manager = if server_mode == ServerMode::Cloud {
-            Some(Arc::new(
-                TableMetadataManager::try_from_connection_info(offset_data)
-                    .await
-                    .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?,
-            ))
-        } else {
-            None
-        };
-
-        let manager = Manager::new(flight_client, key.to_owned(), maybe_table_metadata_manager);
-
-        Ok((manager, remote_delta_lake))
+        Ok((
+            Manager::new(flight_client, key.to_owned()),
+            offset_data.into(),
+        ))
     }
 
     /// Initialize the local database schema with the tables and model tables from the managers
