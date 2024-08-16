@@ -23,6 +23,7 @@ use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
 use object_store::path::Path;
 
+use crate::manager::Manager;
 use crate::ClusterMode;
 
 /// Folder for storing metadata and Apache Parquet files.
@@ -100,3 +101,85 @@ impl DataFolders {
         }
     }
 
+    /// Parse the given command line arguments into a [`ServerMode`], a [`ClusterMode`] and an
+    /// instance of [`DataFolders`]. If the necessary command line arguments are not provided,
+    /// too many arguments are provided, or if the arguments are malformed, [`String`] is returned.
+    async fn try_from_command_line_arguments(
+        arguments: &[&str],
+    ) -> Result<(ServerMode, ClusterMode, Self), String> {
+        // Match the provided command line arguments to the supported inputs.
+        match arguments {
+            &["edge", local_data_folder] | &[local_data_folder] => {
+                let local_data_folder = create_local_data_folder(local_data_folder)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                Ok((
+                    ServerMode::Edge,
+                    ClusterMode::SingleNode,
+                    DataFolders {
+                        local_data_folder: local_data_folder.clone(),
+                        remote_data_folder: None,
+                        query_data_folder: local_data_folder,
+                    },
+                ))
+            }
+            &["cloud", local_data_folder, manager_url] => {
+                let (manager, connection_info) =
+                    Manager::register_node(manager_url, ServerMode::Cloud)
+                        .await
+                        .map_err(|error| error.to_string())?;
+
+                let local_data_folder = create_local_data_folder(local_data_folder)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                let remote_data_folder = create_remote_data_folder(&connection_info)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                Ok((
+                    ServerMode::Cloud,
+                    ClusterMode::MultiNode(manager),
+                    DataFolders {
+                        local_data_folder,
+                        remote_data_folder: Some(remote_data_folder.clone()),
+                        query_data_folder: remote_data_folder,
+                    },
+                ))
+            }
+            &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
+                let (manager, connection_info) =
+                    Manager::register_node(manager_url, ServerMode::Edge)
+                        .await
+                        .map_err(|error| error.to_string())?;
+
+                let local_data_folder = create_local_data_folder(local_data_folder)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                let remote_data_folder = create_remote_data_folder(&connection_info)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                Ok((
+                    ServerMode::Edge,
+                    ClusterMode::MultiNode(manager),
+                    DataFolders {
+                        local_data_folder: local_data_folder.clone(),
+                        remote_data_folder: Some(remote_data_folder),
+                        query_data_folder: local_data_folder,
+                    },
+                ))
+            }
+            _ => {
+                // The errors are consciously ignored as the program is terminating.
+                let binary_path = std::env::current_exe().unwrap();
+                let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+                Err(format!(
+                    "Usage: {binary_name} [server_mode] local_data_folder [manager_url]."
+                ))
+            }
+        }
+    }
+}
