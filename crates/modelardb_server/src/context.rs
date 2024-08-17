@@ -24,7 +24,6 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::SessionContext;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
@@ -42,8 +41,6 @@ use crate::{optimizer, ClusterMode, DataFolders};
 pub struct Context {
     /// Location of local and remote data.
     pub data_folders: DataFolders,
-    /// Metadata for the tables and model tables in the data folder.
-    pub table_metadata_manager: Arc<TableMetadataManager>,
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Main interface for Apache DataFusion.
@@ -69,24 +66,16 @@ impl Context {
         let session = Self::create_session_context();
 
         let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(
-                runtime,
-                data_folders.local_data_folder.0.clone(),
-                data_folders.remote_data_folder.0.clone(),
-                &configuration_manager,
-                data_folders.local_data_folder.1.clone(),
-                data_folders.remote_data_folder.1.clone(),
-            )
-            .await
-            .map_err(|error| {
-                ModelarDbError::ConfigurationError(format!(
-                    "Unable to create a StorageEngine: {error}"
-                ))
-            })?,
+            StorageEngine::try_new(runtime, data_folders.clone(), &configuration_manager)
+                .await
+                .map_err(|error| {
+                    ModelarDbError::ConfigurationError(format!(
+                        "Unable to create a StorageEngine: {error}"
+                    ))
+                })?,
         ));
 
         Ok(Context {
-            table_metadata_manager: data_folders.local_data_folder.1.clone(),
             data_folders,
             configuration_manager,
             session,
@@ -161,7 +150,7 @@ impl Context {
         let delta_table = self
             .data_folders
             .local_data_folder
-            .0
+            .delta_lake
             .create_delta_lake_table(table_name, &schema)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
@@ -174,7 +163,9 @@ impl Context {
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Persist the new table to the metadata database.
-        self.table_metadata_manager
+        self.data_folders
+            .local_data_folder
+            .table_metadata_manager
             .save_table_metadata(table_name, sql)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
@@ -197,7 +188,7 @@ impl Context {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
-            .0
+            .delta_lake
             .create_delta_lake_model_table(&model_table_metadata.name)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
@@ -213,7 +204,9 @@ impl Context {
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Persist the new model table to the metadata database.
-        self.table_metadata_manager
+        self.data_folders
+            .local_data_folder
+            .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
@@ -230,6 +223,8 @@ impl Context {
     /// [`ModelarDbError`].
     pub async fn register_tables(&self, context: &Arc<Context>) -> Result<(), ModelarDbError> {
         let table_names = self
+            .data_folders
+            .local_data_folder
             .table_metadata_manager
             .table_names()
             .await
@@ -240,7 +235,7 @@ impl Context {
             let delta_table = self
                 .data_folders
                 .local_data_folder
-                .0
+                .delta_lake
                 .delta_table(&table_name)
                 .await
                 .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
@@ -268,6 +263,8 @@ impl Context {
         context: &Arc<Context>,
     ) -> Result<(), ModelarDbError> {
         let model_table_metadata = self
+            .data_folders
+            .local_data_folder
             .table_metadata_manager
             .model_table_metadata()
             .await

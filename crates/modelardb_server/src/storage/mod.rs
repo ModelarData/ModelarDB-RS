@@ -38,7 +38,6 @@ use datafusion::parquet::errors::ParquetError;
 use deltalake_core::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::TimestampArray;
 use tokio::runtime::Runtime;
@@ -48,6 +47,7 @@ use tracing::error;
 
 use crate::configuration::ConfigurationManager;
 use crate::context::Context;
+use crate::data_folders::DataFolders;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
@@ -98,11 +98,8 @@ impl StorageEngine {
     /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
     pub(super) async fn try_new(
         runtime: Arc<Runtime>,
-        local_data_folder: Arc<DeltaLake>,
-        maybe_remote_data_folder: Option<Arc<DeltaLake>>,
+        data_folders: DataFolders,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
-        table_metadata_manager: Arc<TableMetadataManager>,
-        maybe_remote_table_metadata_manager: Option<Arc<TableMetadataManager>>,
     ) -> Result<Self, IOError> {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
@@ -122,11 +119,9 @@ impl StorageEngine {
 
         // Create the uncompressed data manager.
         let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
-            local_data_folder.clone(),
+            data_folders.clone(),
             memory_pool.clone(),
             channels.clone(),
-            table_metadata_manager.clone(),
-            maybe_remote_table_metadata_manager,
             used_multivariate_memory_metric.clone(),
             used_disk_space_metric.clone(),
         ));
@@ -170,16 +165,18 @@ impl StorageEngine {
         // Create the compressed data manager.
         let data_transfer = if let (ClusterMode::MultiNode(_manager), Some(remote_data_folder)) = (
             &configuration_manager.cluster_mode,
-            maybe_remote_data_folder,
+            data_folders.remote_data_folder,
         ) {
-            let table_names = table_metadata_manager
+            let table_names = data_folders
+                .local_data_folder
+                .table_metadata_manager
                 .table_names()
                 .await
                 .map_err(IOError::other)?;
 
             let data_transfer = DataTransfer::try_new(
-                local_data_folder.clone(),
-                remote_data_folder,
+                data_folders.local_data_folder.delta_lake.clone(),
+                remote_data_folder.delta_lake,
                 table_names,
                 configuration_manager.transfer_batch_size_in_bytes(),
                 used_disk_space_metric.clone(),
@@ -195,7 +192,7 @@ impl StorageEngine {
         let data_transfer_is_some = data_transfer.is_some();
         let compressed_data_manager = Arc::new(CompressedDataManager::new(
             Arc::new(RwLock::new(data_transfer)),
-            local_data_folder,
+            data_folders.local_data_folder.delta_lake,
             channels.clone(),
             memory_pool.clone(),
             used_disk_space_metric,

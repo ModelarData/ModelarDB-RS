@@ -28,7 +28,7 @@ use crate::ClusterMode;
 
 /// Folder for storing metadata and Apache Parquet files.
 #[derive(Clone)]
-struct DataFolder {
+pub struct DataFolder {
     /// Delta Lake for storing metadata and Apache Parquet files.
     pub delta_lake: Arc<DeltaLake>,
     /// Metadata manager for providing access to metadata related to tables.
@@ -77,6 +77,7 @@ async fn create_remote_data_folder(connection_info: &[u8]) -> Result<DataFolder,
 }
 
 /// Folders for storing metadata and Apache Parquet files locally and remotely.
+#[derive(Clone)]
 pub struct DataFolders {
     /// Folder for storing metadata and Apache Parquet files on the local file system.
     pub local_data_folder: DataFolder,
@@ -117,11 +118,7 @@ impl DataFolders {
                 Ok((
                     ServerMode::Edge,
                     ClusterMode::SingleNode,
-                    DataFolders {
-                        local_data_folder: local_data_folder.clone(),
-                        remote_data_folder: None,
-                        query_data_folder: local_data_folder,
-                    },
+                    DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ))
             }
             &["cloud", local_data_folder, manager_url] => {
@@ -141,11 +138,11 @@ impl DataFolders {
                 Ok((
                     ServerMode::Cloud,
                     ClusterMode::MultiNode(manager),
-                    DataFolders {
+                    DataFolders::new(
                         local_data_folder,
-                        remote_data_folder: Some(remote_data_folder.clone()),
-                        query_data_folder: remote_data_folder,
-                    },
+                        Some(remote_data_folder.clone()),
+                        remote_data_folder,
+                    ),
                 ))
             }
             &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
@@ -165,11 +162,11 @@ impl DataFolders {
                 Ok((
                     ServerMode::Edge,
                     ClusterMode::MultiNode(manager),
-                    DataFolders {
-                        local_data_folder: local_data_folder.clone(),
-                        remote_data_folder: Some(remote_data_folder),
-                        query_data_folder: local_data_folder,
-                    },
+                    DataFolders::new(
+                        local_data_folder.clone(),
+                        Some(remote_data_folder),
+                        local_data_folder,
+                    ),
                 ))
             }
             _ => {
