@@ -31,6 +31,7 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
 
+use crate::data_folders::DataFolder;
 use crate::storage::Metric;
 
 // TODO: Handle the case where a connection can not be established when transferring data.
@@ -38,11 +39,11 @@ use crate::storage::Metric;
 //       transferring the same data multiple times.
 
 pub struct DataTransfer {
-    /// The Delta Lake containing all compressed data managed by the
+    /// The data folder containing all compressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    local_data_folder: Arc<DeltaLake>,
-    /// The Delta Lake that the data should be transferred to.
-    remote_data_folder: Arc<DeltaLake>,
+    local_data_folder: DataFolder,
+    /// The data folder that the data should be transferred to.
+    remote_data_folder: DataFolder,
     /// Map from table names to the current size of the table in bytes.
     table_size_in_bytes: DashMap<String, usize>,
     /// The number of bytes that are required before transferring a batch of data to the remote
@@ -58,10 +59,10 @@ pub struct DataTransfer {
 impl DataTransfer {
     /// Create a new data transfer instance and initialize it with the data already in
     /// `local_data_folder_path`. If `local_data_folder_path` or a path within
-    /// `local_data_folder_path` could not be read, return [`DeltaLake`].
+    /// `local_data_folder_path` could not be read, return [`DeltaTableError`].
     pub async fn try_new(
-        local_data_folder: Arc<DeltaLake>,
-        remote_data_folder: Arc<DeltaLake>,
+        local_data_folder: DataFolder,
+        remote_data_folder: DataFolder,
         table_names: Vec<String>,
         transfer_batch_size_in_bytes: Option<usize>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
@@ -69,7 +70,11 @@ impl DataTransfer {
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
         for table_name in table_names {
-            let delta_table = local_data_folder.delta_table(&table_name).await?;
+            let delta_table = local_data_folder
+                .delta_lake
+                .delta_table(&table_name)
+                .await?;
+
             let mut table_size_in_bytes = table_size_in_bytes.entry(table_name).or_insert(0);
 
             let object_store = delta_table.object_store();
@@ -143,7 +148,7 @@ impl DataTransfer {
 
     /// Update the remote data folder, used to transfer data to.
     pub(super) async fn update_remote_data_folder(&mut self, remote_data_folder: Arc<DeltaLake>) {
-        self.remote_data_folder = remote_data_folder;
+        self.remote_data_folder.delta_lake = remote_data_folder;
     }
 
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
@@ -230,7 +235,11 @@ impl DataTransfer {
         // All compressed segments will be transferred so the current size in bytes is also the
         // amount of data that will be transferred. unwrap() is safe as the table contains data.
         let current_size_in_bytes = *self.table_size_in_bytes.get(table_name).unwrap().value();
-        let local_delta_ops = self.local_data_folder.delta_ops(table_name).await?;
+        let local_delta_ops = self
+            .local_data_folder
+            .delta_lake
+            .delta_ops(table_name)
+            .await?;
 
         // Read the data that is currently stored for the table with table_name.
         let (table, stream) = local_delta_ops.load().await?;
@@ -243,6 +252,7 @@ impl DataTransfer {
 
         // Write the data to the remote Delta Lake and commit it.
         self.remote_data_folder
+            .delta_lake
             .write_compressed_segments_to_model_table(table_name, compressed_segments)
             .await?;
 
@@ -269,10 +279,8 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
-    use modelardb_common::metadata;
     use modelardb_common::metadata::TableMetadataManager;
     use modelardb_common::test;
-    use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
     use sqlx::Sqlite;
     use tempfile::{self, TempDir};

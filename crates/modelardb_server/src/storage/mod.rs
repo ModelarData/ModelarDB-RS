@@ -53,7 +53,6 @@ use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
 use crate::storage::uncompressed_data_buffer::IngestedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::ClusterMode;
 
 /// The folder storing spilled uncompressed data buffers in the local data folder.
 const UNCOMPRESSED_DATA_FOLDER: &str = "buffers";
@@ -119,7 +118,8 @@ impl StorageEngine {
 
         // Create the uncompressed data manager.
         let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
-            data_folders.clone(),
+            data_folders.local_data_folder.clone(),
+            data_folders.remote_data_folder.clone(),
             memory_pool.clone(),
             channels.clone(),
             used_multivariate_memory_metric.clone(),
@@ -163,10 +163,7 @@ impl StorageEngine {
         }
 
         // Create the compressed data manager.
-        let data_transfer = if let (ClusterMode::MultiNode(_manager), Some(remote_data_folder)) = (
-            &configuration_manager.cluster_mode,
-            data_folders.remote_data_folder,
-        ) {
+        let data_transfer = if let Some(remote_data_folder) = data_folders.remote_data_folder {
             let table_names = data_folders
                 .local_data_folder
                 .table_metadata_manager
@@ -175,8 +172,8 @@ impl StorageEngine {
                 .map_err(IOError::other)?;
 
             let data_transfer = DataTransfer::try_new(
-                data_folders.local_data_folder.delta_lake.clone(),
-                remote_data_folder.delta_lake,
+                data_folders.local_data_folder.clone(),
+                remote_data_folder,
                 table_names,
                 configuration_manager.transfer_batch_size_in_bytes(),
                 used_disk_space_metric.clone(),
@@ -192,7 +189,7 @@ impl StorageEngine {
         let data_transfer_is_some = data_transfer.is_some();
         let compressed_data_manager = Arc::new(CompressedDataManager::new(
             Arc::new(RwLock::new(data_transfer)),
-            data_folders.local_data_folder.delta_lake,
+            data_folders.local_data_folder,
             channels.clone(),
             memory_pool.clone(),
             used_disk_space_metric,

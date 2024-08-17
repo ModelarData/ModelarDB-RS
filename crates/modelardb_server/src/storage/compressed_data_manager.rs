@@ -23,11 +23,11 @@ use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
 use deltalake_core::DeltaTableError;
-use modelardb_common::storage::DeltaLake;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
+use crate::data_folders::DataFolder;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
@@ -39,9 +39,8 @@ use crate::storage::Metric;
 pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
-    /// Path to the folder containing all compressed data managed by the
-    /// [`StorageEngine`](crate::storage::StorageEngine).
-    pub(crate) local_data_folder: Arc<DeltaLake>,
+    /// Folder containing all compressed data managed by the [`StorageEngine`](crate::storage::StorageEngine).
+    pub(crate) local_data_folder: DataFolder,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the model table the compressed segments represents data points for so the Apache Parquet
     /// files can be partitioned by table.
@@ -63,7 +62,7 @@ pub(super) struct CompressedDataManager {
 impl CompressedDataManager {
     pub(super) fn new(
         data_transfer: Arc<RwLock<Option<DataTransfer>>>,
-        local_data_folder: Arc<DeltaLake>,
+        local_data_folder: DataFolder,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
@@ -98,6 +97,7 @@ impl CompressedDataManager {
         let record_batch_size_in_bytes = record_batch.get_array_memory_size();
 
         self.local_data_folder
+            .delta_lake
             .write_record_batch_to_table(table_name, record_batch)
             .await?;
 
@@ -272,6 +272,7 @@ impl CompressedDataManager {
         let compressed_data_buffer_size_in_bytes = compressed_data_buffer.size_in_bytes;
         let compressed_segments = compressed_data_buffer.record_batches();
         self.local_data_folder
+            .delta_lake
             .write_compressed_segments_to_model_table(table_name, compressed_segments)
             .await
             .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
@@ -331,7 +332,6 @@ mod tests {
 
     use datafusion::arrow::array::{Array, Int8Array};
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
-    use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};

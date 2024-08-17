@@ -34,7 +34,7 @@ use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
 
 use crate::context::Context;
-use crate::data_folders::DataFolders;
+use crate::data_folders::DataFolder;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::types::Channels;
 use crate::storage::types::MemoryPool;
@@ -48,8 +48,10 @@ use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When an uncompressed data buffer is finished the data is made available for compression.
 pub(super) struct UncompressedDataManager {
-    /// Location of local and remote data.
-    pub data_folders: DataFolders,
+    /// Folder for storing metadata and Apache Parquet files on the local file system.
+    pub local_data_folder: DataFolder,
+    /// Folder for storing Apache Parquet files in a remote object store.
+    pub remote_data_folder: Option<DataFolder>,
     /// Counter incremented for each [`RecordBatch`] of data points ingested. The value is assigned
     /// to buffers that are created or updated and is used to flush buffers that are no longer used.
     current_batch_index: AtomicU64,
@@ -79,14 +81,16 @@ pub(super) struct UncompressedDataManager {
 
 impl UncompressedDataManager {
     pub(super) fn new(
-        data_folders: DataFolders,
+        local_data_folder: DataFolder,
+        remote_data_folder: Option<DataFolder>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
         used_ingested_memory_metric: Arc<Mutex<Metric>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Self {
         Self {
-            data_folders,
+            local_data_folder,
+            remote_data_folder,
             current_batch_index: AtomicU64::new(0),
             uncompressed_in_memory_data_buffers: DashMap::new(),
             uncompressed_on_disk_data_buffers: DashMap::new(),
@@ -103,11 +107,7 @@ impl UncompressedDataManager {
     /// to [`UncompressedDataManager`] which immediately will start compressing them.
     pub(super) async fn initialize(&self, context: &Context) -> Result<(), IOError> {
         let mut initial_disk_space = 0;
-        let local_data_folder = self
-            .data_folders
-            .local_data_folder
-            .delta_lake
-            .object_store();
+        let local_data_folder = self.local_data_folder.delta_lake.object_store();
 
         let mut spilled_buffers =
             local_data_folder.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)));
@@ -123,7 +123,6 @@ impl UncompressedDataManager {
 
             // unwrap() is safe as tag_hash can only exist if it is in the metadata database.
             let table_name = self
-                .data_folders
                 .local_data_folder
                 .table_metadata_manager
                 .tag_hash_to_table_name(tag_hash)
@@ -262,7 +261,6 @@ impl UncompressedDataManager {
                 .collect();
 
             let (tag_hash, tag_hash_is_saved) = self
-                .data_folders
                 .local_data_folder
                 .table_metadata_manager
                 .lookup_or_compute_tag_hash(&model_table_metadata, &tag_values)
@@ -272,7 +270,7 @@ impl UncompressedDataManager {
             // If the server was started with a manager, transfer the tag hash metadata if it was
             // saved to the server metadata Delta Lake. We purposely transfer tag metadata before the
             // associated files for convenience. This does not cause problems when querying.
-            if let Some(remote_data_folder) = &self.data_folders.remote_data_folder {
+            if let Some(remote_data_folder) = &self.remote_data_folder {
                 if tag_hash_is_saved {
                     remote_data_folder
                         .table_metadata_manager
@@ -511,12 +509,7 @@ impl UncompressedDataManager {
             .1;
 
         let maybe_uncompressed_on_disk_data_buffer = uncompressed_in_memory_data_buffer
-            .spill_to_apache_parquet(
-                self.data_folders
-                    .local_data_folder
-                    .delta_lake
-                    .object_store(),
-            )
+            .spill_to_apache_parquet(self.local_data_folder.delta_lake.object_store())
             .await;
 
         // If an error occurs the in-memory buffer must be re-added to the map before returning.
