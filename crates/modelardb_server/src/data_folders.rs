@@ -108,7 +108,7 @@ impl DataFolders {
                 Ok((
                     ServerMode::Edge,
                     ClusterMode::SingleNode,
-                    DataFolders::new(local_data_folder.clone(), None, local_data_folder),
+                    Self::new(local_data_folder.clone(), None, local_data_folder),
                 ))
             }
             &["cloud", local_data_folder, manager_url] => {
@@ -128,7 +128,7 @@ impl DataFolders {
                 Ok((
                     ServerMode::Cloud,
                     ClusterMode::MultiNode(manager),
-                    DataFolders::new(
+                    Self::new(
                         local_data_folder,
                         Some(remote_data_folder.clone()),
                         remote_data_folder,
@@ -152,7 +152,7 @@ impl DataFolders {
                 Ok((
                     ServerMode::Edge,
                     ClusterMode::MultiNode(manager),
-                    DataFolders::new(
+                    Self::new(
                         local_data_folder.clone(),
                         Some(remote_data_folder),
                         local_data_folder,

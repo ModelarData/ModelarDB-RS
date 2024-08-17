@@ -64,6 +64,39 @@ impl RemoteDataFolder {
             metadata_manager,
         }
     }
+
+    /// Parse the command line arguments into a [`RemoteDataFolder`]. If the necessary command line
+    /// arguments are not provided, too many arguments are provided, or if the arguments are malformed,
+    /// [`String`] is returned.
+    async fn try_from_command_line_arguments(arguments: &[&str]) -> Result<Self, String> {
+        match arguments {
+            &[remote_data_folder] => {
+                let connection_info = argument_to_connection_info(remote_data_folder)?;
+
+                let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                let metadata_manager = MetadataManager::try_from_connection_info(&connection_info)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                Ok(Self::new(
+                    connection_info,
+                    Arc::new(delta_lake),
+                    Arc::new(metadata_manager),
+                ))
+            }
+            _ => {
+                // The errors are consciously ignored as the program is terminating.
+                let binary_path = std::env::current_exe().unwrap();
+                let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+                Err(format!(
+                    "Usage: {binary_name} metadata_database remote_data_folder."
+                ))
+            }
+        }
+    }
 }
 
 /// Provides access to the managers components.
@@ -94,7 +127,8 @@ fn main() -> Result<(), String> {
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
     let context = runtime.block_on(async {
-        let remote_data_folder = parse_command_line_arguments(&arguments).await?;
+        let remote_data_folder =
+            RemoteDataFolder::try_from_command_line_arguments(&arguments).await?;
         validate_remote_data_folder(&remote_data_folder.delta_lake).await?;
 
         let nodes = remote_data_folder
@@ -132,37 +166,4 @@ fn main() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     Ok(())
-}
-
-/// Parse the command line arguments into a [`RemoteDataFolder`]. If the necessary command line
-/// arguments are not provided, too many arguments are provided, or if the arguments are malformed,
-/// [`String`] is returned.
-async fn parse_command_line_arguments(arguments: &[&str]) -> Result<RemoteDataFolder, String> {
-    match arguments {
-        &[remote_data_folder] => {
-            let connection_info = argument_to_connection_info(remote_data_folder)?;
-
-            let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info)
-                .await
-                .map_err(|error| error.to_string())?;
-
-            let metadata_manager = MetadataManager::try_from_connection_info(&connection_info)
-                .await
-                .map_err(|error| error.to_string())?;
-
-            Ok(RemoteDataFolder::new(
-                connection_info,
-                Arc::new(delta_lake),
-                Arc::new(metadata_manager),
-            ))
-        }
-        _ => {
-            // The errors are consciously ignored as the program is terminating.
-            let binary_path = std::env::current_exe().unwrap();
-            let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-            Err(format!(
-                "Usage: {binary_name} metadata_database remote_data_folder."
-            ))
-        }
-    }
 }
