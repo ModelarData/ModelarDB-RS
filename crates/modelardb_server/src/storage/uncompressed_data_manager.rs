@@ -51,7 +51,7 @@ pub(super) struct UncompressedDataManager {
     /// Folder for storing metadata and Apache Parquet files on the local file system.
     pub local_data_folder: DataFolder,
     /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: Option<DataFolder>,
+    pub maybe_remote_data_folder: Option<DataFolder>,
     /// Counter incremented for each [`RecordBatch`] of data points ingested. The value is assigned
     /// to buffers that are created or updated and is used to flush buffers that are no longer used.
     current_batch_index: AtomicU64,
@@ -82,7 +82,7 @@ pub(super) struct UncompressedDataManager {
 impl UncompressedDataManager {
     pub(super) fn new(
         local_data_folder: DataFolder,
-        remote_data_folder: Option<DataFolder>,
+        maybe_remote_data_folder: Option<DataFolder>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
         used_ingested_memory_metric: Arc<Mutex<Metric>>,
@@ -90,7 +90,7 @@ impl UncompressedDataManager {
     ) -> Self {
         Self {
             local_data_folder,
-            remote_data_folder,
+            maybe_remote_data_folder,
             current_batch_index: AtomicU64::new(0),
             uncompressed_in_memory_data_buffers: DashMap::new(),
             uncompressed_on_disk_data_buffers: DashMap::new(),
@@ -270,7 +270,7 @@ impl UncompressedDataManager {
             // If the server was started with a manager, transfer the tag hash metadata if it was
             // saved to the server metadata Delta Lake. We purposely transfer tag metadata before the
             // associated files for convenience. This does not cause problems when querying.
-            if let Some(remote_data_folder) = &self.remote_data_folder {
+            if let Some(remote_data_folder) = &self.maybe_remote_data_folder {
                 if tag_hash_is_saved {
                     remote_data_folder
                         .table_metadata_manager
@@ -840,7 +840,7 @@ mod tests {
                 Arc::new(Runtime::new().unwrap()),
                 DataFolders {
                     local_data_folder: (local_data_folder.clone(), table_metadata_manager),
-                    remote_data_folder: None,
+                    maybe_remote_data_folder: None,
                     query_data_folder: local_data_folder,
                 },
                 ClusterMode::SingleNode,

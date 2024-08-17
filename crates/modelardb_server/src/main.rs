@@ -75,7 +75,7 @@ fn main() -> Result<(), String> {
         runtime.block_on(DataFolders::try_from_command_line_arguments(&arguments))?;
 
     // If a remote data folder was provided, check that it can be accessed.
-    if let Some(remote_data_folder) = &data_folders.remote_data_folder {
+    if let Some(remote_data_folder) = &data_folders.maybe_remote_data_folder {
         runtime.block_on(validate_remote_data_folder(&remote_data_folder.delta_lake))?;
     }
 

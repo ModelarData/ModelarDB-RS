@@ -82,7 +82,7 @@ pub struct DataFolders {
     /// Folder for storing metadata and Apache Parquet files on the local file system.
     pub local_data_folder: DataFolder,
     /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: Option<DataFolder>,
+    pub maybe_remote_data_folder: Option<DataFolder>,
     /// Folder from which Apache Parquet files will be read during query execution. It is equivalent
     /// to `local_data_folder` when deployed on the edge and `remote_data_folder` when deployed
     /// in the cloud.
@@ -92,12 +92,12 @@ pub struct DataFolders {
 impl DataFolders {
     pub fn new(
         local_data_folder: DataFolder,
-        remote_data_folder: Option<DataFolder>,
+        maybe_remote_data_folder: Option<DataFolder>,
         query_data_folder: DataFolder,
     ) -> Self {
         Self {
             local_data_folder,
-            remote_data_folder,
+            maybe_remote_data_folder,
             query_data_folder,
         }
     }
@@ -217,7 +217,7 @@ mod tests {
 
         assert_eq!(server_mode, ServerMode::Edge);
         assert_eq!(cluster_mode, ClusterMode::SingleNode);
-        assert!(data_folders.remote_data_folder.is_none());
+        assert!(data_folders.maybe_remote_data_folder.is_none());
     }
 
     #[tokio::test]

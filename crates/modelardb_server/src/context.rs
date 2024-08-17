@@ -633,7 +633,7 @@ mod tests {
                 Arc::new(Runtime::new().unwrap()),
                 &(DataFolders {
                     local_data_folder: (local_data_folder.clone(), table_metadata_manager),
-                    remote_data_folder: None,
+                    maybe_remote_data_folder: None,
                     query_data_folder: local_data_folder,
                 }),
                 ClusterMode::SingleNode,

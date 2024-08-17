@@ -118,7 +118,7 @@ impl StorageEngine {
         // Create the uncompressed data manager.
         let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
             data_folders.local_data_folder.clone(),
-            data_folders.remote_data_folder.clone(),
+            data_folders.maybe_remote_data_folder.clone(),
             memory_pool.clone(),
             channels.clone(),
             used_multivariate_memory_metric.clone(),
@@ -162,7 +162,7 @@ impl StorageEngine {
         }
 
         // Create the compressed data manager.
-        let data_transfer = if let Some(remote_data_folder) = data_folders.remote_data_folder {
+        let data_transfer = if let Some(remote_data_folder) = data_folders.maybe_remote_data_folder {
             let table_names = data_folders
                 .local_data_folder
                 .table_metadata_manager
