@@ -140,12 +140,11 @@ fn main() -> Result<(), String> {
 async fn parse_command_line_arguments(arguments: &[&str]) -> Result<RemoteDataFolder, String> {
     match arguments {
         &[remote_data_folder] => {
-            let delta_lake =
-                DeltaLake::try_remote_from_connection_info(remote_data_folder.as_bytes())
-                    .await
-                    .map_err(|error| error.to_string())?;
-
             let connection_info = argument_to_connection_info(remote_data_folder)?;
+
+            let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info)
+                .await
+                .map_err(|error| error.to_string())?;
 
             let metadata_manager = MetadataManager::try_from_connection_info(&connection_info)
                 .await
