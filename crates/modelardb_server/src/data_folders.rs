@@ -64,7 +64,7 @@ async fn create_local_data_folder(local_data_folder: &str) -> Result<DataFolder,
 
 /// Return a [`DataFolder`] created from `connection_info`. If the connection information could not
 /// be parsed or if the metadata tables could not be created, [`DeltaTableError`] is returned.
-async fn create_remote_data_folder(connection_info: &[u8]) -> Result<DataFolder, DeltaTableError> {
+pub async fn create_remote_data_folder(connection_info: &[u8]) -> Result<DataFolder, DeltaTableError> {
     let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
 
     let remote_table_metadata_manager =

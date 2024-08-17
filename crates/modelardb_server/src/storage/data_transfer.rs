@@ -26,7 +26,6 @@ use datafusion::parquet::errors::ParquetError;
 use deltalake_core::arrow::array::RecordBatch;
 use deltalake_core::{DeltaOps, DeltaTableError};
 use futures::TryStreamExt;
-use modelardb_common::storage::DeltaLake;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
@@ -147,8 +146,8 @@ impl DataTransfer {
     }
 
     /// Update the remote data folder, used to transfer data to.
-    pub(super) async fn update_remote_data_folder(&mut self, remote_data_folder: Arc<DeltaLake>) {
-        self.remote_data_folder.delta_lake = remote_data_folder;
+    pub(super) async fn update_remote_data_folder(&mut self, remote_data_folder: DataFolder) {
+        self.remote_data_folder = remote_data_folder;
     }
 
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved

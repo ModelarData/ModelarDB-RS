@@ -38,7 +38,6 @@ use datafusion::parquet::errors::ParquetError;
 use deltalake_core::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::TimestampArray;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -47,7 +46,7 @@ use tracing::error;
 
 use crate::configuration::ConfigurationManager;
 use crate::context::Context;
-use crate::data_folders::DataFolders;
+use crate::data_folders::{DataFolder, DataFolders};
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
@@ -407,7 +406,7 @@ impl StorageEngine {
     /// a data transfer component does not exist, return [`ModelarDbError].
     pub(super) async fn update_remote_data_folder(
         &mut self,
-        remote_data_folder: Arc<DeltaLake>,
+        remote_data_folder: DataFolder,
     ) -> Result<(), ModelarDbError> {
         let maybe_data_transfer = &mut *self.compressed_data_manager.data_transfer.write().await;
 
