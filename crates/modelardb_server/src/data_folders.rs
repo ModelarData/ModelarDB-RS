@@ -36,16 +36,6 @@ pub struct DataFolder {
 }
 
 impl DataFolder {
-    pub fn new(
-        delta_lake: Arc<DeltaLake>,
-        table_metadata_manager: Arc<TableMetadataManager>,
-    ) -> Self {
-        Self {
-            delta_lake,
-            table_metadata_manager,
-        }
-    }
-
     /// Return a [`DataFolder`] created from `data_folder_path`. If the folder does not exist, it is
     /// created. If the folder does not exist and could not be created or if the metadata tables could
     /// not be created, [`DeltaTableError`] is returned.
@@ -55,10 +45,10 @@ impl DataFolder {
         let table_metadata_manager =
             TableMetadataManager::try_from_path(Path::from(data_folder_path)).await?;
 
-        Ok(DataFolder::new(
-            Arc::new(delta_lake),
-            Arc::new(table_metadata_manager),
-        ))
+        Ok(Self {
+            delta_lake: Arc::new(delta_lake),
+            table_metadata_manager: Arc::new(table_metadata_manager),
+        })
     }
 
     /// Return a [`DataFolder`] created from `connection_info`. If the connection information could not
@@ -69,10 +59,10 @@ impl DataFolder {
         let remote_table_metadata_manager =
             TableMetadataManager::try_from_connection_info(connection_info).await?;
 
-        Ok(DataFolder::new(
-            Arc::new(remote_delta_lake),
-            Arc::new(remote_table_metadata_manager),
-        ))
+        Ok(Self {
+            delta_lake: Arc::new(remote_delta_lake),
+            table_metadata_manager: Arc::new(remote_table_metadata_manager),
+        })
     }
 }
 
