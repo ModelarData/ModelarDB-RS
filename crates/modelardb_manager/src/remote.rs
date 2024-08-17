@@ -36,7 +36,6 @@ use futures::{stream, Stream};
 use modelardb_common::arguments::{decode_argument, encode_argument};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser::ValidStatement;
-use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{parser, remote};
 use tokio::runtime::Runtime;
@@ -45,7 +44,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
 use crate::cluster::Node;
-use crate::{Context, RemoteDataFolder};
+use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
 pub fn start_apache_arrow_flight_server(
@@ -90,7 +89,8 @@ impl FlightServiceHandler {
     async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
         let existing_tables = self
             .context
-            .remote_metadata_manager
+            .remote_data_folder
+            .metadata_manager
             .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
@@ -116,7 +116,8 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Persist the new table to the metadata database.
         self.context
-            .remote_metadata_manager
+            .remote_data_folder
+            .metadata_manager
             .table_metadata_manager
             .save_table_metadata(&table_name, sql)
             .await
@@ -146,7 +147,8 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Persist the new model table to the metadata database.
         self.context
-            .remote_metadata_manager
+            .remote_data_folder
+            .metadata_manager
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
             .await
@@ -200,7 +202,8 @@ impl FlightService for FlightServiceHandler {
         // Retrieve the table names from the metadata database.
         let table_names = self
             .context
-            .remote_metadata_manager
+            .remote_data_folder
+            .metadata_manager
             .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
@@ -271,7 +274,8 @@ impl FlightService for FlightServiceHandler {
 
         let table_sql = self
             .context
-            .remote_metadata_manager
+            .remote_data_folder
+            .metadata_manager
             .table_sql(table_name)
             .await
             .map_err(|error| {
@@ -362,7 +366,8 @@ impl FlightService for FlightServiceHandler {
             // Get the table names in the clusters current database schema.
             let cluster_tables = self
                 .context
-                .remote_metadata_manager
+                .remote_data_folder
+                .metadata_manager
                 .table_metadata_column("table_name")
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
@@ -386,7 +391,8 @@ impl FlightService for FlightServiceHandler {
                 for table in missing_cluster_tables {
                     table_sql_queries.push(
                         self.context
-                            .remote_metadata_manager
+                            .remote_data_folder
+                            .metadata_manager
                             .table_sql(table)
                             .await
                             .map_err(|error| Status::internal(error.to_string()))?,
@@ -408,15 +414,7 @@ impl FlightService for FlightServiceHandler {
                 )))
             }
         } else if action.r#type == "UpdateRemoteObjectStore" {
-            let delta_lake = Arc::new(
-                DeltaLake::try_remote_from_connection_info(&action.body)
-                    .await
-                    .map_err(|error| Status::internal(error.to_string()))?,
-            );
-
-            // Create a new remote data folder and update it in the context.
-            let mut remote_data_folder = self.context.remote_data_folder.write().await;
-            *remote_data_folder = RemoteDataFolder::new(action.body.clone().into(), delta_lake);
+            // TODO: Should be removed in separate PR.
 
             // For each node in the cluster, update the remote object store.
             self.context
@@ -469,7 +467,8 @@ impl FlightService for FlightServiceHandler {
 
             // Use the metadata manager to persist the node to the metadata database.
             self.context
-                .remote_metadata_manager
+                .remote_data_folder
+                .metadata_manager
                 .save_node(&node)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
@@ -486,8 +485,8 @@ impl FlightService for FlightServiceHandler {
             // unwrap() is safe since the key cannot contain invalid characters.
             let mut response_body = encode_argument(self.context.key.to_str().unwrap());
 
-            let remote_data_folder = self.context.remote_data_folder.read().await;
-            response_body.append(&mut remote_data_folder.connection_info().clone());
+            let mut connection_info = self.context.remote_data_folder.connection_info.clone();
+            response_body.append(&mut connection_info);
 
             // Return the key for the manager and the connection info for the remote object store.
             Ok(Response::new(Box::pin(stream::once(async {
@@ -500,7 +499,8 @@ impl FlightService for FlightServiceHandler {
 
             // Remove the node with the given url from the metadata database.
             self.context
-                .remote_metadata_manager
+                .remote_data_folder
+                .metadata_manager
                 .remove_node(url)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;

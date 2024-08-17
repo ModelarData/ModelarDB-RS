@@ -26,7 +26,6 @@ use modelardb_common::arguments::{
     argument_to_connection_info, collect_command_line_arguments, validate_remote_data_folder,
 };
 use modelardb_common::storage::DeltaLake;
-use object_store::ObjectStore;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
@@ -49,35 +48,28 @@ pub struct RemoteDataFolder {
     connection_info: Vec<u8>,
     /// Remote object store for storing data and metadata in Apache Parquet files.
     delta_lake: Arc<DeltaLake>,
+    /// Manager for the access to the metadata Delta Lake.
+    metadata_manager: Arc<MetadataManager>,
 }
 
 impl RemoteDataFolder {
-    pub fn new(connection_info: Vec<u8>, delta_lake: Arc<DeltaLake>) -> Self {
+    pub fn new(
+        connection_info: Vec<u8>,
+        delta_lake: Arc<DeltaLake>,
+        metadata_manager: Arc<MetadataManager>,
+    ) -> Self {
         Self {
             connection_info,
             delta_lake,
+            metadata_manager,
         }
-    }
-
-    pub fn connection_info(&self) -> &Vec<u8> {
-        &self.connection_info
-    }
-
-    pub fn delta_lake(&self) -> Arc<DeltaLake> {
-        self.delta_lake.clone()
-    }
-
-    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
-        self.delta_lake.object_store()
     }
 }
 
 /// Provides access to the managers components.
 pub struct Context {
-    /// Manager for the access to the metadata database.
-    pub remote_metadata_manager: MetadataManager,
-    /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: RwLock<RemoteDataFolder>,
+    /// Folder for storing Apache Parquet files and metadata in a remote object store.
+    pub remote_data_folder: RemoteDataFolder,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
     /// Key used to identify requests coming from the manager.
@@ -102,11 +94,11 @@ fn main() -> Result<(), String> {
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
     let context = runtime.block_on(async {
-        let (metadata_manager, remote_data_folder) =
-            parse_command_line_arguments(&arguments).await?;
-        validate_remote_data_folder(&remote_data_folder.delta_lake()).await?;
+        let remote_data_folder = parse_command_line_arguments(&arguments).await?;
+        validate_remote_data_folder(&remote_data_folder.delta_lake).await?;
 
-        let nodes = metadata_manager
+        let nodes = remote_data_folder
+            .metadata_manager
             .nodes()
             .await
             .map_err(|error| error.to_string())?;
@@ -119,7 +111,8 @@ fn main() -> Result<(), String> {
         }
 
         // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
-        let key = metadata_manager
+        let key = remote_data_folder
+            .metadata_manager
             .manager_key()
             .await
             .map_err(|error| error.to_string())?
@@ -129,8 +122,7 @@ fn main() -> Result<(), String> {
 
         // Create the Context.
         Ok::<Arc<Context>, String>(Arc::new(Context {
-            remote_metadata_manager: metadata_manager,
-            remote_data_folder: RwLock::new(remote_data_folder),
+            remote_data_folder,
             cluster: RwLock::new(cluster),
             key,
         }))
@@ -142,28 +134,27 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command line arguments into a [`MetadataManager`] and a [`RemoteDataFolder`]. If
-/// the necessary command line arguments are not provided, too many arguments are provided, or if
-/// the arguments are malformed, [`String`] is returned.
-async fn parse_command_line_arguments(
-    arguments: &[&str],
-) -> Result<(MetadataManager, RemoteDataFolder), String> {
+/// Parse the command line arguments into a [`RemoteDataFolder`]. If the necessary command line
+/// arguments are not provided, too many arguments are provided, or if the arguments are malformed,
+/// [`String`] is returned.
+async fn parse_command_line_arguments(arguments: &[&str]) -> Result<RemoteDataFolder, String> {
     match arguments {
         &[remote_data_folder] => {
-            let delta_lake = Arc::new(
+            let delta_lake =
                 DeltaLake::try_remote_from_connection_info(remote_data_folder.as_bytes())
                     .await
-                    .map_err(|error| error.to_string())?,
-            );
+                    .map_err(|error| error.to_string())?;
+
             let connection_info = argument_to_connection_info(remote_data_folder)?;
 
             let metadata_manager = MetadataManager::try_from_connection_info(&connection_info)
                 .await
                 .map_err(|error| error.to_string())?;
 
-            Ok((
-                metadata_manager,
-                RemoteDataFolder::new(connection_info, delta_lake),
+            Ok(RemoteDataFolder::new(
+                connection_info,
+                Arc::new(delta_lake),
+                Arc::new(metadata_manager),
             ))
         }
         _ => {
