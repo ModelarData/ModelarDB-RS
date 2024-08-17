@@ -55,7 +55,7 @@ use tracing::{debug, error, info};
 
 use crate::context::Context;
 use crate::ClusterMode;
-use crate::data_folders::create_remote_data_folder;
+use crate::data_folders::DataFolder;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through [`FlightServiceHandler`].
@@ -554,7 +554,7 @@ impl FlightService for FlightServiceHandler {
                 ));
             }
 
-            let remote_data_folder = create_remote_data_folder(&action.body)
+            let remote_data_folder = DataFolder::try_from_connection_info(&action.body)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 

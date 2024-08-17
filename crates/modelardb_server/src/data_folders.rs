@@ -45,35 +45,35 @@ impl DataFolder {
             table_metadata_manager,
         }
     }
-}
 
-/// Return a [`DataFolder`] created from `local_data_folder`. If the folder does not exist, it is
-/// created. If the folder does not exist and could not be created or if the metadata tables could
-/// not be created, [`DeltaTableError`] is returned.
-async fn create_local_data_folder(local_data_folder: &str) -> Result<DataFolder, DeltaTableError> {
-    let delta_lake = DeltaLake::try_from_local_path(local_data_folder)?;
+    /// Return a [`DataFolder`] created from `data_folder_path`. If the folder does not exist, it is
+    /// created. If the folder does not exist and could not be created or if the metadata tables could
+    /// not be created, [`DeltaTableError`] is returned.
+    async fn try_from_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
+        let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
 
-    let table_metadata_manager =
-        TableMetadataManager::try_from_path(Path::from(local_data_folder)).await?;
+        let table_metadata_manager =
+            TableMetadataManager::try_from_path(Path::from(data_folder_path)).await?;
 
-    Ok(DataFolder::new(
-        Arc::new(delta_lake),
-        Arc::new(table_metadata_manager),
-    ))
-}
+        Ok(DataFolder::new(
+            Arc::new(delta_lake),
+            Arc::new(table_metadata_manager),
+        ))
+    }
 
-/// Return a [`DataFolder`] created from `connection_info`. If the connection information could not
-/// be parsed or if the metadata tables could not be created, [`DeltaTableError`] is returned.
-pub async fn create_remote_data_folder(connection_info: &[u8]) -> Result<DataFolder, DeltaTableError> {
-    let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
+    /// Return a [`DataFolder`] created from `connection_info`. If the connection information could not
+    /// be parsed or if the metadata tables could not be created, [`DeltaTableError`] is returned.
+    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self, DeltaTableError> {
+        let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
 
-    let remote_table_metadata_manager =
-        TableMetadataManager::try_from_connection_info(connection_info).await?;
+        let remote_table_metadata_manager =
+            TableMetadataManager::try_from_connection_info(connection_info).await?;
 
-    Ok(DataFolder::new(
-        Arc::new(remote_delta_lake),
-        Arc::new(remote_table_metadata_manager),
-    ))
+        Ok(DataFolder::new(
+            Arc::new(remote_delta_lake),
+            Arc::new(remote_table_metadata_manager),
+        ))
+    }
 }
 
 /// Folders for storing metadata and Apache Parquet files locally and remotely.
@@ -111,7 +111,7 @@ impl DataFolders {
         // Match the provided command line arguments to the supported inputs.
         match arguments {
             &["edge", local_data_folder] | &[local_data_folder] => {
-                let local_data_folder = create_local_data_folder(local_data_folder)
+                let local_data_folder = DataFolder::try_from_path(local_data_folder)
                     .await
                     .map_err(|error| error.to_string())?;
 
@@ -127,11 +127,11 @@ impl DataFolders {
                         .await
                         .map_err(|error| error.to_string())?;
 
-                let local_data_folder = create_local_data_folder(local_data_folder)
+                let local_data_folder = DataFolder::try_from_path(local_data_folder)
                     .await
                     .map_err(|error| error.to_string())?;
 
-                let remote_data_folder = create_remote_data_folder(&connection_info)
+                let remote_data_folder = DataFolder::try_from_connection_info(&connection_info)
                     .await
                     .map_err(|error| error.to_string())?;
 
@@ -151,11 +151,11 @@ impl DataFolders {
                         .await
                         .map_err(|error| error.to_string())?;
 
-                let local_data_folder = create_local_data_folder(local_data_folder)
+                let local_data_folder = DataFolder::try_from_path(local_data_folder)
                     .await
                     .map_err(|error| error.to_string())?;
 
-                let remote_data_folder = create_remote_data_folder(&connection_info)
+                let remote_data_folder = DataFolder::try_from_connection_info(&connection_info)
                     .await
                     .map_err(|error| error.to_string())?;
 
