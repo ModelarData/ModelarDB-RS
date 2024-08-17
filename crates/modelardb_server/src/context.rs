@@ -136,9 +136,9 @@ impl Context {
     }
 
     /// Create a normal table, register it with Apache DataFusion's catalog, and save it to the
-    /// [`TableMetadataManager`]. `context` is needed as an argument instead of using `self` to
-    /// avoid having to copy the context when registering normal tables. If the table exists or if
-    /// the table cannot be saved to the [`TableMetadataManager`], return [`ModelarDbError`] error.
+    /// Delta Lake. `context` is needed as an argument instead of using `self` to avoid having to
+    /// copy the context when registering normal tables. If the table exists or if the table cannot
+    /// be saved to the Delta Lake, return [`ModelarDbError`] error.
     async fn register_and_save_table(
         &self,
         table_name: &str,
@@ -176,9 +176,9 @@ impl Context {
     }
 
     /// Create a model table, register it with Apache DataFusion's catalog, and save it to the
-    /// [`TableMetadataManager`]. `context` is needed as an argument instead of using `self` to
-    /// avoid having to copy the context when registering model tables. If the table exists or if
-    /// the table cannot be saved to the [`TableMetadataManager`], return [`ModelarDbError`] error.
+    /// Delta Lake. `context` is needed as an argument instead of using `self` to avoid having to
+    /// copy the context when registering model tables. If the table exists or if the table cannot
+    /// be saved to the Delta Lake, return [`ModelarDbError`] error.
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,

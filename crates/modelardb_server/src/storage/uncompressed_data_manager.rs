@@ -324,7 +324,7 @@ impl UncompressedDataManager {
     /// buffer has been spilled, read it back into memory. If no buffer exists for `tag_hash`,
     /// allocate a new buffer that will be compressed within the error bound in
     /// `model_table_metadata`. Returns [`true`] if a buffer was spilled, [`false`] if not, and
-    /// [`IOError`] if the error bound cannot be retrieved from the [`TableMetadataManager`].
+    /// [`IOError`] if the error bound cannot be retrieved from the metadata Delta Lake.
     async fn insert_data_point(
         &self,
         tag_hash: u64,
