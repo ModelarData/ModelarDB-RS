@@ -498,12 +498,6 @@ impl FlightService for FlightServiceHandler {
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
     /// to create the tables and model tables that are missing in the list. The list of table names
     /// is also checked to make sure all given tables actually exist.
-    /// * `UpdateRemoteObjectStore`: Update the remote object store, overriding the current
-    /// remote object store. Each argument in the body should start with the size of the argument,
-    /// immediately followed by the argument value. The first argument should be the object store
-    /// type, specifically either 's3' or 'azureblobstorage'. The remaining arguments should be
-    /// the arguments required to connect to the object store. The remote object store is updated
-    /// for all nodes controlled by the manager.
     /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
     /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a
     /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
@@ -580,28 +574,6 @@ impl FlightService for FlightServiceHandler {
                     invalid_node_tables.join(", ")
                 )))
             }
-        } else if action.r#type == "UpdateRemoteObjectStore" {
-            let delta_lake = Arc::new(
-                DeltaLake::try_remote_from_connection_info(&action.body)
-                    .await
-                    .map_err(|error| Status::internal(error.to_string()))?,
-            );
-
-            // Create a new remote data folder and update it in the context.
-            let mut remote_data_folder = self.context.remote_data_folder.write().await;
-            *remote_data_folder = RemoteDataFolder::new(action.body.clone().into(), delta_lake);
-
-            // For each node in the cluster, update the remote object store.
-            self.context
-                .cluster
-                .read()
-                .await
-                .update_remote_object_stores(action.body, &self.context.key)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Confirm the remote object store was updated.
-            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
@@ -715,13 +687,6 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let update_remote_object_store_action = ActionType {
-            r#type: "UpdateRemoteObjectStore".to_owned(),
-            description:
-                "Update the remote object store, overriding the current remote object store."
-                    .to_owned(),
-        };
-
         let command_statement_update_action = ActionType {
             r#type: "CommandStatementUpdate".to_owned(),
             description:
@@ -742,7 +707,6 @@ impl FlightService for FlightServiceHandler {
 
         let output = stream::iter(vec![
             Ok(initialize_database_action),
-            Ok(update_remote_object_store_action),
             Ok(command_statement_update_action),
             Ok(register_node_action),
             Ok(remove_node_action),
