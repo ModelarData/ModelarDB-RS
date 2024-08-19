@@ -335,7 +335,6 @@ mod tests {
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
-    use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
@@ -353,11 +352,10 @@ mod tests {
         let columns: Vec<Arc<dyn Array>> = vec![Arc::new(Int8Array::from(vec![37, 73]))];
         let record_batch = RecordBatch::try_new(schema, columns).unwrap();
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
-
-        let local_data_folder =
-            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+        let local_data_folder = data_manager.local_data_folder.clone();
 
         let mut delta_table = local_data_folder
+            .delta_lake
             .create_delta_lake_table(test::MODEL_TABLE_NAME, &record_batch.schema())
             .await
             .unwrap();
@@ -428,9 +426,10 @@ mod tests {
     #[tokio::test]
     async fn test_save_first_compressed_data_buffer_if_out_of_memory() {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder =
-            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+        let local_data_folder = data_manager.local_data_folder.clone();
+
         let mut delta_table = local_data_folder
+            .delta_lake
             .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
@@ -495,11 +494,11 @@ mod tests {
     #[tokio::test]
     async fn test_remaining_memory_incremented_when_saving_compressed_segments() {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder =
-            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+        let local_data_folder = data_manager.local_data_folder.clone();
 
         let segments = compressed_segments_record_batch();
         local_data_folder
+            .delta_lake
             .create_delta_lake_model_table(segments.model_table_name())
             .await
             .unwrap();
@@ -568,12 +567,12 @@ mod tests {
     #[tokio::test]
     async fn test_decrease_compressed_remaining_memory_in_bytes() {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder =
-            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+        let local_data_folder = data_manager.local_data_folder.clone();
 
         // Insert data that should be saved when the remaining memory is decreased.
         let segments = compressed_segments_record_batch();
         local_data_folder
+            .delta_lake
             .create_delta_lake_model_table(segments.model_table_name())
             .await
             .unwrap();
@@ -617,8 +616,6 @@ mod tests {
     /// and a metadata manager with a single model table.
     async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-
         let channels = Arc::new(Channels::new());
 
         let memory_pool = Arc::new(MemoryPool::new(
@@ -627,18 +624,14 @@ mod tests {
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
-        // Create a metadata manager and save a single model table to the metadata database.
-        let metadata_manager = Arc::new(
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
-                .await
-                .unwrap(),
-        );
-
-        let local_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+        // Create a local data folder and save a single model table to the metadata Delta Lake.
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
+            .await
+            .unwrap();
 
         let model_table_metadata = test::model_table_metadata();
-        metadata_manager
+        local_data_folder
+            .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
