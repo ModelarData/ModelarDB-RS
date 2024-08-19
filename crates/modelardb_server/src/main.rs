@@ -96,7 +96,7 @@ fn main() -> Result<(), String> {
 
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
-    let (server_mode, cluster_mode, data_folders) =
+    let (cluster_mode, data_folders) =
         runtime.block_on(parse_command_line_arguments(&arguments))?;
 
     // If a remote data folder was provided, check that it can be accessed.
@@ -110,7 +110,6 @@ fn main() -> Result<(), String> {
                 runtime.clone(),
                 data_folders,
                 cluster_mode.clone(),
-                server_mode,
             ))
             .map_err(|error| format!("Unable to create a Context: {error}"))?,
     );
@@ -152,19 +151,18 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command line arguments into a [`ServerMode`], a [`ClusterMode`] and an instance of
-/// [`DataFolders`]. If the necessary command line arguments are not provided, too many arguments
-/// are provided, or if the arguments are malformed, [`String`] is returned.
+/// Parse the command line arguments into a [`ClusterMode`] and an instance of [`DataFolders`].
+/// If the necessary command line arguments are not provided, too many arguments are provided, or
+/// if the arguments are malformed, [`String`] is returned.
 async fn parse_command_line_arguments(
     arguments: &[&str],
-) -> Result<(ServerMode, ClusterMode, DataFolders), String> {
+) -> Result<(ClusterMode, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
         &["edge", local_data_folder] | &[local_data_folder] => {
             let local_delta_lake = create_local_data_lake(local_data_folder)?;
 
             Ok((
-                ServerMode::Edge,
                 ClusterMode::SingleNode,
                 DataFolders {
                     local_data_folder: local_delta_lake.clone(),
@@ -182,7 +180,6 @@ async fn parse_command_line_arguments(
             let local_delta_lake = create_local_data_lake(local_data_folder)?;
 
             Ok((
-                ServerMode::Cloud,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
                     local_data_folder: local_delta_lake,
@@ -200,7 +197,6 @@ async fn parse_command_line_arguments(
             let local_delta_lake = create_local_data_lake(local_data_folder)?;
 
             Ok((
-                ServerMode::Edge,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
                     local_data_folder: local_delta_lake.clone(),
@@ -223,8 +219,8 @@ async fn parse_command_line_arguments(
 /// Return a [`DeltaLake`] created from `local_data_folder` if it exists or a [`String`] if it does
 /// not exist.
 fn create_local_data_lake(local_data_folder: &str) -> Result<Arc<DeltaLake>, String> {
-    let delta_lake = DeltaLake::try_from_local_path(local_data_folder)
-        .map_err(|error| error.to_string())?;
+    let delta_lake =
+        DeltaLake::try_from_local_path(local_data_folder).map_err(|error| error.to_string())?;
     Ok(Arc::new(delta_lake))
 }
 
