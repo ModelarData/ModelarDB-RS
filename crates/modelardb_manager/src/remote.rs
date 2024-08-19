@@ -41,7 +41,6 @@ use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::schemas::{COMPRESSED_FILE_METADATA_SCHEMA, TAG_METADATA_SCHEMA};
-use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::{ServerMode, TimestampArray, ValueArray};
 use modelardb_common::{metadata, parser, remote};
 use object_store::path::Path;
@@ -52,7 +51,6 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
 
 use crate::cluster::Node;
-use crate::types::RemoteDataFolder;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.

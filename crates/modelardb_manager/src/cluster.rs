@@ -24,7 +24,6 @@ use futures::StreamExt;
 use log::info;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
-use tonic::codegen::Bytes;
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::Request;
 
