@@ -222,7 +222,6 @@ mod tests {
     use arrow_flight::flight_service_client::FlightServiceClient;
     use modelardb_common::metadata;
     use modelardb_common::storage::DeltaLake;
-    use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
@@ -405,7 +404,6 @@ mod tests {
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
             ClusterMode::MultiNode(manager),
-            ServerMode::Edge,
         )));
 
         let target_dir = tempfile::tempdir().unwrap();

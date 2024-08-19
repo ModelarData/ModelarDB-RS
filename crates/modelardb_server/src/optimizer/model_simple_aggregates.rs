@@ -1041,7 +1041,6 @@ mod tests {
     use datafusion::physical_plan::filter::FilterExec;
     use modelardb_common::storage::DeltaLake;
     use modelardb_common::test;
-    use modelardb_common::types::ServerMode;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
@@ -1156,7 +1155,6 @@ mod tests {
                     query_data_folder: local_data_folder,
                 },
                 ClusterMode::SingleNode,
-                ServerMode::Edge,
             )
             .await
             .unwrap(),

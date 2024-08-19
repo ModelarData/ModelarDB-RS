@@ -642,7 +642,6 @@ mod tests {
                     query_data_folder: local_data_folder,
                 },
                 ClusterMode::SingleNode,
-                ServerMode::Edge,
             )
             .await
             .unwrap(),

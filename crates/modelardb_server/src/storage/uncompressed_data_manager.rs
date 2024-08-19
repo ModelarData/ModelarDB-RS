@@ -817,7 +817,7 @@ mod tests {
     use modelardb_common::metadata;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
-    use modelardb_common::types::{ServerMode, TimestampBuilder, ValueBuilder};
+    use modelardb_common::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
     use tempfile::TempDir;
@@ -845,7 +845,6 @@ mod tests {
                     query_data_folder: local_data_folder,
                 },
                 ClusterMode::SingleNode,
-                ServerMode::Edge,
             )
             .await
             .unwrap(),
