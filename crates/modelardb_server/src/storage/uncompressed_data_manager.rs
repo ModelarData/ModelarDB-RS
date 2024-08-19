@@ -818,7 +818,7 @@ mod tests {
     use tokio::time::{sleep, Duration};
 
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
-    use crate::DataFolders;
+    use crate::{ClusterMode, DataFolders};
 
     const TAG_HASH: u64 = 9674644176454356993;
 
@@ -826,23 +826,15 @@ mod tests {
     #[tokio::test]
     async fn test_can_compress_existing_on_disk_data_buffers_when_initializing() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
-        let table_metadata_manager = Arc::new(
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
-                .await
-                .unwrap(),
-        );
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
+            .await
+            .unwrap();
 
         // Create a context with a storage engine.
         let context = Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                DataFolders {
-                    local_data_folder: (local_data_folder.clone(), table_metadata_manager),
-                    maybe_remote_data_folder: None,
-                    query_data_folder: local_data_folder,
-                },
+                DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
                 ServerMode::Edge,
             )
@@ -882,6 +874,7 @@ mod tests {
         let spilled_buffers = storage_engine
             .uncompressed_data_manager
             .local_data_folder
+            .delta_lake
             .object_store()
             .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
@@ -903,8 +896,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
         let data = uncompressed_data(1, model_table_metadata.schema.clone());
         let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
@@ -930,8 +922,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_record_batch_with_multiple_data_points() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
         let data = uncompressed_data(2, model_table_metadata.schema.clone());
         let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
@@ -957,8 +948,7 @@ mod tests {
     #[tokio::test]
     async fn test_remaining_ingested_memory_increased_after_processing_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
         let data = uncompressed_data(2, model_table_metadata.schema.clone());
         let data_size = data.get_array_memory_size();
@@ -1022,8 +1012,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_data_point_into_new_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
         insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
 
@@ -1043,8 +1032,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_data_point_into_existing_in_memory_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
         insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
@@ -1070,8 +1058,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_data_point_into_existing_on_disk_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
         insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
@@ -1101,8 +1088,7 @@ mod tests {
     #[tokio::test]
     async fn test_will_finish_unused_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
         // Insert using insert_data_points() to increment the batch counter.
         let mut timestamp = TimestampBuilder::new();
@@ -1164,8 +1150,8 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_finished_uncompressed_data_buffer_when_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
+
         insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
@@ -1184,8 +1170,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_multiple_finished_uncompressed_data_buffers_when_multiple_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
         insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
@@ -1211,8 +1196,7 @@ mod tests {
     #[tokio::test]
     async fn test_cannot_get_finished_uncompressed_data_buffers_when_none_are_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, data_manager, _model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (data_manager, _model_table_metadata) = create_managers(&temp_dir).await;
 
         assert!(data_manager
             .channels
@@ -1224,8 +1208,8 @@ mod tests {
     #[tokio::test]
     async fn test_spill_random_uncompressed_data_buffer_to_disk_if_out_of_memory() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
+
         let reserved_memory = data_manager
             .memory_pool
             .remaining_uncompressed_memory_in_bytes() as usize;
@@ -1274,6 +1258,7 @@ mod tests {
         // The UncompressedDataBuffer should be spilled to tag hash in the uncompressed folder.
         let spilled_buffers = data_manager
             .local_data_folder
+            .delta_lake
             .object_store()
             .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
@@ -1285,8 +1270,8 @@ mod tests {
     #[tokio::test]
     async fn test_remaining_memory_decremented_when_creating_new_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
+
         let reserved_memory = data_manager
             .memory_pool
             .remaining_uncompressed_memory_in_bytes();
@@ -1315,8 +1300,7 @@ mod tests {
         // This test purposely does not use tokio::test to prevent multiple Tokio runtimes.
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            runtime.block_on(create_managers(&temp_dir));
+        let (mut data_manager, model_table_metadata) = runtime.block_on(create_managers(&temp_dir));
 
         runtime.block_on(insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
@@ -1360,8 +1344,7 @@ mod tests {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let runtime = Arc::new(Runtime::new().unwrap());
-        let (_metadata_manager, data_manager, model_table_metadata) =
-            runtime.block_on(create_managers(&temp_dir));
+        let (data_manager, model_table_metadata) = runtime.block_on(create_managers(&temp_dir));
 
         // Add the spilled buffer.
         let uncompressed_data = RecordBatch::try_new(
@@ -1415,8 +1398,7 @@ mod tests {
     #[tokio::test]
     async fn test_increase_uncompressed_remaining_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, data_manager, _model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (data_manager, _model_table_metadata) = create_managers(&temp_dir).await;
 
         data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(10000)
@@ -1434,8 +1416,7 @@ mod tests {
     #[tokio::test]
     async fn test_decrease_uncompressed_remaining_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(&temp_dir).await;
+        let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
         // Insert data that should be spilled when the remaining memory is decreased.
         insert_data_points(
@@ -1496,34 +1477,26 @@ mod tests {
         }
     }
 
-    /// Create a [`MetadataManager`] with a model table saved to it and an [`UncompressedDataManager`]
+    /// Create a [`DataFolder`] with a model table saved to it and an [`UncompressedDataManager`]
     /// with a folder that is deleted once the test is finished.
     async fn create_managers(
         temp_dir: &TempDir,
-    ) -> (
-        Arc<TableMetadataManager>,
-        UncompressedDataManager,
-        Arc<ModelTableMetadata>,
-    ) {
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let metadata_manager = Arc::new(
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
-                .await
-                .unwrap(),
-        );
-
-        let local_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+    ) -> (UncompressedDataManager, Arc<ModelTableMetadata>) {
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
+            .await
+            .unwrap();
 
         // Ensure the expected metadata is available through the metadata manager.
         let model_table_metadata = test::model_table_metadata();
 
-        metadata_manager
+        local_data_folder
+            .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
-        metadata_manager
+        local_data_folder
+            .table_metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag".to_owned()])
             .await
             .unwrap();
@@ -1539,18 +1512,13 @@ mod tests {
         // UncompressedDataManager::try_new() lookup the error bounds for each tag hash.
         let uncompressed_data_manager = UncompressedDataManager::new(
             local_data_folder,
+            None,
             memory_pool,
             channels,
-            metadata_manager.clone(),
-            ClusterMode::SingleNode,
             Arc::new(Mutex::new(Metric::new())),
             Arc::new(Mutex::new(Metric::new())),
         );
 
-        (
-            metadata_manager,
-            uncompressed_data_manager,
-            Arc::new(model_table_metadata),
-        )
+        (uncompressed_data_manager, Arc::new(model_table_metadata))
     }
 }
