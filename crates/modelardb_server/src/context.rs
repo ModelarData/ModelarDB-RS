@@ -374,8 +374,10 @@ impl Context {
 mod tests {
     use super::*;
 
-    use modelardb_common::{storage::DeltaLake, test};
+    use modelardb_common::test;
     use tempfile::TempDir;
+
+    use crate::data_folders::DataFolder;
 
     #[tokio::test]
     async fn test_parse_and_create_table_with_invalid_sql() {
@@ -408,7 +410,14 @@ mod tests {
         assert!(folder_path.exists());
 
         // The table should be saved to the metadata database.
-        let table_names = context.table_metadata_manager.table_names().await.unwrap();
+        let table_names = context
+            .data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .table_names()
+            .await
+            .unwrap();
+
         assert!(table_names.contains(&"table_name".to_owned()));
 
         // The table should be registered in the Apache DataFusion catalog.
@@ -443,6 +452,8 @@ mod tests {
 
         // The table should be saved to the metadata database.
         let model_table_metadata = context
+            .data_folders
+            .local_data_folder
             .table_metadata_manager
             .model_table_metadata()
             .await
@@ -506,6 +517,8 @@ mod tests {
 
         let model_table_metadata = test::model_table_metadata();
         context
+            .data_folders
+            .local_data_folder
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
@@ -620,22 +633,14 @@ mod tests {
 
     /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
-        let local_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
-        let table_metadata_manager = Arc::new(
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
-                .await
-                .unwrap(),
-        );
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
+            .await
+            .unwrap();
 
         Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                &(DataFolders {
-                    local_data_folder: (local_data_folder.clone(), table_metadata_manager),
-                    maybe_remote_data_folder: None,
-                    query_data_folder: local_data_folder,
-                }),
+                DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
                 ServerMode::Edge,
             )
