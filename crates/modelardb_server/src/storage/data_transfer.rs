@@ -278,10 +278,8 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
-    use modelardb_common::metadata::TableMetadataManager;
     use modelardb_common::test;
     use ringbuf::traits::observer::Observer;
-    use sqlx::Sqlite;
     use tempfile::{self, TempDir};
 
     const FILE_SIZE: usize = 2374;
@@ -290,12 +288,11 @@ mod tests {
     #[tokio::test]
     async fn test_include_existing_files_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager(&temp_dir).await;
+        let local_data_folder = create_local_data_folder(&temp_dir).await;
 
-        create_delta_table_and_segments(&temp_dir, &metadata_manager, 1).await;
+        create_delta_table_and_segments(local_data_folder.clone(), 1).await;
 
-        let (_target_dir, data_transfer) =
-            create_data_transfer_component(&temp_dir, metadata_manager).await;
+        let (_target_dir, data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         assert_eq!(
             *data_transfer
@@ -319,11 +316,11 @@ mod tests {
     #[tokio::test]
     async fn test_add_batch_to_new_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager(&temp_dir).await;
+        let local_data_folder = create_local_data_folder(&temp_dir).await;
 
         let (_target_dir, data_transfer) =
-            create_data_transfer_component(&temp_dir, metadata_manager.clone()).await;
-        let files_size = create_delta_table_and_segments(&temp_dir, &metadata_manager, 1).await;
+            create_data_transfer_component(local_data_folder.clone()).await;
+        let files_size = create_delta_table_and_segments(local_data_folder, 1).await;
 
         assert!(data_transfer
             .increase_table_size(test::MODEL_TABLE_NAME, files_size)
@@ -342,11 +339,11 @@ mod tests {
     #[tokio::test]
     async fn test_add_batch_to_existing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager(&temp_dir).await;
+        let local_data_folder = create_local_data_folder(&temp_dir).await;
 
         let (_target_dir, data_transfer) =
-            create_data_transfer_component(&temp_dir, metadata_manager.clone()).await;
-        let files_size = create_delta_table_and_segments(&temp_dir, &metadata_manager, 1).await;
+            create_data_transfer_component(local_data_folder.clone()).await;
+        let files_size = create_delta_table_and_segments(local_data_folder, 1).await;
 
         data_transfer
             .increase_table_size(test::MODEL_TABLE_NAME, files_size)
@@ -369,12 +366,11 @@ mod tests {
     #[tokio::test]
     async fn test_increase_transfer_batch_size_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager(&temp_dir).await;
+        let local_data_folder = create_local_data_folder(&temp_dir).await;
 
-        create_delta_table_and_segments(&temp_dir, &metadata_manager, 2).await;
+        create_delta_table_and_segments(local_data_folder.clone(), 2).await;
 
-        let (_, mut data_transfer) =
-            create_data_transfer_component(&temp_dir, metadata_manager).await;
+        let (_, mut data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         data_transfer
             .set_transfer_batch_size_in_bytes(Some(FILE_SIZE * 10))
@@ -399,12 +395,11 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_batch_size_in_bytes_to_none() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager(&temp_dir).await;
+        let local_data_folder = create_local_data_folder(&temp_dir).await;
 
-        create_delta_table_and_segments(&temp_dir, &metadata_manager, 2).await;
+        create_delta_table_and_segments(local_data_folder.clone(), 2).await;
 
-        let (_, mut data_transfer) =
-            create_data_transfer_component(&temp_dir, metadata_manager).await;
+        let (_, mut data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
@@ -431,20 +426,18 @@ mod tests {
     /// Set up a delta table and write `batch_write_count` batches of compressed segments to it.
     /// Returns the size of the files on disk.
     async fn create_delta_table_and_segments(
-        temp_dir: &TempDir,
-        table_metadata_manager: Arc<TableMetadataManager>,
+        local_data_folder: DataFolder,
         batch_write_count: usize,
     ) -> usize {
-        let local_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
-
         local_data_folder
+            .delta_lake
             .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
 
         // Registered as a normal table as it does not require construction of a metadata object.
-        table_metadata_manager
+        local_data_folder
+            .table_metadata_manager
             .save_table_metadata(test::MODEL_TABLE_NAME, "")
             .await
             .unwrap();
@@ -452,6 +445,7 @@ mod tests {
         for _ in 0..batch_write_count {
             let compressed_segments = test::compressed_segments_record_batch();
             local_data_folder
+                .delta_lake
                 .write_compressed_segments_to_model_table(
                     test::MODEL_TABLE_NAME,
                     vec![compressed_segments],
@@ -461,6 +455,7 @@ mod tests {
         }
 
         let mut delta_table = local_data_folder
+            .delta_lake
             .delta_table(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
@@ -481,20 +476,23 @@ mod tests {
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
     async fn create_data_transfer_component(
-        temp_dir: &TempDir,
-        table_metadata_manager: Arc<TableMetadataManager>,
+        local_data_folder: DataFolder,
     ) -> (TempDir, DataTransfer) {
-        let local_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
-
         let target_dir = tempfile::tempdir().unwrap();
-        let remote_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(target_dir.path().to_str().unwrap()).unwrap());
+        let remote_data_folder = DataFolder::try_from_path(target_dir.path().to_str().unwrap())
+            .await
+            .unwrap();
+
+        let table_names = local_data_folder
+            .table_metadata_manager
+            .table_names()
+            .await
+            .unwrap();
 
         let data_transfer = DataTransfer::try_new(
             local_data_folder,
             remote_data_folder,
-            table_metadata_manager.table_names().await.unwrap(),
+            table_names,
             Some(FILE_SIZE * 3 - 1),
             Arc::new(Mutex::new(Metric::new())),
         )
@@ -504,19 +502,19 @@ mod tests {
         (target_dir, data_transfer)
     }
 
-    /// Create a table metadata manager and save a single model table to the metadata database.
-    async fn create_metadata_manager(temp_dir: &TempDir) -> Arc<TableMetadataManager> {
-        let metadata_manager =
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
-                .await
-                .unwrap();
+    /// Create a local [`DataFolder`] and save a single model table to the metadata Delta Lake.
+    async fn create_local_data_folder(temp_dir: &TempDir) -> DataFolder {
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
+            .await
+            .unwrap();
 
         let model_table_metadata = test::model_table_metadata();
-        metadata_manager
+        local_data_folder
+            .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
-        Arc::new(metadata_manager)
+        local_data_folder
     }
 }
