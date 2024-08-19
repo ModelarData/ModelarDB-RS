@@ -351,7 +351,7 @@ mod tests {
         )]));
         let columns: Vec<Arc<dyn Array>> = vec![Arc::new(Int8Array::from(vec![37, 73]))];
         let record_batch = RecordBatch::try_new(schema, columns).unwrap();
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
         let local_data_folder = data_manager.local_data_folder.clone();
 
         let mut delta_table = local_data_folder
@@ -425,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_first_compressed_data_buffer_if_out_of_memory() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
         let local_data_folder = data_manager.local_data_folder.clone();
 
         let mut delta_table = local_data_folder
@@ -493,7 +493,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remaining_memory_incremented_when_saving_compressed_segments() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
         let local_data_folder = data_manager.local_data_folder.clone();
 
         let segments = compressed_segments_record_batch();
@@ -566,7 +566,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decrease_compressed_remaining_memory_in_bytes() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
         let local_data_folder = data_manager.local_data_folder.clone();
 
         // Insert data that should be saved when the remaining memory is decreased.

@@ -29,7 +29,6 @@ use deltalake_core::kernel::StructField;
 use deltalake_core::operations::create::CreateBuilder;
 use deltalake_core::protocol::SaveMode;
 use deltalake_core::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
-use object_store::path::Path;
 
 use crate::arguments::{
     decode_argument, extract_azure_blob_storage_arguments, extract_s3_arguments,
@@ -55,7 +54,7 @@ pub struct MetadataDeltaLake {
 impl MetadataDeltaLake {
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] under
     /// `folder_path`.
-    pub fn from_path(folder_path: Path) -> MetadataDeltaLake {
+    pub fn from_path(folder_path: &str) -> MetadataDeltaLake {
         MetadataDeltaLake {
             url_scheme: format!("{folder_path}/{METADATA_FOLDER}"),
             storage_options: HashMap::new(),

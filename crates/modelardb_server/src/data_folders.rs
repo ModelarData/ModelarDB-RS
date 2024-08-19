@@ -21,7 +21,6 @@ use deltalake_core::DeltaTableError;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
-use object_store::path::Path;
 
 use crate::manager::Manager;
 use crate::ClusterMode;
@@ -41,9 +40,7 @@ impl DataFolder {
     /// not be created, [`DeltaTableError`] is returned.
     pub async fn try_from_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
-
-        let table_metadata_manager =
-            TableMetadataManager::try_from_path(Path::from(data_folder_path)).await?;
+        let table_metadata_manager = TableMetadataManager::try_from_path(data_folder_path).await?;
 
         Ok(Self {
             delta_lake: Arc::new(delta_lake),

@@ -393,13 +393,13 @@ mod tests {
             .unwrap();
 
         let target_dir = tempfile::tempdir().unwrap();
-        let target_data_folder = DataFolder::try_from_path(target_dir.path().to_str().unwrap())
+        let remote_data_folder = DataFolder::try_from_path(target_dir.path().to_str().unwrap())
             .await
             .unwrap();
 
         let data_folders = DataFolders::new(
             local_data_folder.clone(),
-            Some(target_data_folder),
+            Some(remote_data_folder),
             local_data_folder,
         );
 

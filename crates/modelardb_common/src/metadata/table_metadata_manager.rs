@@ -35,7 +35,6 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::prelude::col;
 use deltalake_core::kernel::{DataType, StructField};
 use deltalake_core::DeltaTableError;
-use object_store::path::Path;
 
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataDeltaLake;
@@ -56,7 +55,7 @@ pub struct TableMetadataManager {
 impl TableMetadataManager {
     /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and initialize
     /// the metadata tables. If the metadata tables could not be created, return [`DeltaTableError`].
-    pub async fn try_from_path(folder_path: Path) -> Result<Self, DeltaTableError> {
+    pub async fn try_from_path(folder_path: &str) -> Result<Self, DeltaTableError> {
         let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::from_path(folder_path),
             tag_value_hashes: DashMap::new(),
@@ -714,7 +713,7 @@ mod tests {
     async fn test_create_metadata_delta_lake_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager =
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
                 .await
                 .unwrap();
 
@@ -753,7 +752,7 @@ mod tests {
     async fn test_save_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager =
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
                 .await
                 .unwrap();
 
@@ -791,7 +790,7 @@ mod tests {
     async fn test_table_names() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager =
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
                 .await
                 .unwrap();
 
@@ -1081,7 +1080,7 @@ mod tests {
     async fn test_invalid_tag_hash_to_table_name() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager =
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
                 .await
                 .unwrap();
 
@@ -1150,7 +1149,7 @@ mod tests {
     async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager =
-            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
                 .await
                 .unwrap();
 

@@ -255,7 +255,6 @@ mod tests {
     use super::*;
 
     use modelardb_common::test;
-    use object_store::path::Path;
     use tempfile::TempDir;
 
     // Tests for MetadataManager.
@@ -470,14 +469,14 @@ mod tests {
 
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = Path::from_absolute_path(temp_dir.path()).unwrap();
 
-        let table_metadata_manager = TableMetadataManager::try_from_path(path.clone())
-            .await
-            .unwrap();
+        let table_metadata_manager =
+            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
+                .await
+                .unwrap();
 
         let metadata_manager = MetadataManager {
-            metadata_delta_lake: MetadataDeltaLake::from_path(path),
+            metadata_delta_lake: MetadataDeltaLake::from_path(temp_dir.path().to_str().unwrap()),
             table_metadata_manager,
         };
 
