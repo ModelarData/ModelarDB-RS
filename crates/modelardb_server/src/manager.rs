@@ -254,10 +254,7 @@ impl Manager {
         metadata: &MetadataMap,
     ) -> Result<(), ModelarDbError> {
         // If the server is started with a manager, these actions require a manager key.
-        let restricted_actions = [
-            "CommandStatementUpdate",
-            "KillEdge",
-        ];
+        let restricted_actions = ["CommandStatementUpdate", "KillEdge"];
 
         if restricted_actions.iter().any(|&a| a == action_type) {
             let request_key = metadata
@@ -330,10 +327,7 @@ mod tests {
         "UpdateConfiguration",
     ];
 
-    const RESTRICTED_ACTIONS: [&str; 2] = [
-        "CommandStatementUpdate",
-        "KillEdge",
-    ];
+    const RESTRICTED_ACTIONS: [&str; 2] = ["CommandStatementUpdate", "KillEdge"];
 
     // Tests for validate_action_request().
     #[tokio::test]

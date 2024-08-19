@@ -268,8 +268,7 @@ mod tests {
     }
 
     async fn assert_single_node_without_remote_data_folder(input: &[&str]) {
-        let (cluster_mode, data_folders) =
-            parse_command_line_arguments(input).await.unwrap();
+        let (cluster_mode, data_folders) = parse_command_line_arguments(input).await.unwrap();
 
         assert_eq!(cluster_mode, ClusterMode::SingleNode);
         assert!(data_folders.remote_data_folder.is_none());

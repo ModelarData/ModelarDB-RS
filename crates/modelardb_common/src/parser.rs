@@ -563,13 +563,31 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         check_unsupported_feature_is_disabled(options.is_some(), "NAME=VALUE")?;
         check_unsupported_feature_is_disabled(*strict, "STRICT")?;
         check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;
-        check_unsupported_feature_is_disabled(enable_schema_evolution.is_some(), "ENABLE_SCHEMA_EVOLUTION")?;
+        check_unsupported_feature_is_disabled(
+            enable_schema_evolution.is_some(),
+            "ENABLE_SCHEMA_EVOLUTION",
+        )?;
         check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
-        check_unsupported_feature_is_disabled(data_retention_time_in_days.is_some(), "DATA_RETENTION_TIME_IN_DAYS")?;
-        check_unsupported_feature_is_disabled(max_data_extension_time_in_days.is_some(), "MAX_DATA_EXTENSION_TIME_IN_DAYS")?;
-        check_unsupported_feature_is_disabled(default_ddl_collation.is_some(), "DEFAULT_DDL_COLLATION")?;
-        check_unsupported_feature_is_disabled(with_aggregation_policy.is_some(), "WITH_AGGREGATION_POLICY")?;
-        check_unsupported_feature_is_disabled(with_row_access_policy.is_some(), "WITH_ROW_ACCESS_POLICY")?;
+        check_unsupported_feature_is_disabled(
+            data_retention_time_in_days.is_some(),
+            "DATA_RETENTION_TIME_IN_DAYS",
+        )?;
+        check_unsupported_feature_is_disabled(
+            max_data_extension_time_in_days.is_some(),
+            "MAX_DATA_EXTENSION_TIME_IN_DAYS",
+        )?;
+        check_unsupported_feature_is_disabled(
+            default_ddl_collation.is_some(),
+            "DEFAULT_DDL_COLLATION",
+        )?;
+        check_unsupported_feature_is_disabled(
+            with_aggregation_policy.is_some(),
+            "WITH_AGGREGATION_POLICY",
+        )?;
+        check_unsupported_feature_is_disabled(
+            with_row_access_policy.is_some(),
+            "WITH_ROW_ACCESS_POLICY",
+        )?;
         check_unsupported_feature_is_disabled(with_tags.is_some(), "WITH_TAGS")?;
         Ok(())
     } else {

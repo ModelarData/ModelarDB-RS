@@ -73,9 +73,7 @@ impl Context {
                 })?,
         );
 
-        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            cluster_mode,
-        )));
+        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
         let session = Self::create_session_context();
 
