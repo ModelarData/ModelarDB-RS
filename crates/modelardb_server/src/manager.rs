@@ -267,7 +267,6 @@ mod tests {
         Manager::new(
             Arc::new(RwLock::new(lazy_flight_client)),
             Uuid::new_v4().to_string(),
-            None,
         )
     }
 }

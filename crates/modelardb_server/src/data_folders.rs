@@ -39,7 +39,7 @@ impl DataFolder {
     /// Return a [`DataFolder`] created from `data_folder_path`. If the folder does not exist, it is
     /// created. If the folder does not exist and could not be created or if the metadata tables could
     /// not be created, [`DeltaTableError`] is returned.
-    async fn try_from_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
+    pub async fn try_from_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
 
         let table_metadata_manager =
