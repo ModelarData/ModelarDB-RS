@@ -90,9 +90,9 @@ impl TableMetadataManager {
     /// * The `table_metadata` table contains the metadata for tables.
     /// * The `model_table_metadata` table contains the main metadata for model tables.
     /// * The `model_table_hash_table_name` contains a mapping from each tag hash to the name of the
-    /// model table that contains the time series with that tag hash.
+    ///   model table that contains the time series with that tag hash.
     /// * The `model_table_field_columns` table contains the name, index, error bound value, whether
-    /// error bound is relative, and generation expression of the field columns in each model table.
+    ///   error bound is relative, and generation expression of the field columns in each model table.
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
     async fn create_metadata_delta_lake_tables(&self) -> Result<(), DeltaTableError> {

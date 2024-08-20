@@ -29,7 +29,6 @@ arrow-flight.workspace = true
 deltalake-core.workspace = true
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
-object_store = { workspace = true, features = ["aws", "azure"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tonic.workspace = true
 uuid.workspace = true

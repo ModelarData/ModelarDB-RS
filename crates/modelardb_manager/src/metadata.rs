@@ -66,7 +66,7 @@ impl MetadataManager {
     /// If they do not already exist, create the tables that are specific to the manager metadata
     /// Delta Lake.
     /// * The `manager_metadata` table contains metadata for the manager itself. It is assumed that
-    /// this table will only have a single row since there can only be a single manager.
+    ///   this table will only have a single row since there can only be a single manager.
     /// * The `nodes` table contains metadata for each node that is controlled by the manager.
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
