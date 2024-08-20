@@ -163,7 +163,8 @@ impl StorageEngine {
         }
 
         // Create the compressed data manager.
-        let data_transfer = if let Some(remote_data_folder) = data_folders.maybe_remote_data_folder {
+        let data_transfer = if let Some(remote_data_folder) = data_folders.maybe_remote_data_folder
+        {
             let table_names = data_folders
                 .local_data_folder
                 .table_metadata_manager

@@ -21,9 +21,8 @@ use std::sync::LazyLock;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use crate::types::{
-    ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema,
-    ConfigurationSchema, MetricSchema, QueryCompressedSchema, QuerySchema,
-    UncompressedSchema,
+    ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
+    MetricSchema, QueryCompressedSchema, QuerySchema, UncompressedSchema,
 };
 
 /// Name of the column used to partition the compressed segments.
