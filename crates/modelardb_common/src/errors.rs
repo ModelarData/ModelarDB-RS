@@ -33,7 +33,7 @@ pub enum ModelarDbError {
     /// field with an invalid value.
     ConfigurationError(String),
     /// Error returned when failing to retrieve data from the storage engine, query engine,
-    /// or metadata database.
+    /// or metadata Delta Lake.
     DataRetrievalError(String),
     /// Error returned when something happens that should be impossible.
     ImplementationError(String),

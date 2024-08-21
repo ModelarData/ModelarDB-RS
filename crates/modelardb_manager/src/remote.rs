@@ -106,15 +106,15 @@ impl FlightServiceHandler {
         }
     }
 
-    /// Create a normal table, save it to the metadata database and create it for each node
-    /// controlled by the manager. If the table cannot be saved to the metadata database or
+    /// Create a normal table, save it to the metadata Delta Lake and create it for each node
+    /// controlled by the manager. If the table cannot be saved to the metadata Delta Lake or
     /// created for each node, return [`Status`].
     async fn save_and_create_cluster_tables(
         &self,
         table_name: String,
         sql: &str,
     ) -> Result<(), Status> {
-        // Persist the new table to the metadata database.
+        // Persist the new table to the metadata Delta Lake.
         self.context
             .remote_data_folder
             .metadata_manager
@@ -137,15 +137,15 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Create a model table, save it to the metadata database and create it for each node
-    /// controlled by the manager. If the table cannot be saved to the metadata database or
+    /// Create a model table, save it to the metadata Delta Lake and create it for each node
+    /// controlled by the manager. If the table cannot be saved to the metadata Delta Lake or
     /// created for each node, return [`Status`].
     async fn save_and_create_cluster_model_tables(
         &self,
         model_table_metadata: ModelTableMetadata,
         sql: &str,
     ) -> Result<(), Status> {
-        // Persist the new model table to the metadata database.
+        // Persist the new model table to the metadata Delta Lake.
         self.context
             .remote_data_folder
             .metadata_manager
@@ -199,7 +199,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        // Retrieve the table names from the metadata database.
+        // Retrieve the table names from the metadata Delta Lake.
         let table_names = self
             .context
             .remote_data_folder
@@ -445,7 +445,7 @@ impl FlightService for FlightServiceHandler {
             let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
             let node = Node::new(url.to_string(), server_mode.clone());
 
-            // Use the metadata manager to persist the node to the metadata database.
+            // Use the metadata manager to persist the node to the metadata Delta Lake.
             self.context
                 .remote_data_folder
                 .metadata_manager
@@ -454,7 +454,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             // Use the cluster to register the node in memory. Note that if this fails, the cluster
-            // and metadata database will be out of sync until the manager is restarted.
+            // and metadata Delta Lake will be out of sync until the manager is restarted.
             self.context
                 .cluster
                 .write()
@@ -477,7 +477,7 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "RemoveNode" {
             let (url, _offset_data) = decode_argument(&action.body)?;
 
-            // Remove the node with the given url from the metadata database.
+            // Remove the node with the given url from the metadata Delta Lake.
             self.context
                 .remote_data_folder
                 .metadata_manager
@@ -486,7 +486,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             // Remove the node with the given url from the cluster and kill it. Note that if this fails,
-            // the cluster and metadata database will be out of sync until the manager is restarted.
+            // the cluster and metadata Delta Lake will be out of sync until the manager is restarted.
             self.context
                 .cluster
                 .write()

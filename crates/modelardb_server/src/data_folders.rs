@@ -68,11 +68,11 @@ impl DataFolder {
 pub struct DataFolders {
     /// Folder for storing metadata and Apache Parquet files on the local file system.
     pub local_data_folder: DataFolder,
-    /// Folder for storing Apache Parquet files in a remote object store.
+    /// Folder for storing metadata and Apache Parquet files in a remote object store.
     pub maybe_remote_data_folder: Option<DataFolder>,
-    /// Folder from which Apache Parquet files will be read during query execution. It is equivalent
-    /// to `local_data_folder` when deployed on the edge and `remote_data_folder` when deployed
-    /// in the cloud.
+    /// Folder from which metadata and Apache Parquet files will be read during query execution.
+    /// It is equivalent to `local_data_folder` when deployed on the edge and `remote_data_folder`
+    /// when deployed in the cloud.
     pub query_data_folder: DataFolder,
 }
 

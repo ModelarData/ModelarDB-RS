@@ -14,7 +14,7 @@
  */
 
 //! Interface to connect to and interact with the manager, used if the server is started with a
-//! manager and needs to interact with it to initialize the metadata database and transfer metadata.
+//! manager and needs to interact with it to initialize the metadata Delta Lake.
 
 use std::sync::Arc;
 use std::{env, str};
@@ -109,7 +109,7 @@ impl Manager {
             .split(';')
             .filter(|sql| !sql.is_empty());
 
-        // For each table to create, register and save the table in the metadata database.
+        // For each table to create, register and save the table in the metadata Delta Lake.
         for sql in table_sql_queries {
             context.parse_and_create_table(sql, context).await?;
         }

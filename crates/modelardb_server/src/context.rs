@@ -157,7 +157,7 @@ impl Context {
             .register_table(table_name, table)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Persist the new table to the metadata database.
+        // Persist the new table to the Delta Lake.
         self.data_folders
             .local_data_folder
             .table_metadata_manager
@@ -198,7 +198,7 @@ impl Context {
             )
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Persist the new model table to the metadata database.
+        // Persist the new model table to the Delta Lake.
         self.data_folders
             .local_data_folder
             .table_metadata_manager
@@ -211,10 +211,10 @@ impl Context {
         Ok(())
     }
 
-    /// For each normal table saved in the metadata database, register the normal table in Apache
+    /// For each normal table saved in the metadata Delta Lake, register the normal table in Apache
     /// DataFusion. `context` is needed as an argument instead of using `self` to avoid having to
     /// copy the context when registering normal tables. If the normal tables could not be retrieved
-    /// from the metadata database or a normal table could not be registered, return
+    /// from the metadata Delta Lake or a normal table could not be registered, return
     /// [`ModelarDbError`].
     pub async fn register_tables(&self, context: &Arc<Context>) -> Result<(), ModelarDbError> {
         let table_names = self
@@ -248,10 +248,10 @@ impl Context {
         Ok(())
     }
 
-    /// For each model table saved in the metadata database, register the model table in Apache
+    /// For each model table saved in the metadata Delta Lake, register the model table in Apache
     /// DataFusion. `context` is needed as an argument instead of using `self` to avoid having to
     /// copy the context when registering model tables. If the model tables could not be retrieved
-    /// from the metadata database or a model table could not be registered, return
+    /// from the metadata Delta Lake or a model table could not be registered, return
     /// [`ModelarDbError`].
     pub async fn register_model_tables(
         &self,
@@ -404,7 +404,7 @@ mod tests {
 
         assert!(folder_path.exists());
 
-        // The table should be saved to the metadata database.
+        // The table should be saved to the metadata Delta Lake.
         let table_names = context
             .data_folders
             .local_data_folder
@@ -445,7 +445,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The table should be saved to the metadata database.
+        // The table should be saved to the metadata Delta Lake.
         let model_table_metadata = context
             .data_folders
             .local_data_folder
@@ -486,7 +486,7 @@ mod tests {
     async fn test_register_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
-        // Save a table to the metadata database.
+        // Save a table to the metadata Delta Lake.
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -506,7 +506,7 @@ mod tests {
     async fn test_register_model_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
-        // Save a model table to the metadata database.
+        // Save a model table to the metadata Delta Lake.
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 

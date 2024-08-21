@@ -54,7 +54,7 @@ pub enum ClusterMode {
 
 /// Setup tracing that prints to stdout, parse the command line arguments to extract [`DataFolders`],
 /// construct a [`Context`] with the systems components, initialize the tables and model tables in
-/// the metadata database, initialize a CTRL+C handler that flushes the data in memory to disk, and
+/// the metadata Delta Lake, initialize a CTRL+C handler that flushes the data in memory to disk, and
 /// start the Apache Arrow Flight interface. Returns [`String`] if the command line arguments cannot
 /// be parsed, if the metadata cannot be read from the database, or if the Apache Arrow Flight
 /// interface cannot be started.

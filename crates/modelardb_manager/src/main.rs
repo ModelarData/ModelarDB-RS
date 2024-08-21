@@ -109,10 +109,9 @@ pub struct Context {
     pub key: MetadataValue<Ascii>,
 }
 
-/// Parse the command line arguments to extract the metadata database and the remote object store
-/// and start an Apache Arrow Flight server. Returns [`String`] if the command line arguments
-/// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
-/// Flight server cannot be started.
+/// Parse the command line arguments to extract the remote object store and start an Apache Arrow Flight server.
+/// Returns [`String`] if the command line arguments cannot be parsed, if the metadata cannot be read from the
+/// database, or if the Apache Arrow Flight server cannot be started.
 fn main() -> Result<(), String> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();

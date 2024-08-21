@@ -270,7 +270,7 @@ fn convert_logical_expr_to_physical_expr(
 
 /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
 /// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError::Plan`] if the
-/// necessary metadata cannot be retrieved from the metadata database.
+/// necessary metadata cannot be retrieved from the metadata Delta Lake.
 fn new_apache_parquet_exec(
     delta_table: &DeltaTable,
     partition_filters: &[PartitionFilter],
@@ -294,7 +294,7 @@ fn new_apache_parquet_exec(
         .collect::<Result<Vec<PartitionedFile>>>()?;
 
     // TODO: give the optimizer more info for timestamps and values through statistics, e.g, min
-    // can be computed using only the metadata database due to the aggregate_statistics rule.
+    // can be computed using only the metadata Delta Lake due to the aggregate_statistics rule.
     let log_store = delta_table.log_store();
     let file_scan_config = FileScanConfig {
         object_store_url: log_store.object_store_url(),
