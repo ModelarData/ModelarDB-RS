@@ -26,7 +26,6 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::parser::ValidStatement;
-use modelardb_common::types::ServerMode;
 use modelardb_common::{metadata, parser};
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
@@ -60,7 +59,6 @@ impl Context {
         runtime: Arc<Runtime>,
         data_folders: DataFolders,
         cluster_mode: ClusterMode,
-        server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
         // TODO: replace with DeltaLake when merging support for storing metadata in Delta Lake.
         // unwrap() is safe as the local data folder is always located on the local file system.
@@ -75,10 +73,7 @@ impl Context {
                 })?,
         );
 
-        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            cluster_mode,
-            server_mode,
-        )));
+        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
         let session = Self::create_session_context();
 
@@ -645,7 +640,6 @@ mod tests {
                     query_data_folder: local_data_folder,
                 },
                 ClusterMode::SingleNode,
-                ServerMode::Edge,
             )
             .await
             .unwrap(),

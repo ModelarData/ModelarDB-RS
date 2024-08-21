@@ -245,20 +245,16 @@ impl Manager {
         Ok(())
     }
 
-    /// If `action_type` is `CommandStatementUpdate`, `UpdateRemoteObjectStore`, or `KillEdge`,
-    /// check that the request actually came from the manager. If the request is valid, return
-    /// [`Ok`], otherwise return [`ModelarDbError`].
+    /// If `action_type` is `CommandStatementUpdate` or `KillEdge`, check that the request actually
+    /// came from the manager. If the request is valid, return [`Ok`], otherwise return
+    /// [`ModelarDbError`].
     pub fn validate_action_request(
         &self,
         action_type: &str,
         metadata: &MetadataMap,
     ) -> Result<(), ModelarDbError> {
         // If the server is started with a manager, these actions require a manager key.
-        let restricted_actions = [
-            "CommandStatementUpdate",
-            "UpdateRemoteObjectStore",
-            "KillEdge",
-        ];
+        let restricted_actions = ["CommandStatementUpdate", "KillEdge"];
 
         if restricted_actions.iter().any(|&a| a == action_type) {
             let request_key = metadata
@@ -331,11 +327,7 @@ mod tests {
         "UpdateConfiguration",
     ];
 
-    const RESTRICTED_ACTIONS: [&str; 3] = [
-        "CommandStatementUpdate",
-        "UpdateRemoteObjectStore",
-        "KillEdge",
-    ];
+    const RESTRICTED_ACTIONS: [&str; 2] = ["CommandStatementUpdate", "KillEdge"];
 
     // Tests for validate_action_request().
     #[tokio::test]

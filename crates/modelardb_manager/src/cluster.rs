@@ -24,7 +24,6 @@ use futures::StreamExt;
 use log::info;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
-use tonic::codegen::Bytes;
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::Request;
 
@@ -141,38 +140,6 @@ impl Cluster {
                 "There are no cloud nodes to execute the query in the cluster.".to_owned(),
             ))
         }
-    }
-
-    /// For each node in the cluster, use the `UpdateRemoteObjectStore` action to update the remote
-    /// object store. If the remote object store was successfully updated for each node, return
-    /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
-    pub async fn update_remote_object_stores(
-        &self,
-        connection_info: Bytes,
-        key: &MetadataValue<Ascii>,
-    ) -> Result<(), ModelarDbError> {
-        let action = Action {
-            r#type: "UpdateRemoteObjectStore".to_owned(),
-            body: connection_info,
-        };
-
-        let mut update_object_store_futures: FuturesUnordered<_> = self
-            .nodes
-            .iter()
-            .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
-            .collect();
-
-        // TODO: Fix issue where we return immediately if we encounter an error. If it is a
-        //       connection error, we either need to retry later or remove the node.
-        // Run the futures concurrently and log when the object store has been updated on each node.
-        while let Some(result) = update_object_store_futures.next().await {
-            info!(
-                "Updated remote object store on node with url '{}'.",
-                result?
-            );
-        }
-
-        Ok(())
     }
 
     /// For each node in the cluster, use the `CommandStatementUpdate` action to create the table
