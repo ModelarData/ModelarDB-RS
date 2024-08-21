@@ -404,27 +404,6 @@ impl StorageEngine {
         ]
     }
 
-    /// Update the remote data folder, used to transfer data to in the data transfer component. If
-    /// a data transfer component does not exist, return [`ModelarDbError].
-    pub(super) async fn update_remote_data_folder(
-        &mut self,
-        remote_data_folder: DataFolder,
-    ) -> Result<(), ModelarDbError> {
-        let maybe_data_transfer = &mut *self.compressed_data_manager.data_transfer.write().await;
-
-        if let Some(data_transfer) = maybe_data_transfer {
-            data_transfer
-                .update_remote_data_folder(remote_data_folder)
-                .await;
-
-            Ok(())
-        } else {
-            Err(ModelarDbError::ConfigurationError(
-                "Storage engine is not configured to transfer data.".to_owned(),
-            ))
-        }
-    }
-
     /// Change the amount of memory for multivariate data in bytes according to `value_change`.
     pub(super) async fn adjust_multivariate_remaining_memory_in_bytes(&self, value_change: isize) {
         self.memory_pool.adjust_ingested_memory(value_change)

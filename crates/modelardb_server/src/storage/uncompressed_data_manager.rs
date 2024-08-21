@@ -811,7 +811,7 @@ mod tests {
     use datafusion::arrow::record_batch::RecordBatch;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
-    use modelardb_common::types::{ServerMode, TimestampBuilder, ValueBuilder};
+    use modelardb_common::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
     use tempfile::TempDir;
@@ -836,7 +836,6 @@ mod tests {
                 Arc::new(Runtime::new().unwrap()),
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
-                ServerMode::Edge,
             )
             .await
             .unwrap(),

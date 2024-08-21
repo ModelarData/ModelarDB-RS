@@ -56,12 +56,8 @@ impl Context {
         runtime: Arc<Runtime>,
         data_folders: DataFolders,
         cluster_mode: ClusterMode,
-        server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
-        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            cluster_mode,
-            server_mode,
-        )));
+        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
         let session = Self::create_session_context();
 
@@ -642,7 +638,6 @@ mod tests {
                 Arc::new(Runtime::new().unwrap()),
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
-                ServerMode::Edge,
             )
             .await
             .unwrap(),

@@ -654,7 +654,6 @@ fn test_can_list_actions() {
             "GetConfiguration",
             "KillEdge",
             "UpdateConfiguration",
-            "UpdateRemoteObjectStore",
         ]
     );
 }

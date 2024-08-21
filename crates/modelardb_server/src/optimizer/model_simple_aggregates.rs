@@ -1040,7 +1040,6 @@ mod tests {
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
     use modelardb_common::test;
-    use modelardb_common::types::ServerMode;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
@@ -1153,7 +1152,6 @@ mod tests {
                 Arc::new(Runtime::new().unwrap()),
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
-                ServerMode::Edge,
             )
             .await
             .unwrap(),

@@ -145,11 +145,6 @@ impl DataTransfer {
         Ok(())
     }
 
-    /// Update the remote data folder, used to transfer data to.
-    pub(super) async fn update_remote_data_folder(&mut self, remote_data_folder: DataFolder) {
-        self.remote_data_folder = remote_data_folder;
-    }
-
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
     /// for, check if the amount of data exceeds `new_value` and transfer all the data if it does.
     /// If the value is changed successfully return [`Ok`], otherwise return [`ParquetError`].

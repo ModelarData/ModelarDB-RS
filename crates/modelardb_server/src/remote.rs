@@ -43,7 +43,7 @@ use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
-use modelardb_common::types::{ServerMode, TimestampBuilder};
+use modelardb_common::types::TimestampBuilder;
 use modelardb_common::{arguments, metadata, remote};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
@@ -439,11 +439,6 @@ impl FlightService for FlightServiceHandler {
     /// uncompressed and compressed data, disk space used, and the number of data points ingested
     /// over time. Note that the metrics are cleared when collected, thus only the metrics
     /// recorded since the last call to `CollectMetrics` are returned.
-    /// * `UpdateRemoteObjectStore`: Update the remote object store, overriding the current
-    /// remote object store, if it exists. Each argument in the body should start with the size
-    /// of the argument, immediately followed by the argument value. The first argument should be
-    /// the object store type, specifically either 's3' or 'azureblobstorage'. The remaining
-    /// arguments should be the arguments required to connect to the object store.
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
     /// configuration is returned in a single [`RecordBatch`].
     /// * `UpdateConfiguration`: Update a single setting in the configuration. Each argument in the
@@ -543,32 +538,6 @@ impl FlightService for FlightServiceHandler {
             .unwrap();
 
             send_record_batch(schema.0, batch)
-        } else if action.r#type == "UpdateRemoteObjectStore" {
-            let configuration_manager = self.context.configuration_manager.read().await;
-
-            // If on a cloud node, both the remote data folder and the query data folder should be updated.
-            if configuration_manager.server_mode == ServerMode::Cloud {
-                // TODO: The query data folder should be updated in the session context.
-                return Err(Status::unimplemented(
-                    "Currently not possible to update remote object store on cloud nodes.",
-                ));
-            }
-
-            let remote_data_folder = DataFolder::try_from_connection_info(&action.body)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Update the object store used for data transfers.
-            let mut storage_engine = self.context.storage_engine.write().await;
-            storage_engine
-                .update_remote_data_folder(remote_data_folder)
-                .await
-                .map_err(|error| {
-                    Status::internal(format!("Could not update remote data folder: {error}"))
-                })?;
-
-            // Confirm the remote object store was updated.
-            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "GetConfiguration" {
             // Extract the configuration data from the configuration manager.
             let configuration_manager = self.context.configuration_manager.read().await;
@@ -720,13 +689,6 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let update_remote_object_store_action = ActionType {
-            r#type: "UpdateRemoteObjectStore".to_owned(),
-            description: "Update the remote object store, overriding the current remote object \
-                          store, if it exists."
-                .to_owned(),
-        };
-
         let get_configuration_action = ActionType {
             r#type: "GetConfiguration".to_owned(),
             description: "Get the current server configuration.".to_owned(),
@@ -743,7 +705,6 @@ impl FlightService for FlightServiceHandler {
             Ok(flush_edge_action),
             Ok(kill_edge_action),
             Ok(collect_metrics_action),
-            Ok(update_remote_object_store_action),
             Ok(get_configuration_action),
             Ok(update_configuration_action),
         ]);

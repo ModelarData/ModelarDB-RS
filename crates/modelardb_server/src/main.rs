@@ -85,7 +85,6 @@ fn main() -> Result<(), String> {
                 runtime.clone(),
                 data_folders,
                 cluster_mode.clone(),
-                server_mode,
             ))
             .map_err(|error| format!("Unable to create a Context: {error}"))?,
     );

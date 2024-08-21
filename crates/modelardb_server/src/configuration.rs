@@ -20,7 +20,6 @@ use std::env;
 use std::sync::Arc;
 
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::types::ServerMode;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
@@ -32,9 +31,6 @@ pub struct ConfigurationManager {
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
     pub(crate) cluster_mode: ClusterMode,
-    /// The mode of the server used to determine the behaviour when modifying the remote object
-    /// store and querying.
-    pub(crate) server_mode: ServerMode,
     /// Amount of memory to reserve for storing multivariate time series.
     multivariate_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing uncompressed data buffers.
@@ -57,7 +53,7 @@ pub struct ConfigurationManager {
 }
 
 impl ConfigurationManager {
-    pub fn new(cluster_mode: ClusterMode, server_mode: ServerMode) -> Self {
+    pub fn new(cluster_mode: ClusterMode) -> Self {
         let multivariate_reserved_memory_in_bytes =
             env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
                 .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
@@ -78,7 +74,6 @@ impl ConfigurationManager {
 
         Self {
             cluster_mode,
-            server_mode,
             multivariate_reserved_memory_in_bytes,
             uncompressed_reserved_memory_in_bytes,
             compressed_reserved_memory_in_bytes,
@@ -413,7 +408,6 @@ mod tests {
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
             ClusterMode::MultiNode(manager),
-            ServerMode::Edge,
         )));
 
         let storage_engine = Arc::new(RwLock::new(
