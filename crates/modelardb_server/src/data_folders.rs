@@ -89,12 +89,12 @@ impl DataFolders {
         }
     }
 
-    /// Parse the given command line arguments into a [`ServerMode`], a [`ClusterMode`] and an
-    /// instance of [`DataFolders`]. If the necessary command line arguments are not provided,
-    /// too many arguments are provided, or if the arguments are malformed, [`String`] is returned.
+    /// Parse the given command line arguments into a [`ClusterMode`] and an instance of
+    /// [`DataFolders`]. If the necessary command line arguments are not provided, too many
+    /// arguments are provided, or if the arguments are malformed, [`String`] is returned.
     pub async fn try_from_command_line_arguments(
         arguments: &[&str],
-    ) -> Result<(ServerMode, ClusterMode, Self), String> {
+    ) -> Result<(ClusterMode, Self), String> {
         // Match the provided command line arguments to the supported inputs.
         match arguments {
             &["edge", local_data_folder] | &[local_data_folder] => {
@@ -103,7 +103,6 @@ impl DataFolders {
                     .map_err(|error| error.to_string())?;
 
                 Ok((
-                    ServerMode::Edge,
                     ClusterMode::SingleNode,
                     Self::new(local_data_folder.clone(), None, local_data_folder),
                 ))
@@ -123,7 +122,6 @@ impl DataFolders {
                     .map_err(|error| error.to_string())?;
 
                 Ok((
-                    ServerMode::Cloud,
                     ClusterMode::MultiNode(manager),
                     Self::new(
                         local_data_folder,
@@ -147,7 +145,6 @@ impl DataFolders {
                     .map_err(|error| error.to_string())?;
 
                 Ok((
-                    ServerMode::Edge,
                     ClusterMode::MultiNode(manager),
                     Self::new(
                         local_data_folder.clone(),
@@ -185,7 +182,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_edge_without_remote_data_folder(&["edge", temp_dir_str]).await;
+        assert_single_node_without_remote_data_folder(&["edge", temp_dir_str]).await;
     }
 
     #[tokio::test]
@@ -193,16 +190,14 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_edge_without_remote_data_folder(&[temp_dir_str]).await;
+        assert_single_node_without_remote_data_folder(&[temp_dir_str]).await;
     }
 
-    async fn assert_single_edge_without_remote_data_folder(input: &[&str]) {
-        let (server_mode, cluster_mode, data_folders) =
-            DataFolders::try_from_command_line_arguments(input)
-                .await
-                .unwrap();
+    async fn assert_single_node_without_remote_data_folder(input: &[&str]) {
+        let (cluster_mode, data_folders) = DataFolders::try_from_command_line_arguments(input)
+            .await
+            .unwrap();
 
-        assert_eq!(server_mode, ServerMode::Edge);
         assert_eq!(cluster_mode, ClusterMode::SingleNode);
         assert!(data_folders.maybe_remote_data_folder.is_none());
     }

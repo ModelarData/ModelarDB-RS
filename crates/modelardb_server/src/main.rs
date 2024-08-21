@@ -71,7 +71,7 @@ fn main() -> Result<(), String> {
 
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
-    let (server_mode, cluster_mode, data_folders) =
+    let (cluster_mode, data_folders) =
         runtime.block_on(DataFolders::try_from_command_line_arguments(&arguments))?;
 
     // If a remote data folder was provided, check that it can be accessed.

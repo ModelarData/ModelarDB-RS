@@ -220,7 +220,6 @@ mod tests {
     use std::sync::Arc;
 
     use arrow_flight::flight_service_client::FlightServiceClient;
-    use modelardb_common::types::ServerMode;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;

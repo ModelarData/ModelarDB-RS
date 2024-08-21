@@ -26,7 +26,6 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
-use modelardb_common::types::ServerMode;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;

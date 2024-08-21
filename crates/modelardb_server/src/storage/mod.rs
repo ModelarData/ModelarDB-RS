@@ -47,7 +47,7 @@ use tracing::error;
 
 use crate::configuration::ConfigurationManager;
 use crate::context::Context;
-use crate::data_folders::{DataFolder, DataFolders};
+use crate::data_folders::DataFolders;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};

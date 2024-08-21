@@ -54,7 +54,6 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::context::Context;
-use crate::data_folders::DataFolder;
 use crate::ClusterMode;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
