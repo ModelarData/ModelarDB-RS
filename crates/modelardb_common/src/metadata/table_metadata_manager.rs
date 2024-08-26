@@ -295,7 +295,10 @@ impl TableMetadataManager {
     ) -> Result<Vec<Arc<ModelTableMetadata>>, DeltaTableError> {
         let batch = self
             .metadata_delta_lake
-            .query_table("model_table_metadata", "SELECT * FROM model_table_metadata")
+            .query_table(
+                "model_table_metadata",
+                "SELECT table_name, query_schema FROM model_table_metadata",
+            )
             .await?;
 
         let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];

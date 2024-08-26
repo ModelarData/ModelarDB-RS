@@ -112,7 +112,7 @@ impl MetadataDeltaLake {
                 ))
             }
             _ => Err(DeltaTableError::Generic(format!(
-                "{object_store_type} is currently not supported."
+                "{object_store_type} is not supported."
             ))),
         }?;
 
