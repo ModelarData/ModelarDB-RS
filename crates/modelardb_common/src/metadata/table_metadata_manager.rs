@@ -421,7 +421,7 @@ impl TableMetadataManager {
                 let generated_column = GeneratedColumn {
                     expr,
                     source_columns: try_convert_slice_u8_to_vec_usize(generated_column_sources)?,
-                    original_expr: None,
+                    original_expr: Some(generated_column_expr.to_owned()),
                 };
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
@@ -710,11 +710,14 @@ mod tests {
     use super::*;
 
     use arrow::datatypes::{ArrowPrimitiveType, Field};
+    use datafusion::arrow::datatypes::DataType;
+    use datafusion::common::ScalarValue::Int64;
+    use datafusion::logical_expr::Expr::Literal;
     use proptest::{collection, num, prop_assert_eq, proptest};
     use tempfile::TempDir;
 
     use crate::test;
-    use crate::types::ArrowValue;
+    use crate::types::{ArrowTimestamp, ArrowValue};
 
     // Tests for TableMetadataManager.
     #[tokio::test]
@@ -920,18 +923,64 @@ mod tests {
 
     #[tokio::test]
     async fn test_generated_columns() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager =
+            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
+                .await
+                .unwrap();
 
-        let model_table_metadata = test::model_table_metadata();
-        let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
-        let generated_columns = metadata_manager
-            .generated_columns(test::MODEL_TABLE_NAME, &df_schema)
+        let query_schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("field_2", ArrowValue::DATA_TYPE, false),
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("generated_column_1", ArrowValue::DATA_TYPE, false),
+            Field::new("generated_column_2", ArrowValue::DATA_TYPE, false),
+        ]));
+
+        let error_bounds = vec![
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
+            query_schema.fields.len()
+        ];
+
+        let plus_one_column = Some(GeneratedColumn {
+            expr: col("field_1") + Literal(Int64(Some(1))),
+            source_columns: vec![1],
+            original_expr: Some("field_1 + 1".to_owned()),
+        });
+
+        let addition_column = Some(GeneratedColumn {
+            expr: col("field_1") + col("field_2"),
+            source_columns: vec![1, 2],
+            original_expr: Some("field_1 + field_2".to_owned()),
+        });
+
+        let expected_generated_columns =
+            vec![None, None, None, None, plus_one_column, addition_column];
+
+        let model_table_metadata = ModelTableMetadata::try_new(
+            "generated_columns_table".to_owned(),
+            query_schema,
+            error_bounds,
+            expected_generated_columns.clone(),
+        )
+        .unwrap();
+
+        let sql = "CREATE MODEL TABLE generated_columns_table(timestamp TIMESTAMP,
+        field_1 FIELD, field_2 FIELD, tag TAG, generated_column_1 GENERATED AS field_1 + 1,
+        generated_column_2 GENERATED AS field_1 + field_2)";
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, sql)
             .await
             .unwrap();
 
-        for generated_column in generated_columns {
-            assert!(generated_column.is_none());
-        }
+        let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
+        let generated_columns = metadata_manager
+            .generated_columns("generated_columns_table", &df_schema)
+            .await
+            .unwrap();
+
+        assert_eq!(generated_columns, expected_generated_columns);
     }
 
     #[tokio::test]
