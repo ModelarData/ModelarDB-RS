@@ -44,13 +44,10 @@ services:
     image: modelardb
     build: .
     container_name: modelardb-manager
-    command: ["target/release/modelardbm", "metadata", "s3://modelardb"]
+    command: ["target/release/modelardbm", "s3://modelardb"]
     ports:
       - "9998:9998"
     environment:
-      METADATA_DB_HOST: postgres
-      METADATA_DB_PASSWORD: modelardb_password
-      METADATA_DB_USER: modelardb_user
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_DEFAULT_REGION: eu-central-1
@@ -59,7 +56,6 @@ services:
     depends_on:
       - minio-server
       - create-bucket
-      - postgres
 
   modelardb-edge:
     image: modelardb
