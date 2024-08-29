@@ -39,17 +39,6 @@ services:
       exit 0;
       "
 
-  # Metadata database service.
-  postgres:
-    image: postgres:latest
-    container_name: postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_PASSWORD: modelardb_password
-      POSTGRES_USER: modelardb_user
-      POSTGRES_DB: metadata
-
   # ModelarDB services.
   modelardb-manager:
     image: modelardb
