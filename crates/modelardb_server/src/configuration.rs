@@ -220,15 +220,13 @@ mod tests {
     use std::sync::Arc;
 
     use arrow_flight::flight_service_client::FlightServiceClient;
-    use modelardb_common::metadata;
-    use modelardb_common::storage::DeltaLake;
-    use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
     use tonic::transport::Channel;
     use uuid::Uuid;
 
+    use crate::data_folders::{DataFolder, DataFolders};
     use crate::manager::Manager;
     use crate::storage::StorageEngine;
 
@@ -384,11 +382,20 @@ mod tests {
         Arc<RwLock<StorageEngine>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-
-        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&object_store)
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
             .await
             .unwrap();
+
+        let target_dir = tempfile::tempdir().unwrap();
+        let remote_data_folder = DataFolder::try_from_path(target_dir.path().to_str().unwrap())
+            .await
+            .unwrap();
+
+        let data_folders = DataFolders::new(
+            local_data_folder.clone(),
+            Some(remote_data_folder),
+            local_data_folder,
+        );
 
         let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
         let lazy_flight_client = FlightServiceClient::new(channel);
@@ -396,27 +403,17 @@ mod tests {
         let manager = Manager::new(
             Arc::new(RwLock::new(lazy_flight_client)),
             Uuid::new_v4().to_string(),
-            None,
         );
-
-        let local_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
             ClusterMode::MultiNode(manager),
         )));
 
-        let target_dir = tempfile::tempdir().unwrap();
-        let target_fs =
-            Arc::new(DeltaLake::try_from_local_path(target_dir.path().to_str().unwrap()).unwrap());
-
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                local_data_folder,
-                Some(target_fs),
+                data_folders,
                 &configuration_manager,
-                Arc::new(metadata_manager),
             )
             .await
             .unwrap(),

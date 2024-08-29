@@ -22,8 +22,6 @@ use std::str;
 use std::sync::Arc;
 
 use object_store::{path::Path, ObjectStore};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::PgPool;
 use tonic::Status;
 use uuid::Uuid;
 
@@ -116,43 +114,6 @@ pub async fn validate_remote_data_folder(remote_delta_lake: &Arc<DeltaLake>) -> 
     }
 }
 
-/// Parse the arguments in `data` and return a [`PgPool`] of connections to a PostgreSQL database
-/// and what is remaining of `data` after parsing. If `data` is missing arguments or if the
-/// connection information is invalid, [`Status`] is returned.
-pub async fn parse_postgres_arguments(data: &[u8]) -> Result<(PgPool, &[u8]), Status> {
-    let (username, offset_data) = decode_argument(data)?;
-    let (password, offset_data) = decode_argument(offset_data)?;
-    let (host, offset_data) = decode_argument(offset_data)?;
-    let (metadata_database, offset_data) = decode_argument(offset_data)?;
-
-    let connection = connect_to_postgres(username, password, host, metadata_database)
-        .await
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-    Ok((connection, offset_data))
-}
-
-/// Return a [`PgPool`] of connections to a PostgreSQL database using the given connection
-/// information. If the connection information is invalid, return [`sqlx::Error`].
-pub async fn connect_to_postgres(
-    username: &str,
-    password: &str,
-    host: &str,
-    metadata_database: &str,
-) -> Result<PgPool, sqlx::Error> {
-    let connection_options = PgConnectOptions::new()
-        .username(username)
-        .password(password)
-        .host(host)
-        .database(metadata_database);
-
-    // TODO: Look into what an ideal number of max connections would be.
-    PgPoolOptions::new()
-        .max_connections(10)
-        .connect_with(connection_options)
-        .await
-}
-
 /// Convert the given `argument` into bytes that contain the length of the byte representation of
 /// `argument` together with the byte representation. The length is exactly two bytes long.
 pub fn encode_argument(argument: &str) -> Vec<u8> {
@@ -186,6 +147,38 @@ pub fn decode_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
     let remaining_bytes = &data[(size + 2)..];
 
     Ok((argument, remaining_bytes))
+}
+
+/// Extract the arguments in `data` and return the arguments to connect to an
+/// [`Amazon S3`](object_store::aws::AmazonS3) object store and what is remaining of `data`
+/// after parsing. If `data` is missing arguments, [`Status`] is returned.
+pub async fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
+    let (endpoint, offset_data) = decode_argument(data)?;
+    let (bucket_name, offset_data) = decode_argument(offset_data)?;
+    let (access_key_id, offset_data) = decode_argument(offset_data)?;
+    let (secret_access_key, offset_data) = decode_argument(offset_data)?;
+
+    Ok((
+        endpoint,
+        bucket_name,
+        access_key_id,
+        secret_access_key,
+        offset_data,
+    ))
+}
+
+/// Extract the arguments in `data` and return the arguments to connect to an
+/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
+/// object store and what is remaining of `data` after parsing. If `data` is missing arguments,
+/// [`Status`] is returned.
+pub async fn extract_azure_blob_storage_arguments(
+    data: &[u8],
+) -> Result<(&str, &str, &str, &[u8]), Status> {
+    let (account, offset_data) = decode_argument(data)?;
+    let (access_key, offset_data) = decode_argument(offset_data)?;
+    let (container_name, offset_data) = decode_argument(offset_data)?;
+
+    Ok((account, access_key, container_name, offset_data))
 }
 
 #[cfg(test)]

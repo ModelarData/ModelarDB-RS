@@ -38,11 +38,10 @@ use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use tonic::codegen::Bytes;
-use tonic::Status;
 use url::Url;
 use uuid::Uuid;
 
-use crate::arguments::decode_argument;
+use crate::arguments;
 use crate::schemas::{
     COMPRESSED_SCHEMA, DISK_COMPRESSED_SCHEMA, FIELD_COLUMN, QUERY_COMPRESSED_SCHEMA,
 };
@@ -91,13 +90,13 @@ impl DeltaLake {
     pub async fn try_remote_from_connection_info(
         connection_info: &[u8],
     ) -> Result<Self, DeltaTableError> {
-        let (object_store_type, offset_data) = decode_argument(connection_info)
+        let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
         let (location, storage_options) = match object_store_type {
             "s3" => {
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
-                    extract_s3_arguments(offset_data)
+                    arguments::extract_s3_arguments(offset_data)
                         .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
@@ -117,7 +116,7 @@ impl DeltaLake {
             // TODO: Needs to be tested.
             "azureblobstorage" => {
                 let (account, access_key, container_name, _offset_data) =
-                    extract_azure_blob_storage_arguments(offset_data)
+                    arguments::extract_azure_blob_storage_arguments(offset_data)
                         .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
@@ -130,7 +129,7 @@ impl DeltaLake {
                 Ok((format!("az://{container_name}"), storage_options))
             }
             _ => Err(DeltaTableError::Generic(format!(
-                "{object_store_type} is currently not supported."
+                "{object_store_type} is not supported."
             ))),
         }?;
 
@@ -321,40 +320,6 @@ impl DeltaLake {
     fn location_of_metadata_table(&self, table_name: &str) -> String {
         format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
     }
-}
-
-// TODO: replace with arguments.rs when dev/delta-metadata is merged.
-/// Parse the arguments in `data` and return the arguments to connect to an
-/// [`Amazon S3`](object_store::aws::AmazonS3) object store and what is remaining of `data`
-/// after parsing. If `data` is missing arguments, [`Status`] is returned.
-pub async fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
-    let (endpoint, offset_data) = decode_argument(data)?;
-    let (bucket_name, offset_data) = decode_argument(offset_data)?;
-    let (access_key_id, offset_data) = decode_argument(offset_data)?;
-    let (secret_access_key, offset_data) = decode_argument(offset_data)?;
-
-    Ok((
-        endpoint,
-        bucket_name,
-        access_key_id,
-        secret_access_key,
-        offset_data,
-    ))
-}
-
-// TODO: replace with arguments.rs when dev/delta-metadata is merged.
-/// Parse the arguments in `data` and return the arguments to connect to an
-/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
-/// object store and what is remaining of `data` after parsing. If `data` is missing arguments,
-/// [`Status`] is returned.
-pub async fn extract_azure_blob_storage_arguments(
-    data: &[u8],
-) -> Result<(&str, &str, &str, &[u8]), Status> {
-    let (account, offset_data) = decode_argument(data)?;
-    let (access_key, offset_data) = decode_argument(offset_data)?;
-    let (container_name, offset_data) = decode_argument(offset_data)?;
-
-    Ok((account, access_key, container_name, offset_data))
 }
 
 /// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from

@@ -1039,12 +1039,12 @@ mod tests {
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
-    use modelardb_common::storage::DeltaLake;
     use modelardb_common::test;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
     use crate::context::Context;
+    use crate::data_folders::DataFolder;
     use crate::query::grid_exec::GridExec;
     use crate::query::model_table::ModelTable;
     use crate::{ClusterMode, DataFolders};
@@ -1142,18 +1142,15 @@ mod tests {
         temp_dir: &TempDir,
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
-        let local_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
+            .await
+            .unwrap();
 
         // Create a simple context.
         let context = Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                DataFolders {
-                    local_data_folder: local_data_folder.clone(),
-                    remote_data_folder: None,
-                    query_data_folder: local_data_folder,
-                },
+                DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
             )
             .await
@@ -1165,11 +1162,14 @@ mod tests {
         context
             .data_folders
             .local_data_folder
+            .delta_lake
             .create_delta_lake_model_table(&model_table_metadata.name)
             .await
             .unwrap();
 
         context
+            .data_folders
+            .local_data_folder
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await

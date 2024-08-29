@@ -750,7 +750,7 @@ fn extract_generation_exprs_for_all_columns(
                 generated_keyword: _,
             } = &column_def_option.option
             {
-                // The expression is saved as a string, so it can be stored in the metadata database,
+                // The expression is saved as a string, so it can be stored in the metadata Delta Lake,
                 // it is not stored in ModelTableMetadata as it not used for during query execution.
                 let sql_expr = generation_expr.as_ref().unwrap();
                 let original_expr = Some(sql_expr.to_string());

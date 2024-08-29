@@ -21,9 +21,8 @@ use std::sync::LazyLock;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use crate::types::{
-    ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedFileMetadataSchema, CompressedSchema,
-    ConfigurationSchema, MetricSchema, QueryCompressedSchema, QuerySchema, TagMetadataSchema,
-    UncompressedSchema,
+    ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
+    MetricSchema, QueryCompressedSchema, QuerySchema, UncompressedSchema,
 };
 
 /// Name of the column used to partition the compressed segments.
@@ -128,29 +127,3 @@ pub static CONFIGURATION_SCHEMA: LazyLock<ConfigurationSchema> = LazyLock::new(|
         Field::new("value", DataType::UInt64, true),
     ])))
 });
-
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for tag metadata.
-pub static TAG_METADATA_SCHEMA: LazyLock<TagMetadataSchema> = LazyLock::new(|| {
-    TagMetadataSchema(Arc::new(Schema::new(vec![
-        Field::new("table_name", DataType::Utf8, false),
-        Field::new("hash", DataType::UInt64, false),
-        Field::new("tag_columns", DataType::Utf8, false),
-        Field::new("tag_values", DataType::Utf8, false),
-    ])))
-});
-
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed file metadata.
-pub static COMPRESSED_FILE_METADATA_SCHEMA: LazyLock<CompressedFileMetadataSchema> =
-    LazyLock::new(|| {
-        CompressedFileMetadataSchema(Arc::new(Schema::new(vec![
-            Field::new("table_name", DataType::Utf8, false),
-            Field::new("field_column", DataType::UInt64, false),
-            Field::new("file_path", DataType::Utf8, false),
-            Field::new("size", DataType::UInt64, false),
-            Field::new("created_at", DataType::Int64, false),
-            Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("min_value", ArrowValue::DATA_TYPE, false),
-            Field::new("max_value", ArrowValue::DATA_TYPE, false),
-        ])))
-    });

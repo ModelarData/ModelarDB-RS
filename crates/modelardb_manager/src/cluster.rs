@@ -31,7 +31,7 @@ use tonic::Request;
 /// or a cloud node. A node cannot be another manager.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
-    /// Arrow Flight URL for the node. This URL uniquely identifies the node.
+    /// Apache Arrow Flight URL for the node. This URL uniquely identifies the node.
     pub url: String,
     /// The mode the node was started in.
     pub mode: ServerMode,

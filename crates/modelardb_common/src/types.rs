@@ -66,12 +66,6 @@ pub struct QuerySchema(pub arrow::datatypes::SchemaRef);
 #[derive(Clone)]
 pub struct ConfigurationSchema(pub arrow::datatypes::SchemaRef);
 
-#[derive(Clone)]
-pub struct TagMetadataSchema(pub arrow::datatypes::SchemaRef);
-
-#[derive(Clone)]
-pub struct CompressedFileMetadataSchema(pub arrow::datatypes::SchemaRef);
-
 /// Absolute or relative per-value error bound.
 #[derive(Debug, Copy, Clone)]
 pub enum ErrorBound {

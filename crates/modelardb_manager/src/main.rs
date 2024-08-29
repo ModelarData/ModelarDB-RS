@@ -18,7 +18,6 @@
 mod cluster;
 mod metadata;
 mod remote;
-mod types;
 
 use std::env;
 use std::sync::{Arc, LazyLock};
@@ -34,29 +33,83 @@ use tonic::metadata::{Ascii, MetadataValue};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
+use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
-use crate::types::{RemoteDataFolder, RemoteMetadataManager};
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9998 is used.
 pub static PORT: LazyLock<u16> =
     LazyLock::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
 
+/// Stores the connection information with the remote data folder to ensure that the information
+/// is consistent with the remote data folder.
+pub struct RemoteDataFolder {
+    /// Connection information saved as bytes to make it possible to transfer the information using
+    /// Apache Arrow Flight.
+    connection_info: Vec<u8>,
+    /// Remote object store for storing data and metadata in Apache Parquet files.
+    delta_lake: Arc<DeltaLake>,
+    /// Manager for the access to the metadata Delta Lake.
+    metadata_manager: Arc<MetadataManager>,
+}
+
+impl RemoteDataFolder {
+    pub fn new(
+        connection_info: Vec<u8>,
+        delta_lake: Arc<DeltaLake>,
+        metadata_manager: Arc<MetadataManager>,
+    ) -> Self {
+        Self {
+            connection_info,
+            delta_lake,
+            metadata_manager,
+        }
+    }
+
+    /// Parse the command line arguments into a [`RemoteDataFolder`]. If the necessary command line
+    /// arguments are not provided, too many arguments are provided, or if the arguments are malformed,
+    /// [`String`] is returned.
+    async fn try_from_command_line_arguments(arguments: &[&str]) -> Result<Self, String> {
+        match arguments {
+            &[remote_data_folder] => {
+                let connection_info = argument_to_connection_info(remote_data_folder)?;
+
+                let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                let metadata_manager = MetadataManager::try_from_connection_info(&connection_info)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                Ok(Self::new(
+                    connection_info,
+                    Arc::new(delta_lake),
+                    Arc::new(metadata_manager),
+                ))
+            }
+            _ => {
+                // The errors are consciously ignored as the program is terminating.
+                let binary_path = std::env::current_exe().unwrap();
+                let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+                Err(format!("Usage: {binary_name} remote_data_folder."))
+            }
+        }
+    }
+}
+
 /// Provides access to the managers components.
 pub struct Context {
-    /// Manager for the access to the metadata database.
-    pub remote_metadata_manager: RemoteMetadataManager,
-    /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: RwLock<RemoteDataFolder>,
+    /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
+    pub remote_data_folder: RemoteDataFolder,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
     /// Key used to identify requests coming from the manager.
     pub key: MetadataValue<Ascii>,
 }
 
-/// Parse the command line arguments to extract the metadata database and the remote object store
-/// and start an Apache Arrow Flight server. Returns [`String`] if the command line arguments
-/// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
-/// Flight server cannot be started.
+/// Parse the command line arguments to extract the remote object store and start an Apache Arrow Flight server.
+/// Returns [`String`] if the command line arguments cannot be parsed, if the metadata cannot be read from the
+/// Delta Lake, or if the Apache Arrow Flight server cannot be started.
 fn main() -> Result<(), String> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
@@ -71,12 +124,12 @@ fn main() -> Result<(), String> {
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
     let context = runtime.block_on(async {
-        let (remote_metadata_manager, remote_data_folder) =
-            parse_command_line_arguments(&arguments).await?;
-        validate_remote_data_folder(&remote_data_folder.delta_lake()).await?;
+        let remote_data_folder =
+            RemoteDataFolder::try_from_command_line_arguments(&arguments).await?;
+        validate_remote_data_folder(&remote_data_folder.delta_lake).await?;
 
-        let nodes = remote_metadata_manager
-            .metadata_manager()
+        let nodes = remote_data_folder
+            .metadata_manager
             .nodes()
             .await
             .map_err(|error| error.to_string())?;
@@ -89,8 +142,8 @@ fn main() -> Result<(), String> {
         }
 
         // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
-        let key = remote_metadata_manager
-            .metadata_manager()
+        let key = remote_data_folder
+            .metadata_manager
             .manager_key()
             .await
             .map_err(|error| error.to_string())?
@@ -100,8 +153,7 @@ fn main() -> Result<(), String> {
 
         // Create the Context.
         Ok::<Arc<Context>, String>(Arc::new(Context {
-            remote_metadata_manager,
-            remote_data_folder: RwLock::new(remote_data_folder),
+            remote_data_folder,
             cluster: RwLock::new(cluster),
             key,
         }))
@@ -111,39 +163,4 @@ fn main() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     Ok(())
-}
-
-/// Parse the command line arguments into a [`RemoteMetadataManager`] and a [`RemoteDataFolder`]. If
-/// the necessary command line arguments are not provided, too many arguments are provided, or if
-/// the arguments are malformed, [`String`] is returned.
-async fn parse_command_line_arguments(
-    arguments: &[&str],
-) -> Result<(RemoteMetadataManager, RemoteDataFolder), String> {
-    match arguments {
-        &[metadata_database, remote_data_folder] => {
-            let remote_metadata_manager = RemoteMetadataManager::try_new(metadata_database)
-                .await
-                .map_err(|error| error.to_string())?;
-
-            let delta_lake = Arc::new(
-                DeltaLake::try_remote_from_connection_info(remote_data_folder.as_bytes())
-                    .await
-                    .map_err(|error| error.to_string())?,
-            );
-            let connection_info = argument_to_connection_info(remote_data_folder)?;
-
-            Ok((
-                remote_metadata_manager,
-                RemoteDataFolder::new(connection_info, delta_lake),
-            ))
-        }
-        _ => {
-            // The errors are consciously ignored as the program is terminating.
-            let binary_path = std::env::current_exe().unwrap();
-            let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-            Err(format!(
-                "Usage: {binary_name} metadata_database remote_data_folder."
-            ))
-        }
-    }
 }

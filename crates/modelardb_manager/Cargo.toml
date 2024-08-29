@@ -26,11 +26,9 @@ path = "src/main.rs"
 [dependencies]
 arrow.workspace = true
 arrow-flight.workspace = true
-chrono.workspace = true
+deltalake-core.workspace = true
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
-object_store = { workspace = true, features = ["aws", "azure"] }
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tonic.workspace = true
 uuid.workspace = true
@@ -40,5 +38,5 @@ log = { workspace = true, features = ["max_level_debug", "release_max_level_info
 tracing = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }
 tracing-subscriber.workspace = true
 
-[package.metadata.cargo-machete]
-ignored = ["log"]
+[dev-dependencies]
+tempfile.workspace = true

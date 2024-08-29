@@ -22,7 +22,6 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 [dependencies]
 arrow.workspace = true
 arrow-flight.workspace = true
-chrono.workspace = true
 dashmap.workspace = true
 datafusion.workspace = true
 deltalake-core = { workspace = true, features = ["datafusion"] }
@@ -30,10 +29,8 @@ futures.workspace = true
 object_store = { workspace = true, features = ["aws", "azure"] }
 rand.workspace = true
 sqlparser.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "sqlite", "postgres"] }
 tokio = { workspace = true }
 tonic.workspace = true
-tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
 

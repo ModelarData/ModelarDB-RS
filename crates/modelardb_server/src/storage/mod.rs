@@ -18,7 +18,8 @@
 //! are full or [`StorageEngine::flush()`] is called, stores the resulting data points compressed as
 //! metadata and models in in-memory buffers to batch them before saving them to immutable Apache
 //! Parquet files. The path to the Apache Parquet files containing relevant compressed data points
-//! for a query can be retrieved by the query engine using [`DeltaLake`].
+//! for a query can be retrieved by the query engine using
+//! [`DeltaLake`](modelardb_common::storage::DeltaLake).
 
 mod compressed_data_buffer;
 mod compressed_data_manager;
@@ -38,10 +39,7 @@ use datafusion::parquet::errors::ParquetError;
 use deltalake_core::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::TimestampArray;
-use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::Status;
@@ -49,12 +47,12 @@ use tracing::error;
 
 use crate::configuration::ConfigurationManager;
 use crate::context::Context;
+use crate::data_folders::DataFolders;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
 use crate::storage::uncompressed_data_buffer::IngestedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::ClusterMode;
 
 /// The folder storing spilled uncompressed data buffers in the local data folder.
 const UNCOMPRESSED_DATA_FOLDER: &str = "buffers";
@@ -99,10 +97,8 @@ impl StorageEngine {
     /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
     pub(super) async fn try_new(
         runtime: Arc<Runtime>,
-        local_data_folder: Arc<DeltaLake>,
-        maybe_remote_data_folder: Option<Arc<DeltaLake>>,
+        data_folders: DataFolders,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
-        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> Result<Self, IOError> {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
@@ -122,11 +118,10 @@ impl StorageEngine {
 
         // Create the uncompressed data manager.
         let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
-            local_data_folder.clone(),
+            data_folders.local_data_folder.clone(),
+            data_folders.maybe_remote_data_folder.clone(),
             memory_pool.clone(),
             channels.clone(),
-            table_metadata_manager.clone(),
-            configuration_manager.cluster_mode.clone(),
             used_multivariate_memory_metric.clone(),
             used_disk_space_metric.clone(),
         ));
@@ -168,17 +163,17 @@ impl StorageEngine {
         }
 
         // Create the compressed data manager.
-        let data_transfer = if let (ClusterMode::MultiNode(_manager), Some(remote_data_folder)) = (
-            &configuration_manager.cluster_mode,
-            maybe_remote_data_folder,
-        ) {
-            let table_names = table_metadata_manager
+        let data_transfer = if let Some(remote_data_folder) = data_folders.maybe_remote_data_folder
+        {
+            let table_names = data_folders
+                .local_data_folder
+                .table_metadata_manager
                 .table_names()
                 .await
                 .map_err(IOError::other)?;
 
             let data_transfer = DataTransfer::try_new(
-                local_data_folder.clone(),
+                data_folders.local_data_folder.clone(),
                 remote_data_folder,
                 table_names,
                 configuration_manager.transfer_batch_size_in_bytes(),
@@ -195,7 +190,7 @@ impl StorageEngine {
         let data_transfer_is_some = data_transfer.is_some();
         let compressed_data_manager = Arc::new(CompressedDataManager::new(
             Arc::new(RwLock::new(data_transfer)),
-            local_data_folder,
+            data_folders.local_data_folder,
             channels.clone(),
             memory_pool.clone(),
             used_disk_space_metric,

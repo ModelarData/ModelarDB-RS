@@ -19,6 +19,7 @@
 
 mod configuration;
 mod context;
+mod data_folders;
 mod manager;
 mod optimizer;
 mod query;
@@ -29,14 +30,11 @@ use std::env;
 use std::sync::{Arc, LazyLock};
 
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
-use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::storage::DeltaLake;
-use modelardb_common::types::ServerMode;
-use sqlx::Postgres;
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::context::Context;
+use crate::data_folders::DataFolders;
 use crate::manager::Manager;
 
 #[global_allocator]
@@ -54,32 +52,9 @@ pub enum ClusterMode {
     MultiNode(Manager),
 }
 
-impl ClusterMode {
-    /// Return the optional remote table metadata manager from the manager interface if the cluster
-    /// mode is `MultiNode`, otherwise return [`None`].
-    fn remote_table_metadata_manager(&self) -> &Option<Arc<TableMetadataManager<Postgres>>> {
-        match self {
-            ClusterMode::SingleNode => &None,
-            ClusterMode::MultiNode(manager) => &manager.table_metadata_manager,
-        }
-    }
-}
-
-/// Folders for storing metadata and Apache Parquet files.
-pub struct DataFolders {
-    /// Folder for storing metadata and Apache Parquet files on the local file system.
-    pub local_data_folder: Arc<DeltaLake>,
-    /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: Option<Arc<DeltaLake>>,
-    /// Folder from which Apache Parquet files will be read during query execution. It is equivalent
-    /// to `local_data_folder` when deployed on the edge and `remote_data_folder` when deployed
-    /// in the cloud.
-    pub query_data_folder: Arc<DeltaLake>,
-}
-
 /// Setup tracing that prints to stdout, parse the command line arguments to extract [`DataFolders`],
 /// construct a [`Context`] with the systems components, initialize the tables and model tables in
-/// the metadata database, initialize a CTRL+C handler that flushes the data in memory to disk, and
+/// the metadata Delta Lake, initialize a CTRL+C handler that flushes the data in memory to disk, and
 /// start the Apache Arrow Flight interface. Returns [`String`] if the command line arguments cannot
 /// be parsed, if the metadata cannot be read from the database, or if the Apache Arrow Flight
 /// interface cannot be started.
@@ -97,11 +72,11 @@ fn main() -> Result<(), String> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
     let (cluster_mode, data_folders) =
-        runtime.block_on(parse_command_line_arguments(&arguments))?;
+        runtime.block_on(DataFolders::try_from_command_line_arguments(&arguments))?;
 
     // If a remote data folder was provided, check that it can be accessed.
-    if let Some(remote_data_folder) = &data_folders.remote_data_folder {
-        runtime.block_on(validate_remote_data_folder(remote_data_folder))?;
+    if let Some(remote_data_folder) = &data_folders.maybe_remote_data_folder {
+        runtime.block_on(validate_remote_data_folder(&remote_data_folder.delta_lake))?;
     }
 
     let context = Arc::new(
@@ -151,79 +126,6 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command line arguments into a [`ClusterMode`] and an instance of [`DataFolders`].
-/// If the necessary command line arguments are not provided, too many arguments are provided, or
-/// if the arguments are malformed, [`String`] is returned.
-async fn parse_command_line_arguments(
-    arguments: &[&str],
-) -> Result<(ClusterMode, DataFolders), String> {
-    // Match the provided command line arguments to the supported inputs.
-    match arguments {
-        &["edge", local_data_folder] | &[local_data_folder] => {
-            let local_delta_lake = create_local_data_lake(local_data_folder)?;
-
-            Ok((
-                ClusterMode::SingleNode,
-                DataFolders {
-                    local_data_folder: local_delta_lake.clone(),
-                    remote_data_folder: None,
-                    query_data_folder: local_delta_lake,
-                },
-            ))
-        }
-        &["cloud", local_data_folder, manager_url] => {
-            let (manager, remote_delta_lake) =
-                Manager::register_node(manager_url, ServerMode::Cloud)
-                    .await
-                    .map_err(|error| error.to_string())?;
-
-            let local_delta_lake = create_local_data_lake(local_data_folder)?;
-
-            Ok((
-                ClusterMode::MultiNode(manager),
-                DataFolders {
-                    local_data_folder: local_delta_lake,
-                    remote_data_folder: Some(remote_delta_lake.clone()),
-                    query_data_folder: remote_delta_lake,
-                },
-            ))
-        }
-        &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
-            let (manager, remote_delta_lake) =
-                Manager::register_node(manager_url, ServerMode::Edge)
-                    .await
-                    .map_err(|error| error.to_string())?;
-
-            let local_delta_lake = create_local_data_lake(local_data_folder)?;
-
-            Ok((
-                ClusterMode::MultiNode(manager),
-                DataFolders {
-                    local_data_folder: local_delta_lake.clone(),
-                    remote_data_folder: Some(remote_delta_lake),
-                    query_data_folder: local_delta_lake,
-                },
-            ))
-        }
-        _ => {
-            // The errors are consciously ignored as the program is terminating.
-            let binary_path = std::env::current_exe().unwrap();
-            let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-            Err(format!(
-                "Usage: {binary_name} [server_mode] local_data_folder [manager_url]."
-            ))
-        }
-    }
-}
-
-/// Return a [`DeltaLake`] created from `local_data_folder` if it exists or a [`String`] if it does
-/// not exist.
-fn create_local_data_lake(local_data_folder: &str) -> Result<Arc<DeltaLake>, String> {
-    let delta_lake =
-        DeltaLake::try_from_local_path(local_data_folder).map_err(|error| error.to_string())?;
-    Ok(Arc::new(delta_lake))
-}
-
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for
 /// the storage engine, flushes the data the storage engine currently buffers, and terminates the
 /// system without releasing the lock.
@@ -239,48 +141,4 @@ fn setup_ctrl_c_handler(context: &Arc<Context>, runtime: &Arc<Runtime>) {
 
         std::process::exit(0)
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Tests for parse_command_line_arguments().
-    #[tokio::test]
-    async fn test_parse_empty_command_line_arguments() {
-        assert!(parse_command_line_arguments(&[]).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_manager() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert_single_node_without_remote_data_folder(&["edge", temp_dir_str]).await;
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_server_mode_and_manager() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert_single_node_without_remote_data_folder(&[temp_dir_str]).await;
-    }
-
-    async fn assert_single_node_without_remote_data_folder(input: &[&str]) {
-        let (cluster_mode, data_folders) = parse_command_line_arguments(input).await.unwrap();
-
-        assert_eq!(cluster_mode, ClusterMode::SingleNode);
-        assert!(data_folders.remote_data_folder.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_parse_incomplete_cloud_command_line_arguments() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert!(parse_command_line_arguments(&["cloud", temp_dir_str])
-            .await
-            .is_err())
-    }
 }

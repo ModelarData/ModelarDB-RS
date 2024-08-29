@@ -23,11 +23,11 @@ use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
 use deltalake_core::DeltaTableError;
-use modelardb_common::storage::DeltaLake;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
+use crate::data_folders::DataFolder;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
@@ -39,9 +39,8 @@ use crate::storage::Metric;
 pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
-    /// Path to the folder containing all compressed data managed by the
-    /// [`StorageEngine`](crate::storage::StorageEngine).
-    pub(crate) local_data_folder: Arc<DeltaLake>,
+    /// Folder containing all compressed data managed by the [`StorageEngine`](crate::storage::StorageEngine).
+    pub(crate) local_data_folder: DataFolder,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the model table the compressed segments represents data points for so the Apache Parquet
     /// files can be partitioned by table.
@@ -63,7 +62,7 @@ pub(super) struct CompressedDataManager {
 impl CompressedDataManager {
     pub(super) fn new(
         data_transfer: Arc<RwLock<Option<DataTransfer>>>,
-        local_data_folder: Arc<DeltaLake>,
+        local_data_folder: DataFolder,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
@@ -98,6 +97,7 @@ impl CompressedDataManager {
         let record_batch_size_in_bytes = record_batch.get_array_memory_size();
 
         self.local_data_folder
+            .delta_lake
             .write_record_batch_to_table(table_name, record_batch)
             .await?;
 
@@ -272,6 +272,7 @@ impl CompressedDataManager {
         let compressed_data_buffer_size_in_bytes = compressed_data_buffer.size_in_bytes;
         let compressed_segments = compressed_data_buffer.record_batches();
         self.local_data_folder
+            .delta_lake
             .write_compressed_segments_to_model_table(table_name, compressed_segments)
             .await
             .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
@@ -331,11 +332,9 @@ mod tests {
 
     use datafusion::arrow::array::{Array, Int8Array};
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
-    use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
-    use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
@@ -352,12 +351,11 @@ mod tests {
         )]));
         let columns: Vec<Arc<dyn Array>> = vec![Arc::new(Int8Array::from(vec![37, 73]))];
         let record_batch = RecordBatch::try_new(schema, columns).unwrap();
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
-
-        let local_data_folder =
-            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+        let local_data_folder = data_manager.local_data_folder.clone();
 
         let mut delta_table = local_data_folder
+            .delta_lake
             .create_delta_lake_table(test::MODEL_TABLE_NAME, &record_batch.schema())
             .await
             .unwrap();
@@ -427,10 +425,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_first_compressed_data_buffer_if_out_of_memory() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder =
-            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+        let local_data_folder = data_manager.local_data_folder.clone();
+
         let mut delta_table = local_data_folder
+            .delta_lake
             .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
@@ -494,12 +493,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_remaining_memory_incremented_when_saving_compressed_segments() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder =
-            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+        let local_data_folder = data_manager.local_data_folder.clone();
 
         let segments = compressed_segments_record_batch();
         local_data_folder
+            .delta_lake
             .create_delta_lake_model_table(segments.model_table_name())
             .await
             .unwrap();
@@ -567,13 +566,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_decrease_compressed_remaining_memory_in_bytes() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder =
-            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+        let local_data_folder = data_manager.local_data_folder.clone();
 
         // Insert data that should be saved when the remaining memory is decreased.
         let segments = compressed_segments_record_batch();
         local_data_folder
+            .delta_lake
             .create_delta_lake_model_table(segments.model_table_name())
             .await
             .unwrap();
@@ -617,8 +616,6 @@ mod tests {
     /// and a metadata manager with a single model table.
     async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-
         let channels = Arc::new(Channels::new());
 
         let memory_pool = Arc::new(MemoryPool::new(
@@ -627,18 +624,14 @@ mod tests {
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
-        // Create a metadata manager and save a single model table to the metadata database.
-        let metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(&object_store)
-                .await
-                .unwrap(),
-        );
-
-        let local_data_folder =
-            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+        // Create a local data folder and save a single model table to the metadata Delta Lake.
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
+            .await
+            .unwrap();
 
         let model_table_metadata = test::model_table_metadata();
-        metadata_manager
+        local_data_folder
+            .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
