@@ -30,9 +30,7 @@ use deltalake_core::operations::create::CreateBuilder;
 use deltalake_core::protocol::SaveMode;
 use deltalake_core::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
 
-use crate::arguments::{
-    decode_argument, extract_azure_blob_storage_arguments, extract_s3_arguments,
-};
+use crate::arguments;
 
 pub mod model_table_metadata;
 pub mod table_metadata_manager;
@@ -68,13 +66,13 @@ impl MetadataDeltaLake {
     pub async fn try_from_connection_info(
         connection_info: &[u8],
     ) -> Result<MetadataDeltaLake, DeltaTableError> {
-        let (object_store_type, offset_data) = decode_argument(connection_info)
+        let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
         let (url_scheme, storage_options) = match object_store_type {
             "s3" => {
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
-                    extract_s3_arguments(offset_data)
+                    arguments::extract_s3_arguments(offset_data)
                         .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
@@ -96,7 +94,7 @@ impl MetadataDeltaLake {
             // TODO: Needs to be tested.
             "azureblobstorage" => {
                 let (account, access_key, container_name, _offset_data) =
-                    extract_azure_blob_storage_arguments(offset_data)
+                    arguments::extract_azure_blob_storage_arguments(offset_data)
                         .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
@@ -132,6 +130,7 @@ impl MetadataDeltaLake {
         table_name: &str,
         columns: Vec<StructField>,
     ) -> Result<(), DeltaTableError> {
+        // SaveMode::Ignore is used to avoid errors if the table already exists.
         let table = Arc::new(
             CreateBuilder::new()
                 .with_save_mode(SaveMode::Ignore)
@@ -147,30 +146,30 @@ impl MetadataDeltaLake {
         Ok(())
     }
 
-    /// Append the columns to the table with the given `table_name`. If the columns are appended to
+    /// Append `rows` to the table with the given `table_name`. If `rows` are appended to
     /// the table, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
     pub async fn append_to_table(
         &self,
         table_name: &str,
-        columns: Vec<ArrayRef>,
+        rows: Vec<ArrayRef>,
     ) -> Result<DeltaTable, DeltaTableError> {
         let table_provider = self.session.table_provider(table_name).await?;
-        let batch = RecordBatch::try_new(table_provider.schema(), columns)?;
+        let batch = RecordBatch::try_new(table_provider.schema(), rows)?;
 
         let ops = self.metadata_table_delta_ops(table_name).await?;
         ops.write(vec![batch]).await
     }
 
-    /// Return a [`DataFrame`] with the given `columns` for the metadata table with the given
+    /// Return a [`DataFrame`] with the given `rows` for the metadata table with the given
     /// `table_name`. If the table does not exist or the [`DataFrame`] cannot be created, return
     /// [`DeltaTableError`].
     pub async fn metadata_table_data_frame(
         &self,
         table_name: &str,
-        columns: Vec<ArrayRef>,
+        rows: Vec<ArrayRef>,
     ) -> Result<DataFrame, DeltaTableError> {
         let table_provider = self.session.table_provider(table_name).await?;
-        let batch = RecordBatch::try_new(table_provider.schema(), columns)?;
+        let batch = RecordBatch::try_new(table_provider.schema(), rows)?;
 
         Ok(self.session.read_batch(batch)?)
     }

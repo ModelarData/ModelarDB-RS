@@ -34,7 +34,7 @@ use crate::cluster::Node;
 /// Stores the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub struct MetadataManager {
-    /// Delta lake with functionality to read and write to and from the manager metadata tables.
+    /// Delta Lake with functionality to read and write to and from the manager metadata tables.
     metadata_delta_lake: MetadataDeltaLake,
     /// Metadata manager used to interface with the subset of the manager metadata Delta Lake
     /// related to tables and model tables.
@@ -205,7 +205,7 @@ impl MetadataManager {
             let model_table_sql = array!(batch, 0, StringArray);
             if model_table_sql.is_empty() {
                 Err(DeltaTableError::Generic(format!(
-                    "No table with the name '{table_name}' exists."
+                    "No table or model table with the name '{table_name}' exists."
                 )))
             } else {
                 Ok(model_table_sql.value(0).to_owned())
@@ -242,10 +242,11 @@ impl MetadataManager {
         let table_metadata_column = array!(table_metadata_batch, 0, StringArray);
         let model_table_metadata_column = array!(model_table_metadata_batch, 0, StringArray);
 
+        // unwrap() is safe because table_metadata and model_table_metadata does not have nullable columns.
         Ok(table_metadata_column
             .iter()
             .chain(model_table_metadata_column.iter())
-            .map(|column_value| column_value.unwrap().to_string())
+            .map(|column_value| column_value.unwrap().to_owned())
             .collect())
     }
 }

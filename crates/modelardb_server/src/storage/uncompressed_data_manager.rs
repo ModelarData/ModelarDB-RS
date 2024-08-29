@@ -48,9 +48,9 @@ use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When an uncompressed data buffer is finished the data is made available for compression.
 pub(super) struct UncompressedDataManager {
-    /// Folder for storing metadata and Apache Parquet files on the local file system.
+    /// Folder for storing metadata and data in Apache Parquet files on the local file system.
     pub local_data_folder: DataFolder,
-    /// Folder for storing metadata and Apache Parquet files in a remote object store.
+    /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
     pub maybe_remote_data_folder: Option<DataFolder>,
     /// Counter incremented for each [`RecordBatch`] of data points ingested. The value is assigned
     /// to buffers that are created or updated and is used to flush buffers that are no longer used.

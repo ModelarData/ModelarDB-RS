@@ -25,10 +25,10 @@ use modelardb_common::types::ServerMode;
 use crate::manager::Manager;
 use crate::ClusterMode;
 
-/// Folder for storing metadata and Apache Parquet files.
+/// Folder for storing metadata and data in Apache Parquet files.
 #[derive(Clone)]
 pub struct DataFolder {
-    /// Delta Lake for storing metadata and Apache Parquet files.
+    /// Delta Lake for storing metadata and data in Apache Parquet files.
     pub delta_lake: Arc<DeltaLake>,
     /// Metadata manager for providing access to metadata related to tables.
     pub table_metadata_manager: Arc<TableMetadataManager>,
@@ -63,14 +63,14 @@ impl DataFolder {
     }
 }
 
-/// Folders for storing metadata and Apache Parquet files locally and remotely.
+/// Folders for storing metadata and data in Apache Parquet files locally and remotely.
 #[derive(Clone)]
 pub struct DataFolders {
-    /// Folder for storing metadata and Apache Parquet files on the local file system.
+    /// Folder for storing metadata and data in Apache Parquet files on the local file system.
     pub local_data_folder: DataFolder,
-    /// Folder for storing metadata and Apache Parquet files in a remote object store.
+    /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
     pub maybe_remote_data_folder: Option<DataFolder>,
-    /// Folder from which metadata and Apache Parquet files will be read during query execution.
+    /// Folder from which metadata and data in Apache Parquet files will be read during query execution.
     /// It is equivalent to `local_data_folder` when deployed on the edge and `remote_data_folder`
     /// when deployed in the cloud.
     pub query_data_folder: DataFolder,

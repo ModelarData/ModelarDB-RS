@@ -44,7 +44,7 @@ pub static PORT: LazyLock<u16> =
 /// is consistent with the remote data folder.
 pub struct RemoteDataFolder {
     /// Connection information saved as bytes to make it possible to transfer the information using
-    /// Arrow Flight.
+    /// Apache Arrow Flight.
     connection_info: Vec<u8>,
     /// Remote object store for storing data and metadata in Apache Parquet files.
     delta_lake: Arc<DeltaLake>,
@@ -92,7 +92,7 @@ impl RemoteDataFolder {
                 let binary_path = std::env::current_exe().unwrap();
                 let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
                 Err(format!(
-                    "Usage: {binary_name} metadata_database remote_data_folder."
+                    "Usage: {binary_name} remote_data_folder."
                 ))
             }
         }
@@ -101,7 +101,7 @@ impl RemoteDataFolder {
 
 /// Provides access to the managers components.
 pub struct Context {
-    /// Folder for storing Apache Parquet files and metadata in a remote object store.
+    /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
     pub remote_data_folder: RemoteDataFolder,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
@@ -111,7 +111,7 @@ pub struct Context {
 
 /// Parse the command line arguments to extract the remote object store and start an Apache Arrow Flight server.
 /// Returns [`String`] if the command line arguments cannot be parsed, if the metadata cannot be read from the
-/// database, or if the Apache Arrow Flight server cannot be started.
+/// Delta Lake, or if the Apache Arrow Flight server cannot be started.
 fn main() -> Result<(), String> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();

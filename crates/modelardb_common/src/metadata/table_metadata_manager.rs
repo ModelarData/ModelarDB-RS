@@ -38,15 +38,15 @@ use deltalake_core::DeltaTableError;
 
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataDeltaLake;
+use crate::parser;
 use crate::test::ERROR_BOUND_ZERO;
 use crate::types::ErrorBound;
-use crate::{array, parser};
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata Delta Lake.
 #[derive(Clone)]
 pub struct TableMetadataManager {
-    /// Delta lake with functionality to read and write to and from the metadata tables.
+    /// Delta Lake with functionality to read and write to and from the metadata tables.
     metadata_delta_lake: MetadataDeltaLake,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
@@ -85,7 +85,7 @@ impl TableMetadataManager {
         Ok(table_metadata_manager)
     }
 
-    /// If they do not already exist, create the tables in the metadata Delta Lake used for table and
+    /// If they do not already exist, create the tables in the metadata Delta Lake for table and
     /// model table metadata.
     /// * The `table_metadata` table contains the metadata for tables.
     /// * The `model_table_metadata` table contains the main metadata for model tables.
@@ -176,8 +176,8 @@ impl TableMetadataManager {
             .query_table("table_metadata", "SELECT table_name FROM table_metadata")
             .await?;
 
-        let table_names = array!(batch, 0, StringArray);
-        Ok(table_names.iter().flatten().map(String::from).collect())
+        let table_names = crate::array!(batch, 0, StringArray);
+        Ok(table_names.iter().flatten().map(str::to_owned).collect())
     }
 
     /// Save the created model table to the metadata Delta Lake. This includes creating a tags table
@@ -302,8 +302,8 @@ impl TableMetadataManager {
             .await?;
 
         let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
-        let table_name_array = array!(batch, 0, StringArray);
-        let query_schema_bytes_array = array!(batch, 1, BinaryArray);
+        let table_name_array = crate::array!(batch, 0, StringArray);
+        let query_schema_bytes_array = crate::array!(batch, 1, BinaryArray);
 
         for row_index in 0..batch.num_rows() {
             let table_name = table_name_array.value(row_index);
@@ -316,8 +316,7 @@ impl TableMetadataManager {
                 .error_bounds(table_name, query_schema.fields().len())
                 .await?;
 
-            // unwrap() is safe as the schema is checked before it is written to the metadata Delta Lake.
-            let df_query_schema = query_schema.clone().to_dfschema().unwrap();
+            let df_query_schema = query_schema.clone().to_dfschema()?;
             let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
 
             // Create model table metadata.
@@ -360,9 +359,9 @@ impl TableMetadataManager {
         let mut column_to_error_bound =
             vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(); query_schema_columns];
 
-        let column_index_array = array!(batch, 0, Int16Array);
-        let error_bound_value_array = array!(batch, 1, Float32Array);
-        let error_bound_is_relative_array = array!(batch, 2, BooleanArray);
+        let column_index_array = crate::array!(batch, 0, Int16Array);
+        let error_bound_value_array = crate::array!(batch, 1, Float32Array);
+        let error_bound_is_relative_array = crate::array!(batch, 2, BooleanArray);
 
         for row_index in 0..batch.num_rows() {
             let error_bound_index = column_index_array.value(row_index);
@@ -405,9 +404,9 @@ impl TableMetadataManager {
 
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
-        let column_index_array = array!(batch, 0, Int16Array);
-        let generated_column_expr_array = array!(batch, 1, StringArray);
-        let generated_column_sources_array = array!(batch, 2, BinaryArray);
+        let column_index_array = crate::array!(batch, 0, Int16Array);
+        let generated_column_expr_array = crate::array!(batch, 1, StringArray);
+        let generated_column_sources_array = crate::array!(batch, 2, BinaryArray);
 
         for row_index in 0..batch.num_rows() {
             let generated_column_index = column_index_array.value(row_index);
@@ -500,7 +499,7 @@ impl TableMetadataManager {
 
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
-        // Save the tag hash metadata to the model_table_tags table if it does not already contain it.
+        // Save the tag hash metadata in the model_table_tags table if it does not already contain it.
         let mut table_name_tags_columns: Vec<ArrayRef> =
             vec![Arc::new(Int64Array::from(vec![signed_tag_hash]))];
 
@@ -521,6 +520,9 @@ impl TableMetadataManager {
             .metadata_table_delta_ops(&format!("{table_name}_tags"))
             .await?;
 
+        // Merge the tag hash metadata in the source DataFrame into the model_table_tags table.
+        // For each hash, if the hash is not already in the target table, insert the hash and the
+        // tag values from the source DataFrame.
         let (_table, insert_into_tags_metrics) = ops
             .merge(source, col("target.hash").eq(col("source.hash")))
             .with_source_alias("source")
@@ -534,7 +536,7 @@ impl TableMetadataManager {
             })?
             .await?;
 
-        // Save the tag hash metadata to the model_table_hash_table_name table if it does not
+        // Save the tag hash metadata in the model_table_hash_table_name table if it does not
         // already contain it.
         let source = self
             .metadata_delta_lake
@@ -552,6 +554,9 @@ impl TableMetadataManager {
             .metadata_table_delta_ops("model_table_hash_table_name")
             .await?;
 
+        // Merge the tag hash metadata in the source DataFrame into the model_table_hash_table_name
+        // table. For each hash, if the hash is not already in the target table, insert the hash and
+        // the table name from the source DataFrame.
         let (_table, insert_into_hash_table_name_metrics) = ops
             .merge(source, col("target.hash").eq(col("source.hash")))
             .with_source_alias("source")
@@ -585,7 +590,7 @@ impl TableMetadataManager {
             )
             .await?;
 
-        let table_names = array!(batch, 0, StringArray);
+        let table_names = crate::array!(batch, 0, StringArray);
         if table_names.is_empty() {
             Err(DeltaTableError::Generic(format!(
                 "No table contains a time series with tag hash '{tag_hash}'."
@@ -620,13 +625,13 @@ impl TableMetadataManager {
             )
             .await?;
 
-        let hash_array = array!(batch, 0, Int64Array);
+        let hash_array = crate::array!(batch, 0, Int64Array);
 
         // For each tag column, get the corresponding column array.
         let tag_arrays: Vec<&StringArray> = tag_column_names
             .iter()
             .enumerate()
-            .map(|(index, _tag_column)| array!(batch, index + 1, StringArray))
+            .map(|(index, _tag_column)| crate::array!(batch, index + 1, StringArray))
             .collect();
 
         let mut hash_to_tags = HashMap::new();

@@ -41,9 +41,7 @@ use tonic::codegen::Bytes;
 use url::Url;
 use uuid::Uuid;
 
-use crate::arguments::{
-    decode_argument, extract_azure_blob_storage_arguments, extract_s3_arguments,
-};
+use crate::arguments;
 use crate::schemas::{
     COMPRESSED_SCHEMA, DISK_COMPRESSED_SCHEMA, FIELD_COLUMN, QUERY_COMPRESSED_SCHEMA,
 };
@@ -92,13 +90,13 @@ impl DeltaLake {
     pub async fn try_remote_from_connection_info(
         connection_info: &[u8],
     ) -> Result<Self, DeltaTableError> {
-        let (object_store_type, offset_data) = decode_argument(connection_info)
+        let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
         let (location, storage_options) = match object_store_type {
             "s3" => {
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
-                    extract_s3_arguments(offset_data)
+                    arguments::extract_s3_arguments(offset_data)
                         .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
@@ -118,7 +116,7 @@ impl DeltaLake {
             // TODO: Needs to be tested.
             "azureblobstorage" => {
                 let (account, access_key, container_name, _offset_data) =
-                    extract_azure_blob_storage_arguments(offset_data)
+                    arguments::extract_azure_blob_storage_arguments(offset_data)
                         .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
