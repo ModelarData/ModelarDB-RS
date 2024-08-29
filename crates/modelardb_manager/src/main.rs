@@ -91,9 +91,7 @@ impl RemoteDataFolder {
                 // The errors are consciously ignored as the program is terminating.
                 let binary_path = std::env::current_exe().unwrap();
                 let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-                Err(format!(
-                    "Usage: {binary_name} remote_data_folder."
-                ))
+                Err(format!("Usage: {binary_name} remote_data_folder."))
             }
         }
     }

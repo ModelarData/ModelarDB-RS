@@ -264,7 +264,6 @@ mod tests {
     use arrow::array::{
         ArrayBuilder, BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array,
     };
-    use modelardb_common::array;
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
@@ -694,7 +693,7 @@ mod tests {
             compressed_record_batch,
         );
 
-        let model_type_ids = array!(compressed_record_batch, 1, UInt8Array);
+        let model_type_ids = modelardb_common::array!(compressed_record_batch, 1, UInt8Array);
         assert_eq!(model_type_ids.values(), expected_model_type_ids);
     }
 

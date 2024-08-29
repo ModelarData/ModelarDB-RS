@@ -23,7 +23,6 @@ use arrow::array::{Array, StringArray};
 use deltalake_core::datafusion::logical_expr::{col, lit};
 use deltalake_core::kernel::{DataType, StructField};
 use deltalake_core::DeltaTableError;
-use modelardb_common::array;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::metadata::MetadataDeltaLake;
 use modelardb_common::types::ServerMode;
@@ -102,7 +101,7 @@ impl MetadataManager {
             .query_table("manager_metadata", "SELECT key FROM manager_metadata")
             .await?;
 
-        let keys = array!(batch, 0, StringArray);
+        let keys = modelardb_common::array!(batch, 0, StringArray);
         if keys.is_empty() {
             let manager_key = Uuid::new_v4();
 
@@ -163,8 +162,8 @@ impl MetadataManager {
             .query_table("nodes", "SELECT url, mode FROM nodes")
             .await?;
 
-        let url_array = array!(batch, 0, StringArray);
-        let mode_array = array!(batch, 1, StringArray);
+        let url_array = modelardb_common::array!(batch, 0, StringArray);
+        let mode_array = modelardb_common::array!(batch, 1, StringArray);
 
         for row_index in 0..batch.num_rows() {
             let url = url_array.value(row_index).to_owned();
@@ -190,7 +189,7 @@ impl MetadataManager {
             )
             .await?;
 
-        let table_sql = array!(batch, 0, StringArray);
+        let table_sql = modelardb_common::array!(batch, 0, StringArray);
         if table_sql.is_empty() {
             let batch = self
                 .metadata_delta_lake
@@ -202,7 +201,7 @@ impl MetadataManager {
                 )
                 .await?;
 
-            let model_table_sql = array!(batch, 0, StringArray);
+            let model_table_sql = modelardb_common::array!(batch, 0, StringArray);
             if model_table_sql.is_empty() {
                 Err(DeltaTableError::Generic(format!(
                     "No table or model table with the name '{table_name}' exists."
@@ -239,8 +238,9 @@ impl MetadataManager {
             )
             .await?;
 
-        let table_metadata_column = array!(table_metadata_batch, 0, StringArray);
-        let model_table_metadata_column = array!(model_table_metadata_batch, 0, StringArray);
+        let table_metadata_column = modelardb_common::array!(table_metadata_batch, 0, StringArray);
+        let model_table_metadata_column =
+            modelardb_common::array!(model_table_metadata_batch, 0, StringArray);
 
         // unwrap() is safe because table_metadata and model_table_metadata does not have nullable columns.
         Ok(table_metadata_column

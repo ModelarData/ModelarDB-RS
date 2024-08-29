@@ -41,9 +41,9 @@ use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
+use modelardb_common::test;
 use modelardb_common::test::data_generation;
 use modelardb_common::types::ErrorBound;
-use modelardb_common::{array, test};
 use sysinfo::{Pid, System};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -758,7 +758,7 @@ fn test_insert_can_ingest_time_series_with_tags() {
              ('2020-01-01 13:00:04', 1, 2, 3, 4, 5, 'Aalborg')"
         ))
         .unwrap();
-    let insert_result_count = array!(insert_result, 0, UInt64Array).value(0);
+    let insert_result_count = modelardb_common::array!(insert_result, 0, UInt64Array).value(0);
 
     test_context.flush_data_to_disk();
     let query_result = test_context
@@ -803,7 +803,7 @@ fn test_insert_can_ingest_time_series_without_tags() {
              ('2020-01-01 13:00:04', 1, 2, 3, 4, 5)"
         ))
         .unwrap();
-    let insert_result_count = array!(insert_result, 0, UInt64Array).value(0);
+    let insert_result_count = modelardb_common::array!(insert_result, 0, UInt64Array).value(0);
 
     test_context.flush_data_to_disk();
     let query_result = test_context
@@ -853,7 +853,7 @@ fn test_insert_can_ingest_time_series_with_generated_field() {
              ('2020-01-01 13:00:04', 1, 2, 3, 4)"
         ))
         .unwrap();
-    let insert_result_count = array!(insert_result, 0, UInt64Array).value(0);
+    let insert_result_count = modelardb_common::array!(insert_result, 0, UInt64Array).value(0);
 
     test_context.flush_data_to_disk();
     let query_result = test_context
@@ -985,8 +985,9 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
         .execute_query(format!("EXPLAIN {}", segment_query))
         .unwrap();
 
-    let data_point_query_plans_text = array!(data_point_query_plans, 1, StringArray);
-    let segment_query_plans_text = array!(segment_query_plans, 1, StringArray);
+    let data_point_query_plans_text =
+        modelardb_common::array!(data_point_query_plans, 1, StringArray);
+    let segment_query_plans_text = modelardb_common::array!(segment_query_plans, 1, StringArray);
     assert_ne!(data_point_query_plans, segment_query_plans);
     assert!(data_point_query_plans_text.value(1).contains("GridExec"));
     assert!(!segment_query_plans_text.value(1).contains("GridExec"));
@@ -1002,8 +1003,10 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
         assert_eq!(segment_query_result_set.num_columns(), 1);
         assert_eq!(segment_query_result_set.num_rows(), 1);
 
-        let data_point_query_result = array!(data_point_query_result_set, 0, Float64Array);
-        let segment_query_result = array!(segment_query_result_set, 0, Float64Array);
+        let data_point_query_result =
+            modelardb_common::array!(data_point_query_result_set, 0, Float64Array);
+        let segment_query_result =
+            modelardb_common::array!(segment_query_result_set, 0, Float64Array);
 
         let within_error_bound = modelardb_compression::is_value_within_error_bound(
             ErrorBound::try_new_relative(error_bound).unwrap(),
