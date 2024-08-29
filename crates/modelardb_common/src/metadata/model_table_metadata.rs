@@ -169,6 +169,21 @@ impl ModelTableMetadata {
             generated_columns,
         })
     }
+
+    /// Return `true` if the column at `index` is the timestamp column.
+    pub fn is_timestamp(&self, index: usize) -> bool {
+        index == self.timestamp_column_index
+    }
+
+    /// Return `true` if the column at `index` is a field column or a generated field column.
+    pub fn is_field(&self, index: usize) -> bool {
+        !self.is_timestamp(index) && !self.is_tag(index)
+    }
+
+    /// Return `true` if the column at `index` is a tag column.
+    pub fn is_tag(&self, index: usize) -> bool {
+        self.tag_column_indices.contains(&index)
+    }
 }
 
 /// Compute the indices of all columns in `schema` with `data_type`.
@@ -208,6 +223,7 @@ mod test {
 
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
 
+    use crate::test;
     use crate::test::ERROR_BOUND_ZERO;
 
     // Tests for ModelTableMetadata.
@@ -388,5 +404,35 @@ mod test {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_is_timestamp() {
+        let model_table_metadata = test::model_table_metadata();
+
+        assert!(model_table_metadata.is_timestamp(0));
+        assert!(!model_table_metadata.is_timestamp(1));
+        assert!(!model_table_metadata.is_timestamp(2));
+        assert!(!model_table_metadata.is_timestamp(3));
+    }
+
+    #[test]
+    fn test_is_field() {
+        let model_table_metadata = test::model_table_metadata();
+
+        assert!(!model_table_metadata.is_field(0));
+        assert!(model_table_metadata.is_field(1));
+        assert!(model_table_metadata.is_field(2));
+        assert!(!model_table_metadata.is_field(3));
+    }
+
+    #[test]
+    fn test_is_tag() {
+        let model_table_metadata = test::model_table_metadata();
+
+        assert!(!model_table_metadata.is_tag(0));
+        assert!(!model_table_metadata.is_tag(1));
+        assert!(!model_table_metadata.is_tag(2));
+        assert!(model_table_metadata.is_tag(3));
     }
 }

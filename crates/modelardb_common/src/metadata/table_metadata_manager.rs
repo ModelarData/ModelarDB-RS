@@ -232,13 +232,7 @@ impl TableMetadataManager {
             .iter()
             .enumerate()
         {
-            // Only add a row for the field if it is not the timestamp or a tag.
-            let is_timestamp = query_schema_index == model_table_metadata.timestamp_column_index;
-            let in_tag_indices = model_table_metadata
-                .tag_column_indices
-                .contains(&query_schema_index);
-
-            if !is_timestamp && !in_tag_indices {
+            if model_table_metadata.is_field(query_schema_index) {
                 let (generated_column_expr, generated_column_sources) =
                     if let Some(generated_column) =
                         &model_table_metadata.generated_columns[query_schema_index]
