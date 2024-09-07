@@ -69,7 +69,7 @@ pub(crate) struct ModelTable {
 }
 
 impl ModelTable {
-    pub fn new(
+    pub(crate) fn new(
         delta_table: DeltaTable,
         table_metadata_manager: Arc<TableMetadataManager>,
         model_table_metadata: Arc<ModelTableMetadata>,
@@ -100,7 +100,7 @@ impl ModelTable {
     }
 
     /// Return the [`ModelTableMetadata`] for the table.
-    pub fn model_table_metadata(&self) -> Arc<ModelTableMetadata> {
+    pub(crate) fn model_table_metadata(&self) -> Arc<ModelTableMetadata> {
         self.model_table_metadata.clone()
     }
 

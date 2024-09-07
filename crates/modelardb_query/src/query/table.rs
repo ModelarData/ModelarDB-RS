@@ -42,7 +42,7 @@ pub(crate) struct Table {
 }
 
 impl Table {
-    pub fn new(delta_table: DeltaTable, data_sink: Arc<dyn DataSink>) -> Self {
+    pub(crate) fn new(delta_table: DeltaTable, data_sink: Arc<dyn DataSink>) -> Self {
         Self {
             delta_table,
             data_sink,

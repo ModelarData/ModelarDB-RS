@@ -47,17 +47,17 @@ use super::QUERY_ORDER_DATA_POINT;
 /// The different types of columns supported by [`SortedJoinExec`], used for specifying the order in
 /// which the timestamp, field, and tag columns should be returned by [`SortedJoinStream`].
 #[derive(Debug, Clone)]
-pub enum SortedJoinColumnType {
+pub(crate) enum SortedJoinColumnType {
     Timestamp,
     Field,
     Tag,
 }
 
 /// An execution plan that join arrays of data points sorted by `univariate_id` and `timestamp` from
-/// multiple execution plans and tags. It is public so the additional rules added to Apache Arrow
+/// multiple execution plans and tags. It is `pub(crate)` so the additional rules added to Apache
 /// DataFusion's physical optimizer can pattern match on it.
 #[derive(Debug)]
-pub struct SortedJoinExec {
+pub(crate) struct SortedJoinExec {
     /// Schema of the execution plan.
     schema: SchemaRef,
     /// Order of columns to return.
@@ -73,7 +73,7 @@ pub struct SortedJoinExec {
 }
 
 impl SortedJoinExec {
-    pub fn new(
+    pub(crate) fn new(
         schema: SchemaRef,
         return_order: Vec<SortedJoinColumnType>,
         hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
