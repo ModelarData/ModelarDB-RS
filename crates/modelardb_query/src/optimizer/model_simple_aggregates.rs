@@ -1036,6 +1036,7 @@ mod tests {
     use std::fmt::{self, Debug};
 
     use datafusion::datasource::physical_plan::parquet::ParquetExec;
+    use datafusion::execution::session_state::SessionStateBuilder;
     use datafusion::execution::{SendableRecordBatchStream, TaskContext};
     use datafusion::physical_plan::aggregates::AggregateExec;
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
@@ -1051,6 +1052,7 @@ mod tests {
     use tempfile::TempDir;
     use tonic::async_trait;
 
+    use crate::optimizer;
     use crate::query::grid_exec::GridExec;
     use crate::query::model_table::ModelTable;
 
@@ -1181,6 +1183,7 @@ mod tests {
         temp_dir: &TempDir,
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
+        // Setup access to data and metadata in data folder.
         let data_folder_path = temp_dir.path().to_str().unwrap();
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path).unwrap();
         let table_metadata_manager = Arc::new(
@@ -1188,8 +1191,21 @@ mod tests {
                 .await
                 .unwrap(),
         );
+
+        // Setup access to Apache DataFusion.
+        let mut session_state_builder = SessionStateBuilder::new().with_default_features();
+
+        // Uses the rule method instead of the rules method as the rules method replaces the built-ins.
+        for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
+            session_state_builder =
+                session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
+        }
+
+        let session_state = session_state_builder.build();
+        let session_context = SessionContext::new_with_state(session_state);
+
+        // Create table.
         let model_table_metadata = test::model_table_metadata_arc();
-        let session_context = SessionContext::new();
 
         let delta_table = delta_lake
             .create_delta_lake_model_table(&model_table_metadata.name)
