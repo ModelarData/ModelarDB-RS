@@ -20,15 +20,12 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::catalog::SchemaProvider;
-use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::SessionContext;
 use deltalake_core::DeltaTable;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::parser::{self, ValidStatement};
-use modelardb_query::optimizer;
-use modelardb_query::{ModelTable, Table};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -60,7 +57,7 @@ impl Context {
     ) -> Result<Self, ModelarDbError> {
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
-        let session = Self::create_session_context();
+        let session = modelardb_query::create_session_context();
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(runtime, data_folders.clone(), &configuration_manager)
@@ -78,24 +75,6 @@ impl Context {
             session,
             storage_engine,
         })
-    }
-
-    /// Create a new [`SessionContext`] for interacting with Apache DataFusion. The
-    /// [`SessionContext`] is constructed with the default configuration, default resource managers,
-    /// and additional optimizer rules that rewrite simple aggregate queries to be executed directly
-    /// on the segments containing metadata and models instead of on reconstructed data points
-    /// created from the segments for model tables.
-    fn create_session_context() -> SessionContext {
-        let mut session_state_builder = SessionStateBuilder::new().with_default_features();
-
-        // Uses the rule method instead of the rules method as the rules method replaces the built-ins.
-        for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
-            session_state_builder =
-                session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
-        }
-
-        let session_state = session_state_builder.build();
-        SessionContext::new_with_state(session_state)
     }
 
     /// Parse `sql` and create a normal table or a model table based on the SQL. If `sql` is not
@@ -243,12 +222,7 @@ impl Context {
             self.storage_engine.clone(),
         ));
 
-        let table = Arc::new(Table::new(delta_table, table_data_sink));
-
-        // unwrap() is safe since the path is created from the table name which is valid UTF-8.
-        self.session
-            .register_table(table_name, table)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+        modelardb_query::register_table(&self.session, table_name, delta_table, table_data_sink)?;
 
         info!("Registered table '{table_name}'.");
 
@@ -296,16 +270,13 @@ impl Context {
             self.storage_engine.clone(),
         ));
 
-        let model_table = ModelTable::new(
+        modelardb_query::register_model_table(
+            &self.session,
             delta_table,
-            table_metadata_manager,
             model_table_metadata.clone(),
+            table_metadata_manager,
             model_table_data_sink,
-        );
-
-        self.session
-            .register_table(&model_table_metadata.name, model_table)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+        )?;
 
         info!("Registered model table '{}'.", &model_table_metadata.name);
 
@@ -324,7 +295,7 @@ impl Context {
     ) -> Result<Option<Arc<ModelTableMetadata>>, ModelarDbError> {
         let database_schema = self.default_database_schema()?;
 
-        let table = database_schema
+        let maybe_model_table = database_schema
             .table(table_name)
             .await
             .map_err(|error| {
@@ -338,11 +309,10 @@ impl Context {
                 ))
             })?;
 
-        if let Some(model_table) = table.as_any().downcast_ref::<ModelTable>() {
-            Ok(Some(model_table.model_table_metadata()))
-        } else {
-            Ok(None)
-        }
+        let maybe_model_table_metadata =
+            modelardb_query::maybe_model_table_to_model_table_metadata(maybe_model_table);
+
+        Ok(maybe_model_table_metadata)
     }
 
     /// Return [`ModelarDbError`] if a table named `table_name` exists in the default catalog.
@@ -543,17 +513,16 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        let model_table_metadata = test::model_table_metadata();
         context
-            .data_folders
-            .local_data_folder
-            .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
-        // Register the model table with Apache DataFusion.
-        context.register_model_tables().await.unwrap();
+        // Create a new context to clear the Apache Datafusion catalog.
+        let context_2 = create_context(&temp_dir).await;
+
+        // Register the table with Apache DataFusion.
+        context_2.register_model_tables().await.unwrap();
     }
 
     #[tokio::test]

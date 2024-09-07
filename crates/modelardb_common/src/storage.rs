@@ -159,7 +159,9 @@ impl DeltaLake {
     /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
     /// [`DeltaTableError`] if a connection cannot be established or the table does not exist.
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable, DeltaTableError> {
+        dbg!(table_name);
         let table_path = self.location_of_compressed_table(table_name);
+        dbg!(&table_path);
         deltalake_core::open_table_with_storage_options(&table_path, self.storage_options.clone())
             .await
     }

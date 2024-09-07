@@ -34,7 +34,7 @@ use tonic::async_trait;
 /// [`DeltaTable`] and passes most methods call directly to it. Thus, it can be registered with
 /// Apache Arrow DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is updated to the
 /// latest snapshot when accessed and support for inserting has been added.
-pub struct Table {
+pub(crate) struct Table {
     /// Access to the Delta Lake table.
     delta_table: DeltaTable,
     /// Were data should be written to.

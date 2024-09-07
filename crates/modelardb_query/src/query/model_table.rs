@@ -55,7 +55,7 @@ use super::QUERY_ORDER_SEGMENT;
 /// containing metadata and models. [`ModelTable`] implements [`TableProvider`] so it can be
 /// registered with Apache DataFusion and the multivariate time series queried as multiple
 /// univariate time series.
-pub struct ModelTable {
+pub(crate) struct ModelTable {
     /// Access to the Delta Lake table.
     delta_table: DeltaTable,
     /// Metadata for the model table.
