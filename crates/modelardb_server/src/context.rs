@@ -21,7 +21,6 @@ use std::sync::Arc;
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
-use deltalake_core::DeltaTable;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
@@ -105,9 +104,9 @@ impl Context {
         Ok(())
     }
 
-    /// Create a normal table, register it with Apache DataFusion's catalog, and save it to the
-    /// Delta Lake. If the table exists or if the table cannot be saved to the Delta Lake, return
-    /// [`ModelarDbError`] error.
+    /// Create a normal table, register it with Apache DataFusion, and save it to the Delta Lake. If
+    /// the table exists, cannot be registered with Apache DataFusion, or cannot be saved to the
+    /// Delta Lake, return [`ModelarDbError`] error.
     async fn register_and_save_table(
         &self,
         table_name: &str,
@@ -115,8 +114,7 @@ impl Context {
         schema: Schema,
     ) -> Result<(), ModelarDbError> {
         // Create an empty Delta Lake table.
-        let delta_table = self
-            .data_folders
+        self.data_folders
             .local_data_folder
             .delta_lake
             .create_delta_lake_table(table_name, &schema)
@@ -124,7 +122,7 @@ impl Context {
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Register the table with Apache DataFusion.
-        self.register_table(table_name, delta_table)?;
+        self.register_table(table_name).await?;
 
         // Persist the new table to the Delta Lake.
         self.data_folders
@@ -148,8 +146,7 @@ impl Context {
         sql: &str,
     ) -> Result<(), ModelarDbError> {
         // Create an empty Delta Lake table.
-        let delta_table = self
-            .data_folders
+        self.data_folders
             .local_data_folder
             .delta_lake
             .create_delta_lake_model_table(&model_table_metadata.name)
@@ -163,11 +160,8 @@ impl Context {
             .clone();
 
         // Register the table with Apache DataFusion.
-        self.register_model_table(
-            delta_table,
-            model_table_metadata.clone(),
-            table_metadata_manager,
-        )?;
+        self.register_model_table(model_table_metadata.clone(), table_metadata_manager)
+            .await?;
 
         // Persist the new model table to the Delta Lake.
         self.data_folders
@@ -195,28 +189,23 @@ impl Context {
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
         for table_name in table_names {
-            // Compute the path to the folder containing data for the table.
-            let delta_table = self
-                .data_folders
-                .local_data_folder
-                .delta_lake
-                .delta_table(&table_name)
-                .await
-                .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
-
-            self.register_table(&table_name, delta_table)?;
+            self.register_table(&table_name).await?;
         }
 
         Ok(())
     }
 
-    /// Register the normal table stored in `delta_table` with `table_name` in Apache DataFusion. If
-    /// the normal table could not be registered with Apache DataFusion, return [`ModelarDbError`].
-    fn register_table(
-        &self,
-        table_name: &str,
-        delta_table: DeltaTable,
-    ) -> Result<(), ModelarDbError> {
+    /// Register the normal table with `table_name` in Apache DataFusion. If the normal table does
+    /// not exist or could not be registered with Apache DataFusion, return [`ModelarDbError`].
+    async fn register_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+        let delta_table = self
+            .data_folders
+            .query_data_folder
+            .delta_lake
+            .delta_table(table_name)
+            .await
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+
         let table_data_sink = Arc::new(TableDataSink::new(
             table_name.to_owned(),
             self.storage_engine.clone(),
@@ -241,30 +230,29 @@ impl Context {
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
         for metadata in model_table_metadata {
-            // Compute the path to the folder containing data for the table.
-            let delta_table = self
-                .data_folders
-                .local_data_folder
-                .delta_lake
-                .delta_table(&metadata.name)
-                .await
-                .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
-
-            self.register_model_table(delta_table, metadata, table_metadata_manager.clone())?;
+            self.register_model_table(metadata, table_metadata_manager.clone())
+                .await?;
         }
 
         Ok(())
     }
 
-    /// Register the model table stored in `delta_table` with `model_table_metadata` from
-    /// `table_metadata_manager` in Apache DataFusion. If the model table could not be registered
-    /// with Apache DataFusion, return [`ModelarDbError`].
-    fn register_model_table(
+    /// Register the model table with `model_table_metadata` from `table_metadata_manager` in Apache
+    /// DataFusion. If the model table does not exist or could not be registered with Apache
+    /// DataFusion, return [`ModelarDbError`].
+    async fn register_model_table(
         &self,
-        delta_table: DeltaTable,
         model_table_metadata: Arc<ModelTableMetadata>,
         table_metadata_manager: Arc<TableMetadataManager>,
     ) -> Result<(), ModelarDbError> {
+        let delta_table = self
+            .data_folders
+            .query_data_folder
+            .delta_lake
+            .delta_table(&model_table_metadata.name)
+            .await
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+
         let model_table_data_sink = Arc::new(ModelTableDataSink::new(
             model_table_metadata.clone(),
             self.storage_engine.clone(),
