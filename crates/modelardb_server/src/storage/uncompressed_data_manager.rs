@@ -843,7 +843,7 @@ mod tests {
 
         // Create a table in the context.
         context
-            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 

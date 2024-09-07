@@ -142,7 +142,7 @@ impl FlightServiceHandler {
     /// created for each node, return [`Status`].
     async fn save_and_create_cluster_model_tables(
         &self,
-        model_table_metadata: ModelTableMetadata,
+        model_table_metadata: Arc<ModelTableMetadata>,
         sql: &str,
     ) -> Result<(), Status> {
         // Persist the new model table to the metadata Delta Lake.
@@ -291,7 +291,9 @@ impl FlightService for FlightServiceHandler {
 
         let schema = match valid_statement {
             ValidStatement::CreateTable { schema, .. } => Arc::new(schema),
-            ValidStatement::CreateModelTable(model_table_metadata) => model_table_metadata.schema,
+            ValidStatement::CreateModelTable(model_table_metadata) => {
+                model_table_metadata.schema.clone()
+            }
         };
 
         let options = IpcWriteOptions::default();

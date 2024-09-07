@@ -22,19 +22,21 @@ use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::catalog::SchemaProvider;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::SessionContext;
+use deltalake_core::DeltaTable;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::parser;
-use modelardb_common::parser::ValidStatement;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
+use modelardb_common::parser::{self, ValidStatement};
+use modelardb_query::optimizer;
+use modelardb_query::{ModelTable, Table};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::configuration::ConfigurationManager;
-use crate::query::model_table::ModelTable;
-use crate::query::table::Table;
+use crate::storage::data_sinks::{ModelTableDataSink, TableDataSink};
 use crate::storage::StorageEngine;
-use crate::{optimizer, ClusterMode, DataFolders};
+use crate::{ClusterMode, DataFolders};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
@@ -96,14 +98,9 @@ impl Context {
         SessionContext::new_with_state(session_state)
     }
 
-    /// Parse `sql` and create a normal table or a model table based on the SQL. `context` is needed
-    /// as an argument instead of using `self` to avoid having to copy the context when registering
-    /// model tables. If `sql` is not valid or the table could not be created, return [`ModelarDbError`].
-    pub(crate) async fn parse_and_create_table(
-        &self,
-        sql: &str,
-        context: &Arc<Context>,
-    ) -> Result<(), ModelarDbError> {
+    /// Parse `sql` and create a normal table or a model table based on the SQL. If `sql` is not
+    /// valid or the table could not be created, return [`ModelarDbError`].
+    pub(crate) async fn parse_and_create_table(&self, sql: &str) -> Result<(), ModelarDbError> {
         // Parse the SQL.
         let statement = parser::tokenize_and_parse_sql(sql)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
@@ -116,13 +113,12 @@ impl Context {
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
-                self.register_and_save_table(&name, sql, schema, context)
-                    .await?;
+                self.register_and_save_table(&name, sql, schema).await?;
             }
             ValidStatement::CreateModelTable(model_table_metadata) => {
                 self.check_if_table_exists(&model_table_metadata.name)
                     .await?;
-                self.register_and_save_model_table(model_table_metadata, sql, context)
+                self.register_and_save_model_table(model_table_metadata, sql)
                     .await?;
             }
         }
@@ -131,15 +127,13 @@ impl Context {
     }
 
     /// Create a normal table, register it with Apache DataFusion's catalog, and save it to the
-    /// Delta Lake. `context` is needed as an argument instead of using `self` to avoid having to
-    /// copy the context when registering normal tables. If the table exists or if the table cannot
-    /// be saved to the Delta Lake, return [`ModelarDbError`] error.
+    /// Delta Lake. If the table exists or if the table cannot be saved to the Delta Lake, return
+    /// [`ModelarDbError`] error.
     async fn register_and_save_table(
         &self,
         table_name: &str,
         sql: &str,
         schema: Schema,
-        context: &Arc<Context>,
     ) -> Result<(), ModelarDbError> {
         // Create an empty Delta Lake table.
         let delta_table = self
@@ -151,11 +145,7 @@ impl Context {
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Register the table with Apache DataFusion.
-        let table = Arc::new(Table::new(delta_table, context.storage_engine.clone()));
-
-        self.session
-            .register_table(table_name, table)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+        self.register_table(table_name, delta_table)?;
 
         // Persist the new table to the Delta Lake.
         self.data_folders
@@ -170,33 +160,35 @@ impl Context {
         Ok(())
     }
 
-    /// Create a model table, register it with Apache DataFusion's catalog, and save it to the
-    /// Delta Lake. `context` is needed as an argument instead of using `self` to avoid having to
-    /// copy the context when registering model tables. If the table exists or if the table cannot
-    /// be saved to the Delta Lake, return [`ModelarDbError`] error.
+    /// Create a model table, register it in Apache DataFusion, and save it to the Delta Lake. If
+    /// the table exists, cannot be registered with Apache DataFusion, or cannot be saved to the
+    /// Delta Lake, return [`ModelarDbError`] error.
     async fn register_and_save_model_table(
         &self,
-        model_table_metadata: ModelTableMetadata,
+        model_table_metadata: Arc<ModelTableMetadata>,
         sql: &str,
-        context: &Arc<Context>,
     ) -> Result<(), ModelarDbError> {
         // Create an empty Delta Lake table.
-        self.data_folders
+        let delta_table = self
+            .data_folders
             .local_data_folder
             .delta_lake
             .create_delta_lake_model_table(&model_table_metadata.name)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Register the table with Apache DataFusion.
-        let model_table_metadata = Arc::new(model_table_metadata);
+        let table_metadata_manager = self
+            .data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .clone();
 
-        self.session
-            .register_table(
-                model_table_metadata.name.as_str(),
-                ModelTable::new(context.clone(), model_table_metadata.clone()),
-            )
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+        // Register the table with Apache DataFusion.
+        self.register_model_table(
+            delta_table,
+            model_table_metadata.clone(),
+            table_metadata_manager,
+        )?;
 
         // Persist the new model table to the Delta Lake.
         self.data_folders
@@ -212,11 +204,9 @@ impl Context {
     }
 
     /// For each normal table saved in the metadata Delta Lake, register the normal table in Apache
-    /// DataFusion. `context` is needed as an argument instead of using `self` to avoid having to
-    /// copy the context when registering normal tables. If the normal tables could not be retrieved
-    /// from the metadata Delta Lake or a normal table could not be registered, return
-    /// [`ModelarDbError`].
-    pub async fn register_tables(&self, context: &Arc<Context>) -> Result<(), ModelarDbError> {
+    /// DataFusion. If the normal tables could not be retrieved from the metadata Delta Lake or a
+    /// normal table could not be registered, return [`ModelarDbError`].
+    pub async fn register_tables(&self) -> Result<(), ModelarDbError> {
         let table_names = self
             .data_folders
             .local_data_folder
@@ -235,46 +225,89 @@ impl Context {
                 .await
                 .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
-            let table = Arc::new(Table::new(delta_table, context.storage_engine.clone()));
-
-            // unwrap() is safe since the path is created from the table name which is valid UTF-8.
-            self.session
-                .register_table(&table_name, table)
-                .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-            info!("Registered table '{table_name}'.");
+            self.register_table(&table_name, delta_table)?;
         }
 
         Ok(())
     }
 
-    /// For each model table saved in the metadata Delta Lake, register the model table in Apache
-    /// DataFusion. `context` is needed as an argument instead of using `self` to avoid having to
-    /// copy the context when registering model tables. If the model tables could not be retrieved
-    /// from the metadata Delta Lake or a model table could not be registered, return
-    /// [`ModelarDbError`].
-    pub async fn register_model_tables(
+    /// Register the normal table stored in `delta_table` with `table_name` in Apache DataFusion. If
+    /// the normal table could not be registered with Apache DataFusion, return [`ModelarDbError`].
+    fn register_table(
         &self,
-        context: &Arc<Context>,
+        table_name: &str,
+        delta_table: DeltaTable,
     ) -> Result<(), ModelarDbError> {
-        let model_table_metadata = self
-            .data_folders
-            .local_data_folder
-            .table_metadata_manager
+        let table_data_sink = Arc::new(TableDataSink::new(
+            table_name.to_owned(),
+            self.storage_engine.clone(),
+        ));
+
+        let table = Arc::new(Table::new(delta_table, table_data_sink));
+
+        // unwrap() is safe since the path is created from the table name which is valid UTF-8.
+        self.session
+            .register_table(table_name, table)
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        info!("Registered table '{table_name}'.");
+
+        Ok(())
+    }
+
+    /// For each model table saved in the metadata Delta Lake, register the model table in Apache
+    /// DataFusion. If the model tables could not be retrieved from the metadata Delta Lake or a
+    /// model table could not be registered, return [`ModelarDbError`].
+    pub async fn register_model_tables(&self) -> Result<(), ModelarDbError> {
+        let table_metadata_manager = &self.data_folders.local_data_folder.table_metadata_manager;
+
+        let model_table_metadata = table_metadata_manager
             .model_table_metadata()
             .await
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
         for metadata in model_table_metadata {
-            self.session
-                .register_table(
-                    &metadata.name,
-                    ModelTable::new(context.clone(), metadata.clone()),
-                )
-                .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            // Compute the path to the folder containing data for the table.
+            let delta_table = self
+                .data_folders
+                .local_data_folder
+                .delta_lake
+                .delta_table(&metadata.name)
+                .await
+                .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
-            info!("Registered model table '{}'.", &metadata.name);
+            self.register_model_table(delta_table, metadata, table_metadata_manager.clone())?;
         }
+
+        Ok(())
+    }
+
+    /// Register the model table stored in `delta_table` with `model_table_metadata` from
+    /// `table_metadata_manager` in Apache DataFusion. If the model table could not be registered
+    /// with Apache DataFusion, return [`ModelarDbError`].
+    fn register_model_table(
+        &self,
+        delta_table: DeltaTable,
+        model_table_metadata: Arc<ModelTableMetadata>,
+        table_metadata_manager: Arc<TableMetadataManager>,
+    ) -> Result<(), ModelarDbError> {
+        let model_table_data_sink = Arc::new(ModelTableDataSink::new(
+            model_table_metadata.clone(),
+            self.storage_engine.clone(),
+        ));
+
+        let model_table = ModelTable::new(
+            delta_table,
+            table_metadata_manager,
+            model_table_metadata.clone(),
+            model_table_data_sink,
+        );
+
+        self.session
+            .register_table(&model_table_metadata.name, model_table)
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        info!("Registered model table '{}'.", &model_table_metadata.name);
 
         Ok(())
     }
@@ -380,7 +413,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         assert!(context
-            .parse_and_create_table("TABLE CREATE table_name(timestamp TIMESTAMP)", &context)
+            .parse_and_create_table("TABLE CREATE table_name(timestamp TIMESTAMP)")
             .await
             .is_err());
     }
@@ -391,7 +424,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::TABLE_SQL, &context)
+            .parse_and_create_table(test::TABLE_SQL)
             .await
             .unwrap();
 
@@ -425,12 +458,12 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         assert!(context
-            .parse_and_create_table(test::TABLE_SQL, &context)
+            .parse_and_create_table(test::TABLE_SQL)
             .await
             .is_ok());
 
         assert!(context
-            .parse_and_create_table(test::TABLE_SQL, &context)
+            .parse_and_create_table(test::TABLE_SQL)
             .await
             .is_err())
     }
@@ -441,7 +474,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -472,12 +505,12 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         assert!(context
-            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
             .await
             .is_ok());
 
         assert!(context
-            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
             .await
             .is_err())
     }
@@ -491,7 +524,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::TABLE_SQL, &context)
+            .parse_and_create_table(test::TABLE_SQL)
             .await
             .unwrap();
 
@@ -499,7 +532,7 @@ mod tests {
         let context_2 = create_context(&temp_dir).await;
 
         // Register the table with Apache DataFusion.
-        context_2.register_tables(&context).await.unwrap();
+        context_2.register_tables().await.unwrap();
     }
 
     #[tokio::test]
@@ -520,7 +553,7 @@ mod tests {
             .unwrap();
 
         // Register the model table with Apache DataFusion.
-        context.register_model_tables(&context).await.unwrap();
+        context.register_model_tables().await.unwrap();
     }
 
     #[tokio::test]
@@ -529,7 +562,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -548,7 +581,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::TABLE_SQL, &context)
+            .parse_and_create_table(test::TABLE_SQL)
             .await
             .unwrap();
 
@@ -576,7 +609,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -603,7 +636,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 

@@ -36,16 +36,15 @@ use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::planner;
-use datafusion::physical_plan::insert::DataSinkExec;
+use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake_core::kernel::LogicalFile;
 use deltalake_core::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::schemas::{DISK_QUERY_COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
 use modelardb_common::types::{ArrowTimestamp, ArrowValue};
 
-use crate::context::Context;
-use crate::query::data_sinks::ModelTableDataSink;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
@@ -57,16 +56,25 @@ use super::QUERY_ORDER_SEGMENT;
 /// registered with Apache DataFusion and the multivariate time series queried as multiple
 /// univariate time series.
 pub struct ModelTable {
-    /// Access to the system's configuration and components.
-    context: Arc<Context>,
-    /// Metadata required to read from and write to the model table.
+    /// Access to the Delta Lake table.
+    delta_table: DeltaTable,
+    /// Metadata for the model table.
     model_table_metadata: Arc<ModelTableMetadata>,
+    /// Were data should be written to.
+    data_sink: Arc<dyn DataSink>,
+    /// Aaccess to metadata related to tables.
+    table_metadata_manager: Arc<TableMetadataManager>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u16,
 }
 
 impl ModelTable {
-    pub fn new(context: Arc<Context>, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
+    pub fn new(
+        delta_table: DeltaTable,
+        table_metadata_manager: Arc<TableMetadataManager>,
+        model_table_metadata: Arc<ModelTableMetadata>,
+        data_sink: Arc<dyn DataSink>,
+    ) -> Arc<Self> {
         // Compute the index of the first stored field column in the model table's query schema. It
         // is used for queries without fields as uids, timestamps, and values are stored together.
         let fallback_field_column = {
@@ -83,8 +91,10 @@ impl ModelTable {
         };
 
         Arc::new(ModelTable {
-            context,
+            delta_table,
             model_table_metadata,
+            data_sink,
+            table_metadata_manager,
             fallback_field_column,
         })
     }
@@ -380,15 +390,15 @@ impl TableProvider for ModelTable {
         let query_schema = &self.model_table_metadata.query_schema;
         let generated_columns = &self.model_table_metadata.generated_columns;
 
-        // Create a DeltaTable to access data and metadata from the Delta Lake table.
-        let delta_table = self
-            .context
-            .data_folders
-            .query_data_folder
-            .delta_lake
-            .delta_table(table_name)
+        // Clone the Delta Lake table and update it to the latest version. self.delta_lake.load(
+        // &mut self) is not an option due to TypeProvider::scan(&self, ...). Storing the DeltaTable
+        // in a Mutex and RwLock is also not an option since most of the methods in TypeProvider
+        // return a reference and the locks will be dropped at the end of the method.
+        let mut delta_table = self.delta_table.clone();
+        delta_table
+            .load()
             .await
-            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+            .map_err(|error| DataFusionError::Internal(error.to_string()))?;
 
         // Register the object store as done in DeltaTable so paths are from the table root.
         let log_store = delta_table.log_store();
@@ -483,9 +493,6 @@ impl TableProvider for ModelTable {
         // Compute a mapping from hashes to the requested tag values in the requested order. If the
         // server is a cloud node, use the table metadata manager for the remote metadata Delta Lake.
         let hash_to_tags = self
-            .context
-            .data_folders
-            .query_data_folder
             .table_metadata_manager
             .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
             .await
@@ -564,14 +571,9 @@ impl TableProvider for ModelTable {
         input: Arc<dyn ExecutionPlan>,
         _overwrite: bool,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let data_sink = Arc::new(ModelTableDataSink::new(
-            self.model_table_metadata.clone(),
-            self.context.storage_engine.clone(),
-        ));
-
         let data_sink_exec = Arc::new(DataSinkExec::new(
             input,
-            data_sink,
+            self.data_sink.clone(),
             self.model_table_metadata.schema.clone(),
             None,
         ));

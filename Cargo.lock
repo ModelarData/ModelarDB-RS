@@ -2235,6 +2235,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "modelardb_query"
+version = "0.1.0"
+dependencies = [
+ "arrow-flight",
+ "async-trait",
+ "bytes",
+ "crossbeam-channel",
+ "crossbeam-queue",
+ "dashmap",
+ "datafusion",
+ "deltalake-core",
+ "futures",
+ "log",
+ "modelardb_common",
+ "modelardb_compression",
+ "object_store",
+ "parquet",
+ "proptest",
+ "ringbuf",
+ "snmalloc-rs",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "modelardb_server"
 version = "0.1.0"
 dependencies = [
@@ -2250,6 +2281,7 @@ dependencies = [
  "log",
  "modelardb_common",
  "modelardb_compression",
+ "modelardb_query",
  "object_store",
  "parquet",
  "proptest",

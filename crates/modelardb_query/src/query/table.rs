@@ -25,15 +25,10 @@ use datafusion::common::Constraints;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::logical_expr::{Expr, LogicalPlan, TableProviderFilterPushDown};
-use datafusion::physical_plan::insert::DataSinkExec;
+use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use deltalake_core::{arrow::datatypes::SchemaRef, DeltaTable};
-use tokio::sync::RwLock;
 use tonic::async_trait;
-
-use crate::storage::StorageEngine;
-
-use super::data_sinks::TableDataSink;
 
 /// A queryable representation of a normal table. [`Table`] wraps the [`TableProvider`]
 /// [`DeltaTable`] and passes most methods call directly to it. Thus, it can be registered with
@@ -42,15 +37,15 @@ use super::data_sinks::TableDataSink;
 pub struct Table {
     /// Access to the Delta Lake table.
     delta_table: DeltaTable,
-    /// Manages all uncompressed and compressed data in the system.
-    storage_engine: Arc<RwLock<StorageEngine>>,
+    /// Were data should be written to.
+    data_sink: Arc<dyn DataSink>,
 }
 
 impl Table {
-    pub fn new(delta_table: DeltaTable, storage_engine: Arc<RwLock<StorageEngine>>) -> Self {
+    pub fn new(delta_table: DeltaTable, data_sink: Arc<dyn DataSink>) -> Self {
         Self {
             delta_table,
-            storage_engine,
+            data_sink,
         }
     }
 }
@@ -106,7 +101,6 @@ impl TableProvider for Table {
         // in a Mutex and RwLock is also not an option since most of the methods in TypeProvider
         // return a reference and the locks will be dropped at the end of the method.
         let mut delta_table = self.delta_table.clone();
-
         delta_table
             .load()
             .await
@@ -138,18 +132,12 @@ impl TableProvider for Table {
         input: Arc<dyn ExecutionPlan>,
         _overwrite: bool,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // unwrap() is safe as all delta tables are given a name.
-        let table_name = self
-            .delta_table
-            .metadata()
-            .map_err(|error| DataFusionError::Internal(error.to_string()))?
-            .name
-            .clone()
-            .unwrap();
-
-        let data_sink = Arc::new(TableDataSink::new(table_name, self.storage_engine.clone()));
-
-        let file_sink = Arc::new(DataSinkExec::new(input, data_sink, self.schema(), None));
+        let file_sink = Arc::new(DataSinkExec::new(
+            input,
+            self.data_sink.clone(),
+            self.schema(),
+            None,
+        ));
 
         Ok(file_sink)
     }

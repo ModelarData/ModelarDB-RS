@@ -24,6 +24,7 @@
 mod compressed_data_buffer;
 mod compressed_data_manager;
 mod data_transfer;
+pub(super) mod data_sinks; // pub(super) so it can be used in context.rs.
 mod types;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;

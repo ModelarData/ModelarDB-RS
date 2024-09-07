@@ -13,15 +13,11 @@
 # limitations under the License.
 
 [package]
-name = "modelardb_server"
+name = "modelardb_query"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
-
-[[bin]]
-name = "modelardbd"
-path = "src/main.rs"
 
 [dependencies]
 arrow-flight.workspace = true
@@ -35,7 +31,6 @@ deltalake-core = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }
-modelardb_query = { path = "../modelardb_query" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 parquet = { workspace = true, features = ["object_store"] }
 ringbuf.workspace = true
