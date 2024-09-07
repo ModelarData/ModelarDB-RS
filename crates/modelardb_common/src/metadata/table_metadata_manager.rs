@@ -171,9 +171,30 @@ impl TableMetadataManager {
     /// Return the name of each table currently in the metadata Delta Lake. Note that this does not
     /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
+        self.table_names_of_type("table").await
+    }
+
+    /// Return the name of each model table currently in the metadata Delta Lake. Note that this
+    /// does not include tables. If the table names cannot be retrieved, [`DeltaTableError`] is
+    /// returned.
+    pub async fn model_table_names(&self) -> Result<Vec<String>, DeltaTableError> {
+        self.table_names_of_type("model_table").await
+    }
+
+    // Return the name of tables of `table_type` where `table_type` is either "table" or
+    // "model_table". Returns [`DeltaTableError`] if `table_type` is not "table" or "model_table" or
+    // the table names cannot be retrieved.
+    async fn table_names_of_type(&self, table_type: &str) -> Result<Vec<String>, DeltaTableError> {
+        if table_type != "table" && table_type != "model_table" {
+            return Err(DeltaTableError::NoMetadata);
+        }
+
         let batch = self
             .metadata_delta_lake
-            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .query_table(
+                &format!("{table_type}_metadata"),
+                &format!("SELECT table_name FROM {table_type}_metadata"),
+            )
             .await?;
 
         let table_names = crate::array!(batch, 0, StringArray);
@@ -301,33 +322,71 @@ impl TableMetadataManager {
 
         for row_index in 0..batch.num_rows() {
             let table_name = table_name_array.value(row_index);
-
-            // Convert the bytes to the concrete types.
             let query_schema_bytes = query_schema_bytes_array.value(row_index);
-            let query_schema = try_convert_bytes_to_schema(query_schema_bytes.into())?;
 
-            let error_bounds = self
-                .error_bounds(table_name, query_schema.fields().len())
+            let metadata = self
+                .model_table_metadata_row_to_model_table_metadata(table_name, query_schema_bytes)
                 .await?;
 
-            let df_query_schema = query_schema.clone().to_dfschema()?;
-            let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
-
-            // Create model table metadata.
-            let metadata = Arc::new(
-                ModelTableMetadata::try_new(
-                    table_name.to_owned(),
-                    Arc::new(query_schema),
-                    error_bounds,
-                    generated_columns,
-                )
-                .map_err(|error| DeltaTableError::Generic(error.to_string()))?,
-            );
-
-            model_table_metadata.push(metadata)
+            model_table_metadata.push(Arc::new(metadata))
         }
 
         Ok(model_table_metadata)
+    }
+
+    /// Return the [`ModelTableMetadata`] of for the model table with `table_name` in the metadata
+    /// Delta Lake. If the [`ModelTableMetadata`] cannot be retrieved, [`DeltaTableError`] is
+    /// returned.
+    pub async fn model_table_metadata_for_model_table(
+        &self,
+        table_name: &str,
+    ) -> Result<ModelTableMetadata, DeltaTableError> {
+        let batch = self
+            .metadata_delta_lake
+            .query_table(
+                "model_table_metadata",
+                &format!("SELECT table_name, query_schema FROM model_table_metadata WHERE table_name = '{table_name}'"),
+            )
+            .await?;
+
+        if batch.num_rows() == 0 {
+            return Err(DeltaTableError::NoMetadata);
+        }
+
+        let table_name_array = crate::array!(batch, 0, StringArray);
+        let query_schema_bytes_array = crate::array!(batch, 1, BinaryArray);
+
+        let table_name = table_name_array.value(0);
+        let query_schema_bytes = query_schema_bytes_array.value(0);
+
+        self.model_table_metadata_row_to_model_table_metadata(table_name, query_schema_bytes)
+            .await
+    }
+
+    /// Convert a row from the table "model_table_metadata" to an instance of
+    /// [`ModelTableMetadata`]. Returns [`DeltaTableError`] if a model table with `table_name` does
+    /// not exist or the bytes in `query_schema_bytes` is not a valid schema.
+    async fn model_table_metadata_row_to_model_table_metadata(
+        &self,
+        table_name: &str,
+        query_schema_bytes: &[u8],
+    ) -> Result<ModelTableMetadata, DeltaTableError> {
+        let query_schema = try_convert_bytes_to_schema(query_schema_bytes.into())?;
+
+        let error_bounds = self
+            .error_bounds(table_name, query_schema.fields().len())
+            .await?;
+
+        let df_query_schema = query_schema.clone().to_dfschema()?;
+        let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
+
+        ModelTableMetadata::try_new(
+            table_name.to_owned(),
+            Arc::new(query_schema),
+            error_bounds,
+            generated_columns,
+        )
+        .map_err(|error| DeltaTableError::Generic(error.to_string()))
     }
 
     /// Return the error bounds for the columns in the model table with `table_name`. If a model
@@ -814,6 +873,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_model_table_names() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_names = metadata_manager.model_table_names().await.unwrap();
+        assert_eq!(model_table_names, vec![test::MODEL_TABLE_NAME]);
+    }
+
+    #[tokio::test]
     async fn test_save_model_table_metadata() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
@@ -893,6 +960,32 @@ mod tests {
             model_table_metadata.first().unwrap().name,
             test::model_table_metadata().name,
         );
+    }
+
+    #[tokio::test]
+    async fn test_model_table_metadata_for_existing_model_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = metadata_manager
+            .model_table_metadata_for_model_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            model_table_metadata.name,
+            test::model_table_metadata().name,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_model_table_metadata_for_missing_model_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = metadata_manager
+            .model_table_metadata_for_model_table("missing_model_table_name")
+            .await;
+
+        assert!(model_table_metadata.is_err());
     }
 
     #[tokio::test]
