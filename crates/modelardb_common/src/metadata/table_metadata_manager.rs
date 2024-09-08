@@ -42,6 +42,12 @@ use crate::parser;
 use crate::test::ERROR_BOUND_ZERO;
 use crate::types::ErrorBound;
 
+/// Types of tables supported by ModelarDB.
+enum TableType {
+    Table,
+    ModelTable,
+}
+
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata Delta Lake.
 #[derive(Clone)]
@@ -171,23 +177,26 @@ impl TableMetadataManager {
     /// Return the name of each table currently in the metadata Delta Lake. Note that this does not
     /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
-        self.table_names_of_type("table").await
+        self.table_names_of_type(TableType::Table).await
     }
 
     /// Return the name of each model table currently in the metadata Delta Lake. Note that this
     /// does not include tables. If the table names cannot be retrieved, [`DeltaTableError`] is
     /// returned.
     pub async fn model_table_names(&self) -> Result<Vec<String>, DeltaTableError> {
-        self.table_names_of_type("model_table").await
+        self.table_names_of_type(TableType::ModelTable).await
     }
 
-    // Return the name of tables of `table_type` where `table_type` is either "table" or
-    // "model_table". Returns [`DeltaTableError`] if `table_type` is not "table" or "model_table" or
-    // the table names cannot be retrieved.
-    async fn table_names_of_type(&self, table_type: &str) -> Result<Vec<String>, DeltaTableError> {
-        if table_type != "table" && table_type != "model_table" {
-            return Err(DeltaTableError::NoMetadata);
-        }
+    // Return the name of tables of `table_type` of `table_type`. Returns [`DeltaTableError`] if
+    // `table_type` is not "table" or "model_table" or the table names cannot be retrieved.
+    async fn table_names_of_type(
+        &self,
+        table_type: TableType,
+    ) -> Result<Vec<String>, DeltaTableError> {
+        let table_type = match table_type {
+            TableType::Table => "table",
+            TableType::ModelTable => "model_table",
+        };
 
         let batch = self
             .metadata_delta_lake
@@ -334,7 +343,7 @@ impl TableMetadataManager {
         Ok(model_table_metadata)
     }
 
-    /// Return the [`ModelTableMetadata`] of for the model table with `table_name` in the metadata
+    /// Return the [`ModelTableMetadata`] for the model table with `table_name` in the metadata
     /// Delta Lake. If the [`ModelTableMetadata`] cannot be retrieved, [`DeltaTableError`] is
     /// returned.
     pub async fn model_table_metadata_for_model_table(
@@ -971,10 +980,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            model_table_metadata.name,
-            test::model_table_metadata().name,
-        );
+        assert_eq!(model_table_metadata.name, test::model_table_metadata().name,);
     }
 
     #[tokio::test]

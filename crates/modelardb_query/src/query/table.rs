@@ -37,7 +37,7 @@ use tonic::async_trait;
 pub(crate) struct Table {
     /// Access to the Delta Lake table.
     delta_table: DeltaTable,
-    /// Were data should be written to.
+    /// Where data should be written to.
     data_sink: Arc<dyn DataSink>,
 }
 

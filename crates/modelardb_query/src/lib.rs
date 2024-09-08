@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Compress batches of sorted data points to produce compressed segments containing metadata and
-//! models, merge compressed segments if possible within the error bound, compute aggregates
-//! directly from the segments, and reconstruct the data points for each compressed segment.
+//! Execute queries against tables and model tables using Apache DataFusion. Queries may be
+//! rewritten by Apache DataFusion's optimizer to make it more efficient to execute. Additional
+//! rules are added to this optimizer to execute queries directly on the compressed segments.
 
 mod optimizer;
 mod query;

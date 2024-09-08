@@ -1057,10 +1057,10 @@ mod tests {
     use crate::query::model_table::ModelTable;
 
     // DataSink for testing.
-    struct NopDataSink {}
+    struct NoOpDataSink {}
 
     #[async_trait]
-    impl DataSink for NopDataSink {
+    impl DataSink for NoOpDataSink {
         fn as_any(&self) -> &dyn Any {
             unimplemented!();
         }
@@ -1078,13 +1078,13 @@ mod tests {
         }
     }
 
-    impl Debug for NopDataSink {
+    impl Debug for NoOpDataSink {
         fn fmt(&self, _f: &mut Formatter<'_>) -> fmt::Result {
             unimplemented!();
         }
     }
 
-    impl DisplayAs for NopDataSink {
+    impl DisplayAs for NoOpDataSink {
         fn fmt_as(&self, _t: DisplayFormatType, _f: &mut Formatter<'_>) -> fmt::Result {
             unimplemented!();
         }
@@ -1217,7 +1217,7 @@ mod tests {
             .await
             .unwrap();
 
-        let model_table_data_sink = Arc::new(NopDataSink {});
+        let model_table_data_sink = Arc::new(NoOpDataSink {});
 
         let model_table = ModelTable::new(
             delta_table,

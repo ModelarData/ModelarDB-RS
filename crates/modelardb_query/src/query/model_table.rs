@@ -60,7 +60,7 @@ pub(crate) struct ModelTable {
     delta_table: DeltaTable,
     /// Metadata for the model table.
     model_table_metadata: Arc<ModelTableMetadata>,
-    /// Were data should be written to.
+    /// Where data should be written to.
     data_sink: Arc<dyn DataSink>,
     /// Aaccess to metadata related to tables.
     table_metadata_manager: Arc<TableMetadataManager>,
