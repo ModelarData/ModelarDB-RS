@@ -62,7 +62,7 @@ pub(crate) struct ModelTable {
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Where data should be written to.
     data_sink: Arc<dyn DataSink>,
-    /// Aaccess to metadata related to tables.
+    /// Access to metadata related to tables.
     table_metadata_manager: Arc<TableMetadataManager>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u16,

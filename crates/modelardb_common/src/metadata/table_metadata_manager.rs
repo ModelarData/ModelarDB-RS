@@ -374,7 +374,7 @@ impl TableMetadataManager {
 
     /// Convert a row from the table "model_table_metadata" to an instance of
     /// [`ModelTableMetadata`]. Returns [`DeltaTableError`] if a model table with `table_name` does
-    /// not exist or the bytes in `query_schema_bytes` is not a valid schema.
+    /// not exist or the bytes in `query_schema_bytes` are not a valid schema.
     async fn model_table_metadata_row_to_model_table_metadata(
         &self,
         table_name: &str,
