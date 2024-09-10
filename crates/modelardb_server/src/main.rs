@@ -21,8 +21,6 @@ mod configuration;
 mod context;
 mod data_folders;
 mod manager;
-mod optimizer;
-mod query;
 mod remote;
 mod storage;
 
@@ -91,11 +89,11 @@ fn main() -> Result<(), String> {
 
     // Register tables and model tables.
     runtime
-        .block_on(context.register_tables(&context))
+        .block_on(context.register_tables())
         .map_err(|error| format!("Unable to register tables: {error}"))?;
 
     runtime
-        .block_on(context.register_model_tables(&context))
+        .block_on(context.register_model_tables())
         .map_err(|error| format!("Unable to register model tables: {error}"))?;
 
     if let ClusterMode::MultiNode(manager) = &cluster_mode {

@@ -53,10 +53,10 @@ use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
 use super::{QUERY_ORDER_DATA_POINT, QUERY_ORDER_SEGMENT};
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
-/// metadata and models. It is public so the additional rules added to Apache Arrow DataFusion's
+/// metadata and models. It is `pub(crate)` so the additional rules added to Apache DataFusion's
 /// physical optimizer can pattern match on it.
 #[derive(Debug, Clone)]
-pub struct GridExec {
+pub(crate) struct GridExec {
     /// Schema of the execution plan.
     schema: SchemaRef,
     /// Predicate to filter data points by.
@@ -72,7 +72,7 @@ pub struct GridExec {
 }
 
 impl GridExec {
-    pub fn new(
+    pub(super) fn new(
         maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
         limit: Option<usize>,
         input: Arc<dyn ExecutionPlan>,

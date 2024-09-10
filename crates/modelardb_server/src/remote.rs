@@ -470,7 +470,7 @@ impl FlightService for FlightServiceHandler {
             info!("Received request to execute '{}'.", sql);
 
             self.context
-                .parse_and_create_table(sql, &self.context)
+                .parse_and_create_table(sql)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 

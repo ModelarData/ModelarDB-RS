@@ -1033,21 +1033,62 @@ mod tests {
     use super::*;
 
     use std::any::TypeId;
+    use std::fmt::{self, Debug};
 
     use datafusion::datasource::physical_plan::parquet::ParquetExec;
+    use datafusion::execution::session_state::SessionStateBuilder;
+    use datafusion::execution::{SendableRecordBatchStream, TaskContext};
     use datafusion::physical_plan::aggregates::AggregateExec;
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
+    use datafusion::physical_plan::insert::DataSink;
+    use datafusion::physical_plan::metrics::MetricsSet;
+    use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
+    use datafusion::prelude::SessionContext;
+    use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
     use modelardb_common::test;
+    use storage::DeltaLake;
     use tempfile::TempDir;
-    use tokio::runtime::Runtime;
+    use tonic::async_trait;
 
-    use crate::context::Context;
-    use crate::data_folders::DataFolder;
+    use crate::optimizer;
     use crate::query::grid_exec::GridExec;
     use crate::query::model_table::ModelTable;
-    use crate::{ClusterMode, DataFolders};
+
+    // DataSink for testing.
+    struct NoOpDataSink {}
+
+    #[async_trait]
+    impl DataSink for NoOpDataSink {
+        fn as_any(&self) -> &dyn Any {
+            unimplemented!();
+        }
+
+        fn metrics(&self) -> Option<MetricsSet> {
+            unimplemented!();
+        }
+
+        async fn write_all(
+            &self,
+            _data: SendableRecordBatchStream,
+            _context: &Arc<TaskContext>,
+        ) -> Result<u64> {
+            unimplemented!();
+        }
+    }
+
+    impl Debug for NoOpDataSink {
+        fn fmt(&self, _f: &mut Formatter<'_>) -> fmt::Result {
+            unimplemented!();
+        }
+    }
+
+    impl DisplayAs for NoOpDataSink {
+        fn fmt_as(&self, _t: DisplayFormatType, _f: &mut Formatter<'_>) -> fmt::Result {
+            unimplemented!();
+        }
+    }
 
     // Tests for ModelSimpleAggregatesPhysicalOptimizerRule.
     #[tokio::test]
@@ -1142,49 +1183,54 @@ mod tests {
         temp_dir: &TempDir,
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
-        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
-            .await
-            .unwrap();
-
-        // Create a simple context.
-        let context = Arc::new(
-            Context::try_new(
-                Arc::new(Runtime::new().unwrap()),
-                DataFolders::new(local_data_folder.clone(), None, local_data_folder),
-                ClusterMode::SingleNode,
-            )
-            .await
-            .unwrap(),
+        // Setup access to data and metadata in data folder.
+        let data_folder_path = temp_dir.path().to_str().unwrap();
+        let delta_lake = DeltaLake::try_from_local_path(data_folder_path).unwrap();
+        let table_metadata_manager = Arc::new(
+            TableMetadataManager::try_from_path(data_folder_path)
+                .await
+                .unwrap(),
         );
 
+        // Setup access to Apache DataFusion.
+        let mut session_state_builder = SessionStateBuilder::new().with_default_features();
+
+        // Uses the rule method instead of the rules method as the rules method replaces the built-ins.
+        for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
+            session_state_builder =
+                session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
+        }
+
+        let session_state = session_state_builder.build();
+        let session_context = SessionContext::new_with_state(session_state);
+
+        // Create table.
         let model_table_metadata = test::model_table_metadata_arc();
 
-        context
-            .data_folders
-            .local_data_folder
-            .delta_lake
+        let delta_table = delta_lake
             .create_delta_lake_model_table(&model_table_metadata.name)
             .await
             .unwrap();
 
-        context
-            .data_folders
-            .local_data_folder
-            .table_metadata_manager
+        table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
-        context
-            .session
-            .register_table(
-                test::MODEL_TABLE_NAME,
-                ModelTable::new(context.clone(), model_table_metadata),
-            )
+        let model_table_data_sink = Arc::new(NoOpDataSink {});
+
+        let model_table = ModelTable::new(
+            delta_table,
+            table_metadata_manager,
+            model_table_metadata.clone(),
+            model_table_data_sink,
+        );
+
+        session_context
+            .register_table(test::MODEL_TABLE_NAME, model_table)
             .unwrap();
 
-        context
-            .session
+        session_context
             .sql(query)
             .await
             .unwrap()

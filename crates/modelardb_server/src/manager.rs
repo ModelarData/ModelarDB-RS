@@ -111,7 +111,7 @@ impl Manager {
 
         // For each table to create, register and save the table in the metadata Delta Lake.
         for sql in table_sql_queries {
-            context.parse_and_create_table(sql, context).await?;
+            context.parse_and_create_table(sql).await?;
         }
 
         Ok(())

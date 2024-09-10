@@ -42,13 +42,13 @@ use modelardb_common::types::{TimestampArray, ValueArray};
 /// A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using
 /// [`GeneratedAsStream`] with the location it must be at and the [`PhysicalExpr`] that compute it.
 #[derive(Debug, Clone)]
-pub struct ColumnToGenerate {
+pub(super) struct ColumnToGenerate {
     index: usize,
     physical_expr: Arc<dyn PhysicalExpr>,
 }
 
 impl ColumnToGenerate {
-    pub fn new(index: usize, physical_expr: Arc<dyn PhysicalExpr>) -> Self {
+    pub(super) fn new(index: usize, physical_expr: Arc<dyn PhysicalExpr>) -> Self {
         ColumnToGenerate {
             index,
             physical_expr,
@@ -58,10 +58,9 @@ impl ColumnToGenerate {
 
 /// An execution plan that generates one or more new columns from a [`RecordBatch`] using
 /// [`PhysicalExprs`](PhysicalExpr) and creates a new [`RecordBatch`] with the new columns included.
-/// It is public so the additional rules added to Apache Arrow DataFusion's physical optimizer can
-/// pattern match on it. Assumes any columns that are only used to generate other columns are last.
+/// Assumes any columns that are only used to generate other columns are last.
 #[derive(Debug)]
-pub struct GeneratedAsExec {
+pub(super) struct GeneratedAsExec {
     /// Schema of the execution plan.
     schema: SchemaRef,
     /// Columns to generate and the index they should be at.
@@ -75,7 +74,7 @@ pub struct GeneratedAsExec {
 }
 
 impl GeneratedAsExec {
-    pub fn new(
+    pub(super) fn new(
         schema: SchemaRef,
         columns_to_generate: Vec<ColumnToGenerate>,
         input: Arc<dyn ExecutionPlan>,

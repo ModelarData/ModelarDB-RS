@@ -1,4 +1,4 @@
-# Copyright 2023 The ModelarDB Contributors
+# Copyright 2024 The ModelarDB Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,47 +13,22 @@
 # limitations under the License.
 
 [package]
-name = "modelardb_server"
+name = "modelardb_query"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
-[[bin]]
-name = "modelardbd"
-path = "src/main.rs"
-
 [dependencies]
-arrow-flight.workspace = true
 async-trait.workspace = true
-bytes.workspace = true
-crossbeam-channel.workspace = true
-crossbeam-queue.workspace = true
-dashmap.workspace = true
 datafusion.workspace = true
 deltalake-core = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }
-modelardb_query = { path = "../modelardb_query" }
-object_store = { workspace = true, features = ["aws", "azure"] }
 parquet = { workspace = true, features = ["object_store"] }
-ringbuf.workspace = true
-snmalloc-rs = { workspace = true, features = ["build_cc"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
-tokio-stream.workspace = true
 tonic.workspace = true
-uuid.workspace = true
-
-# Log is a dependency so the compile time filters for log and tracing can be set to the same values.
-log = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }
-tracing = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }
-tracing-subscriber.workspace = true
 
 [dev-dependencies]
-proptest.workspace = true
-sysinfo.workspace = true
 tempfile.workspace = true
-
-[package.metadata.cargo-machete]
-ignored = ["log"]

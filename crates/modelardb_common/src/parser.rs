@@ -351,7 +351,7 @@ pub enum ValidStatement {
     /// CREATE TABLE.
     CreateTable { name: String, schema: Schema },
     /// CREATE MODEL TABLE.
-    CreateModelTable(ModelTableMetadata),
+    CreateModelTable(Arc<ModelTableMetadata>),
 }
 
 /// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL
@@ -407,7 +407,9 @@ pub fn semantic_checks_for_create_table(
             let model_table_metadata =
                 semantic_checks_for_create_model_table(normalized_name, columns)?;
 
-            Ok(ValidStatement::CreateModelTable(model_table_metadata))
+            Ok(ValidStatement::CreateModelTable(Arc::new(
+                model_table_metadata,
+            )))
         } else {
             // Create a table that supports all columns types supported by Apache Arrow DataFusion.
             let context_provider = ParserContextProvider::new();

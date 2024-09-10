@@ -23,7 +23,6 @@ use deltalake_core::arrow::compute::SortOptions;
 
 // grid_exec and sorted_join_exec are pub(crate) so the rules added to Apache DataFusion's physical
 // optimizer can access them.
-mod data_sinks;
 mod generated_as_exec;
 pub(crate) mod grid_exec;
 pub(crate) mod model_table;
