@@ -897,7 +897,7 @@ dependencies = [
  "paste",
  "pin-project-lite",
  "rand",
- "sqlparser",
+ "sqlparser 0.49.0",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -940,7 +940,7 @@ dependencies = [
  "num_cpus",
  "object_store",
  "parquet",
- "sqlparser",
+ "sqlparser 0.49.0",
 ]
 
 [[package]]
@@ -987,7 +987,7 @@ dependencies = [
  "datafusion-common",
  "paste",
  "serde_json",
- "sqlparser",
+ "sqlparser 0.49.0",
  "strum 0.26.1",
  "strum_macros 0.26.1",
 ]
@@ -1034,7 +1034,7 @@ dependencies = [
  "datafusion-physical-expr-common",
  "log",
  "paste",
- "sqlparser",
+ "sqlparser 0.49.0",
 ]
 
 [[package]]
@@ -1211,7 +1211,7 @@ dependencies = [
  "datafusion-expr",
  "log",
  "regex",
- "sqlparser",
+ "sqlparser 0.49.0",
  "strum 0.26.1",
 ]
 
@@ -1263,9 +1263,9 @@ dependencies = [
 
 [[package]]
 name = "deltalake-core"
-version = "0.19.0"
+version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f4c949a361bc458163233ab10dbe610c89912bdd0f42ccc7a4a25b4c1ec474c"
+checksum = "120658be361276db2135b8838b1968c9196a1d88c93584c6a294e13c1a234f89"
 dependencies = [
  "arrow",
  "arrow-arith",
@@ -1289,6 +1289,7 @@ dependencies = [
  "datafusion-functions",
  "datafusion-functions-aggregate",
  "datafusion-physical-expr",
+ "datafusion-physical-plan",
  "datafusion-proto",
  "datafusion-sql",
  "delta_kernel",
@@ -1316,7 +1317,7 @@ dependencies = [
  "roaring",
  "serde",
  "serde_json",
- "sqlparser",
+ "sqlparser 0.50.0",
  "thiserror",
  "tokio",
  "tracing",
@@ -2199,7 +2200,7 @@ dependencies = [
  "object_store",
  "proptest",
  "rand",
- "sqlparser",
+ "sqlparser 0.49.0",
  "tempfile",
  "tokio",
  "tonic",
@@ -3305,6 +3306,15 @@ checksum = "a4a404d0e14905361b918cb8afdb73605e25c1d5029312bd9785142dcb3aa49e"
 dependencies = [
  "log",
  "sqlparser_derive",
+]
+
+[[package]]
+name = "sqlparser"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2e5b515a2bd5168426033e9efbfd05500114833916f1d5c268f938b4ee130ac"
+dependencies = [
+ "log",
 ]
 
 [[package]]
