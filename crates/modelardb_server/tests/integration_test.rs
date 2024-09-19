@@ -649,6 +649,7 @@ fn test_can_list_actions() {
         vec![
             "CollectMetrics",
             "CommandStatementUpdate",
+            "DropTable",
             "FlushEdge",
             "FlushMemory",
             "GetConfiguration",
