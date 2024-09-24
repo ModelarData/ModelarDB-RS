@@ -73,7 +73,6 @@ impl MetadataDeltaLake {
             "s3" => {
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
                     arguments::extract_s3_arguments(offset_data)
-                        .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
                 let storage_options = HashMap::from([
@@ -95,7 +94,6 @@ impl MetadataDeltaLake {
             "azureblobstorage" => {
                 let (account, access_key, container_name, _offset_data) =
                     arguments::extract_azure_blob_storage_arguments(offset_data)
-                        .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
                 let storage_options = HashMap::from([

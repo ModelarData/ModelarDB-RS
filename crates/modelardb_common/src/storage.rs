@@ -86,53 +86,94 @@ impl DeltaLake {
     }
 
     /// Create a new [`DeltaLake`] that manages delta tables in the remote object store given by
-    /// `connection_info`. Returns [`DeltaTableError`] if `connection_info` could not be parsed.
+    /// `connection_info`. Returns [`DeltaTableError`] if `connection_info` could not be parsed or a
+    /// connection to the specified object store cannot be created.
     pub async fn try_remote_from_connection_info(
         connection_info: &[u8],
     ) -> Result<Self, DeltaTableError> {
         let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
-        let (location, storage_options) = match object_store_type {
+        match object_store_type {
             "s3" => {
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
                     arguments::extract_s3_arguments(offset_data)
-                        .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
-                // TODO: Determine if safe with AWS_S3_ALLOW_UNSAFE_RENAME.
-                let storage_options = HashMap::from([
-                    ("REGION".to_owned(), "".to_owned()),
-                    ("ALLOW_HTTP".to_owned(), "true".to_owned()),
-                    ("ENDPOINT".to_owned(), endpoint.to_owned()),
-                    ("BUCKET_NAME".to_owned(), bucket_name.to_owned()),
-                    ("ACCESS_KEY_ID".to_owned(), access_key_id.to_owned()),
-                    ("SECRET_ACCESS_KEY".to_owned(), secret_access_key.to_owned()),
-                    ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
-                ]);
-
-                Ok((format!("s3://{bucket_name}"), storage_options))
+                Self::try_from_s3_configuration(
+                    endpoint.to_owned(),
+                    bucket_name.to_owned(),
+                    access_key_id.to_owned(),
+                    secret_access_key.to_owned(),
+                )
             }
-            // TODO: Needs to be tested.
             "azureblobstorage" => {
                 let (account, access_key, container_name, _offset_data) =
                     arguments::extract_azure_blob_storage_arguments(offset_data)
-                        .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
-                let storage_options = HashMap::from([
-                    ("ACCOUNT_NAME".to_owned(), account.to_owned()),
-                    ("ACCESS_KEY".to_owned(), access_key.to_owned()),
-                    ("CONTAINER_NAME".to_owned(), container_name.to_owned()),
-                ]);
-
-                Ok((format!("az://{container_name}"), storage_options))
+                Self::try_from_azure_configuration(
+                    account.to_owned(),
+                    access_key.to_owned(),
+                    container_name.to_owned(),
+                )
             }
             _ => Err(DeltaTableError::Generic(format!(
                 "{object_store_type} is not supported."
             ))),
-        }?;
+        }
+    }
 
+
+    /// Create a new [`DeltaLake`] that manages the delta tables in an object store with an
+    /// S3-compatible API. Returns a [`DeltaTableError`] if a connection to the object store cannot
+    /// be made.
+    pub fn try_from_s3_configuration(
+        endpoint: String,
+        bucket_name: String,
+        access_key_id: String,
+        secret_access_key: String,
+    ) -> Result<Self, DeltaTableError> {
+        let location = format!("s3://{bucket_name}");
+
+        // TODO: Determine if it is safe to use AWS_S3_ALLOW_UNSAFE_RENAME.
+        let storage_options = HashMap::from([
+            ("REGION".to_owned(), "".to_owned()),
+            ("ALLOW_HTTP".to_owned(), "true".to_owned()),
+            ("ENDPOINT".to_owned(), endpoint),
+            ("BUCKET_NAME".to_owned(), bucket_name),
+            ("ACCESS_KEY_ID".to_owned(), access_key_id),
+            ("SECRET_ACCESS_KEY".to_owned(), secret_access_key),
+            ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+        ]);
+        let url =
+            Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+        let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
+
+        Ok(DeltaLake {
+            location,
+            storage_options,
+            object_store: Arc::new(object_store),
+            maybe_local_file_system: None,
+        })
+    }
+
+    /// Create a new [`DeltaLake`] that manages the delta tables in an object store with an
+    /// Azure-compatible API. Returns a [`DeltaTableError`] if a connection to the object store
+    /// cannot be made.
+    pub fn try_from_azure_configuration(
+        account_name: String,
+        access_key: String,
+        container_name: String,
+    ) -> Result<Self, DeltaTableError> {
+        let location = format!("az://{container_name}");
+
+        // TODO: Needs to be tested.
+        let storage_options = HashMap::from([
+            ("ACCOUNT_NAME".to_owned(), account_name),
+            ("ACCESS_KEY".to_owned(), access_key),
+            ("CONTAINER_NAME".to_owned(), container_name),
+        ]);
         let url =
             Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
         let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
