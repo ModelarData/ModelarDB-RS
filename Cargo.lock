@@ -1262,6 +1262,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "deltalake"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb19a9a5ef642da82a32eed2c85a3b1c66dd3ecdc7cc0d986ed5e484d9d17396"
+dependencies = [
+ "deltalake-core",
+]
+
+[[package]]
 name = "deltalake-core"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2195,7 +2204,7 @@ dependencies = [
  "arrow-flight",
  "dashmap",
  "datafusion",
- "deltalake-core",
+ "deltalake",
  "futures",
  "object_store",
  "proptest",
@@ -2223,7 +2232,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "arrow-flight",
- "deltalake-core",
+ "deltalake",
  "futures",
  "log",
  "modelardb_common",
@@ -2241,7 +2250,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "datafusion",
- "deltalake-core",
+ "deltalake",
  "futures",
  "modelardb_common",
  "modelardb_compression",
@@ -2262,7 +2271,7 @@ dependencies = [
  "crossbeam-queue",
  "dashmap",
  "datafusion",
- "deltalake-core",
+ "deltalake",
  "futures",
  "log",
  "modelardb_common",

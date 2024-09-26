@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use deltalake_core::DeltaTableError;
+use deltalake::DeltaTableError;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;

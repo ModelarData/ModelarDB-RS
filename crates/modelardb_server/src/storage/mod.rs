@@ -23,8 +23,8 @@
 
 mod compressed_data_buffer;
 mod compressed_data_manager;
-mod data_transfer;
 pub(super) mod data_sinks; // pub(super) so it can be used in context.rs.
+mod data_transfer;
 mod types;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
@@ -37,7 +37,7 @@ use std::thread::{self, JoinHandle};
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use deltalake_core::DeltaTableError;
+use deltalake::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::TimestampArray;
