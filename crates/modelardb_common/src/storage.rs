@@ -95,6 +95,8 @@ impl DeltaLake {
 
         let (location, storage_options) = match object_store_type {
             "s3" => {
+                deltalake::aws::register_handlers(None);
+
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
                     arguments::extract_s3_arguments(offset_data)
                         .await

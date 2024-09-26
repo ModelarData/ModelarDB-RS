@@ -24,7 +24,7 @@ arrow.workspace = true
 arrow-flight.workspace = true
 dashmap.workspace = true
 datafusion.workspace = true
-deltalake = { workspace = true, features = ["datafusion"] }
+deltalake = { workspace = true, features = ["datafusion", "s3"] }
 futures.workspace = true
 object_store = { workspace = true, features = ["aws", "azure"] }
 rand.workspace = true
