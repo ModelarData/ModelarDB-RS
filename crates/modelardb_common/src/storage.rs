@@ -124,7 +124,6 @@ impl DeltaLake {
         }
     }
 
-
     /// Create a new [`DeltaLake`] that manages the delta tables in an object store with an
     /// S3-compatible API. Returns a [`DeltaTableError`] if a connection to the object store cannot
     /// be made.

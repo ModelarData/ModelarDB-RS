@@ -48,8 +48,7 @@ impl MetadataManager {
         connection_info: &[u8],
     ) -> Result<MetadataManager, DeltaTableError> {
         let metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)
-                .await?,
+            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)?,
             table_metadata_manager: TableMetadataManager::try_from_connection_info(connection_info)
                 .await?,
         };

@@ -76,11 +76,61 @@ impl TableMetadataManager {
 
     /// Create a new [`TableMetadataManager`] that saves the metadata to a remote object store given
     /// by `connection_info` and initialize the metadata tables. If `connection_info` could not be
-    /// parsed or the metadata tables could not be created, return [`DeltaTableError`].
+    /// parsed, the connection cannot be made, or the metadata tables could not be created, return
+    /// [`DeltaTableError`].
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self, DeltaTableError> {
         let table_metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)
-                .await?,
+            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)?,
+            tag_value_hashes: DashMap::new(),
+        };
+
+        table_metadata_manager
+            .create_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote S3 object store
+    /// and initialize the metadata tables. If the connection cannot be made or the metadata tables
+    /// could not be created, return [`DeltaTableError`].
+    pub async fn try_from_s3_configuration(
+        endpoint: String,
+        bucket_name: String,
+        access_key_id: String,
+        secret_access_key: String,
+    ) -> Result<Self, DeltaTableError> {
+        let table_metadata_manager = Self {
+            metadata_delta_lake: MetadataDeltaLake::try_from_s3_configuration(
+                endpoint,
+                bucket_name,
+                access_key_id,
+                secret_access_key,
+            )?,
+            tag_value_hashes: DashMap::new(),
+        };
+
+        table_metadata_manager
+            .create_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote Azure object store
+    /// and initialize the metadata tables. If the connection cannot be made or the metadata tables
+    /// could not be created, return [`DeltaTableError`].
+    pub async fn try_from_azure_configuration(
+        account_name: String,
+        access_key: String,
+        container_name: String,
+    ) -> Result<Self, DeltaTableError> {
+        let table_metadata_manager = Self {
+            metadata_delta_lake: MetadataDeltaLake::try_from_azure_configuration(
+                account_name,
+                access_key,
+                container_name,
+            )?,
             tag_value_hashes: DashMap::new(),
         };
 
@@ -718,7 +768,7 @@ impl Debug for TableMetadataManager {
     /// Write a string-based representation of the [`TableMetadataManager`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.metadata_delta_lake.url_scheme)
+        write!(f, "{}", self.metadata_delta_lake.location)
     }
 }
 
