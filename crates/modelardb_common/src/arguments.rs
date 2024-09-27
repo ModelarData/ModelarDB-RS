@@ -19,13 +19,8 @@
 use std::env;
 use std::io::Write;
 use std::str;
-use std::sync::Arc;
 
-use object_store::{path::Path, ObjectStore};
 use tonic::Status;
-use uuid::Uuid;
-
-use crate::storage::DeltaLake;
 
 /// Error to emit when an unknown remote data folder type is used.
 const REMOTE_DATA_FOLDER_ERROR: &str =
@@ -83,34 +78,6 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
                 .collect())
         }
         _ => Err(REMOTE_DATA_FOLDER_ERROR.to_owned()),
-    }
-}
-
-/// Validate that the remote data folder can be accessed. If the remote data folder cannot be
-/// accessed, return the error that occurred as a [`String`].
-pub async fn validate_remote_data_folder(remote_delta_lake: &Arc<DeltaLake>) -> Result<(), String> {
-    let remote_data_folder = remote_delta_lake.object_store();
-
-    // Use an UUID for the path to minimize the chance of the path existing in the object store.
-    let invalid_path = Uuid::new_v4().to_string();
-
-    // Check that the connection is valid by attempting to retrieve a file that does not exist.
-    match remote_data_folder.get(&Path::from(invalid_path)).await {
-        Ok(_) => Ok(()),
-        Err(error) => match error {
-            object_store::Error::NotFound { .. } => {
-                let error = error.to_string();
-
-                // BlobNotFound and NoSuchKey errors are only returned if the object store
-                // connection is valid but the path does not exist.
-                if error.contains("BlobNotFound") || error.contains("NoSuchKey") {
-                    Ok(())
-                } else {
-                    Err(error)
-                }
-            }
-            _ => Err(error.to_string()),
-        },
     }
 }
 
