@@ -71,6 +71,9 @@ impl MetadataDeltaLake {
 
         let (url_scheme, storage_options) = match object_store_type {
             "s3" => {
+                // Register the S3 storage handlers to allow the use of Amazon S3 object stores.
+                // This is required at runtime to initialize the S3 storage implementation in the
+                // deltalake_aws storage subcrate.
                 deltalake::aws::register_handlers(None);
 
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
