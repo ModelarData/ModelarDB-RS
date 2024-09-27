@@ -17,6 +17,7 @@
 //! created tables, and query the created tables.
 
 use std::collections::HashMap;
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::ArrayRef;
@@ -52,12 +53,16 @@ pub struct MetadataDeltaLake {
 impl MetadataDeltaLake {
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] under
     /// `folder_path`.
-    pub fn from_path(folder_path: &str) -> MetadataDeltaLake {
-        MetadataDeltaLake {
-            location: format!("{folder_path}/{METADATA_FOLDER}"),
+    pub fn from_path(folder_path: &StdPath) -> Result<MetadataDeltaLake, DeltaTableError> {
+        let folder_str = folder_path
+            .to_str()
+            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8"))?;
+
+        Ok(MetadataDeltaLake {
+            location: format!("{folder_str}/{METADATA_FOLDER}"),
             storage_options: HashMap::new(),
             session: SessionContext::new(),
-        }
+        })
     }
 
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a

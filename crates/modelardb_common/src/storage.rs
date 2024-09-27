@@ -17,6 +17,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{Int64Array, RecordBatch, UInt64Array};
@@ -67,7 +68,7 @@ pub struct DeltaLake {
 impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages the delta tables in `data_folder_path`. Returns a
     /// [`DeltaTableError`] if `data_folder_path` does not exist and could not be created.
-    pub fn try_from_local_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
+    pub fn try_from_local_path(data_folder_path: &StdPath) -> Result<Self, DeltaTableError> {
         // Ensure the directories in the path exists as LocalFileSystem otherwise returns an error.
         fs::create_dir_all(data_folder_path)
             .map_err(|error| DeltaTableError::generic(error.to_string()))?;
@@ -77,8 +78,13 @@ impl DeltaLake {
                 .map_err(|error| DeltaTableError::generic(error.to_string()))?,
         );
 
+        let location = data_folder_path
+            .to_str()
+            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8"))?
+            .to_owned();
+
         Ok(Self {
-            location: data_folder_path.to_string(),
+            location,
             storage_options: HashMap::new(),
             object_store: local_file_system.clone(),
             maybe_local_file_system: Some(local_file_system),

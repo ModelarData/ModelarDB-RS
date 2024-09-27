@@ -470,13 +470,12 @@ mod tests {
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let table_metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
+        let table_metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
 
         let metadata_manager = MetadataManager {
-            metadata_delta_lake: MetadataDeltaLake::from_path(temp_dir.path().to_str().unwrap()),
+            metadata_delta_lake: MetadataDeltaLake::from_path(temp_dir.path()).unwrap(),
             table_metadata_manager,
         };
 
