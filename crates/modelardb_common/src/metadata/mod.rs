@@ -164,7 +164,7 @@ impl MetadataDeltaLake {
 
         let batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
 
-        let ops = self.metadata_table_delta_ops(table_name).await?;
+        let ops = DeltaOps::from(table);
         ops.write(vec![batch]).await
     }
 
