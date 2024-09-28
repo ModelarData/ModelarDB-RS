@@ -24,6 +24,7 @@ use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use datafusion::dataframe::DataFrame;
+use datafusion::datasource::TableProvider;
 use datafusion::prelude::SessionContext;
 use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
@@ -155,8 +156,13 @@ impl MetadataDeltaLake {
         table_name: &str,
         rows: Vec<ArrayRef>,
     ) -> Result<DeltaTable, DeltaTableError> {
-        let table_provider = self.session.table_provider(table_name).await?;
-        let batch = RecordBatch::try_new(table_provider.schema(), rows)?;
+        let table = open_table_with_storage_options(
+            format!("{}/{table_name}", self.url_scheme),
+            self.storage_options.clone(),
+        )
+        .await?;
+
+        let batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
 
         let ops = self.metadata_table_delta_ops(table_name).await?;
         ops.write(vec![batch]).await
@@ -170,8 +176,13 @@ impl MetadataDeltaLake {
         table_name: &str,
         rows: Vec<ArrayRef>,
     ) -> Result<DataFrame, DeltaTableError> {
-        let table_provider = self.session.table_provider(table_name).await?;
-        let batch = RecordBatch::try_new(table_provider.schema(), rows)?;
+        let table = open_table_with_storage_options(
+            format!("{}/{table_name}", self.url_scheme),
+            self.storage_options.clone(),
+        )
+        .await?;
+
+        let batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
 
         Ok(self.session.read_batch(batch)?)
     }
