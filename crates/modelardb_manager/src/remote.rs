@@ -155,6 +155,14 @@ impl FlightServiceHandler {
         model_table_metadata: Arc<ModelTableMetadata>,
         sql: &str,
     ) -> Result<(), Status> {
+        // Create an empty Delta Lake table.
+        self.context
+            .remote_data_folder
+            .delta_lake
+            .create_delta_lake_model_table(&model_table_metadata.name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
         // Persist the new model table to the metadata Delta Lake.
         self.context
             .remote_data_folder

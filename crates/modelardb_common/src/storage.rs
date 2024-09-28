@@ -187,9 +187,9 @@ impl DeltaLake {
             .await
     }
 
-    /// Create a Delta Lake table for a model table with `table_name` and `schema` if it does not
-    /// already exist. Returns [`DeltaTable`] if the table could be created and [`DeltaTableError`]
-    /// if it could not.
+    /// Create a Delta Lake table for a model table with `table_name` and [`DISK_COMPRESSED_SCHEMA`]
+    /// if it does not already exist. Returns [`DeltaTable`] if the table could be created and
+    /// [`DeltaTableError`] if it could not.
     pub async fn create_delta_lake_model_table(
         &self,
         table_name: &str,
