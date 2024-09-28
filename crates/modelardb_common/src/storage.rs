@@ -330,13 +330,20 @@ impl DeltaLake {
 fn univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
     for record_batch in compressed_segments {
         let mut columns = record_batch.columns().to_vec();
-        let univariate_ids = crate::array!(record_batch, 0, UInt64Array);
-        let signed_univariate_ids: Int64Array =
-            univariate_ids.unary(|value| i64::from_ne_bytes(value.to_ne_bytes()));
-        columns[0] = Arc::new(signed_univariate_ids);
 
-        // unwrap() is safe as columns is constructed to match DISK_COMPRESSED_SCHEMA.
-        *record_batch = RecordBatch::try_new(DISK_COMPRESSED_SCHEMA.0.clone(), columns).unwrap();
+        // Only convert the univariate ids if they are stored as unsigned integers. The univariate
+        // ids can be stored as signed integers already if the compressed segments have been saved
+        // to disk previously.
+        if record_batch.schema().field(0).data_type() == &DataType::UInt64 {
+            let univariate_ids = crate::array!(record_batch, 0, UInt64Array);
+            let signed_univariate_ids: Int64Array =
+                univariate_ids.unary(|value| i64::from_ne_bytes(value.to_ne_bytes()));
+            columns[0] = Arc::new(signed_univariate_ids);
+
+            // unwrap() is safe as columns is constructed to match DISK_COMPRESSED_SCHEMA.
+            *record_batch =
+                RecordBatch::try_new(DISK_COMPRESSED_SCHEMA.0.clone(), columns).unwrap();
+        }
     }
 }
 
