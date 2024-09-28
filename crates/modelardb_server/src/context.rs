@@ -155,7 +155,7 @@ impl Context {
 
         let table_metadata_manager = self
             .data_folders
-            .local_data_folder
+            .query_data_folder
             .table_metadata_manager
             .clone();
 
@@ -222,7 +222,7 @@ impl Context {
     /// DataFusion. If the model tables could not be retrieved from the metadata Delta Lake or a
     /// model table could not be registered, return [`ModelarDbError`].
     pub async fn register_model_tables(&self) -> Result<(), ModelarDbError> {
-        let table_metadata_manager = &self.data_folders.local_data_folder.table_metadata_manager;
+        let table_metadata_manager = &self.data_folders.query_data_folder.table_metadata_manager;
 
         let model_table_metadata = table_metadata_manager
             .model_table_metadata()
