@@ -329,12 +329,11 @@ impl DeltaLake {
 /// be used by `write_compressed_segments_to_model_table()` which owns `compressed_segments`.
 fn univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
     for record_batch in compressed_segments {
-        let mut columns = record_batch.columns().to_vec();
-
         // Only convert the univariate ids if they are stored as unsigned integers. The univariate
         // ids can be stored as signed integers already if the compressed segments have been saved
         // to disk previously.
         if record_batch.schema().field(0).data_type() == &DataType::UInt64 {
+            let mut columns = record_batch.columns().to_vec();
             let univariate_ids = crate::array!(record_batch, 0, UInt64Array);
             let signed_univariate_ids: Int64Array =
                 univariate_ids.unary(|value| i64::from_ne_bytes(value.to_ne_bytes()));
@@ -524,6 +523,10 @@ mod tests {
 
         let mut record_batches = vec![record_batch.clone()];
         univariate_ids_uint64_to_int64(&mut record_batches);
+
+        // univariate_ids_uint64_to_int64 should not panic when called twice.
+        univariate_ids_uint64_to_int64(&mut record_batches);
+
         record_batches[0].remove_column(10);
         let computed_record_batch = univariate_ids_int64_to_uint64(&record_batches[0]);
 
