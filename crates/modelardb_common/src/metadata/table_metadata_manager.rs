@@ -187,8 +187,8 @@ impl TableMetadataManager {
         self.table_names_of_type(TableType::ModelTable).await
     }
 
-    // Return the name of tables of `table_type`. Returns [`DeltaTableError`] if the table names
-    // cannot be retrieved.
+    /// Return the name of tables of `table_type`. Returns [`DeltaTableError`] if the table names
+    /// cannot be retrieved.
     async fn table_names_of_type(
         &self,
         table_type: TableType,
