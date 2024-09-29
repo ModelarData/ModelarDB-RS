@@ -271,9 +271,10 @@ impl Context {
         Ok(())
     }
 
-    /// Drop the table with `table_name` if it exists. The table is deleted from the storage
-    /// engine, the DeltaLake, the Apache Arrow Datafusion session, and the metadata Delta Lake.
-    /// If the table does not exist or if it could not be dropped, [`ModelarDbError`] is returned.
+    /// Drop the table with `table_name` if it exists. The table is deregistered from the Apache
+    /// Arrow Datafusion session and deleted from the storage engine, Delta Lake, and metadata
+    /// Delta Lake. If the table does not exist or if it could not be dropped, [`ModelarDbError`]
+    /// is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
         let table_metadata_manager = &self.data_folders.local_data_folder.table_metadata_manager;
 
@@ -283,38 +284,55 @@ impl Context {
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?
             .contains(&table_name.to_owned())
         {
-            // TODO: Remove the table from the data transfer component.
-            // TODO: Check if it needs to be removed other places in the storage engine.
-            // TODO: Delete the table from the Delta Lake (maybe through the storage engine).
-
-            // Deregister the table from the Apache DataFusion session.
-            self.session
-                .deregister_table(table_name)
-                .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-            // TODO: Drop the table from the metadata Delta Lake.
-            Ok(())
+            self.deregister_and_delete_table(table_name).await
         } else if table_metadata_manager
             .model_table_names()
             .await
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?
             .contains(&table_name.to_owned())
         {
-            // TODO: Drop the table from the storage engine.
-            // TODO: Drop the table from the DeltaLake (maybe through the storage engine).
-
-            // Deregister the model table from the Apache DataFusion session.
-            self.session
-                .deregister_table(table_name)
-                .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-            // TODO: Drop the table from the metadata manager.
-            Ok(())
+            self.deregister_and_delete_model_table(table_name).await
         } else {
             Err(ModelarDbError::TableError(format!(
                 "Table with name '{table_name}' does not exist."
             )))
         }
+    }
+
+    /// Deregister the table with `table_name` from the Apache Arrow Datafusion session and delete
+    /// it from the storage engine, Delta Lake, and metadata Delta Lake. If the table could not be
+    /// deregistered and deleted, [`ModelarDbError`] is returned.
+    async fn deregister_and_delete_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+        // TODO: Remove the table from the data transfer component.
+        // TODO: Check if it needs to be removed other places in the storage engine.
+        // TODO: Delete the table from the Delta Lake (maybe through the storage engine).
+
+        // Deregister the table from the Apache DataFusion session.
+        self.session
+            .deregister_table(table_name)
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        // TODO: Drop the table from the metadata Delta Lake.
+        Ok(())
+    }
+
+    /// Deregister the model table with `table_name` from the Apache Arrow Datafusion session and
+    /// delete it from the storage engine, Delta Lake, and metadata Delta Lake. If the model table
+    /// could not be deregistered and deleted, [`ModelarDbError`] is returned.
+    async fn deregister_and_delete_model_table(
+        &self,
+        table_name: &str,
+    ) -> Result<(), ModelarDbError> {
+        // TODO: Drop the table from the storage engine.
+        // TODO: Drop the table from the DeltaLake (maybe through the storage engine).
+
+        // Deregister the model table from the Apache DataFusion session.
+        self.session
+            .deregister_table(table_name)
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        // TODO: Drop the table from the metadata manager.
+        Ok(())
     }
 
     /// Lookup the [`ModelTableMetadata`] of the model table with name `table_name` if it exists.
