@@ -554,6 +554,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_drop_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        context
+            .parse_and_create_table(test::TABLE_SQL)
+            .await
+            .unwrap();
+
+        context.drop_table("table_name").await.unwrap();
+
+        // TODO: The table should be deleted from the storage engine.
+
+        // TODO: The table should be deleted from the Delta Lake.
+
+        // TODO: The table should be dropped from the Apache DataFusion session.
+
+        // TODO: The table should be deleted from the metadata Delta Lake.
+    }
+
+    #[tokio::test]
+    async fn test_drop_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        context
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        context.drop_table(test::MODEL_TABLE_NAME).await.unwrap();
+
+        // TODO: The table should be deleted from the storage engine.
+
+        // TODO: The table should be deleted from the Delta Lake.
+
+        // TODO: The table should be dropped from the Apache DataFusion session.
+
+        // TODO: The table should be deleted from the metadata Delta Lake.
+    }
+
+    #[tokio::test]
+    async fn test_drop_non_existent_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        assert!(context.drop_table("invalid_table_name").await.is_err());
+    }
+
+    #[tokio::test]
     async fn test_model_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
