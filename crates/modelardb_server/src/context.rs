@@ -287,7 +287,10 @@ impl Context {
             // TODO: Check if it needs to be removed other places in the storage engine.
             // TODO: Delete the table from the Delta Lake (maybe through the storage engine).
 
-            // TODO: Drop the table from the Apache DataFusion session.
+            // Deregister the table from the Apache DataFusion session.
+            self.session
+                .deregister_table(table_name)
+                .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
             // TODO: Drop the table from the metadata Delta Lake.
             Ok(())
@@ -300,7 +303,10 @@ impl Context {
             // TODO: Drop the table from the storage engine.
             // TODO: Drop the table from the DeltaLake (maybe through the storage engine).
 
-            // TODO: Drop the table from the Apache DataFusion session.
+            // Deregister the model table from the Apache DataFusion session.
+            self.session
+                .deregister_table(table_name)
+                .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
             // TODO: Drop the table from the metadata manager.
             Ok(())
@@ -569,7 +575,8 @@ mod tests {
 
         // TODO: The table should be deleted from the Delta Lake.
 
-        // TODO: The table should be dropped from the Apache DataFusion session.
+        // The table should be deregistered from the Apache DataFusion session.
+        assert!(context.check_if_table_exists("table_name").await.is_ok());
 
         // TODO: The table should be deleted from the metadata Delta Lake.
     }
@@ -590,7 +597,11 @@ mod tests {
 
         // TODO: The table should be deleted from the Delta Lake.
 
-        // TODO: The table should be dropped from the Apache DataFusion session.
+        // The table should be deregistered from the Apache DataFusion session.
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_ok());
 
         // TODO: The table should be deleted from the metadata Delta Lake.
     }
