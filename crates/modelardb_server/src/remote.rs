@@ -485,10 +485,10 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             info!("Received request to drop table '{}'.", table_name);
 
-            // TODO: Drop the table from the storage engine.
-            // TODO: Drop the table from the DeltaLake.
-            // TODO: Drop the table from the context.
-            // TODO: Drop the table from the metadata manager.
+            self.context
+                .drop_table(table_name)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             // Confirm the table was dropped.
             Ok(Response::new(Box::pin(stream::empty())))

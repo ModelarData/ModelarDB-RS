@@ -271,6 +271,46 @@ impl Context {
         Ok(())
     }
 
+    /// Drop the table with `table_name` if it exists. The table is deleted from the storage
+    /// engine, the DeltaLake, the Apache Arrow Datafusion session, and the metadata Delta Lake.
+    /// If the table does not exist or if it could not be dropped, [`ModelarDbError`] is returned.
+    pub async fn drop_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+        let table_metadata_manager = &self.data_folders.local_data_folder.table_metadata_manager;
+
+        if table_metadata_manager
+            .table_names()
+            .await
+            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?
+            .contains(&table_name.to_owned())
+        {
+            // TODO: Remove the table from the data transfer component.
+            // TODO: Check if it needs to be removed other places in the storage engine.
+            // TODO: Delete the table from the Delta Lake (maybe through the storage engine).
+
+            // TODO: Drop the table from the Apache DataFusion session.
+
+            // TODO: Drop the table from the metadata Delta Lake.
+            Ok(())
+        } else if table_metadata_manager
+            .model_table_names()
+            .await
+            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?
+            .contains(&table_name.to_owned())
+        {
+            // TODO: Drop the table from the storage engine.
+            // TODO: Drop the table from the DeltaLake (maybe through the storage engine).
+
+            // TODO: Drop the table from the Apache DataFusion session.
+
+            // TODO: Drop the table from the metadata manager.
+            Ok(())
+        } else {
+            Err(ModelarDbError::TableError(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
+        }
+    }
+
     /// Lookup the [`ModelTableMetadata`] of the model table with name `table_name` if it exists.
     /// Specifically, the method returns:
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
