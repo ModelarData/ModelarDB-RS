@@ -196,7 +196,7 @@ impl MetadataDeltaLake {
         rows: Vec<ArrayRef>,
     ) -> Result<DeltaTable, DeltaTableError> {
         let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.url_scheme),
+            format!("{}/{table_name}", self.location),
             self.storage_options.clone(),
         )
         .await?;
@@ -216,7 +216,7 @@ impl MetadataDeltaLake {
         rows: Vec<ArrayRef>,
     ) -> Result<DataFrame, DeltaTableError> {
         let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.url_scheme),
+            format!("{}/{table_name}", self.location),
             self.storage_options.clone(),
         )
         .await?;
