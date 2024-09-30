@@ -462,7 +462,7 @@ impl FlightService for FlightServiceHandler {
             self.context
                 .remote_data_folder
                 .metadata_manager
-                .save_node(&node)
+                .save_node(node)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
