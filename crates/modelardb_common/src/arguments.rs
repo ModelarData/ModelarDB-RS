@@ -119,7 +119,7 @@ pub fn decode_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
 /// Extract the arguments in `data` and return the arguments to connect to an
 /// [`Amazon S3`](object_store::aws::AmazonS3) object store and what is remaining of `data`
 /// after parsing. If `data` is missing arguments, [`Status`] is returned.
-pub async fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
+pub fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
     let (endpoint, offset_data) = decode_argument(data)?;
     let (bucket_name, offset_data) = decode_argument(offset_data)?;
     let (access_key_id, offset_data) = decode_argument(offset_data)?;
@@ -138,7 +138,7 @@ pub async fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str
 /// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
 /// object store and what is remaining of `data` after parsing. If `data` is missing arguments,
 /// [`Status`] is returned.
-pub async fn extract_azure_blob_storage_arguments(
+pub fn extract_azure_blob_storage_arguments(
     data: &[u8],
 ) -> Result<(&str, &str, &str, &[u8]), Status> {
     let (account, offset_data) = decode_argument(data)?;

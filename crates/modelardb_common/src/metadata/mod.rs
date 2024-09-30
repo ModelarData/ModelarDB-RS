@@ -17,6 +17,7 @@
 //! created tables, and query the created tables.
 
 use std::collections::HashMap;
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::ArrayRef;
@@ -42,7 +43,7 @@ pub const METADATA_FOLDER: &str = "metadata";
 #[derive(Clone)]
 pub struct MetadataDeltaLake {
     /// URL to access the base folder of the location where the metadata tables are stored.
-    url_scheme: String,
+    location: String,
     /// Storage options used to access Delta Lake tables in remote object stores.
     storage_options: HashMap<String, String>,
     /// Session used to read from the metadata Delta Lake using Apache Arrow DataFusion.
@@ -52,24 +53,28 @@ pub struct MetadataDeltaLake {
 impl MetadataDeltaLake {
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] under
     /// `folder_path`.
-    pub fn from_path(folder_path: &str) -> MetadataDeltaLake {
-        MetadataDeltaLake {
-            url_scheme: format!("{folder_path}/{METADATA_FOLDER}"),
+    pub fn from_path(folder_path: &StdPath) -> Result<MetadataDeltaLake, DeltaTableError> {
+        let folder_str = folder_path
+            .to_str()
+            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8."))?;
+
+        Ok(MetadataDeltaLake {
+            location: format!("{folder_str}/{METADATA_FOLDER}"),
             storage_options: HashMap::new(),
             session: SessionContext::new(),
-        }
+        })
     }
 
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a
-    /// remote object store given by `connection_info`. If `connection_info` could not be parsed
-    /// return [`DeltaTableError`].
-    pub async fn try_from_connection_info(
+    /// remote object store given by `connection_info`. Returns [`DeltaTableError`] if
+    /// `connection_info` could not be parsed or a connection cannot be made.
+    pub fn try_from_connection_info(
         connection_info: &[u8],
     ) -> Result<MetadataDeltaLake, DeltaTableError> {
         let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
-        let (url_scheme, storage_options) = match object_store_type {
+        match object_store_type {
             "s3" => {
                 // Register the S3 storage handlers to allow the use of Amazon S3 object stores.
                 // This is required at runtime to initialize the S3 storage implementation in the
@@ -78,56 +83,87 @@ impl MetadataDeltaLake {
 
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
                     arguments::extract_s3_arguments(offset_data)
-                        .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
-                let storage_options = HashMap::from([
-                    ("REGION".to_owned(), "".to_owned()),
-                    ("ALLOW_HTTP".to_owned(), "true".to_owned()),
-                    ("ENDPOINT".to_owned(), endpoint.to_owned()),
-                    ("BUCKET_NAME".to_owned(), bucket_name.to_owned()),
-                    ("ACCESS_KEY_ID".to_owned(), access_key_id.to_owned()),
-                    ("SECRET_ACCESS_KEY".to_owned(), secret_access_key.to_owned()),
-                    ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
-                ]);
-
-                Ok((
-                    format!("s3://{bucket_name}/{METADATA_FOLDER}"),
-                    storage_options,
-                ))
+                Self::try_from_s3_configuration(
+                    endpoint.to_owned(),
+                    bucket_name.to_owned(),
+                    access_key_id.to_owned(),
+                    secret_access_key.to_owned(),
+                )
             }
-            // TODO: Needs to be tested.
             "azureblobstorage" => {
                 let (account, access_key, container_name, _offset_data) =
                     arguments::extract_azure_blob_storage_arguments(offset_data)
-                        .await
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
-                let storage_options = HashMap::from([
-                    ("ACCOUNT_NAME".to_owned(), account.to_owned()),
-                    ("ACCESS_KEY".to_owned(), access_key.to_owned()),
-                    ("CONTAINER_NAME".to_owned(), container_name.to_owned()),
-                ]);
-
-                Ok((
-                    format!("az://{container_name}/{METADATA_FOLDER}"),
-                    storage_options,
-                ))
+                Self::try_from_azure_configuration(
+                    account.to_owned(),
+                    access_key.to_owned(),
+                    container_name.to_owned(),
+                )
             }
             _ => Err(DeltaTableError::Generic(format!(
                 "{object_store_type} is not supported."
             ))),
-        }?;
+        }
+    }
+
+    /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a
+    /// remote S3-compatible object store. If a connection cannot be created [`DeltaTableError`] is
+    /// returned.
+    pub fn try_from_s3_configuration(
+        endpoint: String,
+        bucket_name: String,
+        access_key_id: String,
+        secret_access_key: String,
+    ) -> Result<Self, DeltaTableError> {
+        let location = format!("s3://{bucket_name}/{METADATA_FOLDER}");
+
+        // TODO: Determine if it is safe to use AWS_S3_ALLOW_UNSAFE_RENAME.
+        let storage_options = HashMap::from([
+            ("REGION".to_owned(), "".to_owned()),
+            ("ALLOW_HTTP".to_owned(), "true".to_owned()),
+            ("ENDPOINT".to_owned(), endpoint),
+            ("BUCKET_NAME".to_owned(), bucket_name),
+            ("ACCESS_KEY_ID".to_owned(), access_key_id),
+            ("SECRET_ACCESS_KEY".to_owned(), secret_access_key),
+            ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+        ]);
 
         Ok(MetadataDeltaLake {
-            url_scheme,
+            location,
+            storage_options,
+            session: SessionContext::new(),
+        })
+    }
+
+    /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a
+    /// remote Azure-compatible object store. If a connection cannot be created [`DeltaTableError`]
+    /// is returned.
+    pub fn try_from_azure_configuration(
+        account_name: String,
+        access_key: String,
+        container_name: String,
+    ) -> Result<Self, DeltaTableError> {
+        let location = format!("az://{container_name}/{METADATA_FOLDER}");
+
+        // TODO: Needs to be tested.
+        let storage_options = HashMap::from([
+            ("ACCOUNT_NAME".to_owned(), account_name),
+            ("ACCESS_KEY".to_owned(), access_key),
+            ("CONTAINER_NAME".to_owned(), container_name),
+        ]);
+
+        Ok(MetadataDeltaLake {
+            location,
             storage_options,
             session: SessionContext::new(),
         })
     }
 
     /// Use `table_name` to create a Delta Lake table with `columns` in the location given by
-    /// `url_scheme` and `storage_options` if it does not already exist. The created table is
+    /// `location` and `storage_options` if it does not already exist. The created table is
     /// registered in the Apache Arrow Datafusion session. If the table could not be created or
     /// registered, return [`DeltaTableError`].
     pub async fn create_delta_lake_table(
@@ -141,7 +177,7 @@ impl MetadataDeltaLake {
                 .with_save_mode(SaveMode::Ignore)
                 .with_storage_options(self.storage_options.clone())
                 .with_table_name(table_name)
-                .with_location(format!("{}/{table_name}", self.url_scheme))
+                .with_location(format!("{}/{table_name}", self.location))
                 .with_columns(columns)
                 .await?,
         );
@@ -188,7 +224,7 @@ impl MetadataDeltaLake {
         table_name: &str,
     ) -> Result<DeltaOps, DeltaTableError> {
         let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.url_scheme),
+            format!("{}/{table_name}", self.location),
             self.storage_options.clone(),
         )
         .await?;
@@ -205,7 +241,7 @@ impl MetadataDeltaLake {
         query: &str,
     ) -> Result<RecordBatch, DeltaTableError> {
         let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.url_scheme),
+            format!("{}/{table_name}", self.location),
             self.storage_options.clone(),
         )
         .await?;

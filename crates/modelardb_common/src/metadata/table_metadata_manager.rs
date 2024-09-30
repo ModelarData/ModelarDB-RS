@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::hash::{DefaultHasher, Hasher};
+use std::path::Path as StdPath;
 use std::sync::Arc;
 use std::{fmt, mem};
 
@@ -61,9 +62,9 @@ pub struct TableMetadataManager {
 impl TableMetadataManager {
     /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and initialize
     /// the metadata tables. If the metadata tables could not be created, return [`DeltaTableError`].
-    pub async fn try_from_path(folder_path: &str) -> Result<Self, DeltaTableError> {
+    pub async fn try_from_path(folder_path: &StdPath) -> Result<Self, DeltaTableError> {
         let table_metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::from_path(folder_path),
+            metadata_delta_lake: MetadataDeltaLake::from_path(folder_path)?,
             tag_value_hashes: DashMap::new(),
         };
 
@@ -76,11 +77,61 @@ impl TableMetadataManager {
 
     /// Create a new [`TableMetadataManager`] that saves the metadata to a remote object store given
     /// by `connection_info` and initialize the metadata tables. If `connection_info` could not be
-    /// parsed or the metadata tables could not be created, return [`DeltaTableError`].
+    /// parsed, the connection cannot be made, or the metadata tables could not be created, return
+    /// [`DeltaTableError`].
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self, DeltaTableError> {
         let table_metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)
-                .await?,
+            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)?,
+            tag_value_hashes: DashMap::new(),
+        };
+
+        table_metadata_manager
+            .create_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote S3-compatible
+    /// object store and initialize the metadata tables. If the connection cannot be made or the
+    /// metadata tables could not be created, return [`DeltaTableError`].
+    pub async fn try_from_s3_configuration(
+        endpoint: String,
+        bucket_name: String,
+        access_key_id: String,
+        secret_access_key: String,
+    ) -> Result<Self, DeltaTableError> {
+        let table_metadata_manager = Self {
+            metadata_delta_lake: MetadataDeltaLake::try_from_s3_configuration(
+                endpoint,
+                bucket_name,
+                access_key_id,
+                secret_access_key,
+            )?,
+            tag_value_hashes: DashMap::new(),
+        };
+
+        table_metadata_manager
+            .create_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote Azure-compatible
+    /// object store and initialize the metadata tables. If the connection cannot be made or the
+    /// metadata tables could not be created, return [`DeltaTableError`].
+    pub async fn try_from_azure_configuration(
+        account_name: String,
+        access_key: String,
+        container_name: String,
+    ) -> Result<Self, DeltaTableError> {
+        let table_metadata_manager = Self {
+            metadata_delta_lake: MetadataDeltaLake::try_from_azure_configuration(
+                account_name,
+                access_key,
+                container_name,
+            )?,
             tag_value_hashes: DashMap::new(),
         };
 
@@ -718,7 +769,7 @@ impl Debug for TableMetadataManager {
     /// Write a string-based representation of the [`TableMetadataManager`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.metadata_delta_lake.url_scheme)
+        write!(f, "{}", self.metadata_delta_lake.location)
     }
 }
 
@@ -785,10 +836,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_metadata_delta_lake_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
 
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(metadata_manager
@@ -824,10 +874,9 @@ mod tests {
     #[tokio::test]
     async fn test_save_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
 
         metadata_manager
             .save_table_metadata("table_1", "CREATE TABLE table_1")
@@ -862,10 +911,9 @@ mod tests {
     #[tokio::test]
     async fn test_table_names() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
 
         metadata_manager
             .save_table_metadata("table_1", "CREATE TABLE table_1")
@@ -1017,10 +1065,9 @@ mod tests {
     #[tokio::test]
     async fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
 
         let query_schema = Arc::new(Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
@@ -1229,10 +1276,9 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_tag_hash_to_table_name() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
 
         assert!(metadata_manager.tag_hash_to_table_name(0).await.is_err());
     }
@@ -1298,10 +1344,9 @@ mod tests {
 
     async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
 
         // Save a model table to the metadata Delta Lake.
         let model_table_metadata = test::model_table_metadata();
