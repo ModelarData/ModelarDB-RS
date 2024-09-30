@@ -30,13 +30,10 @@ jobs:
   cargo_build_lint_and_test:
     name: Cargo Build, Lint, and Test
 
-    # macos-13 is used instead of macos-latest due to "stepWithCompactEncoding
-    # - invalid compact unwind encoding" occurring in libunwind when using
-    # macos-latest, this is maybe related to rust-lang/rust/issues/113783.
     runs-on: ${{ matrix.operating-system }}
     strategy:
       matrix:
-        operating-system: [ubuntu-latest, macos-13, windows-latest]
+        operating-system: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
     - name: Checkout
