@@ -1184,7 +1184,7 @@ mod tests {
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
         // Setup access to data and metadata in data folder.
-        let data_folder_path = temp_dir.path().to_str().unwrap();
+        let data_folder_path = temp_dir.path();
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path).unwrap();
         let table_metadata_manager = Arc::new(
             TableMetadataManager::try_from_path(data_folder_path)

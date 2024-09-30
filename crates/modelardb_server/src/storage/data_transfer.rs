@@ -418,7 +418,7 @@ mod tests {
         );
     }
 
-    /// Set up a delta table and write `batch_write_count` batches of compressed segments to it.
+    /// Set up a Delta table and write `batch_write_count` batches of compressed segments to it.
     /// Returns the size of the files on disk.
     async fn create_delta_table_and_segments(
         local_data_folder: DataFolder,
@@ -474,9 +474,7 @@ mod tests {
         local_data_folder: DataFolder,
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
-        let remote_data_folder = DataFolder::try_from_path(target_dir.path().to_str().unwrap())
-            .await
-            .unwrap();
+        let remote_data_folder = DataFolder::try_from_path(target_dir.path()).await.unwrap();
 
         let table_names = local_data_folder
             .table_metadata_manager
@@ -499,9 +497,7 @@ mod tests {
 
     /// Create a local [`DataFolder`] and save a single model table to the metadata Delta Lake.
     async fn create_local_data_folder(temp_dir: &TempDir) -> DataFolder {
-        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
-            .await
-            .unwrap();
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = test::model_table_metadata();
         local_data_folder
