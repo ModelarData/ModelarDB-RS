@@ -382,14 +382,10 @@ mod tests {
         Arc<RwLock<StorageEngine>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
-        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
-            .await
-            .unwrap();
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path()).await.unwrap();
 
         let target_dir = tempfile::tempdir().unwrap();
-        let remote_data_folder = DataFolder::try_from_path(target_dir.path().to_str().unwrap())
-            .await
-            .unwrap();
+        let remote_data_folder = DataFolder::try_from_path(target_dir.path()).await.unwrap();
 
         let data_folders = DataFolders::new(
             local_data_folder.clone(),

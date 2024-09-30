@@ -826,9 +826,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_compress_existing_on_disk_data_buffers_when_initializing() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
-            .await
-            .unwrap();
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path()).await.unwrap();
 
         // Create a context with a storage engine.
         let context = Arc::new(
@@ -1481,9 +1479,7 @@ mod tests {
     async fn create_managers(
         temp_dir: &TempDir,
     ) -> (UncompressedDataManager, Arc<ModelTableMetadata>) {
-        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
-            .await
-            .unwrap();
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path()).await.unwrap();
 
         // Ensure the expected metadata is available through the metadata manager.
         let model_table_metadata = test::model_table_metadata();
