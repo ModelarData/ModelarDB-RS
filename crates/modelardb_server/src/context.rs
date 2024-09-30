@@ -180,6 +180,8 @@ impl Context {
     /// DataFusion. If the normal tables could not be retrieved from the metadata Delta Lake or a
     /// normal table could not be registered, return [`ModelarDbError`].
     pub async fn register_tables(&self) -> Result<(), ModelarDbError> {
+        // We register the tables in the local data folder to avoid registering tables that
+        // TableDataSink cannot write data to.
         let table_names = self
             .data_folders
             .local_data_folder
@@ -222,6 +224,8 @@ impl Context {
     /// DataFusion. If the model tables could not be retrieved from the metadata Delta Lake or a
     /// model table could not be registered, return [`ModelarDbError`].
     pub async fn register_model_tables(&self) -> Result<(), ModelarDbError> {
+        // We register the model tables in the local data folder to avoid registering tables that
+        // ModelTableDataSink cannot write data to.
         let model_table_metadata = self
             .data_folders
             .local_data_folder
