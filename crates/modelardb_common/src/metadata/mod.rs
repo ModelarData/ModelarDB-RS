@@ -56,7 +56,7 @@ impl MetadataDeltaLake {
     pub fn from_path(folder_path: &StdPath) -> Result<MetadataDeltaLake, DeltaTableError> {
         let folder_str = folder_path
             .to_str()
-            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8"))?;
+            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8."))?;
 
         Ok(MetadataDeltaLake {
             location: format!("{folder_str}/{METADATA_FOLDER}"),
@@ -105,7 +105,8 @@ impl MetadataDeltaLake {
     }
 
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a
-    /// remote S3 object store. If a connection cannot be created [`DeltaTableError`] is returned.
+    /// remote S3-compatible object store. If a connection cannot be created [`DeltaTableError`] is
+    /// returned.
     pub fn try_from_s3_configuration(
         endpoint: String,
         bucket_name: String,
@@ -133,8 +134,8 @@ impl MetadataDeltaLake {
     }
 
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a
-    /// remote Azure object store. If a connection cannot be created [`DeltaTableError`] is
-    /// returned.
+    /// remote Azure-compatible object store. If a connection cannot be created [`DeltaTableError`]
+    /// is returned.
     pub fn try_from_azure_configuration(
         account_name: String,
         access_key: String,

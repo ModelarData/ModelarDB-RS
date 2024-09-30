@@ -418,7 +418,7 @@ mod tests {
         );
     }
 
-    /// Set up a delta table and write `batch_write_count` batches of compressed segments to it.
+    /// Set up a Delta table and write `batch_write_count` batches of compressed segments to it.
     /// Returns the size of the files on disk.
     async fn create_delta_table_and_segments(
         local_data_folder: DataFolder,

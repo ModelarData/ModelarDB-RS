@@ -92,9 +92,9 @@ impl TableMetadataManager {
         Ok(table_metadata_manager)
     }
 
-    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote S3 object store
-    /// and initialize the metadata tables. If the connection cannot be made or the metadata tables
-    /// could not be created, return [`DeltaTableError`].
+    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote S3-compatible
+    /// object store and initialize the metadata tables. If the connection cannot be made or the
+    /// metadata tables could not be created, return [`DeltaTableError`].
     pub async fn try_from_s3_configuration(
         endpoint: String,
         bucket_name: String,
@@ -118,9 +118,9 @@ impl TableMetadataManager {
         Ok(table_metadata_manager)
     }
 
-    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote Azure object store
-    /// and initialize the metadata tables. If the connection cannot be made or the metadata tables
-    /// could not be created, return [`DeltaTableError`].
+    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote Azure-compatible
+    /// object store and initialize the metadata tables. If the connection cannot be made or the
+    /// metadata tables could not be created, return [`DeltaTableError`].
     pub async fn try_from_azure_configuration(
         account_name: String,
         access_key: String,

@@ -66,7 +66,7 @@ pub struct DeltaLake {
 }
 
 impl DeltaLake {
-    /// Create a new [`DeltaLake`] that manages the delta tables in `data_folder_path`. Returns a
+    /// Create a new [`DeltaLake`] that manages the Delta tables in `data_folder_path`. Returns a
     /// [`DeltaTableError`] if `data_folder_path` does not exist and could not be created.
     pub fn try_from_local_path(data_folder_path: &StdPath) -> Result<Self, DeltaTableError> {
         // Ensure the directories in the path exists as LocalFileSystem otherwise returns an error.
@@ -80,7 +80,7 @@ impl DeltaLake {
 
         let location = data_folder_path
             .to_str()
-            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8"))?
+            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8."))?
             .to_owned();
 
         Ok(Self {
@@ -91,7 +91,7 @@ impl DeltaLake {
         })
     }
 
-    /// Create a new [`DeltaLake`] that manages delta tables in the remote object store given by
+    /// Create a new [`DeltaLake`] that manages Delta tables in the remote object store given by
     /// `connection_info`. Returns [`DeltaTableError`] if `connection_info` could not be parsed or a
     /// connection to the specified object store cannot be created.
     pub async fn try_remote_from_connection_info(
@@ -130,7 +130,7 @@ impl DeltaLake {
         }
     }
 
-    /// Create a new [`DeltaLake`] that manages the delta tables in an object store with an
+    /// Create a new [`DeltaLake`] that manages the Delta tables in an object store with an
     /// S3-compatible API. Returns a [`DeltaTableError`] if a connection to the object store cannot
     /// be made.
     pub fn try_from_s3_configuration(
@@ -163,7 +163,7 @@ impl DeltaLake {
         })
     }
 
-    /// Create a new [`DeltaLake`] that manages the delta tables in an object store with an
+    /// Create a new [`DeltaLake`] that manages the Delta tables in an object store with an
     /// Azure-compatible API. Returns a [`DeltaTableError`] if a connection to the object store
     /// cannot be made.
     pub fn try_from_azure_configuration(
