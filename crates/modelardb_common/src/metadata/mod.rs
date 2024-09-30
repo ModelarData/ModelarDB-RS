@@ -201,6 +201,8 @@ impl MetadataDeltaLake {
         )
         .await?;
 
+        // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
+        // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
         let batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
 
         let ops = DeltaOps::from(table);
@@ -221,6 +223,8 @@ impl MetadataDeltaLake {
         )
         .await?;
 
+        // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
+        // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
         let batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
 
         Ok(self.session.read_batch(batch)?)
