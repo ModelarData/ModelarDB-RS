@@ -27,7 +27,7 @@ use datafusion::error::{DataFusionError, Result};
 use datafusion::logical_expr::{Expr, LogicalPlan, TableProviderFilterPushDown};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
-use deltalake_core::{arrow::datatypes::SchemaRef, DeltaTable};
+use deltalake::{arrow::datatypes::SchemaRef, DeltaTable};
 use tonic::async_trait;
 
 /// A queryable representation of a normal table. [`Table`] wraps the [`TableProvider`]

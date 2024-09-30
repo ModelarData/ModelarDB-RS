@@ -26,10 +26,10 @@ use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use datafusion::dataframe::DataFrame;
 use datafusion::prelude::SessionContext;
-use deltalake_core::kernel::StructField;
-use deltalake_core::operations::create::CreateBuilder;
-use deltalake_core::protocol::SaveMode;
-use deltalake_core::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
+use deltalake::kernel::StructField;
+use deltalake::operations::create::CreateBuilder;
+use deltalake::protocol::SaveMode;
+use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
 
 use crate::arguments;
 
@@ -76,6 +76,11 @@ impl MetadataDeltaLake {
 
         match object_store_type {
             "s3" => {
+                // Register the S3 storage handlers to allow the use of Amazon S3 object stores.
+                // This is required at runtime to initialize the S3 storage implementation in the
+                // deltalake_aws storage subcrate.
+                deltalake::aws::register_handlers(None);
+
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
                     arguments::extract_s3_arguments(offset_data)
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;

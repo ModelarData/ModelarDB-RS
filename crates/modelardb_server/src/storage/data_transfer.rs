@@ -23,8 +23,8 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use datafusion::parquet::errors::ParquetError;
-use deltalake_core::arrow::array::RecordBatch;
-use deltalake_core::{DeltaOps, DeltaTableError};
+use deltalake::arrow::array::RecordBatch;
+use deltalake::{DeltaOps, DeltaTableError};
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;

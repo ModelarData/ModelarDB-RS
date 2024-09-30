@@ -19,7 +19,7 @@
 use std::sync::{Arc, LazyLock};
 
 use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
-use deltalake_core::arrow::compute::SortOptions;
+use deltalake::arrow::compute::SortOptions;
 
 // grid_exec and sorted_join_exec are pub(crate) so the rules added to Apache DataFusion's physical
 // optimizer can access them.

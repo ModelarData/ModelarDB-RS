@@ -34,8 +34,8 @@ use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::prelude::col;
-use deltalake_core::kernel::{DataType, StructField};
-use deltalake_core::DeltaTableError;
+use deltalake::kernel::{DataType, StructField};
+use deltalake::DeltaTableError;
 
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataDeltaLake;

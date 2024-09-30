@@ -31,9 +31,9 @@ use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use datafusion::parquet::format::SortingColumn;
-use deltalake_core::kernel::StructField;
-use deltalake_core::operations::create::CreateBuilder;
-use deltalake_core::{DeltaOps, DeltaTable, DeltaTableError};
+use deltalake::kernel::StructField;
+use deltalake::operations::create::CreateBuilder;
+use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::StreamExt;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
@@ -102,6 +102,11 @@ impl DeltaLake {
 
         match object_store_type {
             "s3" => {
+                // Register the S3 storage handlers to allow the use of Amazon S3 object stores.
+                // This is required at runtime to initialize the S3 storage implementation in the
+                // deltalake_aws storage subcrate.
+                deltalake::aws::register_handlers(None);
+
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
                     arguments::extract_s3_arguments(offset_data)
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
@@ -206,8 +211,7 @@ impl DeltaLake {
     /// [`DeltaTableError`] if a connection cannot be established or the table does not exist.
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable, DeltaTableError> {
         let table_path = self.location_of_compressed_table(table_name);
-        deltalake_core::open_table_with_storage_options(&table_path, self.storage_options.clone())
-            .await
+        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone()).await
     }
 
     /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or a
