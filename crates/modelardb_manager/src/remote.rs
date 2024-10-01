@@ -24,6 +24,7 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
@@ -111,15 +112,24 @@ impl FlightServiceHandler {
     /// created for each node, return [`Status`].
     async fn save_and_create_cluster_tables(
         &self,
-        table_name: String,
+        table_name: &str,
+        schema: &Schema,
         sql: &str,
     ) -> Result<(), Status> {
+        // Create an empty Delta Lake table.
+        self.context
+            .remote_data_folder
+            .delta_lake
+            .create_delta_lake_table(table_name, schema)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
         // Persist the new table to the metadata Delta Lake.
         self.context
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_table_metadata(&table_name, sql)
+            .save_table_metadata(table_name, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -128,7 +138,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&table_name, sql, &self.context.key)
+            .create_tables(table_name, sql, &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -145,6 +155,14 @@ impl FlightServiceHandler {
         model_table_metadata: Arc<ModelTableMetadata>,
         sql: &str,
     ) -> Result<(), Status> {
+        // Create an empty Delta Lake table.
+        self.context
+            .remote_data_folder
+            .delta_lake
+            .create_delta_lake_model_table(&model_table_metadata.name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
         // Persist the new model table to the metadata Delta Lake.
         self.context
             .remote_data_folder
@@ -425,9 +443,10 @@ impl FlightService for FlightServiceHandler {
 
             // Create the table or model table if it does not already exist.
             match valid_statement {
-                ValidStatement::CreateTable { name, .. } => {
+                ValidStatement::CreateTable { name, schema } => {
                     self.check_if_table_exists(&name).await?;
-                    self.save_and_create_cluster_tables(name, sql).await?;
+                    self.save_and_create_cluster_tables(&name, &schema, sql)
+                        .await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
@@ -447,21 +466,23 @@ impl FlightService for FlightServiceHandler {
             let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
             let node = Node::new(url.to_string(), server_mode.clone());
 
-            // Use the metadata manager to persist the node to the metadata Delta Lake.
-            self.context
-                .remote_data_folder
-                .metadata_manager
-                .save_node(&node)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Use the cluster to register the node in memory. Note that if this fails, the cluster
-            // and metadata Delta Lake will be out of sync until the manager is restarted.
+            // Use the cluster to register the node in memory. This returns an error if the node is
+            // already registered.
             self.context
                 .cluster
                 .write()
                 .await
-                .register_node(node)
+                .register_node(node.clone())
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Use the metadata manager to persist the node to the metadata Delta Lake. Note that if
+            // this fails, the metadata Delta Lake and the cluster will be out of sync until the
+            // manager is restarted.
+            self.context
+                .remote_data_folder
+                .metadata_manager
+                .save_node(node)
+                .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             // unwrap() is safe since the key cannot contain invalid characters.
