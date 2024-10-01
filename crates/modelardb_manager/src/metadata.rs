@@ -124,12 +124,12 @@ impl MetadataManager {
 
     /// Save the node to the metadata Delta Lake and return [`Ok`]. If the node could not be saved,
     /// return [`DeltaTableError`].
-    pub async fn save_node(&self, node: &Node) -> Result<(), DeltaTableError> {
+    pub async fn save_node(&self, node: Node) -> Result<(), DeltaTableError> {
         self.metadata_delta_lake
             .append_to_table(
                 "nodes",
                 vec![
-                    Arc::new(StringArray::from(vec![node.url.clone()])),
+                    Arc::new(StringArray::from(vec![node.url])),
                     Arc::new(StringArray::from(vec![node.mode.to_string()])),
                 ],
             )
@@ -318,10 +318,10 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
         let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_1).await.unwrap();
+        metadata_manager.save_node(node_1.clone()).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_2).await.unwrap();
+        metadata_manager.save_node(node_2.clone()).await.unwrap();
 
         // Verify that the nodes are saved correctly.
         let batch = metadata_manager
@@ -345,10 +345,10 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
         let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_1).await.unwrap();
+        metadata_manager.save_node(node_1.clone()).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_2).await.unwrap();
+        metadata_manager.save_node(node_2.clone()).await.unwrap();
 
         metadata_manager.remove_node(&node_1.url).await.unwrap();
 
@@ -374,10 +374,10 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
         let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_1).await.unwrap();
+        metadata_manager.save_node(node_1.clone()).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_2).await.unwrap();
+        metadata_manager.save_node(node_2.clone()).await.unwrap();
 
         let nodes = metadata_manager.nodes().await.unwrap();
 
