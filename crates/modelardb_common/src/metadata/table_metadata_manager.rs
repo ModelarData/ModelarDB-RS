@@ -32,6 +32,7 @@ use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
+use datafusion::logical_expr::lit;
 use datafusion::prelude::col;
 use deltalake_core::kernel::{DataType, StructField};
 use deltalake_core::DeltaTableError;
@@ -177,6 +178,15 @@ impl TableMetadataManager {
     /// Delete the metadata for the table with `table_name` from the `table_metadata` table in the
     /// metadata Delta Lake. If the table metadata could not be deleted, [`DeltaTableError`] is returned.
     pub async fn delete_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        let ops = self
+            .metadata_delta_lake
+            .metadata_table_delta_ops("table_metadata")
+            .await?;
+
+        ops.delete()
+            .with_predicate(col("table_name").eq(lit(table_name)))
+            .await?;
+
         Ok(())
     }
 
@@ -886,16 +896,28 @@ mod tests {
                 .unwrap();
 
         metadata_manager
-            .save_table_metadata("test_table", "CREATE TABLE table")
+            .save_table_metadata("table_1", "CREATE TABLE table_1")
             .await
             .unwrap();
 
         metadata_manager
-            .delete_table_metadata("test_table")
+            .save_table_metadata("table_2", "CREATE TABLE table_2")
             .await
             .unwrap();
 
-        // TODO: Verify that the table was deleted from the table_metadata table.
+        metadata_manager
+            .delete_table_metadata("table_2")
+            .await
+            .unwrap();
+
+        // Verify that the table was deleted from the table_metadata table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .await
+            .unwrap();
+
+        assert_eq!(**batch.column(0), StringArray::from(vec!["table_1"]));
     }
 
     #[tokio::test]
