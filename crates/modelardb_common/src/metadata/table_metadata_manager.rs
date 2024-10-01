@@ -337,6 +337,34 @@ impl TableMetadataManager {
         &self,
         table_name: &str,
     ) -> Result<(), DeltaTableError> {
+        // Delete the model_table_name_tags table.
+
+        // Delete the table metadata from the model_table_metadata table.
+        self.metadata_delta_lake
+            .metadata_table_delta_ops("model_table_metadata")
+            .await?
+            .delete()
+            .with_predicate(col("table_name").eq(lit(table_name)))
+            .await?;
+
+        // Delete the column metadata from the model_table_field_columns table.
+        self.metadata_delta_lake
+            .metadata_table_delta_ops("model_table_field_columns")
+            .await?
+            .delete()
+            .with_predicate(col("table_name").eq(lit(table_name)))
+            .await?;
+
+        // Delete the tag metadata from the model_table_hash_table_name table.
+        self.metadata_delta_lake
+            .metadata_table_delta_ops("model_table_hash_table_name")
+            .await?
+            .delete()
+            .with_predicate(col("table_name").eq(lit(table_name)))
+            .await?;
+
+        // Delete the tag metadata from the tag cache.
+
         Ok(())
     }
 
@@ -1002,15 +1030,55 @@ mod tests {
     async fn test_delete_model_table_metadata() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
         metadata_manager
             .delete_model_table_metadata(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
 
         // TODO: Verify that the tags table was deleted from the Delta Lake.
-        // TODO: Verify that the model table was deleted from the model_table_metadata table.
-        // TODO: Verify that the field columns were deleted from the model_table_field_columns table.
-        // TODO: Verify that the tag metadata was deleted from the model_table_hash_table_name table.
+
+        // Verify that the model table was deleted from the model_table_metadata table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                "model_table_metadata",
+                "SELECT table_name FROM model_table_metadata",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the field columns were deleted from the model_table_field_columns table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                "model_table_field_columns",
+                "SELECT table_name FROM model_table_field_columns",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the tag metadata was deleted from the model_table_hash_table_name table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                "model_table_hash_table_name",
+                "SELECT table_name FROM model_table_hash_table_name",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
         // TODO: Verify that the tag cache was cleared.
     }
 
