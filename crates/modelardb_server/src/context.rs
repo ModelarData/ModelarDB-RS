@@ -607,12 +607,13 @@ mod tests {
 
         // TODO: The table should be deleted from the storage engine.
 
-        // TODO: The table should be deleted from the Delta Lake.
-
         // The table should be deregistered from the Apache DataFusion session.
         assert!(context.check_if_table_exists("table_name").await.is_ok());
 
         // TODO: The table should be deleted from the metadata Delta Lake.
+
+        // The table should be deleted from the Delta Lake.
+        assert!(!temp_dir.path().join("tables").exists());
     }
 
     #[tokio::test]
@@ -629,8 +630,6 @@ mod tests {
 
         // TODO: The table should be deleted from the storage engine.
 
-        // TODO: The table should be deleted from the Delta Lake.
-
         // The table should be deregistered from the Apache DataFusion session.
         assert!(context
             .check_if_table_exists(test::MODEL_TABLE_NAME)
@@ -638,6 +637,9 @@ mod tests {
             .is_ok());
 
         // TODO: The table should be deleted from the metadata Delta Lake.
+
+        // The table should be deleted from the Delta Lake.
+        assert!(!temp_dir.path().join("tables").exists());
     }
 
     #[tokio::test]
