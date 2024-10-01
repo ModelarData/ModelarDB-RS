@@ -389,6 +389,9 @@ impl TableMetadataManager {
         table_name: &str,
     ) -> Result<(), DeltaTableError> {
         // Delete the model_table_name_tags table.
+        self.metadata_delta_lake
+            .drop_delta_lake_table(&format!("{table_name}_tags"))
+            .await?;
 
         // Delete the table metadata from the model_table_metadata table.
         self.metadata_delta_lake
@@ -1077,7 +1080,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_model_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
@@ -1090,7 +1093,13 @@ mod tests {
             .await
             .unwrap();
 
-        // TODO: Verify that the tags table was deleted from the Delta Lake.
+        // Verify that the tags table was deleted from the Delta Lake.
+        let tags_table_name = format!("{}_tags", test::MODEL_TABLE_NAME);
+        assert!(!temp_dir
+            .path()
+            .join("metadata")
+            .join(tags_table_name)
+            .exists());
 
         // Verify that the model table was deleted from the model_table_metadata table.
         let batch = metadata_manager
