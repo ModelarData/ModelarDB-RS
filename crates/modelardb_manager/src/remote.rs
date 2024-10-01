@@ -466,21 +466,23 @@ impl FlightService for FlightServiceHandler {
             let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
             let node = Node::new(url.to_string(), server_mode.clone());
 
-            // Use the metadata manager to persist the node to the metadata Delta Lake.
-            self.context
-                .remote_data_folder
-                .metadata_manager
-                .save_node(&node)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Use the cluster to register the node in memory. Note that if this fails, the cluster
-            // and metadata Delta Lake will be out of sync until the manager is restarted.
+            // Use the cluster to register the node in memory. This returns an error if the node is
+            // already registered.
             self.context
                 .cluster
                 .write()
                 .await
-                .register_node(node)
+                .register_node(node.clone())
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Use the metadata manager to persist the node to the metadata Delta Lake. Note that if
+            // this fails, the metadata Delta Lake and the cluster will be out of sync until the
+            // manager is restarted.
+            self.context
+                .remote_data_folder
+                .metadata_manager
+                .save_node(node)
+                .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             // unwrap() is safe since the key cannot contain invalid characters.
