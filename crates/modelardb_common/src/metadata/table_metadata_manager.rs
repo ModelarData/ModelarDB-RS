@@ -174,6 +174,12 @@ impl TableMetadataManager {
         Ok(())
     }
 
+    /// Delete the metadata for the table with `table_name` from the `table_metadata` table in the
+    /// metadata Delta Lake. If the table metadata could not be deleted, [`DeltaTableError`] is returned.
+    pub async fn delete_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        Ok(())
+    }
+
     /// Return the name of each table currently in the metadata Delta Lake. Note that this does not
     /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
@@ -309,6 +315,18 @@ impl TableMetadataManager {
             }
         }
 
+        Ok(())
+    }
+
+    /// Delete the metadata for the model table with `table_name` from the metadata Delta Lake.
+    /// This includes deleting the tags table for the model table, deleting a row from the
+    /// `model_table_metadata` table, deleting a row from the `model_table_field_columns` table for
+    /// each field column, and deleting the tag metadata from the `model_table_hash_table_name`
+    /// table and the tag cache.
+    pub async fn delete_model_table_metadata(
+        &self,
+        table_name: &str,
+    ) -> Result<(), DeltaTableError> {
         Ok(())
     }
 
@@ -860,6 +878,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_delete_table_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager =
+            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
+                .await
+                .unwrap();
+
+        metadata_manager
+            .save_table_metadata("test_table", "CREATE TABLE table")
+            .await
+            .unwrap();
+
+        metadata_manager
+            .delete_table_metadata("test_table")
+            .await
+            .unwrap();
+
+        // TODO: Verify that the table was deleted from the table_metadata table.
+    }
+
+    #[tokio::test]
     async fn test_table_names() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager =
@@ -957,6 +996,22 @@ mod tests {
             StringArray::from(vec![None, None] as Vec<Option<&str>>)
         );
         assert_eq!(**batch.column(6), BinaryArray::from(vec![None, None]));
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_table_metadata() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        metadata_manager
+            .delete_model_table_metadata(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // TODO: Verify that the tags table was deleted from the Delta Lake.
+        // TODO: Verify that the model table was deleted from the model_table_metadata table.
+        // TODO: Verify that the field columns were deleted from the model_table_field_columns table.
+        // TODO: Verify that the tag metadata was deleted from the model_table_hash_table_name table.
+        // TODO: Verify that the tag cache was cleared.
     }
 
     #[tokio::test]
