@@ -305,7 +305,6 @@ impl Context {
     async fn deregister_and_delete_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
         // TODO: Remove the table from the data transfer component.
         // TODO: Check if it needs to be removed other places in the storage engine.
-        // TODO: Delete the table from the Delta Lake (maybe through the storage engine).
 
         // Deregister the table from the Apache DataFusion session.
         self.session
@@ -313,6 +312,15 @@ impl Context {
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // TODO: Drop the table from the metadata Delta Lake.
+
+        // Delete the table from the Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .delta_lake
+            .drop_delta_lake_table(table_name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
         Ok(())
     }
 
@@ -324,7 +332,6 @@ impl Context {
         table_name: &str,
     ) -> Result<(), ModelarDbError> {
         // TODO: Drop the table from the storage engine.
-        // TODO: Drop the table from the DeltaLake (maybe through the storage engine).
 
         // Deregister the model table from the Apache DataFusion session.
         self.session
@@ -332,6 +339,15 @@ impl Context {
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // TODO: Drop the table from the metadata manager.
+
+        // Delete the table from the Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .delta_lake
+            .drop_delta_lake_table(table_name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
         Ok(())
     }
 
