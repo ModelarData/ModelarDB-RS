@@ -22,9 +22,7 @@ mod remote;
 use std::env;
 use std::sync::{Arc, LazyLock};
 
-use modelardb_common::arguments::{
-    argument_to_connection_info, collect_command_line_arguments, validate_remote_data_folder,
-};
+use modelardb_common::arguments::{argument_to_connection_info, collect_command_line_arguments};
 use modelardb_common::storage::DeltaLake;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -126,7 +124,6 @@ fn main() -> Result<(), String> {
     let context = runtime.block_on(async {
         let remote_data_folder =
             RemoteDataFolder::try_from_command_line_arguments(&arguments).await?;
-        validate_remote_data_folder(&remote_data_folder.delta_lake).await?;
 
         let nodes = remote_data_folder
             .metadata_manager

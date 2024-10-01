@@ -83,7 +83,7 @@ includes crates used for purposes such as logging, where multiple crates provide
 - Async Runtime - [tokio](https://crates.io/crates/tokio)
 - gRPC - [tonic](https://crates.io/crates/tonic)
 - UUID - [uuid](https://crates.io/crates/uuid)
-- Object Store Access - [deltalake-core](https://crates.io/crates/deltalake-core)
+- Object Store Access - [deltalake](https://crates.io/crates/deltalake)
 - TLS - [rustls](https://crates.io/crates/rustls)
 - Memory Allocation - [snmalloc-rs](https://crates.io/crates/snmalloc-rs)
 - Hardware Information - [sysinfo](https://crates.io/crates/sysinfo)

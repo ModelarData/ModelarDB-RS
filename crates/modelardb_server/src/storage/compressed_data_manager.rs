@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
-use deltalake_core::DeltaTableError;
+use deltalake::DeltaTableError;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
@@ -625,9 +625,7 @@ mod tests {
         ));
 
         // Create a local data folder and save a single model table to the metadata Delta Lake.
-        let local_data_folder = DataFolder::try_from_path(temp_dir.path().to_str().unwrap())
-            .await
-            .unwrap();
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = test::model_table_metadata();
         local_data_folder

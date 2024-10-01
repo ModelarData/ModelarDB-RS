@@ -15,9 +15,10 @@
 
 //! Implementation of a struct that provides access to the local and remote data storage components.
 
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use deltalake_core::DeltaTableError;
+use deltalake::DeltaTableError;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
@@ -38,7 +39,7 @@ impl DataFolder {
     /// Return a [`DataFolder`] created from `data_folder_path`. If the folder does not exist, it is
     /// created. If the folder does not exist and could not be created or if the metadata tables could
     /// not be created, [`DeltaTableError`] is returned.
-    pub async fn try_from_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
+    pub async fn try_from_path(data_folder_path: &StdPath) -> Result<Self, DeltaTableError> {
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
         let table_metadata_manager = TableMetadataManager::try_from_path(data_folder_path).await?;
 
@@ -98,7 +99,7 @@ impl DataFolders {
         // Match the provided command line arguments to the supported inputs.
         match arguments {
             &["edge", local_data_folder] | &[local_data_folder] => {
-                let local_data_folder = DataFolder::try_from_path(local_data_folder)
+                let local_data_folder = DataFolder::try_from_path(StdPath::new(local_data_folder))
                     .await
                     .map_err(|error| error.to_string())?;
 
@@ -113,7 +114,7 @@ impl DataFolders {
                         .await
                         .map_err(|error| error.to_string())?;
 
-                let local_data_folder = DataFolder::try_from_path(local_data_folder)
+                let local_data_folder = DataFolder::try_from_path(StdPath::new(local_data_folder))
                     .await
                     .map_err(|error| error.to_string())?;
 
@@ -136,7 +137,7 @@ impl DataFolders {
                         .await
                         .map_err(|error| error.to_string())?;
 
-                let local_data_folder = DataFolder::try_from_path(local_data_folder)
+                let local_data_folder = DataFolder::try_from_path(StdPath::new(local_data_folder))
                     .await
                     .map_err(|error| error.to_string())?;
 

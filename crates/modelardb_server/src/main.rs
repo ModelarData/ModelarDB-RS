@@ -27,7 +27,7 @@ mod storage;
 use std::env;
 use std::sync::{Arc, LazyLock};
 
-use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
+use modelardb_common::arguments::collect_command_line_arguments;
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -71,11 +71,6 @@ fn main() -> Result<(), String> {
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
     let (cluster_mode, data_folders) =
         runtime.block_on(DataFolders::try_from_command_line_arguments(&arguments))?;
-
-    // If a remote data folder was provided, check that it can be accessed.
-    if let Some(remote_data_folder) = &data_folders.maybe_remote_data_folder {
-        runtime.block_on(validate_remote_data_folder(&remote_data_folder.delta_lake))?;
-    }
 
     let context = Arc::new(
         runtime

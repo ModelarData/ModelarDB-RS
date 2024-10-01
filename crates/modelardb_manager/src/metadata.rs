@@ -20,9 +20,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::array::{Array, StringArray};
-use deltalake_core::datafusion::logical_expr::{col, lit};
-use deltalake_core::kernel::{DataType, StructField};
-use deltalake_core::DeltaTableError;
+use deltalake::datafusion::logical_expr::{col, lit};
+use deltalake::kernel::{DataType, StructField};
+use deltalake::DeltaTableError;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::metadata::MetadataDeltaLake;
 use modelardb_common::types::ServerMode;
@@ -48,8 +48,7 @@ impl MetadataManager {
         connection_info: &[u8],
     ) -> Result<MetadataManager, DeltaTableError> {
         let metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)
-                .await?,
+            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)?,
             table_metadata_manager: TableMetadataManager::try_from_connection_info(connection_info)
                 .await?,
         };
@@ -125,12 +124,12 @@ impl MetadataManager {
 
     /// Save the node to the metadata Delta Lake and return [`Ok`]. If the node could not be saved,
     /// return [`DeltaTableError`].
-    pub async fn save_node(&self, node: &Node) -> Result<(), DeltaTableError> {
+    pub async fn save_node(&self, node: Node) -> Result<(), DeltaTableError> {
         self.metadata_delta_lake
             .append_to_table(
                 "nodes",
                 vec![
-                    Arc::new(StringArray::from(vec![node.url.clone()])),
+                    Arc::new(StringArray::from(vec![node.url])),
                     Arc::new(StringArray::from(vec![node.mode.to_string()])),
                 ],
             )
@@ -319,10 +318,10 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
         let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_1).await.unwrap();
+        metadata_manager.save_node(node_1.clone()).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_2).await.unwrap();
+        metadata_manager.save_node(node_2.clone()).await.unwrap();
 
         // Verify that the nodes are saved correctly.
         let batch = metadata_manager
@@ -346,10 +345,10 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
         let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_1).await.unwrap();
+        metadata_manager.save_node(node_1.clone()).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_2).await.unwrap();
+        metadata_manager.save_node(node_2.clone()).await.unwrap();
 
         metadata_manager.remove_node(&node_1.url).await.unwrap();
 
@@ -375,10 +374,10 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
         let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_1).await.unwrap();
+        metadata_manager.save_node(node_1.clone()).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(&node_2).await.unwrap();
+        metadata_manager.save_node(node_2.clone()).await.unwrap();
 
         let nodes = metadata_manager.nodes().await.unwrap();
 
@@ -471,13 +470,12 @@ mod tests {
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let table_metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
+        let table_metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
 
         let metadata_manager = MetadataManager {
-            metadata_delta_lake: MetadataDeltaLake::from_path(temp_dir.path().to_str().unwrap()),
+            metadata_delta_lake: MetadataDeltaLake::from_path(temp_dir.path()).unwrap(),
             table_metadata_manager,
         };
 

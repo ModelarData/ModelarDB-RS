@@ -19,13 +19,8 @@
 use std::env;
 use std::io::Write;
 use std::str;
-use std::sync::Arc;
 
-use object_store::{path::Path, ObjectStore};
 use tonic::Status;
-use uuid::Uuid;
-
-use crate::storage::DeltaLake;
 
 /// Error to emit when an unknown remote data folder type is used.
 const REMOTE_DATA_FOLDER_ERROR: &str =
@@ -86,34 +81,6 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Validate that the remote data folder can be accessed. If the remote data folder cannot be
-/// accessed, return the error that occurred as a [`String`].
-pub async fn validate_remote_data_folder(remote_delta_lake: &Arc<DeltaLake>) -> Result<(), String> {
-    let remote_data_folder = remote_delta_lake.object_store();
-
-    // Use an UUID for the path to minimize the chance of the path existing in the object store.
-    let invalid_path = Uuid::new_v4().to_string();
-
-    // Check that the connection is valid by attempting to retrieve a file that does not exist.
-    match remote_data_folder.get(&Path::from(invalid_path)).await {
-        Ok(_) => Ok(()),
-        Err(error) => match error {
-            object_store::Error::NotFound { .. } => {
-                let error = error.to_string();
-
-                // BlobNotFound and NoSuchKey errors are only returned if the object store
-                // connection is valid but the path does not exist.
-                if error.contains("BlobNotFound") || error.contains("NoSuchKey") {
-                    Ok(())
-                } else {
-                    Err(error)
-                }
-            }
-            _ => Err(error.to_string()),
-        },
-    }
-}
-
 /// Convert the given `argument` into bytes that contain the length of the byte representation of
 /// `argument` together with the byte representation. The length is exactly two bytes long.
 pub fn encode_argument(argument: &str) -> Vec<u8> {
@@ -152,7 +119,7 @@ pub fn decode_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
 /// Extract the arguments in `data` and return the arguments to connect to an
 /// [`Amazon S3`](object_store::aws::AmazonS3) object store and what is remaining of `data`
 /// after parsing. If `data` is missing arguments, [`Status`] is returned.
-pub async fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
+pub fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
     let (endpoint, offset_data) = decode_argument(data)?;
     let (bucket_name, offset_data) = decode_argument(offset_data)?;
     let (access_key_id, offset_data) = decode_argument(offset_data)?;
@@ -171,7 +138,7 @@ pub async fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str
 /// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
 /// object store and what is remaining of `data` after parsing. If `data` is missing arguments,
 /// [`Status`] is returned.
-pub async fn extract_azure_blob_storage_arguments(
+pub fn extract_azure_blob_storage_arguments(
     data: &[u8],
 ) -> Result<(&str, &str, &str, &[u8]), Status> {
     let (account, offset_data) = decode_argument(data)?;
