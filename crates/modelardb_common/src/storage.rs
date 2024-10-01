@@ -33,7 +33,7 @@ use datafusion::parquet::format::SortingColumn;
 use deltalake_core::kernel::StructField;
 use deltalake_core::operations::create::CreateBuilder;
 use deltalake_core::{DeltaOps, DeltaTable, DeltaTableError};
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
@@ -72,9 +72,11 @@ impl DeltaLake {
         fs::create_dir_all(data_folder_path)
             .map_err(|error| DeltaTableError::generic(error.to_string()))?;
 
+        // Use with_automatic_cleanup to ensure empty directories are deleted automatically.
         let local_file_system = Arc::new(
             LocalFileSystem::new_with_prefix(data_folder_path)
-                .map_err(|error| DeltaTableError::generic(error.to_string()))?,
+                .map_err(|error| DeltaTableError::generic(error.to_string()))?
+                .with_automatic_cleanup(true),
         );
 
         Ok(Self {
@@ -240,6 +242,31 @@ impl DeltaLake {
             .with_columns(columns)
             .with_partition_columns(partition_columns)
             .await
+    }
+
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file in
+    /// the table folder. If the table was dropped successfully, the paths to the deleted files are
+    /// returned, otherwise a [`DeltaTableError`] is returned.
+    pub async fn drop_delta_lake_table(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<Path>, DeltaTableError> {
+        // List all files in the Delta Lake table folder.
+        let table_path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}");
+        let file_locations = self
+            .object_store
+            .list(Some(&Path::from(table_path)))
+            .map_ok(|object_meta| object_meta.location)
+            .boxed();
+
+        // Delete all files in the Delta Lake table folder using bulk operations if available.
+        let deleted_paths = self
+            .object_store
+            .delete_stream(file_locations)
+            .try_collect::<Vec<Path>>()
+            .await?;
+
+        Ok(deleted_paths)
     }
 
     /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`. Returns
