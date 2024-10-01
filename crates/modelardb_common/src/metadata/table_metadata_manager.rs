@@ -851,21 +851,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_table_metadata() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_1", "CREATE TABLE table_1")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_2", "CREATE TABLE table_2")
-            .await
-            .unwrap();
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
         // Retrieve the table from the metadata Delta Lake.
         let batch = metadata_manager
@@ -889,21 +875,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_table_metadata() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
-                .await
-                .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_1", "CREATE TABLE table_1")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_2", "CREATE TABLE table_2")
-            .await
-            .unwrap();
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
         metadata_manager
             .delete_table_metadata("table_2")
@@ -922,6 +894,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_table_names() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        let table_names = metadata_manager.table_names().await.unwrap();
+        assert_eq!(table_names, vec!["table_2", "table_1"]);
+    }
+
+    async fn create_metadata_manager_and_save_tables() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager =
             TableMetadataManager::try_from_path(temp_dir.path().to_str().unwrap())
@@ -938,8 +917,7 @@ mod tests {
             .await
             .unwrap();
 
-        let table_names = metadata_manager.table_names().await.unwrap();
-        assert_eq!(table_names, vec!["table_2", "table_1"]);
+        (temp_dir, metadata_manager)
     }
 
     #[tokio::test]
