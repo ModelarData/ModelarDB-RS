@@ -317,7 +317,13 @@ impl Context {
             .deregister_table(table_name)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // TODO: Drop the table from the metadata Delta Lake.
+        // Delete the table metadata from the metadata Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .delete_table_metadata(table_name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Delete the table from the Delta Lake.
         self.data_folders
@@ -337,16 +343,22 @@ impl Context {
         &self,
         table_name: &str,
     ) -> Result<(), ModelarDbError> {
-        // TODO: Drop the table from the storage engine.
+        // TODO: Drop the model table from the storage engine.
 
         // Deregister the model table from the Apache DataFusion session.
         self.session
             .deregister_table(table_name)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // TODO: Drop the table from the metadata manager.
+        // Delete the model table metadata from the metadata Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .delete_model_table_metadata(table_name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Delete the table from the Delta Lake.
+        // Delete the model table from the Delta Lake.
         self.data_folders
             .local_data_folder
             .delta_lake
@@ -616,7 +628,16 @@ mod tests {
         // The table should be deregistered from the Apache DataFusion session.
         assert!(context.check_if_table_exists("table_name").await.is_ok());
 
-        // TODO: The table should be deleted from the metadata Delta Lake.
+        // The table should be deleted from the metadata Delta Lake.
+        let table_names = context
+            .data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .table_names()
+            .await
+            .unwrap();
+
+        assert!(table_names.is_empty());
 
         // The table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
@@ -634,17 +655,26 @@ mod tests {
 
         context.drop_table(test::MODEL_TABLE_NAME).await.unwrap();
 
-        // TODO: The table should be deleted from the storage engine.
+        // TODO: The model table should be deleted from the storage engine.
 
-        // The table should be deregistered from the Apache DataFusion session.
+        // The model table should be deregistered from the Apache DataFusion session.
         assert!(context
             .check_if_table_exists(test::MODEL_TABLE_NAME)
             .await
             .is_ok());
 
-        // TODO: The table should be deleted from the metadata Delta Lake.
+        // The model table should be deleted from the metadata Delta Lake.
+        let model_table_metadata = context
+            .data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .model_table_metadata()
+            .await
+            .unwrap();
 
-        // The table should be deleted from the Delta Lake.
+        assert!(model_table_metadata.is_empty());
+
+        // The model table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
     }
 
