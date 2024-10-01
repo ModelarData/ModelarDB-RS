@@ -45,7 +45,7 @@ pub struct RemoteDataFolder {
     /// Apache Arrow Flight.
     connection_info: Vec<u8>,
     /// Remote object store for storing data and metadata in Apache Parquet files.
-    _delta_lake: Arc<DeltaLake>,
+    delta_lake: Arc<DeltaLake>,
     /// Manager for the access to the metadata Delta Lake.
     metadata_manager: Arc<MetadataManager>,
 }
@@ -58,7 +58,7 @@ impl RemoteDataFolder {
     ) -> Self {
         Self {
             connection_info,
-            _delta_lake: delta_lake,
+            delta_lake,
             metadata_manager,
         }
     }

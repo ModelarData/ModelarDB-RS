@@ -24,6 +24,7 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
@@ -111,15 +112,24 @@ impl FlightServiceHandler {
     /// created for each node, return [`Status`].
     async fn save_and_create_cluster_tables(
         &self,
-        table_name: String,
+        table_name: &str,
+        schema: &Schema,
         sql: &str,
     ) -> Result<(), Status> {
+        // Create an empty Delta Lake table.
+        self.context
+            .remote_data_folder
+            .delta_lake
+            .create_delta_lake_table(table_name, schema)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
         // Persist the new table to the metadata Delta Lake.
         self.context
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_table_metadata(&table_name, sql)
+            .save_table_metadata(table_name, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -128,7 +138,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&table_name, sql, &self.context.key)
+            .create_tables(table_name, sql, &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -145,6 +155,14 @@ impl FlightServiceHandler {
         model_table_metadata: Arc<ModelTableMetadata>,
         sql: &str,
     ) -> Result<(), Status> {
+        // Create an empty Delta Lake table.
+        self.context
+            .remote_data_folder
+            .delta_lake
+            .create_delta_lake_model_table(&model_table_metadata.name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
         // Persist the new model table to the metadata Delta Lake.
         self.context
             .remote_data_folder
@@ -425,9 +443,10 @@ impl FlightService for FlightServiceHandler {
 
             // Create the table or model table if it does not already exist.
             match valid_statement {
-                ValidStatement::CreateTable { name, .. } => {
+                ValidStatement::CreateTable { name, schema } => {
                     self.check_if_table_exists(&name).await?;
-                    self.save_and_create_cluster_tables(name, sql).await?;
+                    self.save_and_create_cluster_tables(&name, &schema, sql)
+                        .await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
