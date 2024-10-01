@@ -22,4 +22,4 @@ COPY . .
 
 RUN cargo build --profile $BUILD_PROFILE
 
-CMD ["target/release/modelardbd", "edge", "data"]
+CMD ["target/debug/modelardbd", "edge", "data"]
