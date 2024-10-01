@@ -32,7 +32,9 @@ use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
 use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
+use futures::{StreamExt, TryStreamExt};
 use object_store::local::LocalFileSystem;
+use object_store::path::Path;
 use object_store::ObjectStore;
 use url::Url;
 
@@ -215,6 +217,31 @@ impl MetadataDeltaLake {
         self.session.register_table(table_name, table.clone())?;
 
         Ok(())
+    }
+
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file in
+    /// the table folder. If the table was dropped successfully, the paths to the deleted files are
+    /// returned, otherwise a [`DeltaTableError`] is returned.
+    pub async fn drop_delta_lake_table(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<Path>, DeltaTableError> {
+        // List all files in the metadata Delta Lake table folder.
+        let table_path = format!("{METADATA_FOLDER}/{table_name}");
+        let file_locations = self
+            .object_store
+            .list(Some(&Path::from(table_path)))
+            .map_ok(|object_meta| object_meta.location)
+            .boxed();
+
+        // Delete all files in the metadata Delta Lake table folder using bulk operations if available.
+        let deleted_paths = self
+            .object_store
+            .delete_stream(file_locations)
+            .try_collect::<Vec<Path>>()
+            .await?;
+
+        Ok(deleted_paths)
     }
 
     /// Append `rows` to the table with the given `table_name`. If `rows` are appended to
