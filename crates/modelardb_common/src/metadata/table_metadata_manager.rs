@@ -417,7 +417,9 @@ impl TableMetadataManager {
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
 
-        // Delete the tag metadata from the tag cache.
+        // Delete the tag metadata from the tag cache. The table name is always the last part of the cache key.
+        self.tag_value_hashes
+            .retain(|key, _| key.split(';').last() != Some(table_name));
 
         Ok(())
     }
@@ -1137,7 +1139,8 @@ mod tests {
 
         assert_eq!(batch.num_rows(), 0);
 
-        // TODO: Verify that the tag cache was cleared.
+        // Verify that the tag cache was cleared.
+        assert!(metadata_manager.tag_value_hashes.is_empty());
     }
 
     #[tokio::test]
