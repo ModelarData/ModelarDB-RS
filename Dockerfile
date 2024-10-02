@@ -14,10 +14,12 @@
 
 FROM rust:latest
 
+ARG BUILD_PROFILE=dev
+
 WORKDIR /usr/src/app
 
 COPY . .
 
-RUN cargo build --release
+RUN cargo build --profile $BUILD_PROFILE
 
-CMD ["target/release/modelardbd", "edge", "data"]
+CMD ["target/debug/modelardbd", "edge", "data"]

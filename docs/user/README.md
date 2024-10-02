@@ -408,9 +408,7 @@ docker-compose -p modelardb-cluster stop
 
 The cluster deployment sets up a [MinIO](https://min.io/) object store and a [MinIO](https://min.io/) client is used to
 initialize the bucket `modelardb` in the object store. [MinIO](https://min.io/) can be administered through its
-[web interface](http://127.0.0.1:9001). The default username and password, `minioadmin`, can be used to log in. The
-deployment also sets up a PostgreSQL database named `metadata` that is used as the metadata database for the cluster.
-The username `modelardb_user` and the password `modelardb_password` can be used to access the database.
+[web interface](http://127.0.0.1:9001). The default username and password, `minioadmin`, can be used to log in.
 
 The cluster itself consists of a manager node, an edge node, and a cloud node. The manager node can be accessed using
 the URL `grpc://127.0.0.1:9998`, the edge node using the URL `grpc://127.0.0.1:9999`, and the cloud node using the URL
