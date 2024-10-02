@@ -345,8 +345,8 @@ impl DeltaLake {
         table_name: &str,
         mut compressed_segments: Vec<RecordBatch>,
     ) -> Result<DeltaTable, DeltaTableError> {
-        // Reinterpret univariate_ids from uint64 to int64 to fix #187 as a stopgap until #197.
-        univariate_ids_uint64_to_int64(&mut compressed_segments);
+        // Reinterpret univariate_ids from uint64 to int64 if necessary to fix #187 as a stopgap until #197.
+        maybe_univariate_ids_uint64_to_int64(&mut compressed_segments);
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
@@ -400,19 +400,26 @@ impl DeltaLake {
 }
 
 /// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
-/// [`UInt64Array`] to [`Int64Array`] as the Delta Lake Protocol does not support unsigned integers.
-/// `compressed_segments` is modified in-place as `univariate_ids_uint64_to_int64()` is designed to
-/// be used by `write_compressed_segments_to_model_table()` which owns `compressed_segments`.
-fn univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
+/// [`UInt64Array`] to [`Int64Array`] if the column is currently [`UInt64Array`], as the Delta Lake
+/// Protocol does not support unsigned integers. `compressed_segments` is modified in-place as
+/// `maybe_univariate_ids_uint64_to_int64()` is designed to be used by
+/// `write_compressed_segments_to_model_table()` which owns `compressed_segments`.
+fn maybe_univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
     for record_batch in compressed_segments {
-        let mut columns = record_batch.columns().to_vec();
-        let univariate_ids = crate::array!(record_batch, 0, UInt64Array);
-        let signed_univariate_ids: Int64Array =
-            univariate_ids.unary(|value| i64::from_ne_bytes(value.to_ne_bytes()));
-        columns[0] = Arc::new(signed_univariate_ids);
+        // Only convert the univariate ids if they are stored as unsigned integers. The univariate
+        // ids can be stored as signed integers already if the compressed segments have been saved
+        // to disk previously.
+        if record_batch.schema().field(0).data_type() == &DataType::UInt64 {
+            let mut columns = record_batch.columns().to_vec();
+            let univariate_ids = crate::array!(record_batch, 0, UInt64Array);
+            let signed_univariate_ids: Int64Array =
+                univariate_ids.unary(|value| i64::from_ne_bytes(value.to_ne_bytes()));
+            columns[0] = Arc::new(signed_univariate_ids);
 
-        // unwrap() is safe as columns is constructed to match DISK_COMPRESSED_SCHEMA.
-        *record_batch = RecordBatch::try_new(DISK_COMPRESSED_SCHEMA.0.clone(), columns).unwrap();
+            // unwrap() is safe as columns is constructed to match DISK_COMPRESSED_SCHEMA.
+            *record_batch =
+                RecordBatch::try_new(DISK_COMPRESSED_SCHEMA.0.clone(), columns).unwrap();
+        }
     }
 }
 
@@ -583,7 +590,7 @@ mod tests {
 
     use crate::test::{self, compressed_segments_record_batch_with_time};
 
-    // Tests for univariate_ids_uint64_to_int64() and univariate_ids_int64_to_uint64().
+    // Tests for maybe_univariate_ids_uint64_to_int64() and univariate_ids_int64_to_uint64().
     proptest! {
     #[test]
     fn test_univariate_ids_uint64_to_int64_to_uint64(univariate_id in ProptestUnivariateId::ANY) {
@@ -592,7 +599,11 @@ mod tests {
         expected_record_batch.remove_column(10);
 
         let mut record_batches = vec![record_batch.clone()];
-        univariate_ids_uint64_to_int64(&mut record_batches);
+        maybe_univariate_ids_uint64_to_int64(&mut record_batches);
+
+        // maybe_univariate_ids_uint64_to_int64 should not panic when called twice.
+        maybe_univariate_ids_uint64_to_int64(&mut record_batches);
+
         record_batches[0].remove_column(10);
         let computed_record_batch = univariate_ids_int64_to_uint64(&record_batches[0]);
 

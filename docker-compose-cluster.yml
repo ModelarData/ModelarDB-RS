@@ -39,29 +39,15 @@ services:
       exit 0;
       "
 
-  # Metadata database service.
-  postgres:
-    image: postgres:latest
-    container_name: postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_PASSWORD: modelardb_password
-      POSTGRES_USER: modelardb_user
-      POSTGRES_DB: metadata
-
   # ModelarDB services.
   modelardb-manager:
     image: modelardb
     build: .
     container_name: modelardb-manager
-    command: ["target/release/modelardbm", "metadata", "s3://modelardb"]
+    command: ["target/debug/modelardbm", "s3://modelardb"]
     ports:
       - "9998:9998"
     environment:
-      METADATA_DB_HOST: postgres
-      METADATA_DB_PASSWORD: modelardb_password
-      METADATA_DB_USER: modelardb_user
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_DEFAULT_REGION: eu-central-1
@@ -70,12 +56,11 @@ services:
     depends_on:
       - minio-server
       - create-bucket
-      - postgres
 
   modelardb-edge:
     image: modelardb
     container_name: modelardb-edge
-    command: ["target/release/modelardbd", "edge", "data/edge", "grpc://modelardb-manager:9998"]
+    command: ["target/debug/modelardbd", "edge", "data/edge", "grpc://modelardb-manager:9998"]
     ports:
       - "9999:9999"
     environment:
@@ -92,7 +77,7 @@ services:
   modelardb-cloud:
     image: modelardb
     container_name: modelardb-cloud
-    command: [ "target/release/modelardbd", "cloud", "data/cloud", "grpc://modelardb-manager:9998"]
+    command: [ "target/debug/modelardbd", "cloud", "data/cloud", "grpc://modelardb-manager:9998"]
     ports:
       - "9997:9997"
     environment:
