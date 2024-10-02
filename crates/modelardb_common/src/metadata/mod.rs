@@ -241,6 +241,8 @@ impl MetadataDeltaLake {
             .try_collect::<Vec<Path>>()
             .await?;
 
+        self.session.deregister_table(table_name)?;
+
         Ok(deleted_paths)
     }
 
