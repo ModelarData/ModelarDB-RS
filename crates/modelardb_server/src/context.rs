@@ -300,8 +300,12 @@ impl Context {
     /// it from the storage engine, Delta Lake, and metadata Delta Lake. If the table could not be
     /// deregistered and deleted, [`ModelarDbError`] is returned.
     async fn deregister_and_delete_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
-        // TODO: Remove the table from the data transfer component.
-        // TODO: Check if it needs to be removed other places in the storage engine.
+        // Clear the table from the data transfer component.
+        self.storage_engine
+            .read()
+            .await
+            .clear_table_size(table_name)
+            .await;
 
         // Deregister the table from the Apache DataFusion session.
         self.session

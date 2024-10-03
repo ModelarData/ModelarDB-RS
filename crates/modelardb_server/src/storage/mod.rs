@@ -432,6 +432,18 @@ impl StorageEngine {
             .await
     }
 
+    /// Clear the size of the table with `table_name` in the data transfer component and return the
+    /// number of bytes that were cleared.
+    pub(super) async fn clear_table_size(&self, table_name: &str) -> usize {
+        if let Some(ref mut data_transfer) =
+            *self.compressed_data_manager.data_transfer.write().await
+        {
+            data_transfer.clear_table_size(table_name)
+        } else {
+            0
+        }
+    }
+
     /// Set the transfer batch size in the data transfer component to `new_value` if it exists. If
     /// a data transfer component does not exist, or the value could not be changed,
     /// return [`ModelarDbError`].
