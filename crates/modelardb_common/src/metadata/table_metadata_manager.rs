@@ -228,18 +228,25 @@ impl TableMetadataManager {
     }
 
     /// Delete the metadata for the table with `table_name` from the `table_metadata` table in the
-    /// metadata Delta Lake. If the table metadata could not be deleted, [`DeltaTableError`] is returned.
+    /// metadata Delta Lake. If the table does not exist or the metadata could not be deleted,
+    /// [`DeltaTableError`] is returned.
     pub async fn delete_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
-        let ops = self
-            .metadata_delta_lake
-            .metadata_table_delta_ops("table_metadata")
-            .await?;
+        if self.table_type(table_name).await? == TableType::Table {
+            let ops = self
+                .metadata_delta_lake
+                .metadata_table_delta_ops("table_metadata")
+                .await?;
 
-        ops.delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
+            ops.delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
 
-        Ok(())
+            Ok(())
+        } else {
+            Err(DeltaTableError::NotATable(format!(
+                "'{table_name}' is not a table."
+            )))
+        }
     }
 
     /// Return the name of each table currently in the metadata Delta Lake. Note that this does not
@@ -402,45 +409,52 @@ impl TableMetadataManager {
     /// This includes deleting the tags table for the model table, deleting a row from the
     /// `model_table_metadata` table, deleting a row from the `model_table_field_columns` table for
     /// each field column, and deleting the tag metadata from the `model_table_hash_table_name`
-    /// table and the tag cache.
+    /// table and the tag cache. If the model table does not exist or the metadata could not be
+    /// deleted, [`DeltaTableError`] is returned.
     pub async fn delete_model_table_metadata(
         &self,
         table_name: &str,
     ) -> Result<(), DeltaTableError> {
-        // Delete the model_table_name_tags table.
-        self.metadata_delta_lake
-            .drop_delta_lake_table(&format!("{table_name}_tags"))
-            .await?;
+        if self.table_type(table_name).await? == TableType::ModelTable {
+            // Delete the model_table_name_tags table.
+            self.metadata_delta_lake
+                .drop_delta_lake_table(&format!("{table_name}_tags"))
+                .await?;
 
-        // Delete the table metadata from the model_table_metadata table.
-        self.metadata_delta_lake
-            .metadata_table_delta_ops("model_table_metadata")
-            .await?
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
+            // Delete the table metadata from the model_table_metadata table.
+            self.metadata_delta_lake
+                .metadata_table_delta_ops("model_table_metadata")
+                .await?
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
 
-        // Delete the column metadata from the model_table_field_columns table.
-        self.metadata_delta_lake
-            .metadata_table_delta_ops("model_table_field_columns")
-            .await?
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
+            // Delete the column metadata from the model_table_field_columns table.
+            self.metadata_delta_lake
+                .metadata_table_delta_ops("model_table_field_columns")
+                .await?
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
 
-        // Delete the tag metadata from the model_table_hash_table_name table.
-        self.metadata_delta_lake
-            .metadata_table_delta_ops("model_table_hash_table_name")
-            .await?
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
+            // Delete the tag metadata from the model_table_hash_table_name table.
+            self.metadata_delta_lake
+                .metadata_table_delta_ops("model_table_hash_table_name")
+                .await?
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
 
-        // Delete the tag metadata from the tag cache. The table name is always the last part of the cache key.
-        self.tag_value_hashes
-            .retain(|key, _| key.split(';').last() != Some(table_name));
+            // Delete the tag metadata from the tag cache. The table name is always the last part of the cache key.
+            self.tag_value_hashes
+                .retain(|key, _| key.split(';').last() != Some(table_name));
 
-        Ok(())
+            Ok(())
+        } else {
+            Err(DeltaTableError::NotATable(format!(
+                "'{table_name}' is not a model table."
+            )))
+        }
     }
 
     /// Return the [`ModelTableMetadata`] of each model table currently in the metadata Delta Lake.
