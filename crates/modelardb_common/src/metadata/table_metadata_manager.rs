@@ -1530,11 +1530,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mapping_from_hash_to_tags_with_invalid_table() {
+    async fn test_mapping_from_hash_to_tags_with_missing_model_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let result = metadata_manager
-            .mapping_from_hash_to_tags("invalid_table_name", &["tag"])
+            .mapping_from_hash_to_tags("missing_model_table", &["tag"])
             .await;
 
         assert!(result.is_err());
