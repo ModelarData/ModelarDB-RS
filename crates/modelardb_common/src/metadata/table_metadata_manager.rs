@@ -45,7 +45,8 @@ use crate::test::ERROR_BOUND_ZERO;
 use crate::types::ErrorBound;
 
 /// Types of tables supported by ModelarDB.
-enum TableType {
+#[derive(Debug, PartialEq)]
+pub enum TableType {
     Table,
     ModelTable,
 }
@@ -275,6 +276,24 @@ impl TableMetadataManager {
 
         let table_names = crate::array!(batch, 0, StringArray);
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
+    }
+
+    /// Return the [`TableType`] of the table with `table_name`. If the table does not exist,
+    /// [`DeltaTableError`] is returned.
+    pub async fn table_type(&self, table_name: &str) -> Result<TableType, DeltaTableError> {
+        if self.table_names().await?.contains(&table_name.to_owned()) {
+            Ok(TableType::Table)
+        } else if self
+            .model_table_names()
+            .await?
+            .contains(&table_name.to_owned())
+        {
+            Ok(TableType::ModelTable)
+        } else {
+            Err(DeltaTableError::NotATable(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
+        }
     }
 
     /// Save the created model table to the metadata Delta Lake. This includes creating a tags table
@@ -983,6 +1002,22 @@ mod tests {
         assert_eq!(table_names, vec!["table_2", "table_1"]);
     }
 
+    #[tokio::test]
+    async fn test_model_table_names() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_names = metadata_manager.model_table_names().await.unwrap();
+        assert_eq!(model_table_names, vec![test::MODEL_TABLE_NAME]);
+    }
+
+    #[tokio::test]
+    async fn test_table_type_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        let table_type = metadata_manager.table_type("table_1").await.unwrap();
+        assert_eq!(table_type, TableType::Table);
+    }
+
     async fn create_metadata_manager_and_save_tables() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
@@ -1003,11 +1038,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_model_table_names() {
+    async fn test_table_type_model_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        let model_table_names = metadata_manager.model_table_names().await.unwrap();
-        assert_eq!(model_table_names, vec![test::MODEL_TABLE_NAME]);
+        let table_type = metadata_manager
+            .table_type(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        assert_eq!(table_type, TableType::ModelTable);
+    }
+
+    #[tokio::test]
+    async fn test_table_type_missing_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+        assert!(metadata_manager.table_type("missing_table").await.is_err());
     }
 
     #[tokio::test]
