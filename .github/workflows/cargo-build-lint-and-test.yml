@@ -21,10 +21,18 @@ on:
     branches: [ "main" ]
 
 env:
+  # General.
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -C instrument-coverage -C strip=symbols -D warnings
   RUSTDOCFLAGS: -D warnings
   LLVM_PROFILE_FILE: modelardb-%p-%m.profraw
+
+  # Minio.
+  AWS_ACCESS_KEY_ID: minioadmin
+  AWS_SECRET_ACCESS_KEY: minioadmin
+  AWS_DEFAULT_REGION: us-west-1
+  AWS_ENDPOINT: http://127.0.0.1:9000
+  AWS_ALLOW_HTTP: true
 
 jobs:
   cargo_build_lint_and_test:
@@ -55,6 +63,7 @@ jobs:
 
         chmod +x minio
         ./minio server minio_data_folder &
+        aws s3 mb s3://modelardb --endpoint-url http://localhost:9000
 
     # Setup Azurite.
     - name: Setup Azurite
@@ -62,6 +71,8 @@ jobs:
       run: |
         npm install azurite
         node_modules/.bin/azurite -l azurite_data_folder &
+        az storage container create -n modelardb --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;"
+
 
     # Update Rust.
     - name: Rustup Update
