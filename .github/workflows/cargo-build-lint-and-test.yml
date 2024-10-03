@@ -27,10 +27,10 @@ env:
   RUSTDOCFLAGS: -D warnings
   LLVM_PROFILE_FILE: modelardb-%p-%m.profraw
 
-  # Minio.
+  # MinIO.
   AWS_ACCESS_KEY_ID: minioadmin
   AWS_SECRET_ACCESS_KEY: minioadmin
-  AWS_DEFAULT_REGION: us-west-1
+  AWS_DEFAULT_REGION: eu-central-1
   AWS_ENDPOINT: http://127.0.0.1:9000
   AWS_ALLOW_HTTP: true
 
@@ -48,8 +48,8 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # Setup Minio.
-    - name: Setup Minio
+    # Setup MinIO.
+    - name: Setup MinIO
       shell: bash
       run: |
         case $(uname) in
