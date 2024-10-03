@@ -145,6 +145,14 @@ impl DataTransfer {
         Ok(())
     }
 
+    /// Clear the size of the table with `table_name`. If the size was cleared, return the size in
+    /// bytes that was removed, otherwise return [`None`].
+    pub async fn clear_table_size(&self, table_name: &str) -> Option<usize> {
+        self.table_size_in_bytes
+            .remove(table_name)
+            .map(|(_table_name, size_in_bytes)| size_in_bytes)
+    }
+
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
     /// for, check if the amount of data exceeds `new_value` and transfer all the data if it does.
     /// If the value is changed successfully return [`Ok`], otherwise return [`ParquetError`].
@@ -356,6 +364,33 @@ mod tests {
                 .unwrap(),
             FILE_SIZE * 2
         );
+    }
+
+    #[tokio::test]
+    async fn test_clear_table_size() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let local_data_folder = create_local_data_folder(&temp_dir).await;
+
+        let (_target_dir, data_transfer) =
+            create_data_transfer_component(local_data_folder.clone()).await;
+        let files_size = create_delta_table_and_segments(local_data_folder, 1).await;
+
+        data_transfer
+            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            data_transfer
+                .clear_table_size(test::MODEL_TABLE_NAME)
+                .await
+                .unwrap(),
+            FILE_SIZE
+        );
+
+        assert!(!data_transfer
+            .table_size_in_bytes
+            .contains_key(test::MODEL_TABLE_NAME));
     }
 
     #[tokio::test]
