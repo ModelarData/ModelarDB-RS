@@ -1009,6 +1009,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_delete_table_metadata_for_missing_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        assert!(metadata_manager
+            .delete_table_metadata("missing_table")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn test_table_names() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
@@ -1025,7 +1035,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_table_type_table() {
+    async fn test_table_type_for_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
         let table_type = metadata_manager.table_type("table_1").await.unwrap();
@@ -1052,7 +1062,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_table_type_model_table() {
+    async fn test_table_type_for_model_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let table_type = metadata_manager
@@ -1064,7 +1074,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_table_type_missing_table() {
+    async fn test_table_type_for_missing_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
         assert!(metadata_manager.table_type("missing_table").await.is_err());
     }
@@ -1200,6 +1210,16 @@ mod tests {
 
         // Verify that the tag cache was cleared.
         assert!(metadata_manager.tag_value_hashes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_table_metadata_for_missing_model_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        assert!(metadata_manager
+            .delete_model_table_metadata("missing_model_table")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
