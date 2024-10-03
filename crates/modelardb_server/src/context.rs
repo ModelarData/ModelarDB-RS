@@ -23,7 +23,7 @@ use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
+use modelardb_common::metadata::table_metadata_manager::{TableMetadataManager, TableType};
 use modelardb_common::parser::{self, ValidStatement};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -282,26 +282,17 @@ impl Context {
     /// Delta Lake. If the table does not exist or if it could not be dropped, [`ModelarDbError`]
     /// is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
-        let table_metadata_manager = &self.data_folders.local_data_folder.table_metadata_manager;
+        let table_type = self
+            .data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .table_type(table_name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        if table_metadata_manager
-            .table_names()
-            .await
-            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?
-            .contains(&table_name.to_owned())
-        {
-            self.deregister_and_delete_table(table_name).await
-        } else if table_metadata_manager
-            .model_table_names()
-            .await
-            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?
-            .contains(&table_name.to_owned())
-        {
-            self.deregister_and_delete_model_table(table_name).await
-        } else {
-            Err(ModelarDbError::TableError(format!(
-                "Table with name '{table_name}' does not exist."
-            )))
+        match table_type {
+            TableType::Table => self.deregister_and_delete_table(table_name).await,
+            TableType::ModelTable => self.deregister_and_delete_model_table(table_name).await,
         }
     }
 
