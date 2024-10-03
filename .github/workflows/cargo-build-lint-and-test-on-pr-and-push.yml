@@ -36,9 +36,34 @@ jobs:
         operating-system: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
+    # Retrieve Code.
     - name: Checkout
       uses: actions/checkout@v4
 
+    # Setup Minio.
+    - name: Setup Minio
+      shell: bash
+      run: |
+        case $(uname) in
+        "Linux")
+          curl https://dl.min.io/server/minio/release/linux-amd64/minio -o minio ;;
+        "Darwin")
+          curl https://dl.min.io/server/minio/release/darwin-arm64/minio -o minio ;;
+        *)
+          curl https://dl.min.io/server/minio/release/windows-amd64/minio.exe -o minio ;;
+        esac
+
+        chmod +x minio
+        ./minio server minio_data_folder &
+
+    # Setup Azurite.
+    - name: Setup Azurite
+      shell: bash
+      run: |
+        npm install azurite
+        node_modules/.bin/azurite -l azurite_data_folder &
+
+    # Update Rust.
     - name: Rustup Update
       run: rustup update
     - name: Rustup Add llvm-tools
@@ -48,6 +73,7 @@ jobs:
     - name: Cargo Install machete
       run: cargo install cargo-machete
 
+    # Run Lints and Tests.
     - name: Cargo Build
       run: cargo build --verbose --all-targets
     - name: Cargo Clippy
@@ -59,6 +85,7 @@ jobs:
     - name: Cargo Test
       run: cargo test --verbose --all-targets -- --nocapture
 
+    # Upload Code Coverage Report.
     - name: grcov
       run: grcov . --source-dir . --binary-path ./target/debug/ --output-types html --branch --ignore-not-existing -o ./target/debug/coverage/
     - uses: actions/upload-artifact@v4
