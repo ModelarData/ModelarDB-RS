@@ -62,7 +62,7 @@ jobs:
         esac
 
         chmod +x minio
-        ./minio server minio_data_folder &
+        ./minio server minio_data_folder --console-address ":9001" &
         aws s3 mb s3://modelardb --endpoint-url http://localhost:9000
 
     # Setup Azurite.

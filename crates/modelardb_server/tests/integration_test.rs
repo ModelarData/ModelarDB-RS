@@ -55,7 +55,8 @@ const HOST: &str = "127.0.0.1";
 
 /// The next port to be used for the server in an integration test. Each test uses a unique port and
 /// local data folder, so they can run in parallel and so that any failing tests do not cascade.
-static PORT: AtomicU16 = AtomicU16::new(9999);
+/// Ports 9000 and 9001 is used by MinIO and Ports 10000, 10001, and 10002 is used by Azurite.
+static PORT: AtomicU16 = AtomicU16::new(20_000);
 
 /// Number of times to try to create the client and kill child processes.
 const ATTEMPTS: u8 = 10;
