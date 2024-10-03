@@ -145,12 +145,11 @@ impl DataTransfer {
         Ok(())
     }
 
-    /// Clear the size of the table with `table_name`. If the size was cleared, return the size in
-    /// bytes that was removed, otherwise return [`None`].
-    pub async fn clear_table_size(&self, table_name: &str) -> Option<usize> {
+    /// Clear the size of the table with `table_name`. Return the number of bytes that were cleared.
+    pub(super) fn clear_table_size(&self, table_name: &str) -> usize {
         self.table_size_in_bytes
             .remove(table_name)
-            .map(|(_table_name, size_in_bytes)| size_in_bytes)
+            .map_or(0, |(_table_name, size_in_bytes)| size_in_bytes)
     }
 
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
@@ -381,10 +380,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            data_transfer
-                .clear_table_size(test::MODEL_TABLE_NAME)
-                .await
-                .unwrap(),
+            data_transfer.clear_table_size(test::MODEL_TABLE_NAME),
             FILE_SIZE
         );
 
