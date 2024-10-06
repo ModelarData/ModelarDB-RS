@@ -185,6 +185,17 @@ impl FlightServiceHandler {
 
         Ok(())
     }
+
+    /// Drop the table from the metadata Delta Lake, the data Delta Lake, and from each node
+    /// controlled by the manager. If the table cannot be dropped from the remote data folder or
+    /// from each node, return [`Status`].
+    async fn drop_cluster_table(&self, table_name: &str) -> Result<(), Status> {
+        // TODO: Drop the table from the metadata Delta Lake.
+        // TODO: Drop the table from the remote object store.
+        // TODO: Drop the table from the nodes controlled by the manager.
+
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
@@ -468,12 +479,18 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             info!("Received request to drop table '{}'.", table_name);
 
-            // TODO: Drop the table from the metadata Delta Lake.
-            // TODO: Drop the table from the nodes controlled by the manager.
-            // TODO: Drop the table from the remote object store.
+            if self.check_if_table_exists(&table_name).await.is_err() {
+                // Drop the table from the metadata Delta Lake, the data Delta Lake, and from each
+                // node controlled by the manager.
+                self.drop_cluster_table(table_name).await?;
 
-            // Confirm the table was dropped.
-            Ok(Response::new(Box::pin(stream::empty())))
+                // Confirm the table was dropped.
+                Ok(Response::new(Box::pin(stream::empty())))
+            } else {
+                Err(Status::not_found(format!(
+                    "Table with name '{table_name}' does not exist.",
+                )))
+            }
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let (url, offset_data) = decode_argument(&action.body)?;

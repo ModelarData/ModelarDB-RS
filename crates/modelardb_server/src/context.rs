@@ -631,8 +631,6 @@ mod tests {
 
         context.drop_table("table_name").await.unwrap();
 
-        // TODO: The table should be deleted from the storage engine.
-
         // The table should be deregistered from the Apache DataFusion session.
         assert!(context.check_if_table_exists("table_name").await.is_ok());
 
@@ -662,8 +660,6 @@ mod tests {
             .unwrap();
 
         context.drop_table(test::MODEL_TABLE_NAME).await.unwrap();
-
-        // TODO: The model table should be deleted from the storage engine.
 
         // The model table should be deregistered from the Apache DataFusion session.
         assert!(context
