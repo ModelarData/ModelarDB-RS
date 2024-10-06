@@ -209,7 +209,14 @@ impl FlightServiceHandler {
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
-        // TODO: Drop the table from the nodes controlled by the manager.
+        // Drop the table from the nodes controlled by the manager.
+        self.context
+            .cluster
+            .read()
+            .await
+            .drop_tables(table_name, &self.context.key)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
 
         Ok(())
     }
