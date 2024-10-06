@@ -36,6 +36,7 @@ use arrow_flight::{
 use futures::{stream, Stream};
 use modelardb_common::arguments::{decode_argument, encode_argument};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::table_metadata_manager::TableType;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{parser, remote};
@@ -190,8 +191,45 @@ impl FlightServiceHandler {
     /// controlled by the manager. If the table cannot be dropped from the remote data folder or
     /// from each node, return [`Status`].
     async fn drop_cluster_table(&self, table_name: &str) -> Result<(), Status> {
-        // TODO: Drop the table from the metadata Delta Lake.
-        // TODO: Drop the table from the remote object store.
+        // Drop the table from the remote data folder metadata Delta Lake.
+        let table_type = self
+            .context
+            .remote_data_folder
+            .metadata_manager
+            .table_metadata_manager
+            .table_type(table_name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        match table_type {
+            TableType::Table => {
+                self.context
+                    .remote_data_folder
+                    .metadata_manager
+                    .table_metadata_manager
+                    .delete_table_metadata(table_name)
+                    .await
+                    .map_err(|error| Status::internal(error.to_string()))?;
+            }
+            TableType::ModelTable => {
+                self.context
+                    .remote_data_folder
+                    .metadata_manager
+                    .table_metadata_manager
+                    .delete_model_table_metadata(table_name)
+                    .await
+                    .map_err(|error| Status::internal(error.to_string()))?;
+            }
+        }
+
+        // Drop the table from the remote data folder data Delta lake.
+        self.context
+            .remote_data_folder
+            .delta_lake
+            .drop_delta_lake_table(table_name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
         // TODO: Drop the table from the nodes controlled by the manager.
 
         Ok(())
