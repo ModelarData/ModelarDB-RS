@@ -277,6 +277,20 @@ impl TestContext {
         })
     }
 
+    /// Drop a table in the server through the `do_action()` method and the `DropTable` action.
+    fn drop_table(
+        &mut self,
+        table_name: &str,
+    ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
+        let action = Action {
+            r#type: "DropTable".to_owned(),
+            body: table_name.to_owned().into(),
+        };
+
+        self.runtime
+            .block_on(async { self.client.do_action(Request::new(action)).await })
+    }
+
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
     /// depending on `generate_irregular_timestamps`, generated values with noise depending on
     /// `multiply_noise_range`, and an optional tag.
@@ -450,7 +464,8 @@ impl TestContext {
         })
     }
 
-    /// Update `setting` to `setting_value` in the server configuration using the UpdateConfiguration action.
+    /// Update `setting` to `setting_value` in the server configuration using the
+    /// `UpdateConfiguration` action.
     fn update_configuration(
         &mut self,
         setting: &str,
@@ -600,6 +615,43 @@ fn test_can_create_register_and_list_multiple_tables_and_model_tables() {
     let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
     retrieved_table_names.sort();
     assert_eq!(retrieved_table_names, table_names);
+}
+
+#[test]
+fn test_can_drop_table() {
+    let mut test_context = TestContext::new();
+    test_context.create_table(TABLE_NAME, TableType::NormalTable);
+
+    test_context.drop_table(TABLE_NAME).unwrap();
+
+    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    assert_eq!(retrieved_table_names.len(), 0);
+
+    // It should be possible to create a table, drop it, and then create a new table with the same name.
+    test_context.create_table(TABLE_NAME, TableType::NormalTable);
+}
+
+#[test]
+fn test_can_drop_model_table() {
+    let mut test_context = TestContext::new();
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+
+    test_context.drop_table(TABLE_NAME).unwrap();
+
+    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    assert_eq!(retrieved_table_names.len(), 0);
+
+    // It should be possible to create a model table, drop it, and then create a new model table with
+    // the same name.
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+}
+
+#[test]
+fn test_cannot_drop_missing_table() {
+    let mut test_context = TestContext::new();
+
+    let result = test_context.drop_table(TABLE_NAME);
+    assert!(result.is_err());
 }
 
 #[test]
