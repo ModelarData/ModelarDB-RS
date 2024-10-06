@@ -457,6 +457,21 @@ impl TableMetadataManager {
         }
     }
 
+    /// Depending on the type of the table with `table_name`, delete either the table metadata or
+    /// the model table metadata from the metadata Delta Lake. If the table does not exist or the
+    /// metadata could not be deleted, [`DeltaTableError`] is returned.
+    pub async fn delete_table_or_model_table_metadata(
+        &self,
+        table_name: &str,
+    ) -> Result<(), DeltaTableError> {
+        let table_type = self.table_type(table_name).await?;
+
+        match table_type {
+            TableType::Table => self.delete_table_metadata(table_name).await,
+            TableType::ModelTable => self.delete_model_table_metadata(table_name).await,
+        }
+    }
+
     /// Return the [`ModelTableMetadata`] of each model table currently in the metadata Delta Lake.
     /// If the [`ModelTableMetadata`] cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn model_table_metadata(

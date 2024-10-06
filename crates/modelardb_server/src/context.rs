@@ -282,6 +282,7 @@ impl Context {
     /// Delta Lake. If the table does not exist or if it could not be dropped, [`ModelarDbError`]
     /// is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+        // Determine the type of the table and return an error if the table does not exist.
         let table_type = self
             .data_folders
             .local_data_folder
