@@ -36,7 +36,6 @@ use arrow_flight::{
 use futures::{stream, Stream};
 use modelardb_common::arguments::{decode_argument, encode_argument};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::table_metadata_manager::TableType;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{parser, remote};
