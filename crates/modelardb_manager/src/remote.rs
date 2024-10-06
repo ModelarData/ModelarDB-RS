@@ -188,39 +188,18 @@ impl FlightServiceHandler {
     }
 
     /// Drop the table from the metadata Delta Lake, the data Delta Lake, and from each node
-    /// controlled by the manager. If the table cannot be dropped from the remote data folder or
-    /// from each node, return [`Status`].
+    /// controlled by the manager. If the table does not exist or the table cannot be dropped from
+    /// the remote data folder and from each node, return [`Status`].
     async fn drop_cluster_table(&self, table_name: &str) -> Result<(), Status> {
-        // Drop the table from the remote data folder metadata Delta Lake.
-        let table_type = self
-            .context
+        // Drop the table from the remote data folder metadata Delta Lake. This will return an error
+        // if the table does not exist.
+        self.context
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .table_type(table_name)
+            .delete_table_or_model_table_metadata(table_name)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
-
-        match table_type {
-            TableType::Table => {
-                self.context
-                    .remote_data_folder
-                    .metadata_manager
-                    .table_metadata_manager
-                    .delete_table_metadata(table_name)
-                    .await
-                    .map_err(|error| Status::internal(error.to_string()))?;
-            }
-            TableType::ModelTable => {
-                self.context
-                    .remote_data_folder
-                    .metadata_manager
-                    .table_metadata_manager
-                    .delete_model_table_metadata(table_name)
-                    .await
-                    .map_err(|error| Status::internal(error.to_string()))?;
-            }
-        }
 
         // Drop the table from the remote data folder data Delta lake.
         self.context
@@ -517,18 +496,12 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             info!("Received request to drop table '{}'.", table_name);
 
-            if self.check_if_table_exists(&table_name).await.is_err() {
-                // Drop the table from the metadata Delta Lake, the data Delta Lake, and from each
-                // node controlled by the manager.
-                self.drop_cluster_table(table_name).await?;
+            // Drop the table from the metadata Delta Lake, the data Delta Lake, and from each
+            // node controlled by the manager.
+            self.drop_cluster_table(table_name).await?;
 
-                // Confirm the table was dropped.
-                Ok(Response::new(Box::pin(stream::empty())))
-            } else {
-                Err(Status::not_found(format!(
-                    "Table with name '{table_name}' does not exist.",
-                )))
-            }
+            // Confirm the table was dropped.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let (url, offset_data) = decode_argument(&action.body)?;
