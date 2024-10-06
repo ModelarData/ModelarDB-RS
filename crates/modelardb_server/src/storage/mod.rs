@@ -432,6 +432,16 @@ impl StorageEngine {
             .await
     }
 
+    /// Mark the table with `table_name` as dropped in the data transfer component. This will prevent
+    /// data related to the table from being transferred to the remote data folder.
+    pub(super) async fn mark_table_as_dropped(&self, table_name: &str) {
+        if let Some(ref mut data_transfer) =
+            *self.compressed_data_manager.data_transfer.write().await
+        {
+            data_transfer.mark_table_as_dropped(table_name)
+        }
+    }
+
     /// Clear the size of the table with `table_name` in the data transfer component and return the
     /// number of bytes that were cleared.
     pub(super) async fn clear_table_size(&self, table_name: &str) -> usize {

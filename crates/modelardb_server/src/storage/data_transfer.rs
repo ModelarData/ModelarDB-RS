@@ -51,6 +51,8 @@ pub struct DataTransfer {
     /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
     /// data is not transferred based on time.
     transfer_scheduler_handle: Option<TaskJoinHandle<()>>,
+    /// Tables that have been dropped and should not be transferred to the remote data folder.
+    dropped_tables: Vec<String>,
     /// Metric for the total used disk space in bytes, updated when data is transferred.
     pub used_disk_space_metric: Arc<Mutex<Metric>>,
 }
@@ -92,6 +94,7 @@ impl DataTransfer {
             table_size_in_bytes: table_size_in_bytes.clone(),
             transfer_batch_size_in_bytes,
             transfer_scheduler_handle: None,
+            dropped_tables: vec![],
             used_disk_space_metric,
         };
 
@@ -145,8 +148,18 @@ impl DataTransfer {
         Ok(())
     }
 
+    /// Mark the table with `table_name` as dropped. This will prevent data related to the table
+    /// from being transferred to the remote data folder.
+    pub(super) fn mark_table_as_dropped(&mut self, table_name: &str) {
+        self.dropped_tables.push(table_name.to_owned());
+    }
+
     /// Clear the size of the table with `table_name`. Return the number of bytes that were cleared.
-    pub(super) fn clear_table_size(&self, table_name: &str) -> usize {
+    /// Note that this also removes the table from the tables that are marked as dropped.
+    pub(super) fn clear_table_size(&mut self, table_name: &str) -> usize {
+        self.dropped_tables
+            .retain(|dropped_table| dropped_table != table_name);
+
         self.table_size_in_bytes
             .remove(table_name)
             .map_or(0, |(_table_name, size_in_bytes)| size_in_bytes)
@@ -233,6 +246,12 @@ impl DataTransfer {
     /// Once successfully transferred, the data is deleted from local storage. Return [`Ok`] if the
     /// files were transferred successfully, otherwise [`DeltaTableError`].
     async fn transfer_data(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        // Check if the table has been dropped and should not be transferred.
+        if self.dropped_tables.contains(&table_name.to_owned()) {
+            debug!("Table '{table_name}' has been dropped and data will not be transferred.");
+            return Ok(());
+        }
+
         // All compressed segments will be transferred so the current size in bytes is also the
         // amount of data that will be transferred. unwrap() is safe as the table contains data.
         let current_size_in_bytes = *self.table_size_in_bytes.get(table_name).unwrap().value();
@@ -370,7 +389,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_data_folder = create_local_data_folder(&temp_dir).await;
 
-        let (_target_dir, data_transfer) =
+        let (_target_dir, mut data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
         let files_size = create_delta_table_and_segments(local_data_folder, 1).await;
 
