@@ -345,7 +345,18 @@ impl Context {
             .deregister_table(table_name)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // TODO: Drop the model table from the storage engine.
+        // Drop the model table from the storage engine by flushing the data managers. The table is
+        // marked as dropped in the data transfer component first to avoid transferring data to the
+        // remote data folder when flushing.
+        let storage_engine = self.storage_engine.write().await;
+        storage_engine.mark_table_as_dropped(table_name).await;
+
+        storage_engine
+            .flush()
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        storage_engine.clear_table_size(table_name).await;
 
         // Delete the model table metadata from the metadata Delta Lake.
         self.data_folders
