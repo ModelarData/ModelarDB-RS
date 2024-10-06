@@ -385,6 +385,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_mark_table_as_dropped() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let local_data_folder = create_local_data_folder(&temp_dir).await;
+
+        let (_target_dir, mut data_transfer) =
+            create_data_transfer_component(local_data_folder.clone()).await;
+
+        data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
+        assert_eq!(data_transfer.dropped_tables, vec![test::MODEL_TABLE_NAME]);
+    }
+
+    #[tokio::test]
     async fn test_clear_table_size() {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_data_folder = create_local_data_folder(&temp_dir).await;
@@ -398,14 +410,20 @@ mod tests {
             .await
             .unwrap();
 
+        data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
+
         assert_eq!(
             data_transfer.clear_table_size(test::MODEL_TABLE_NAME),
             FILE_SIZE
         );
 
+        // The table should be removed from the in-memory tracking of compressed files and removed
+        // from the dropped tables.
         assert!(!data_transfer
             .table_size_in_bytes
             .contains_key(test::MODEL_TABLE_NAME));
+
+        assert!(data_transfer.dropped_tables.is_empty());
     }
 
     #[tokio::test]
