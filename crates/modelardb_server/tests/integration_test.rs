@@ -649,7 +649,7 @@ fn test_can_list_actions() {
         vec![
             "CollectMetrics",
             "CommandStatementUpdate",
-            "FlushEdge",
+            "FlushNode",
             "FlushMemory",
             "GetConfiguration",
             "KillNode",

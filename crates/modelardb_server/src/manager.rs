@@ -193,7 +193,7 @@ mod tests {
 
     const UNRESTRICTED_ACTIONS: [&str; 5] = [
         "FlushMemory",
-        "FlushEdge",
+        "FlushNode",
         "CollectMetrics",
         "GetConfiguration",
         "UpdateConfiguration",

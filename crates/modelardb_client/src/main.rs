@@ -240,7 +240,7 @@ async fn execute_and_print_action_command_or_query(
 /// Execute an action. Currently, the following actions are supported:
 /// * `CommandStatementUpdate`: Executes a SQL query that does not return a result on the server.
 /// * `FlushMemory`: Flush all data the server currently has in memory to disk.
-/// * `FlushEdge`: Flush all data the server currently has in memory and disk to the object store.
+/// * `FlushNode`: Flush all data the server currently has in memory and disk to the object store.
 ///
 /// The function returns [`Error`] if the action could not be executed.
 async fn execute_action(
@@ -312,7 +312,7 @@ async fn execute_command(
         // Flushes all data the server currently has in memory to disk.
         "\\f" => execute_action(flight_service_client, "FlushMemory", "").await,
         // Flushes all data the server currently has in memory and disk to the object store.
-        "\\F" => execute_action(flight_service_client, "FlushEdge", "").await,
+        "\\F" => execute_action(flight_service_client, "FlushNode", "").await,
         // Print helpful information, explanations with \\ must be indented more to be aligned.
         "\\h" => {
             println!(
