@@ -35,6 +35,7 @@ use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
+use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
@@ -150,17 +151,29 @@ impl DeltaLake {
 
         // TODO: Determine if it is safe to use AWS_S3_ALLOW_UNSAFE_RENAME.
         let storage_options = HashMap::from([
-            ("REGION".to_owned(), "".to_owned()),
-            ("ALLOW_HTTP".to_owned(), "true".to_owned()),
-            ("ENDPOINT".to_owned(), endpoint),
-            ("BUCKET_NAME".to_owned(), bucket_name),
-            ("ACCESS_KEY_ID".to_owned(), access_key_id),
-            ("SECRET_ACCESS_KEY".to_owned(), secret_access_key),
-            ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+            ("aws_access_key_id".to_owned(), access_key_id),
+            ("aws_secret_access_key".to_owned(), secret_access_key),
+            ("aws_endpoint_url".to_owned(), endpoint),
+            ("aws_bucket_name".to_owned(), bucket_name),
+            ("aws_s3_allow_unsafe_rename".to_owned(), "true".to_owned()),
         ]);
+
         let url =
             Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
-        let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
+
+        // Build the Amazon S3 object store with the given storage options manually to allow http.
+        let object_store = storage_options
+            .iter()
+            .fold(
+                AmazonS3Builder::new()
+                    .with_url(url.to_string())
+                    .with_allow_http(true),
+                |builder, (key, value)| match key.parse() {
+                    Ok(k) => builder.with_config(k, value),
+                    Err(_) => builder,
+                },
+            )
+            .build()?;
 
         Ok(DeltaLake {
             location,
