@@ -107,7 +107,7 @@ impl Cluster {
                 .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
             let action = Action {
-                r#type: "KillEdge".to_owned(),
+                r#type: "KillNode".to_owned(),
                 body: vec![].into(),
             };
 

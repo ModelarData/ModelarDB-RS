@@ -430,7 +430,7 @@ impl FlightService for FlightServiceHandler {
     /// currently in memory to disk and then flushes all compressed data on disk to the remote
     /// object store. Note that data is only transferred to the remote object store if one was
     /// provided when starting the server.
-    /// * `KillEdge`: An extension of the `FlushEdge` action that first flushes all data to disk,
+    /// * `KillNode`: An extension of the `FlushEdge` action that first flushes all data to disk,
     /// then flushes all compressed data to the remote object store, and finally kills the process
     /// that is running the server. Note that since the process is killed, a conventional response
     /// cannot be returned.
@@ -494,7 +494,7 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "KillEdge" {
+        } else if action.r#type == "KillNode" {
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine.flush().await.map_err(Status::internal)?;
             storage_engine.transfer().await?;
@@ -671,8 +671,8 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let kill_edge_action = ActionType {
-            r#type: "KillEdge".to_owned(),
+        let kill_node_action = ActionType {
+            r#type: "KillNode".to_owned(),
             description: "Flush uncompressed data to disk by compressing and saving the data, \
                           transfer all compressed data to the remote object store, and kill the \
                           process running the server."
@@ -702,7 +702,7 @@ impl FlightService for FlightServiceHandler {
             Ok(command_statement_update_action),
             Ok(flush_memory_action),
             Ok(flush_edge_action),
-            Ok(kill_edge_action),
+            Ok(kill_node_action),
             Ok(collect_metrics_action),
             Ok(get_configuration_action),
             Ok(update_configuration_action),
