@@ -537,7 +537,7 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let command_statement_update_action = ActionType {
+        let create_table_action = ActionType {
             r#type: "CreateTable".to_owned(),
             description: "Execute a SQL query containing a command that creates a table."
                 .to_owned(),
@@ -556,7 +556,7 @@ impl FlightService for FlightServiceHandler {
 
         let output = stream::iter(vec![
             Ok(initialize_database_action),
-            Ok(command_statement_update_action),
+            Ok(create_table_action),
             Ok(register_node_action),
             Ok(remove_node_action),
         ]);
