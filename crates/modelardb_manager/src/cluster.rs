@@ -142,7 +142,7 @@ impl Cluster {
         }
     }
 
-    /// For each node in the cluster, use the `CommandStatementUpdate` action to create the table
+    /// For each node in the cluster, use the `CreateTable` action to create the table
     /// given by `sql`. If the table was successfully created for each node, return
     /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
     pub async fn create_tables(
@@ -152,7 +152,7 @@ impl Cluster {
         key: &MetadataValue<Ascii>,
     ) -> Result<(), ModelarDbError> {
         let action = Action {
-            r#type: "CommandStatementUpdate".to_owned(),
+            r#type: "CreateTable".to_owned(),
             body: sql.to_owned().into(),
         };
 

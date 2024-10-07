@@ -420,9 +420,9 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
-    /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a
-    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
+    /// * `CreateTable`: Execute a SQL query containing a command that creates a table.
+    /// These commands can be `CREATE TABLE table_name(...` which creates a normal table, and
+    /// `CREATE MODEL TABLE table_name(...` which creates a model table.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -463,7 +463,7 @@ impl FlightService for FlightServiceHandler {
         // Manually drop the read lock on the configuration manager to avoid deadlock issues.
         std::mem::drop(configuration_manager);
 
-        if action.r#type == "CommandStatementUpdate" {
+        if action.r#type == "CreateTable" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -654,8 +654,9 @@ impl FlightService for FlightServiceHandler {
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
         let command_statement_update_action = ActionType {
-            r#type: "CommandStatementUpdate".to_owned(),
-            description: "Execute a single SQL statement that produces no results.".to_owned(),
+            r#type: "CreateTable".to_owned(),
+            description: "Execute a SQL query containing a command that creates a table."
+                .to_owned(),
         };
 
         let flush_memory_action = ActionType {

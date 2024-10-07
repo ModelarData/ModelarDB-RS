@@ -213,7 +213,7 @@ impl TestContext {
     }
 
     /// Create a normal table or model table with or without tags in the server through the
-    /// `do_action()` method and the `CommandStatementUpdate` action.
+    /// `do_action()` method and the `CreateTable` action.
     fn create_table(&mut self, table_name: &str, table_type: TableType) {
         let cmd = match table_type {
             TableType::NormalTable => {
@@ -268,7 +268,7 @@ impl TestContext {
         };
 
         let action = Action {
-            r#type: "CommandStatementUpdate".to_owned(),
+            r#type: "CreateTable".to_owned(),
             body: cmd.into(),
         };
 
@@ -648,7 +648,7 @@ fn test_can_list_actions() {
         actions,
         vec![
             "CollectMetrics",
-            "CommandStatementUpdate",
+            "CreateTable",
             "FlushNode",
             "FlushMemory",
             "GetConfiguration",
