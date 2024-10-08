@@ -249,7 +249,7 @@ impl DataTransfer {
     /// files were transferred successfully, otherwise [`DeltaTableError`].
     async fn transfer_data(&self, table_name: &str) -> Result<(), DeltaTableError> {
         // Check if the table has been dropped and should not be transferred.
-        if self.dropped_tables.contains(&table_name.to_owned()) {
+        if self.dropped_tables.contains(table_name) {
             debug!("Table '{table_name}' has been dropped and data will not be transferred.");
             return Ok(());
         }
