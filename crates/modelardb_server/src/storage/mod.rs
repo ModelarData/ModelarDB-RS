@@ -442,13 +442,13 @@ impl StorageEngine {
         }
     }
 
-    /// Clear the size of the table with `table_name` in the data transfer component and return the
-    /// number of bytes that were cleared.
-    pub(super) async fn clear_table_size(&self, table_name: &str) -> usize {
+    /// Remove the table with `table_name` from the tables that are marked as dropped and clear the
+    /// size of the table in the data transfer component. Return the number of bytes that were cleared.
+    pub(super) async fn clear_table(&self, table_name: &str) -> usize {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await
         {
-            data_transfer.clear_table_size(table_name)
+            data_transfer.clear_table(table_name)
         } else {
             0
         }

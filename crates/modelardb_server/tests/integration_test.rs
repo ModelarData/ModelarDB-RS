@@ -622,6 +622,9 @@ fn test_can_drop_table() {
     let mut test_context = TestContext::new();
     test_context.create_table(TABLE_NAME, TableType::NormalTable);
 
+    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+
     test_context.drop_table(TABLE_NAME).unwrap();
 
     let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
@@ -635,6 +638,9 @@ fn test_can_drop_table() {
 fn test_can_drop_model_table() {
     let mut test_context = TestContext::new();
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
+
+    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    assert_eq!(retrieved_table_names[0], TABLE_NAME);
 
     test_context.drop_table(TABLE_NAME).unwrap();
 

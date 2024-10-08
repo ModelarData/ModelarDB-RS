@@ -16,6 +16,7 @@
 //! Support for efficiently transferring data to a remote object store. Data saved locally on disk
 //! is managed here until it is of a sufficient size to be transferred efficiently.
 
+use std::collections::HashSet;
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::sync::{Arc, Mutex};
@@ -52,7 +53,7 @@ pub struct DataTransfer {
     /// data is not transferred based on time.
     transfer_scheduler_handle: Option<TaskJoinHandle<()>>,
     /// Tables that have been dropped and should not be transferred to the remote data folder.
-    dropped_tables: Vec<String>,
+    dropped_tables: HashSet<String>,
     /// Metric for the total used disk space in bytes, updated when data is transferred.
     pub used_disk_space_metric: Arc<Mutex<Metric>>,
 }
@@ -94,7 +95,7 @@ impl DataTransfer {
             table_size_in_bytes: table_size_in_bytes.clone(),
             transfer_batch_size_in_bytes,
             transfer_scheduler_handle: None,
-            dropped_tables: vec![],
+            dropped_tables: HashSet::new(),
             used_disk_space_metric,
         };
 
@@ -151,15 +152,16 @@ impl DataTransfer {
     /// Mark the table with `table_name` as dropped. This will prevent data related to the table
     /// from being transferred to the remote data folder.
     pub(super) fn mark_table_as_dropped(&mut self, table_name: &str) {
-        self.dropped_tables.push(table_name.to_owned());
+        self.dropped_tables.insert(table_name.to_owned());
     }
 
-    /// Clear the size of the table with `table_name`. Return the number of bytes that were cleared.
-    /// Note that this also removes the table from the tables that are marked as dropped.
-    pub(super) fn clear_table_size(&mut self, table_name: &str) -> usize {
-        self.dropped_tables
-            .retain(|dropped_table| dropped_table != table_name);
+    /// Remove the table with `table_name` from the tables that are marked as dropped and clear the
+    /// size of the table. Return the number of bytes that were cleared.
+    pub(super) fn clear_table(&mut self, table_name: &str) -> usize {
+        self.dropped_tables.remove(table_name);
 
+        // Return 0 if compressed data has not been saved for the table yet to avoid returning
+        // an error when a table is dropped before any data is saved.
         self.table_size_in_bytes
             .remove(table_name)
             .map_or(0, |(_table_name, size_in_bytes)| size_in_bytes)
@@ -393,7 +395,9 @@ mod tests {
             create_data_transfer_component(local_data_folder.clone()).await;
 
         data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
-        assert_eq!(data_transfer.dropped_tables, vec![test::MODEL_TABLE_NAME]);
+        assert!(data_transfer
+            .dropped_tables
+            .contains(test::MODEL_TABLE_NAME));
     }
 
     #[tokio::test]
@@ -412,10 +416,7 @@ mod tests {
 
         data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
 
-        assert_eq!(
-            data_transfer.clear_table_size(test::MODEL_TABLE_NAME),
-            FILE_SIZE
-        );
+        assert_eq!(data_transfer.clear_table(test::MODEL_TABLE_NAME), FILE_SIZE);
 
         // The table should be removed from the in-memory tracking of compressed files and removed
         // from the dropped tables.

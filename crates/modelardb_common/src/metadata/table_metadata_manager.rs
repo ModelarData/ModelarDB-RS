@@ -1013,7 +1013,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify that the table was deleted from the table_metadata table.
+        // Verify that table_2 was deleted from the table_metadata table.
         let batch = metadata_manager
             .metadata_delta_lake
             .query_table("table_metadata", "SELECT table_name FROM table_metadata")

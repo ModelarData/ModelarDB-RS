@@ -311,7 +311,7 @@ impl Context {
         self.storage_engine
             .read()
             .await
-            .clear_table_size(table_name)
+            .clear_table(table_name)
             .await;
 
         // Delete the table metadata from the metadata Delta Lake.
@@ -357,7 +357,7 @@ impl Context {
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        storage_engine.clear_table_size(table_name).await;
+        storage_engine.clear_table(table_name).await;
 
         // Delete the model table metadata from the metadata Delta Lake.
         self.data_folders
@@ -630,6 +630,8 @@ mod tests {
             .await
             .unwrap();
 
+        assert!(context.check_if_table_exists("table_name").await.is_err());
+
         context.drop_table("table_name").await.unwrap();
 
         // The table should be deregistered from the Apache DataFusion session.
@@ -660,6 +662,11 @@ mod tests {
             .await
             .unwrap();
 
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
+
         context.drop_table(test::MODEL_TABLE_NAME).await.unwrap();
 
         // The model table should be deregistered from the Apache DataFusion session.
@@ -684,11 +691,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_non_existent_table() {
+    async fn test_drop_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context.drop_table("invalid_table_name").await.is_err());
+        assert!(context.drop_table(test::MODEL_TABLE_NAME).await.is_err());
     }
 
     #[tokio::test]

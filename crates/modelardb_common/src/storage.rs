@@ -195,9 +195,9 @@ impl DeltaLake {
 
         // TODO: Needs to be tested.
         let storage_options = HashMap::from([
-            ("ACCOUNT_NAME".to_owned(), account_name),
-            ("ACCESS_KEY".to_owned(), access_key),
-            ("CONTAINER_NAME".to_owned(), container_name),
+            ("azure_storage_account_name".to_owned(), account_name),
+            ("azure_storage_account_key".to_owned(), access_key),
+            ("azure_container_name".to_owned(), container_name),
         ]);
         let url =
             Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
@@ -307,9 +307,10 @@ impl DeltaLake {
             .await
     }
 
-    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file in
-    /// the table folder. If the table was dropped successfully, the paths to the deleted files are
-    /// returned, otherwise a [`DeltaTableError`] is returned.
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file related
+    /// to the table. The table folder cannot be deleted directly since folders do not exist in object
+    /// stores and therefore cannot be operated upon. If the table was dropped successfully, the
+    /// paths to the deleted files are returned, otherwise a [`DeltaTableError`] is returned.
     pub async fn drop_delta_lake_table(
         &self,
         table_name: &str,
