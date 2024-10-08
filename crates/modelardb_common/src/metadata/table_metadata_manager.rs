@@ -386,10 +386,7 @@ impl TableMetadataManager {
     /// Depending on the type of the table with `table_name`, delete either the normal table
     /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
     /// exist or the metadata could not be deleted, [`DeltaTableError`] is returned.
-    pub async fn delete_table_metadata(
-        &self,
-        table_name: &str,
-    ) -> Result<(), DeltaTableError> {
+    pub async fn delete_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
         let table_type = self.table_type(table_name).await?;
 
         match table_type {
@@ -400,7 +397,10 @@ impl TableMetadataManager {
 
     /// Delete the metadata for the normal table with `table_name` from the `table_metadata` table in the
     /// metadata Delta Lake. If the metadata could not be deleted, [`DeltaTableError`] is returned.
-    pub async fn delete_normal_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    pub async fn delete_normal_table_metadata(
+        &self,
+        table_name: &str,
+    ) -> Result<(), DeltaTableError> {
         let ops = self
             .metadata_delta_lake
             .metadata_table_delta_ops("table_metadata")
@@ -991,35 +991,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
-
-        metadata_manager
-            .delete_normal_table_metadata("table_2")
-            .await
-            .unwrap();
-
-        // Verify that table_2 was deleted from the table_metadata table.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
-            .await
-            .unwrap();
-
-        assert_eq!(**batch.column(0), StringArray::from(vec!["table_1"]));
-    }
-
-    #[tokio::test]
-    async fn test_delete_table_metadata_for_missing_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
-
-        assert!(metadata_manager
-            .delete_normal_table_metadata("missing_table")
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
     async fn test_table_names() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
@@ -1041,25 +1012,6 @@ mod tests {
 
         let table_type = metadata_manager.table_type("table_1").await.unwrap();
         assert_eq!(table_type, TableType::Table);
-    }
-
-    async fn create_metadata_manager_and_save_tables() -> (TempDir, TableMetadataManager) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
-            .await
-            .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_1", "CREATE TABLE table_1")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_2", "CREATE TABLE table_2")
-            .await
-            .unwrap();
-
-        (temp_dir, metadata_manager)
     }
 
     #[tokio::test]
@@ -1151,6 +1103,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_delete_table_metadata() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        metadata_manager
+            .delete_table_metadata("table_2")
+            .await
+            .unwrap();
+
+        // Verify that table_2 was deleted from the table_metadata table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .await
+            .unwrap();
+
+        assert_eq!(**batch.column(0), StringArray::from(vec!["table_1"]));
+    }
+
+    #[tokio::test]
+    async fn test_delete_table_metadata_for_missing_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        assert!(metadata_manager
+            .delete_table_metadata("missing_table")
+            .await
+            .is_err());
+    }
+
+    async fn create_metadata_manager_and_save_tables() -> (TempDir, TableMetadataManager) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
+
+        metadata_manager
+            .save_table_metadata("table_1", "CREATE TABLE table_1")
+            .await
+            .unwrap();
+
+        metadata_manager
+            .save_table_metadata("table_2", "CREATE TABLE table_2")
+            .await
+            .unwrap();
+
+        (temp_dir, metadata_manager)
+    }
+
+    #[tokio::test]
     async fn test_delete_model_table_metadata() {
         let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
@@ -1161,7 +1161,7 @@ mod tests {
             .unwrap();
 
         metadata_manager
-            .delete_model_table_metadata(test::MODEL_TABLE_NAME)
+            .delete_table_metadata(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -1218,7 +1218,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         assert!(metadata_manager
-            .delete_model_table_metadata("missing_model_table")
+            .delete_table_metadata("missing_model_table")
             .await
             .is_err());
     }
