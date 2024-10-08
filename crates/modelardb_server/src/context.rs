@@ -318,7 +318,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .delete_table_metadata(table_name)
+            .delete_normal_table_metadata(table_name)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 

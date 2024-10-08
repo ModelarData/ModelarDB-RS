@@ -196,7 +196,7 @@ impl FlightServiceHandler {
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .delete_table_or_model_table_metadata(table_name)
+            .delete_table_metadata(table_name)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
