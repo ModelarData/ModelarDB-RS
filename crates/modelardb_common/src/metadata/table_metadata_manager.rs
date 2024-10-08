@@ -45,8 +45,7 @@ use crate::test::ERROR_BOUND_ZERO;
 use crate::types::ErrorBound;
 
 /// Types of tables supported by ModelarDB.
-#[derive(Debug, PartialEq)]
-pub enum TableType {
+enum TableType {
     Table,
     ModelTable,
 }

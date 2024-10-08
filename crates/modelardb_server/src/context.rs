@@ -282,6 +282,14 @@ impl Context {
     /// Delta Lake. If the table does not exist or if it could not be dropped, [`ModelarDbError`]
     /// is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+        // Deregistering the table from the Apache DataFusion session and deleting the table from
+        // the storage engine does not require the table to exist, so the table is checked first.
+        if self.check_if_table_exists(table_name).await.is_ok() {
+            return Err(ModelarDbError::TableError(format!(
+                "Table with name '{table_name}' does not exist."
+            )));
+        }
+
         // Deregister the table from the Apache DataFusion session. This is done first to
         // avoid ingesting data into the table while it is being deleted.
         self.session
