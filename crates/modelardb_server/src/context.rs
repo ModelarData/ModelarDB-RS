@@ -23,7 +23,7 @@ use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::table_metadata_manager::{TableMetadataManager, TableType};
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::parser::{self, ValidStatement};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -278,75 +278,17 @@ impl Context {
     }
 
     /// Drop the table with `table_name` if it exists. The table is deregistered from the Apache
-    /// Arrow Datafusion session and deleted from the storage engine, Delta Lake, and metadata
+    /// Arrow Datafusion session and deleted from the storage engine, metadata Delta Lake, and data
     /// Delta Lake. If the table does not exist or if it could not be dropped, [`ModelarDbError`]
     /// is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
-        // Determine the type of the table and return an error if the table does not exist.
-        let table_type = self
-            .data_folders
-            .local_data_folder
-            .table_metadata_manager
-            .table_type(table_name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-        match table_type {
-            TableType::Table => self.deregister_and_delete_table(table_name).await,
-            TableType::ModelTable => self.deregister_and_delete_model_table(table_name).await,
-        }
-    }
-
-    /// Deregister the table with `table_name` from the Apache Arrow Datafusion session and delete
-    /// it from the storage engine, Delta Lake, and metadata Delta Lake. If the table could not be
-    /// deregistered and deleted, [`ModelarDbError`] is returned.
-    async fn deregister_and_delete_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
         // Deregister the table from the Apache DataFusion session. This is done first to
         // avoid ingesting data into the table while it is being deleted.
         self.session
             .deregister_table(table_name)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Clear the table from the data transfer component.
-        self.storage_engine
-            .read()
-            .await
-            .clear_table(table_name)
-            .await;
-
-        // Delete the table metadata from the metadata Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .table_metadata_manager
-            .delete_normal_table_metadata(table_name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-        // Delete the table from the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .delta_lake
-            .drop_delta_lake_table(table_name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-        Ok(())
-    }
-
-    /// Deregister the model table with `table_name` from the Apache Arrow Datafusion session and
-    /// delete it from the storage engine, Delta Lake, and metadata Delta Lake. If the model table
-    /// could not be deregistered and deleted, [`ModelarDbError`] is returned.
-    async fn deregister_and_delete_model_table(
-        &self,
-        table_name: &str,
-    ) -> Result<(), ModelarDbError> {
-        // Deregister the model table from the Apache DataFusion session. This is done first to
-        // avoid ingesting data into the model table while it is being deleted.
-        self.session
-            .deregister_table(table_name)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-        // Drop the model table from the storage engine by flushing the data managers. The table is
+        // Drop the table from the storage engine by flushing the data managers. The table is
         // marked as dropped in the data transfer component first to avoid transferring data to the
         // remote data folder when flushing.
         let storage_engine = self.storage_engine.write().await;
@@ -359,15 +301,15 @@ impl Context {
 
         storage_engine.clear_table(table_name).await;
 
-        // Delete the model table metadata from the metadata Delta Lake.
+        // Delete the table metadata from the metadata Delta Lake.
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .delete_model_table_metadata(table_name)
+            .delete_table_metadata(table_name)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Delete the model table from the Delta Lake.
+        // Delete the table from the Delta Lake.
         self.data_folders
             .local_data_folder
             .delta_lake
