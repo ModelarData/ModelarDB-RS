@@ -227,28 +227,6 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Delete the metadata for the table with `table_name` from the `table_metadata` table in the
-    /// metadata Delta Lake. If the table does not exist or the metadata could not be deleted,
-    /// [`DeltaTableError`] is returned.
-    pub async fn delete_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
-        if self.table_type(table_name).await? == TableType::Table {
-            let ops = self
-                .metadata_delta_lake
-                .metadata_table_delta_ops("table_metadata")
-                .await?;
-
-            ops.delete()
-                .with_predicate(col("table_name").eq(lit(table_name)))
-                .await?;
-
-            Ok(())
-        } else {
-            Err(DeltaTableError::NotATable(format!(
-                "'{table_name}' is not a table."
-            )))
-        }
-    }
-
     /// Return the name of each table currently in the metadata Delta Lake. Note that this does not
     /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
@@ -405,6 +383,43 @@ impl TableMetadataManager {
         Ok(())
     }
 
+    /// Depending on the type of the table with `table_name`, delete either the table metadata or
+    /// the model table metadata from the metadata Delta Lake. If the table does not exist or the
+    /// metadata could not be deleted, [`DeltaTableError`] is returned.
+    pub async fn delete_table_or_model_table_metadata(
+        &self,
+        table_name: &str,
+    ) -> Result<(), DeltaTableError> {
+        let table_type = self.table_type(table_name).await?;
+
+        match table_type {
+            TableType::Table => self.delete_table_metadata(table_name).await,
+            TableType::ModelTable => self.delete_model_table_metadata(table_name).await,
+        }
+    }
+
+    /// Delete the metadata for the table with `table_name` from the `table_metadata` table in the
+    /// metadata Delta Lake. If the table does not exist or the metadata could not be deleted,
+    /// [`DeltaTableError`] is returned.
+    pub async fn delete_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        if self.table_type(table_name).await? == TableType::Table {
+            let ops = self
+                .metadata_delta_lake
+                .metadata_table_delta_ops("table_metadata")
+                .await?;
+
+            ops.delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
+
+            Ok(())
+        } else {
+            Err(DeltaTableError::NotATable(format!(
+                "'{table_name}' is not a table."
+            )))
+        }
+    }
+
     /// Delete the metadata for the model table with `table_name` from the metadata Delta Lake.
     /// This includes deleting the tags table for the model table, deleting a row from the
     /// `model_table_metadata` table, deleting a row from the `model_table_field_columns` table for
@@ -454,21 +469,6 @@ impl TableMetadataManager {
             Err(DeltaTableError::NotATable(format!(
                 "'{table_name}' is not a model table."
             )))
-        }
-    }
-
-    /// Depending on the type of the table with `table_name`, delete either the table metadata or
-    /// the model table metadata from the metadata Delta Lake. If the table does not exist or the
-    /// metadata could not be deleted, [`DeltaTableError`] is returned.
-    pub async fn delete_table_or_model_table_metadata(
-        &self,
-        table_name: &str,
-    ) -> Result<(), DeltaTableError> {
-        let table_type = self.table_type(table_name).await?;
-
-        match table_type {
-            TableType::Table => self.delete_table_metadata(table_name).await,
-            TableType::ModelTable => self.delete_model_table_metadata(table_name).await,
         }
     }
 
