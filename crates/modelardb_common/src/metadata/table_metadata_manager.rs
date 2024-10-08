@@ -263,24 +263,6 @@ impl TableMetadataManager {
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
     }
 
-    /// Return the [`TableType`] of the table with `table_name`. If the table does not exist,
-    /// [`DeltaTableError`] is returned.
-    pub async fn table_type(&self, table_name: &str) -> Result<TableType, DeltaTableError> {
-        if self.table_names().await?.contains(&table_name.to_owned()) {
-            Ok(TableType::Table)
-        } else if self
-            .model_table_names()
-            .await?
-            .contains(&table_name.to_owned())
-        {
-            Ok(TableType::ModelTable)
-        } else {
-            Err(DeltaTableError::NotATable(format!(
-                "Table with name '{table_name}' does not exist."
-            )))
-        }
-    }
-
     /// Save the created model table to the metadata Delta Lake. This includes creating a tags table
     /// for the model table, adding a row to the `model_table_metadata` table, and adding a row to
     /// the `model_table_field_columns` table for each field column.
@@ -387,11 +369,18 @@ impl TableMetadataManager {
     /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
     /// exist or the metadata could not be deleted, [`DeltaTableError`] is returned.
     pub async fn delete_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
-        let table_type = self.table_type(table_name).await?;
-
-        match table_type {
-            TableType::Table => self.delete_normal_table_metadata(table_name).await,
-            TableType::ModelTable => self.delete_model_table_metadata(table_name).await,
+        if self.table_names().await?.contains(&table_name.to_owned()) {
+            self.delete_normal_table_metadata(table_name).await
+        } else if self
+            .model_table_names()
+            .await?
+            .contains(&table_name.to_owned())
+        {
+            self.delete_model_table_metadata(table_name).await
+        } else {
+            Err(DeltaTableError::NotATable(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
         }
     }
 
@@ -998,32 +987,6 @@ mod tests {
 
         let model_table_names = metadata_manager.model_table_names().await.unwrap();
         assert_eq!(model_table_names, vec![test::MODEL_TABLE_NAME]);
-    }
-
-    #[tokio::test]
-    async fn test_table_type_for_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
-
-        let table_type = metadata_manager.table_type("table_1").await.unwrap();
-        assert_eq!(table_type, TableType::Table);
-    }
-
-    #[tokio::test]
-    async fn test_table_type_for_model_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-
-        let table_type = metadata_manager
-            .table_type(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap();
-
-        assert_eq!(table_type, TableType::ModelTable);
-    }
-
-    #[tokio::test]
-    async fn test_table_type_for_missing_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
-        assert!(metadata_manager.table_type("missing_table").await.is_err());
     }
 
     #[tokio::test]
