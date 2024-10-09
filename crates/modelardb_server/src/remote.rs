@@ -420,17 +420,17 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
-    /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a
-    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
+    /// * `CreateTable`: Execute a SQL query containing a command that creates a table.
+    /// These commands can be `CREATE TABLE table_name(...` which creates a normal table, and
+    /// `CREATE MODEL TABLE table_name(...` which creates a model table.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
-    /// * `FlushEdge`: An extension of the `FlushMemory` action that first flushes all data that is
+    /// * `FlushNode`: An extension of the `FlushMemory` action that first flushes all data that is
     /// currently in memory to disk and then flushes all compressed data on disk to the remote
     /// object store. Note that data is only transferred to the remote object store if one was
     /// provided when starting the server.
-    /// * `KillEdge`: An extension of the `FlushEdge` action that first flushes all data to disk,
+    /// * `KillNode`: An extension of the `FlushNode` action that first flushes all data to disk,
     /// then flushes all compressed data to the remote object store, and finally kills the process
     /// that is running the server. Note that since the process is killed, a conventional response
     /// cannot be returned.
@@ -463,7 +463,7 @@ impl FlightService for FlightServiceHandler {
         // Manually drop the read lock on the configuration manager to avoid deadlock issues.
         std::mem::drop(configuration_manager);
 
-        if action.r#type == "CommandStatementUpdate" {
+        if action.r#type == "CreateTable" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -487,14 +487,14 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "FlushEdge" {
+        } else if action.r#type == "FlushNode" {
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine.flush().await.map_err(Status::internal)?;
             storage_engine.transfer().await?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "KillEdge" {
+        } else if action.r#type == "KillNode" {
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine.flush().await.map_err(Status::internal)?;
             storage_engine.transfer().await?;
@@ -653,9 +653,10 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
-        let command_statement_update_action = ActionType {
-            r#type: "CommandStatementUpdate".to_owned(),
-            description: "Execute a single SQL statement that produces no results.".to_owned(),
+        let create_table_action = ActionType {
+            r#type: "CreateTable".to_owned(),
+            description: "Execute a SQL query containing a command that creates a table."
+                .to_owned(),
         };
 
         let flush_memory_action = ActionType {
@@ -664,15 +665,15 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let flush_edge_action = ActionType {
-            r#type: "FlushEdge".to_owned(),
+        let flush_node_action = ActionType {
+            r#type: "FlushNode".to_owned(),
             description: "Flush uncompressed data to disk by compressing and saving the data and \
                           transfer all compressed data to the remote object store."
                 .to_owned(),
         };
 
-        let kill_edge_action = ActionType {
-            r#type: "KillEdge".to_owned(),
+        let kill_node_action = ActionType {
+            r#type: "KillNode".to_owned(),
             description: "Flush uncompressed data to disk by compressing and saving the data, \
                           transfer all compressed data to the remote object store, and kill the \
                           process running the server."
@@ -699,10 +700,10 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
-            Ok(command_statement_update_action),
+            Ok(create_table_action),
             Ok(flush_memory_action),
-            Ok(flush_edge_action),
-            Ok(kill_edge_action),
+            Ok(flush_node_action),
+            Ok(kill_node_action),
             Ok(collect_metrics_action),
             Ok(get_configuration_action),
             Ok(update_configuration_action),

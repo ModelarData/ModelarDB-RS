@@ -352,10 +352,10 @@ impl FlightService for FlightServiceHandler {
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
     /// to create the tables and model tables that are missing in the list. The list of table names
     /// is also checked to make sure all given tables actually exist.
-    /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
-    /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a
-    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
-    /// The table is created for all nodes controlled by the manager.
+    /// * `CreateTable`: Execute a SQL query containing a command that creates a table. These
+    /// commands can be `CREATE TABLE table_name(...` which creates a normal table, and
+    /// `CREATE MODEL TABLE table_name(...` which creates a model table. The table is created
+    /// for all nodes controlled by the manager.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
     /// to the cluster of nodes controlled by the manager and the key and object store used in the
     /// cluster is returned.
@@ -427,7 +427,7 @@ impl FlightService for FlightServiceHandler {
                     invalid_node_tables.join(", ")
                 )))
             }
-        } else if action.r#type == "CommandStatementUpdate" {
+        } else if action.r#type == "CreateTable" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -537,11 +537,10 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let command_statement_update_action = ActionType {
-            r#type: "CommandStatementUpdate".to_owned(),
-            description:
-                "Execute a SQL query containing a single command that produces no results."
-                    .to_owned(),
+        let create_table_action = ActionType {
+            r#type: "CreateTable".to_owned(),
+            description: "Execute a SQL query containing a command that creates a table."
+                .to_owned(),
         };
 
         let register_node_action = ActionType {
@@ -557,7 +556,7 @@ impl FlightService for FlightServiceHandler {
 
         let output = stream::iter(vec![
             Ok(initialize_database_action),
-            Ok(command_statement_update_action),
+            Ok(create_table_action),
             Ok(register_node_action),
             Ok(remove_node_action),
         ]);
