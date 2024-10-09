@@ -432,6 +432,28 @@ impl StorageEngine {
             .await
     }
 
+    /// Mark the table with `table_name` as dropped in the data transfer component. This will prevent
+    /// data related to the table from being transferred to the remote data folder.
+    pub(super) async fn mark_table_as_dropped(&self, table_name: &str) {
+        if let Some(ref mut data_transfer) =
+            *self.compressed_data_manager.data_transfer.write().await
+        {
+            data_transfer.mark_table_as_dropped(table_name)
+        }
+    }
+
+    /// Remove the table with `table_name` from the tables that are marked as dropped and clear the
+    /// size of the table in the data transfer component. Return the number of bytes that were cleared.
+    pub(super) async fn clear_table(&self, table_name: &str) -> usize {
+        if let Some(ref mut data_transfer) =
+            *self.compressed_data_manager.data_transfer.write().await
+        {
+            data_transfer.clear_table(table_name)
+        } else {
+            0
+        }
+    }
+
     /// Set the transfer batch size in the data transfer component to `new_value` if it exists. If
     /// a data transfer component does not exist, or the value could not be changed,
     /// return [`ModelarDbError`].

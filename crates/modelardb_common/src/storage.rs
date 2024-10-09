@@ -34,7 +34,8 @@ use datafusion::parquet::format::SortingColumn;
 use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
+use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
@@ -73,9 +74,11 @@ impl DeltaLake {
         fs::create_dir_all(data_folder_path)
             .map_err(|error| DeltaTableError::generic(error.to_string()))?;
 
+        // Use with_automatic_cleanup to ensure empty directories are deleted automatically.
         let local_file_system = Arc::new(
             LocalFileSystem::new_with_prefix(data_folder_path)
-                .map_err(|error| DeltaTableError::generic(error.to_string()))?,
+                .map_err(|error| DeltaTableError::generic(error.to_string()))?
+                .with_automatic_cleanup(true),
         );
 
         let location = data_folder_path
@@ -148,17 +151,29 @@ impl DeltaLake {
 
         // TODO: Determine if it is safe to use AWS_S3_ALLOW_UNSAFE_RENAME.
         let storage_options = HashMap::from([
-            ("REGION".to_owned(), "".to_owned()),
-            ("ALLOW_HTTP".to_owned(), "true".to_owned()),
-            ("ENDPOINT".to_owned(), endpoint),
-            ("BUCKET_NAME".to_owned(), bucket_name),
-            ("ACCESS_KEY_ID".to_owned(), access_key_id),
-            ("SECRET_ACCESS_KEY".to_owned(), secret_access_key),
-            ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+            ("aws_access_key_id".to_owned(), access_key_id),
+            ("aws_secret_access_key".to_owned(), secret_access_key),
+            ("aws_endpoint_url".to_owned(), endpoint),
+            ("aws_bucket_name".to_owned(), bucket_name),
+            ("aws_s3_allow_unsafe_rename".to_owned(), "true".to_owned()),
         ]);
+
         let url =
             Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
-        let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
+
+        // Build the Amazon S3 object store with the given storage options manually to allow http.
+        let object_store = storage_options
+            .iter()
+            .fold(
+                AmazonS3Builder::new()
+                    .with_url(url.to_string())
+                    .with_allow_http(true),
+                |builder, (key, value)| match key.parse() {
+                    Ok(k) => builder.with_config(k, value),
+                    Err(_) => builder,
+                },
+            )
+            .build()?;
 
         Ok(DeltaLake {
             location,
@@ -180,9 +195,9 @@ impl DeltaLake {
 
         // TODO: Needs to be tested.
         let storage_options = HashMap::from([
-            ("ACCOUNT_NAME".to_owned(), account_name),
-            ("ACCESS_KEY".to_owned(), access_key),
-            ("CONTAINER_NAME".to_owned(), container_name),
+            ("azure_storage_account_name".to_owned(), account_name),
+            ("azure_storage_account_key".to_owned(), access_key),
+            ("azure_container_name".to_owned(), container_name),
         ]);
         let url =
             Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
@@ -290,6 +305,32 @@ impl DeltaLake {
             .with_columns(columns)
             .with_partition_columns(partition_columns)
             .await
+    }
+
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file related
+    /// to the table. The table folder cannot be deleted directly since folders do not exist in object
+    /// stores and therefore cannot be operated upon. If the table was dropped successfully, the
+    /// paths to the deleted files are returned, otherwise a [`DeltaTableError`] is returned.
+    pub async fn drop_delta_lake_table(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<Path>, DeltaTableError> {
+        // List all files in the Delta Lake table folder.
+        let table_path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}");
+        let file_locations = self
+            .object_store
+            .list(Some(&Path::from(table_path)))
+            .map_ok(|object_meta| object_meta.location)
+            .boxed();
+
+        // Delete all files in the Delta Lake table folder using bulk operations if available.
+        let deleted_paths = self
+            .object_store
+            .delete_stream(file_locations)
+            .try_collect::<Vec<Path>>()
+            .await?;
+
+        Ok(deleted_paths)
     }
 
     /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`. Returns

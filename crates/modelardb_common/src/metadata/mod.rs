@@ -17,6 +17,7 @@
 //! created tables, and query the created tables.
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
@@ -31,6 +32,12 @@ use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
 use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
+use futures::{StreamExt, TryStreamExt};
+use object_store::aws::AmazonS3Builder;
+use object_store::local::LocalFileSystem;
+use object_store::path::Path;
+use object_store::ObjectStore;
+use url::Url;
 
 use crate::arguments;
 
@@ -47,6 +54,8 @@ pub struct MetadataDeltaLake {
     location: String,
     /// Storage options used to access Delta Lake tables in remote object stores.
     storage_options: HashMap<String, String>,
+    /// [`ObjectStore`] to access the root of the Delta Lake.
+    object_store: Arc<dyn ObjectStore>,
     /// Session used to read from the metadata Delta Lake using Apache Arrow DataFusion.
     session: SessionContext,
 }
@@ -55,13 +64,26 @@ impl MetadataDeltaLake {
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] under
     /// `folder_path`.
     pub fn from_path(folder_path: &StdPath) -> Result<MetadataDeltaLake, DeltaTableError> {
-        let folder_str = folder_path
+        // Ensure the directories in the path exists as LocalFileSystem otherwise returns an error.
+        fs::create_dir_all(folder_path)
+            .map_err(|error| DeltaTableError::generic(error.to_string()))?;
+
+        // Use with_automatic_cleanup to ensure empty directories are deleted automatically.
+        let local_file_system = Arc::new(
+            LocalFileSystem::new_with_prefix(folder_path)
+                .map_err(|error| DeltaTableError::generic(error.to_string()))?
+                .with_automatic_cleanup(true),
+        );
+
+        let location = folder_path
             .to_str()
-            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8."))?;
+            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8."))?
+            .to_owned();
 
         Ok(MetadataDeltaLake {
-            location: format!("{folder_str}/{METADATA_FOLDER}"),
+            location,
             storage_options: HashMap::new(),
+            object_store: local_file_system,
             session: SessionContext::new(),
         })
     }
@@ -119,22 +141,38 @@ impl MetadataDeltaLake {
         access_key_id: String,
         secret_access_key: String,
     ) -> Result<Self, DeltaTableError> {
-        let location = format!("s3://{bucket_name}/{METADATA_FOLDER}");
+        let location = format!("s3://{bucket_name}");
 
         // TODO: Determine if it is safe to use AWS_S3_ALLOW_UNSAFE_RENAME.
         let storage_options = HashMap::from([
-            ("REGION".to_owned(), "".to_owned()),
-            ("ALLOW_HTTP".to_owned(), "true".to_owned()),
-            ("ENDPOINT".to_owned(), endpoint),
-            ("BUCKET_NAME".to_owned(), bucket_name),
-            ("ACCESS_KEY_ID".to_owned(), access_key_id),
-            ("SECRET_ACCESS_KEY".to_owned(), secret_access_key),
-            ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+            ("aws_access_key_id".to_owned(), access_key_id),
+            ("aws_secret_access_key".to_owned(), secret_access_key),
+            ("aws_endpoint_url".to_owned(), endpoint),
+            ("aws_bucket_name".to_owned(), bucket_name),
+            ("aws_s3_allow_unsafe_rename".to_owned(), "true".to_owned()),
         ]);
+
+        let url =
+            Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+        // Build the Amazon S3 object store with the given storage options manually to allow http.
+        let object_store = storage_options
+            .iter()
+            .fold(
+                AmazonS3Builder::new()
+                    .with_url(url.to_string())
+                    .with_allow_http(true),
+                |builder, (key, value)| match key.parse() {
+                    Ok(k) => builder.with_config(k, value),
+                    Err(_) => builder,
+                },
+            )
+            .build()?;
 
         Ok(MetadataDeltaLake {
             location,
             storage_options,
+            object_store: Arc::new(object_store),
             session: SessionContext::new(),
         })
     }
@@ -147,18 +185,22 @@ impl MetadataDeltaLake {
         access_key: String,
         container_name: String,
     ) -> Result<Self, DeltaTableError> {
-        let location = format!("az://{container_name}/{METADATA_FOLDER}");
+        let location = format!("az://{container_name}");
 
         // TODO: Needs to be tested.
         let storage_options = HashMap::from([
-            ("ACCOUNT_NAME".to_owned(), account_name),
-            ("ACCESS_KEY".to_owned(), access_key),
-            ("CONTAINER_NAME".to_owned(), container_name),
+            ("azure_storage_account_name".to_owned(), account_name),
+            ("azure_storage_account_key".to_owned(), access_key),
+            ("azure_container_name".to_owned(), container_name),
         ]);
+        let url =
+            Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+        let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
 
         Ok(MetadataDeltaLake {
             location,
             storage_options,
+            object_store: Arc::new(object_store),
             session: SessionContext::new(),
         })
     }
@@ -172,13 +214,15 @@ impl MetadataDeltaLake {
         table_name: &str,
         columns: Vec<StructField>,
     ) -> Result<(), DeltaTableError> {
+        let location = self.location_of_metadata_table(table_name);
+
         // SaveMode::Ignore is used to avoid errors if the table already exists.
         let table = Arc::new(
             CreateBuilder::new()
                 .with_save_mode(SaveMode::Ignore)
                 .with_storage_options(self.storage_options.clone())
                 .with_table_name(table_name)
-                .with_location(format!("{}/{table_name}", self.location))
+                .with_location(location)
                 .with_columns(columns)
                 .await?,
         );
@@ -188,6 +232,34 @@ impl MetadataDeltaLake {
         Ok(())
     }
 
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file related
+    /// to the table. The table folder cannot be deleted directly since folders do not exist in object
+    /// stores and therefore cannot be operated upon. If the table was dropped successfully, the
+    /// paths to the deleted files are returned, otherwise a [`DeltaTableError`] is returned.
+    pub async fn drop_delta_lake_table(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<Path>, DeltaTableError> {
+        // List all files in the metadata Delta Lake table folder.
+        let table_path = format!("{METADATA_FOLDER}/{table_name}");
+        let file_locations = self
+            .object_store
+            .list(Some(&Path::from(table_path)))
+            .map_ok(|object_meta| object_meta.location)
+            .boxed();
+
+        // Delete all files in the metadata Delta Lake table folder using bulk operations if available.
+        let deleted_paths = self
+            .object_store
+            .delete_stream(file_locations)
+            .try_collect::<Vec<Path>>()
+            .await?;
+
+        self.session.deregister_table(table_name)?;
+
+        Ok(deleted_paths)
+    }
+
     /// Append `rows` to the table with the given `table_name`. If `rows` are appended to
     /// the table, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
     pub async fn append_to_table(
@@ -195,11 +267,7 @@ impl MetadataDeltaLake {
         table_name: &str,
         rows: Vec<ArrayRef>,
     ) -> Result<DeltaTable, DeltaTableError> {
-        let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.location),
-            self.storage_options.clone(),
-        )
-        .await?;
+        let table = self.metadata_delta_table(table_name).await?;
 
         // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
         // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
@@ -217,11 +285,7 @@ impl MetadataDeltaLake {
         table_name: &str,
         rows: Vec<ArrayRef>,
     ) -> Result<DataFrame, DeltaTableError> {
-        let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.location),
-            self.storage_options.clone(),
-        )
-        .await?;
+        let table = self.metadata_delta_table(table_name).await?;
 
         // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
         // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
@@ -238,12 +302,7 @@ impl MetadataDeltaLake {
         &self,
         table_name: &str,
     ) -> Result<DeltaOps, DeltaTableError> {
-        let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.location),
-            self.storage_options.clone(),
-        )
-        .await?;
-
+        let table = self.metadata_delta_table(table_name).await?;
         Ok(DeltaOps::from(table))
     }
 
@@ -255,11 +314,7 @@ impl MetadataDeltaLake {
         table_name: &str,
         query: &str,
     ) -> Result<RecordBatch, DeltaTableError> {
-        let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.location),
-            self.storage_options.clone(),
-        )
-        .await?;
+        let table = self.metadata_delta_table(table_name).await?;
 
         self.session.deregister_table(table_name)?;
         self.session.register_table(table_name, Arc::new(table))?;
@@ -271,6 +326,22 @@ impl MetadataDeltaLake {
         let batch = concat_batches(&schema.into(), batches.as_slice())?;
 
         Ok(batch)
+    }
+
+    /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
+    /// metadata Delta Lake, or a [`DeltaTableError`] if a connection cannot be established or
+    /// the table does not exist.
+    pub async fn metadata_delta_table(
+        &self,
+        table_name: &str,
+    ) -> Result<DeltaTable, DeltaTableError> {
+        let table_path = self.location_of_metadata_table(table_name);
+        open_table_with_storage_options(&table_path, self.storage_options.clone()).await
+    }
+
+    /// Return the location of the metadata table with `table_name`.
+    fn location_of_metadata_table(&self, table_name: &str) -> String {
+        format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
     }
 }
 

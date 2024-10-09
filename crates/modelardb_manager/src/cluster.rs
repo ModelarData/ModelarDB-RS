@@ -175,6 +175,36 @@ impl Cluster {
         Ok(())
     }
 
+    /// For each node in the cluster, use the `DropTable` action to drop the table given by
+    /// `table_name`. If the table was successfully dropped for each node, return [`Ok`], otherwise
+    /// return [`ClusterError`](ModelarDbError::ClusterError).
+    pub async fn drop_tables(
+        &self,
+        table_name: &str,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<(), ModelarDbError> {
+        let action = Action {
+            r#type: "DropTable".to_owned(),
+            body: table_name.to_owned().into(),
+        };
+
+        let mut drop_table_futures: FuturesUnordered<_> = self
+            .nodes
+            .iter()
+            .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
+            .collect();
+
+        // Run the futures concurrently and log when the table has been dropped on each node.
+        while let Some(result) = drop_table_futures.next().await {
+            info!(
+                "Dropped table '{}' on node with url '{}'.",
+                table_name, result?
+            );
+        }
+
+        Ok(())
+    }
+
     /// Connect to the Apache Arrow flight client given by `url` and make a request to do `action`.
     /// If the action was successfully executed, return the url of the node, otherwise return
     /// [`ClusterError`](ModelarDbError::ClusterError).
