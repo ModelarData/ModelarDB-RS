@@ -60,18 +60,18 @@ processing.
   from compressed segments instead of from reconstructed data points.
   - **Query** - Types that implement traits provided by Apache DataFusion so SQL queries can be executed for ModelarDB
   tables.
-- [modelardb_server](/crates/modelardb_server) - ModelarDB's server in the form of the binary `modelardbd`.
+- [modelardb_server](/crates/modelardb_server) - ModelarDB's DBMS server in the form of the binary `modelardbd`.
   - **Storage** - Manages uncompressed data, compresses uncompressed data, manages compressed data, and writes
   compressed data to Delta Lake.
-  - **Configuration** - Manages the configuration of the ModelarDB server and provides functionality for updating the
-  configuration.
-  - **Context** - A type that contains all of the components in ModelarDB server and makes it easy to share and access
-  them.
-  - **Data Folders** - A type for managing data and metadata in a local data folder, an S3 bucket, or an Azure Blob
-  Store container.
+  - **Configuration** - Manages the configuration of the ModelarDB DBMS server and provides functionality for updating
+  the configuration.
+  - **Context** - A type that contains all of the components in ModelarDB DBMS server and makes it easy to share and
+  access them.
+  - **Data Folders** - A type for managing data and metadata in a local data folder, an Amazon S3 bucket, or an
+  Microsoft Azure Blob Storage container.
   - **Manager** - Manages metadata related to ModelarDB manager and provides functionality for interacting with
   ModelarDB manager.
-  - **Remote** - A public interface to interact with the ModelarDB server using Apache Arrow Flight.
+  - **Remote** - A public interface to interact with the ModelarDB DBMS server using Apache Arrow Flight.
 
 ## Development
 All code must be formatted according to the [Rust Style
