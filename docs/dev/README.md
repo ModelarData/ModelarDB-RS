@@ -1,9 +1,8 @@
 # ModelarDB Development
 This document describes the structure of the code and general considerations to consider when doing further development.
-As such, this document should be used as a guideline when contributing to the repository.
-
-Contributions to all aspects of ModelarDB are highly appreciated and do not need to be in the form of new features or even code.
-For example, contributions can be:
+As such, this document should be used as a guideline when contributing to the repository. Contributions to all aspects
+of ModelarDB are highly appreciated and do not need to be in the form of new features or even code. For example,
+contributions can be:
 
 - Helping other users.
 - Writing documentation.
@@ -13,67 +12,93 @@ For example, contributions can be:
 - Refactoring existing functionality.
 - Implementing new functionality.
 
-Any questions or discussions regarding a possible contribution should be posted in the appropriate GitHub issue if
-one exists, e.g., the bug report if it is a bugfix, and as a new GitHub issue otherwise.
+Any questions or discussions regarding a possible contribution should be posted in the appropriate GitHub issue if one
+exists, e.g., the bug report if it is a bugfix, and as a new GitHub issue otherwise.
 
 ## Structure
 The ModelarDB project consists of the following crates and major components:
 
 - [modelardb_client](/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
   - **Helper** - Enhances the command-line client with autocompletion of keywords and names.
-- [modelardb_common](/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the other crates.
-  - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the tables' schema and compressed data.
-  - **Arguments** - Parses command-line arguments and serializes and deserializes arguments for use with Apache Arrow Flight.
-  - **Errors** - Error type used throughout the ModelarDB project, a single error type is used throughout the ModelarDB project for simplicity.
-  - **Macros** - Macros for extracting an array from a `RecordBatch` and extracting all arrays from a `RecordBatch` with compressed segments.
-  - **Parser** - Extension to Apache DataFusion's SQL parser so it can create model tables with a timestamp, one or more fields, and zero or more tags.
-  - **Schemas** - Schemas used throughout the ModelarDB project, e.g., for buffers and for Apache Parquet files with compressed segments.
-  - **Types** - Types used throughout the ModelarDB project, e.g., for representing timestamps and different kinds of error bounds.
-- [modelardb_compression](/crates/modelardb_compression) - Library providing lossless and lossy model-based compression of time series.
-  - **Models** - Multiple types of models used for compressing time series within different kinds of error bounds (possible 0% error).
-  - **Compression** - Compresses univariate time series within a user-defined error bounds (possible 0% error) and outputs compressed segments.
-  - **Merge** - Merges compressed segments if possible within the error bound to further decrease the amount of storage bandwidth required.
-  For example, if a time series has the same structure at the end of a batch of data points and the start of the following batch of data points.
-  - **Types** - Types used throughout modelardb_compression, e.g., for creating compressed segments and accumulating batches of them.
+- [modelardb_common](/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the
+other crates.
+  - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the tables' schema and compressed
+  data.
+  - **Arguments** - Parses command-line arguments and serializes and deserializes arguments for use with Apache Arrow
+  Flight.
+  - **Errors** - Error type used throughout the ModelarDB project, a single error type is used throughout the ModelarDB
+  project for simplicity.
+  - **Macros** - Macros for extracting an array from a `RecordBatch` and extracting all arrays from a `RecordBatch` with
+  compressed segments.
+  - **Parser** - Extension to Apache DataFusion's SQL parser so it can create model tables with a timestamp, one or more
+  fields, and zero or more tags.
+  - **Schemas** - Schemas used throughout the ModelarDB project, e.g., for buffers and for Apache Parquet files with
+  compressed segments.
+  - **Types** - Types used throughout the ModelarDB project, e.g., for representing timestamps and different kinds of
+  error bounds.
+- [modelardb_compression](/crates/modelardb_compression) - Library providing lossless and lossy model-based compression
+of time series.
+  - **Models** - Multiple types of models used for compressing time series within different kinds of error bounds
+  (possible 0% error).
+  - **Compression** - Compresses univariate time series within a user-defined error bounds (possible 0% error) and
+  outputs compressed segments.
+  - **Merge** - Merges compressed segments if possible within the error bound to further decrease the amount of storage
+  bandwidth required.
+  For example, if a time series has the same structure at the end of a batch of data points and the start of the
+  following batch of data points.
+  - **Types** - Types used throughout modelardb_compression, e.g., for creating compressed segments and accumulating
+  batches of them.
 - [modelardb_manager](/crates/modelardb_manager) - ModelarDB's manager in the form of the binary `modelardbm`.
-  - **Cluster** - Manages edge and cloud nodes currently controlled by the ModelarDB manager and provides functionality for balancing
-  query workloads across multiple cloud nodes.
-  - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the manager itself, the nodes controlled by the manager,
-  and the database schema and compressed data in the cluster.
+  - **Cluster** - Manages edge and cloud nodes currently controlled by the ModelarDB manager and provides functionality
+  for balancing query workloads across multiple cloud nodes.
+  - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the manager itself, the nodes
+  controlled by the manager, and the database schema and compressed data in the cluster.
   - **Remote** - A public interface for interacting with the ModelarDB manager using Apache Arrow Flight.
-- [modelardb_query](/crates/modelardb_query) - Library providing integration with Apache DataFusion for query processing.
-  - **Optimizer** - Rules for rewriting Apache DataFusion's physical plans for model tables so aggregates are computed from compressed segments
-  instead of from reconstructed data points.
-  - **Query** - Types that implement traits provided by Apache DataFusion so SQL queries can be executed for ModelarDB tables.
+- [modelardb_query](/crates/modelardb_query) - Library providing integration with Apache DataFusion for query
+processing.
+  - **Optimizer** - Rules for rewriting Apache DataFusion's physical plans for model tables so aggregates are computed
+  from compressed segments instead of from reconstructed data points.
+  - **Query** - Types that implement traits provided by Apache DataFusion so SQL queries can be executed for ModelarDB
+  tables.
 - [modelardb_server](/crates/modelardb_server) - ModelarDB's server in the form of the binary `modelardbd`.
-  - **Storage** - Manages uncompressed data, compresses uncompressed data, manages compressed data, and writes compressed data to Delta Lake.
-  - **Configuration** - Manages the configuration of the ModelarDB server and provides functionality for updating the configuration.
-  - **Context** - A type that contains all of the components in ModelarDB server and makes it easy to share and access them.
-  - **Data Folders** - A type for managing data and metadata in a local data folder, an S3 bucket, or an Azure Blob Store container.
-  - **Manager** - Manages metadata related to ModelarDB manager and provides functionality for interacting with ModelarDB manager.
+  - **Storage** - Manages uncompressed data, compresses uncompressed data, manages compressed data, and writes
+  compressed data to Delta Lake.
+  - **Configuration** - Manages the configuration of the ModelarDB server and provides functionality for updating the
+  configuration.
+  - **Context** - A type that contains all of the components in ModelarDB server and makes it easy to share and access
+  them.
+  - **Data Folders** - A type for managing data and metadata in a local data folder, an S3 bucket, or an Azure Blob
+  Store container.
+  - **Manager** - Manages metadata related to ModelarDB manager and provides functionality for interacting with
+  ModelarDB manager.
   - **Remote** - A public interface to interact with the ModelarDB server using Apache Arrow Flight.
 
 ## Development
-All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
-using [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific
-to this repository, are covered here.
+All code must be formatted according to the [Rust Style
+Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md) using
+[rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific to
+this repository, are covered here.
 
 ### Documentation
-All modules must have an accompanying doc comment that describes the general functionality of the module and its content.
-Thus, a brief description of the central structs, functions, etc should be included if important to understand the module.
+All modules must have an accompanying doc comment that describes the general functionality of the module and its
+content. Thus, a brief description of the central structs, functions, etc should be included if important to understand
+the module.
 
-Function and methods should be ordered by visibility and the order in which they are expected to be used. For example, for a struct
-its public constructors should be placed first, then the most commonly used public methods, then the 2nd most commonly used public
-methods, and so on. Private functions and methods should be placed right after the last public function or method that calls them.
+Function and methods should be ordered by visibility and the order in which they are expected to be used. For example,
+for a struct its public constructors should be placed first, then the most commonly used public methods, then the 2nd
+most commonly used public methods, and so on. Private functions and methods should be placed right after the last public
+function or method that calls them.
 
-All public and private structs, traits, functions, and methods must have an accompanying doc comment that describes their purpose.
-Generally, these doc comments should include a description of the main parameters, the return value, and, if beneficial, examples.
+All public and private structs, traits, functions, and methods must have an accompanying doc comment that describes
+their purpose. Generally, these doc comments should include a description of the main parameters, the return value, and,
+if beneficial, examples.
 
 ### Terminology
 The following terminology must be used throughout the ModelarDB project.
 
 - **maybe** - Used as a prefix for variables of type `Result` or `Option` to indicate it may contain a value.
-- **try** - Used as a prefix for functions and methods that return `Result` or `Option` to indicate it may return a value.
+- **try** - Used as a prefix for functions and methods that return `Result` or `Option` to indicate it may return a
+value.
 - **normal table** A relational table that stores data directly in Apache Parquet files managed by Delta Lake and thus
 use the same schema at the logical and physical layer.
 - **model table** A relational table that stores time series data as compressed segments containing metadata and models
