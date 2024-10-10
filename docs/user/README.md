@@ -33,21 +33,25 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 ## Usage
 ModelarDB consists of three binaries: `modelardbd` is a DBMS server that manages data and executes SQL queries,
 `modelardbm` is a manager for one or more DBMS servers deployed on the *edge* or in the *cloud*, and `modelardb` is a
-command-line client for connecting to a DBMS server and executing commands and SQL queries.  `modelardbd` uses local
+command-line client for connecting to a DBMS server and executing commands and SQL queries. `modelardbd` uses local
 storage on the edge and an Amazon S3-compatible or Azure Blob Storage object store in the cloud. `modelardbd` can be
-deployed alone or together with `modelardbm` depending on the use cases. `modelardbd` can be deployed on a single node
-and manage data in a local folder. In this configuration `modelardbm` is not needed. `modelardbd` can also be deployed
-in a distributed configuration across edge and cloud. In this configuration, `modelardbm` must first be deployed in the
-cloud to manager the `modelardbd` instances on the edge and in the cloud. Specifically, `modelardbm` is responsible for
-keeping the database schema consistent across all `modelardbd` instances in the cluster. After deploying `modelardbd`,
-instances of `modelardbd` can deployed on the edge and in cloud. While the `modelardbd` instances on the edge and in
-cloud provides the same functionality, the primary purpose of instances on the edge is to collect data and transfer it
-to an object store in the cloud while the primary purpose of the instances in the cloud is to execute queries on the
-data in the object store. Thus, when `modelardbd` is deployed in edge mode, it executes queries against local storage
-for low latency queries on the latest data and when it is deployed in cloud mode, it executes queries against the object
-store for efficient analytics on all the data transferred to the cloud. `modelardbm` implements the [Apache Arrow Flight
-protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for retrieving the cloud node to use, thus
-providing a single, workload-balanced, interface for querying data from all `modelardbd` instances in the cloud.
+deployed alone or together with `modelardbm` depending on the use cases.
+
+`modelardbd` can be deployed on a single node to manage data in a local folder. In this configuration `modelardbm` is
+not needed. `modelardbd` can also be deployed in a distributed configuration across edge and cloud. In this
+configuration, `modelardbm` must first be deployed in the cloud to manage the `modelardbd` instances on the edge and in
+the cloud. Specifically, `modelardbm` is responsible for keeping the database schema consistent across all `modelardbd`
+instances in the cluster. After deploying `modelardbm`, instances of `modelardbd` can be deployed on the edge and in
+cloud. While the `modelardbd` instances on the edge and in cloud provides the same functionality, the primary purpose of
+the instances on the edge is to collect data and transfer it to an object store in the cloud while the primary purpose
+of the instances in the cloud is to execute queries on the data in the object store.
+
+Thus, when `modelardbd` is deployed in edge mode, it executes queries against local storage for low latency queries on
+the latest data and when it is deployed in cloud mode, it executes queries against the object store for efficient
+analytics on all the data transferred to the cloud. `modelardbm` implements the [Apache Arrow Flight
+protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for retrieving the `modelardbd` instance in
+the cloud to use for executing each query, thus providing a single, workload-balanced, interface for querying the data
+in the object store using the `modelardbd` instances in the cloud.
 
 ### Start Server
 There are three options available when starting `modelardbd` depending on the desired deployment use case. Each option
@@ -73,7 +77,7 @@ transferring data in the local data folder to the object store.
 3. Start `modelardbd` in cloud mode with a manager - As above, a running instance of `modelardbm` and an Amazon
 S3-compatible or Azure Blob Storage object store are required to start `modelardbd` in cloud mode with a manager. This
 configuration supports ingesting data to a local folder in the cloud, transferring data in the local data folder to the
-object store, and querying the data in the object store in the cloud
+object store, and querying the data in the object store in the cloud.
 
 The following environment variables must be set to appropriate values if an Amazon S3-compatible object store is used so
 `modelardbm` and `modelardbd` knows how to connect to it:
@@ -98,7 +102,7 @@ Then, assuming a bucket named `wind-turbine` has been created through MinIO's co
 `modelardbm` can be started with the following command:
 
 ```shell
-modelardbm metadata s3://wind-turbine
+modelardbm s3://wind-turbine
 ```
 
 `modelardbm` also supports using [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/)
@@ -113,7 +117,7 @@ Then, assuming a container named `wind-turbine` has been created, `modelardbm` c
 command:
 
 ```shell
-modelardbm metadata azureblobstorage://wind-turbine
+modelardbm azureblobstorage://wind-turbine
 ```
 
 When a manager is running, `modelardbd` can be started in edge mode with transfer of the ingested data to the object
@@ -147,7 +151,7 @@ TABLE` statements. From a user's perspective, a model table functions like a sta
 queried using SQL. However, the implementation of a model table is highly optimized for time series and a model table
 must contain a single column with timestamps, one or more columns with fields (measurements as floating-point values),
 and zero or more columns with tags (metadata as strings). As stated, model tables can be created using `CREATE MODEL
-TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD` an error bound can optionally be
+TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD`, an error bound can optionally be
 specified in parentheses to enable lossy compression with a per-value error bound. The error bound can be absolute or
 relative, e.g., `FIELD(1.0)` creates a column with an absolute per-value error bound that allows each value to deviate
 by at most 1.0 while `FIELD(1.0%)` creates a column with a relative per-value error bound that allows each value to
