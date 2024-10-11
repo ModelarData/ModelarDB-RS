@@ -55,7 +55,8 @@ const HOST: &str = "127.0.0.1";
 
 /// The next port to be used for the server in an integration test. Each test uses a unique port and
 /// local data folder, so they can run in parallel and so that any failing tests do not cascade.
-static PORT: AtomicU16 = AtomicU16::new(9999);
+/// Ports 9000 and 9001 are used by MinIO and Ports 10000, 10001, and 10002 are used by Azurite.
+static PORT: AtomicU16 = AtomicU16::new(20_000);
 
 /// Number of times to try to create the client and kill child processes.
 const ATTEMPTS: u8 = 10;
@@ -213,7 +214,7 @@ impl TestContext {
     }
 
     /// Create a normal table or model table with or without tags in the server through the
-    /// `do_action()` method and the `CommandStatementUpdate` action.
+    /// `do_action()` method and the `CreateTable` action.
     fn create_table(&mut self, table_name: &str, table_type: TableType) {
         let cmd = match table_type {
             TableType::NormalTable => {
@@ -268,7 +269,7 @@ impl TestContext {
         };
 
         let action = Action {
-            r#type: "CommandStatementUpdate".to_owned(),
+            r#type: "CreateTable".to_owned(),
             body: cmd.into(),
         };
 
@@ -706,12 +707,12 @@ fn test_can_list_actions() {
         actions,
         vec![
             "CollectMetrics",
-            "CommandStatementUpdate",
-            "DropTable",
-            "FlushEdge",
+            "CreateTable",
+						"DropTable",
             "FlushMemory",
+            "FlushNode",
             "GetConfiguration",
-            "KillEdge",
+            "KillNode",
             "UpdateConfiguration",
         ]
     );
