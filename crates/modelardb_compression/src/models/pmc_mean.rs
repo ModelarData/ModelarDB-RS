@@ -20,8 +20,8 @@
 //! [Poor Man’s Compression paper]: https://ieeexplore.ieee.org/document/1260811
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
-use modelardb_common::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
-use modelardb_common::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
+use modelardb_types::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
+use modelardb_types::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 use crate::models;
 use crate::models::ErrorBound;

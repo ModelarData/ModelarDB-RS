@@ -22,9 +22,9 @@ use std::collections::HashMap;
 
 use arrow::array::{Array, BinaryArray, Float32Array, UInt64Array, UInt8Array};
 use arrow::record_batch::RecordBatch;
-use modelardb_common::errors::ModelarDbError;
-use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray};
+use modelardb_types::errors::ModelarDbError;
+use modelardb_types::schemas::COMPRESSED_SCHEMA;
+use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray};
 
 use crate::models::{self, timestamps};
 use crate::types::CompressedSegmentBatchBuilder;
@@ -45,7 +45,7 @@ pub fn try_merge_segments(compressed_segments: RecordBatch) -> Result<RecordBatc
         ));
     }
 
-    modelardb_common::arrays!(
+    modelardb_types::arrays!(
         compressed_segments,
         univariate_ids,
         model_type_ids,
@@ -330,9 +330,9 @@ mod tests {
 
     use arrow::array::{UInt64Builder, UInt8Array};
     use arrow::compute;
-    use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test::ERROR_BOUND_ZERO;
-    use modelardb_common::types::{ErrorBound, ValueBuilder};
+    use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
+    use modelardb_types::types::{ErrorBound, ValueBuilder};
 
     // Tests for try_merge_segments().
     #[test]
@@ -372,7 +372,7 @@ mod tests {
         let merged_compressed_segments = try_merge_segments(compressed_segments.clone()).unwrap();
 
         // Decompress merged segments.
-        modelardb_common::arrays!(
+        modelardb_types::arrays!(
             merged_compressed_segments,
             univariate_ids,
             model_type_ids,

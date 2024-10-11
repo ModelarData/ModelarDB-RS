@@ -35,6 +35,9 @@ use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
+use modelardb_types::schemas::{
+    COMPRESSED_SCHEMA, DISK_COMPRESSED_SCHEMA, FIELD_COLUMN, QUERY_COMPRESSED_SCHEMA,
+};
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
@@ -44,9 +47,6 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::arguments;
-use crate::schemas::{
-    COMPRESSED_SCHEMA, DISK_COMPRESSED_SCHEMA, FIELD_COLUMN, QUERY_COMPRESSED_SCHEMA,
-};
 
 /// The folder storing compressed data in the data folders.
 const COMPRESSED_DATA_FOLDER: &str = "tables";
@@ -425,7 +425,7 @@ fn maybe_univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatc
         // to disk previously.
         if record_batch.schema().field(0).data_type() == &DataType::UInt64 {
             let mut columns = record_batch.columns().to_vec();
-            let univariate_ids = crate::array!(record_batch, 0, UInt64Array);
+            let univariate_ids = modelardb_types::array!(record_batch, 0, UInt64Array);
             let signed_univariate_ids: Int64Array =
                 univariate_ids.unary(|value| i64::from_ne_bytes(value.to_ne_bytes()));
             columns[0] = Arc::new(signed_univariate_ids);
@@ -446,7 +446,7 @@ fn maybe_univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatc
 /// [`datafusion::physical_plan::PhysicalExpr::evaluate()`] borrows `compressed_segments` immutably.
 pub fn univariate_ids_int64_to_uint64(compressed_segments: &RecordBatch) -> RecordBatch {
     let mut columns = compressed_segments.columns().to_vec();
-    let signed_univariate_ids = crate::array!(compressed_segments, 0, Int64Array);
+    let signed_univariate_ids = modelardb_types::array!(compressed_segments, 0, Int64Array);
     let univariate_ids: UInt64Array =
         signed_univariate_ids.unary(|value| u64::from_ne_bytes(value.to_ne_bytes()));
     columns[0] = Arc::new(univariate_ids);

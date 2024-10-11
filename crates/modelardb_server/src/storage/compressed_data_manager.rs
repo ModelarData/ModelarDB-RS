@@ -334,7 +334,7 @@ mod tests {
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
-    use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
+    use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 

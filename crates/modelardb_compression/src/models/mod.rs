@@ -26,7 +26,7 @@ pub mod timestamps;
 use std::mem;
 
 use arrow::array::ArrayBuilder;
-use modelardb_common::types::{
+use modelardb_types::types::{
     ErrorBound, Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
 };
 

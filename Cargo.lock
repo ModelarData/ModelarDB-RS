@@ -2622,6 +2622,7 @@ dependencies = [
  "datafusion",
  "deltalake",
  "futures",
+ "modelardb_types",
  "object_store",
  "proptest",
  "rand",
@@ -2639,6 +2640,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "modelardb_common",
+ "modelardb_types",
  "proptest",
 ]
 
@@ -2652,6 +2654,7 @@ dependencies = [
  "futures",
  "log",
  "modelardb_common",
+ "modelardb_types",
  "tempfile",
  "tokio",
  "tonic",
@@ -2670,6 +2673,7 @@ dependencies = [
  "futures",
  "modelardb_common",
  "modelardb_compression",
+ "modelardb_types",
  "tempfile",
  "tokio",
  "tonic",
@@ -2692,6 +2696,7 @@ dependencies = [
  "modelardb_common",
  "modelardb_compression",
  "modelardb_query",
+ "modelardb_types",
  "object_store",
  "proptest",
  "ringbuf",
@@ -2704,6 +2709,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "modelardb_types"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "modelardb_common",
+ "proptest",
 ]
 
 [[package]]

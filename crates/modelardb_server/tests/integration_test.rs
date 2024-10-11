@@ -43,7 +43,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
 use modelardb_common::test;
 use modelardb_common::test::data_generation;
-use modelardb_common::types::ErrorBound;
+use modelardb_types::types::ErrorBound;
 use sysinfo::{Pid, System};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -730,7 +730,7 @@ fn test_can_collect_metrics() {
     let metrics = test_context.retrieve_action_record_batch("CollectMetrics");
 
     // Check that all metrics are present in the response.
-    let metrics_array = modelardb_common::array!(metrics, 0, StringArray);
+    let metrics_array = modelardb_types::array!(metrics, 0, StringArray);
 
     assert_eq!(metrics_array.value(0), "used_ingested_memory");
     assert_eq!(metrics_array.value(1), "used_uncompressed_memory");
@@ -739,7 +739,7 @@ fn test_can_collect_metrics() {
     assert_eq!(metrics_array.value(4), "used_disk_space");
 
     // Check that the metrics are populated when ingesting and flushing.
-    let values_array = modelardb_common::array!(metrics, 2, ListArray);
+    let values_array = modelardb_types::array!(metrics, 2, ListArray);
 
     // The used_ingested_memory metric should record when data is received and ingested.
     let ingested_buffer_size = test::INGESTED_BUFFER_SIZE as u32;
@@ -818,7 +818,7 @@ fn test_insert_can_ingest_time_series_with_tags() {
              ('2020-01-01 13:00:04', 1, 2, 3, 4, 5, 'Aalborg')"
         ))
         .unwrap();
-    let insert_result_count = modelardb_common::array!(insert_result, 0, UInt64Array).value(0);
+    let insert_result_count = modelardb_types::array!(insert_result, 0, UInt64Array).value(0);
 
     test_context.flush_data_to_disk();
     let query_result = test_context
@@ -863,7 +863,7 @@ fn test_insert_can_ingest_time_series_without_tags() {
              ('2020-01-01 13:00:04', 1, 2, 3, 4, 5)"
         ))
         .unwrap();
-    let insert_result_count = modelardb_common::array!(insert_result, 0, UInt64Array).value(0);
+    let insert_result_count = modelardb_types::array!(insert_result, 0, UInt64Array).value(0);
 
     test_context.flush_data_to_disk();
     let query_result = test_context
@@ -913,7 +913,7 @@ fn test_insert_can_ingest_time_series_with_generated_field() {
              ('2020-01-01 13:00:04', 1, 2, 3, 4)"
         ))
         .unwrap();
-    let insert_result_count = modelardb_common::array!(insert_result, 0, UInt64Array).value(0);
+    let insert_result_count = modelardb_types::array!(insert_result, 0, UInt64Array).value(0);
 
     test_context.flush_data_to_disk();
     let query_result = test_context
@@ -1046,8 +1046,8 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
         .unwrap();
 
     let data_point_query_plans_text =
-        modelardb_common::array!(data_point_query_plans, 1, StringArray);
-    let segment_query_plans_text = modelardb_common::array!(segment_query_plans, 1, StringArray);
+        modelardb_types::array!(data_point_query_plans, 1, StringArray);
+    let segment_query_plans_text = modelardb_types::array!(segment_query_plans, 1, StringArray);
     assert_ne!(data_point_query_plans, segment_query_plans);
     assert!(data_point_query_plans_text.value(1).contains("GridExec"));
     assert!(!segment_query_plans_text.value(1).contains("GridExec"));
@@ -1064,9 +1064,9 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
         assert_eq!(segment_query_result_set.num_rows(), 1);
 
         let data_point_query_result =
-            modelardb_common::array!(data_point_query_result_set, 0, Float64Array);
+            modelardb_types::array!(data_point_query_result_set, 0, Float64Array);
         let segment_query_result =
-            modelardb_common::array!(segment_query_result_set, 0, Float64Array);
+            modelardb_types::array!(segment_query_result_set, 0, Float64Array);
 
         let within_error_bound = modelardb_compression::is_value_within_error_bound(
             ErrorBound::try_new_relative(error_bound).unwrap(),
@@ -1089,8 +1089,8 @@ fn test_can_get_configuration() {
     let mut test_context = TestContext::new();
     let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
 
-    let settings = modelardb_common::array!(configuration, 0, StringArray);
-    let values = modelardb_common::array!(configuration, 1, UInt64Array);
+    let settings = modelardb_types::array!(configuration, 0, StringArray);
+    let values = modelardb_types::array!(configuration, 1, UInt64Array);
 
     assert_eq!(settings.value(0), "uncompressed_reserved_memory_in_bytes");
     assert_eq!(values.value(0), 512 * 1024 * 1024);
@@ -1136,7 +1136,7 @@ fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
     test_context.update_configuration(setting, "1").unwrap();
 
     let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
-    modelardb_common::array!(configuration, 1, UInt64Array).clone()
+    modelardb_types::array!(configuration, 1, UInt64Array).clone()
 }
 
 #[test]

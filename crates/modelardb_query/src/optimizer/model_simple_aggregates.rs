@@ -49,7 +49,7 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue;
 use modelardb_common::storage;
-use modelardb_common::types::{ArrowValue, TimestampArray, Value, ValueArray};
+use modelardb_types::types::{ArrowValue, TimestampArray, Value, ValueArray};
 
 use crate::query::sorted_join_exec::SortedJoinExec;
 
@@ -387,7 +387,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
         let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
 
-        modelardb_common::arrays!(
+        modelardb_types::arrays!(
             record_batch,
             _univariate_ids,
             _model_type_ids,
@@ -520,7 +520,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut min = Value::MAX;
-        let min_value_array = modelardb_common::array!(record_batch, 5, ValueArray);
+        let min_value_array = modelardb_types::array!(record_batch, 5, ValueArray);
         for row_index in 0..record_batch.num_rows() {
             min = Value::min(min, min_value_array.value(row_index));
         }
@@ -638,7 +638,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut max = Value::MIN;
-        let max_value_array = modelardb_common::array!(record_batch, 6, ValueArray);
+        let max_value_array = modelardb_types::array!(record_batch, 6, ValueArray);
         for row_index in 0..record_batch.num_rows() {
             max = Value::max(max, max_value_array.value(row_index));
         }
@@ -758,7 +758,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
         let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
 
-        modelardb_common::arrays!(
+        modelardb_types::arrays!(
             record_batch,
             _univariate_ids,
             model_type_ids,
@@ -908,7 +908,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
         let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
 
-        modelardb_common::arrays!(
+        modelardb_types::arrays!(
             record_batch,
             _univariate_ids,
             model_type_ids,

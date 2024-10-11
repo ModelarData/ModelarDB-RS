@@ -24,11 +24,11 @@ use datafusion::arrow::array::ArrowPrimitiveType;
 use datafusion::arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
+use modelardb_types::functions;
+use modelardb_types::schemas::COMPRESSED_SCHEMA;
+use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 
-use crate::metadata;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::schemas::COMPRESSED_SCHEMA;
-use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 
 /// Expected size of the ingested data buffer produced in the tests.
 pub const INGESTED_BUFFER_SIZE: usize = 1438392;
@@ -124,7 +124,7 @@ pub fn compressed_segments_record_batch_with_time(
     time_ms: i64,
     offset: f32,
 ) -> RecordBatch {
-    let field_column = metadata::univariate_id_to_column_index(univariate_id);
+    let field_column = functions::univariate_id_to_column_index(univariate_id);
     let start_times = vec![time_ms, time_ms + 2, time_ms + 4];
     let end_times = vec![time_ms + 1, time_ms + 3, time_ms + 5];
     let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];

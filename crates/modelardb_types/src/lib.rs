@@ -1,4 +1,4 @@
-/* Copyright 2023 The ModelarDB Contributors
+/* Copyright 2024 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,8 @@
 
 //! Implementation of functions, macros, and types used throughout ModelarDB.
 
-pub mod arguments;
-pub mod metadata;
-pub mod parser;
-pub mod remote;
-pub mod storage;
-pub mod test;
+pub mod errors;
+pub mod functions;
+pub mod macros;
+pub mod schemas;
+pub mod types;

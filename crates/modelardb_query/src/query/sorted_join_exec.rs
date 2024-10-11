@@ -40,7 +40,7 @@ use datafusion::physical_plan::{
     Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-use modelardb_common::metadata;
+use modelardb_types::functions;
 
 use super::QUERY_ORDER_DATA_POINT;
 
@@ -293,7 +293,7 @@ impl SortedJoinStream {
         // Compute the requested tag columns, so they can be assigned to the batch by index.
         // unwrap() is safe as a record batch is read from each input before this method is called.
         let batch = self.batches[0].as_ref().unwrap();
-        let univariate_ids = modelardb_common::array!(batch, 0, UInt64Array);
+        let univariate_ids = modelardb_types::array!(batch, 0, UInt64Array);
 
         let mut tag_columns = if !self.hash_to_tags.is_empty() {
             // unwrap() is safe as hash_to_tags is guaranteed not to be empty.
@@ -305,7 +305,7 @@ impl SortedJoinStream {
                 .collect();
 
             for univariate_id in univariate_ids.values() {
-                let tag_hash = metadata::univariate_id_to_tag_hash(*univariate_id);
+                let tag_hash = functions::univariate_id_to_tag_hash(*univariate_id);
                 let tags = &self.hash_to_tags[&tag_hash];
                 for (index, tag) in tags.iter().enumerate() {
                     tag_columns[index].append_value(tag.clone());

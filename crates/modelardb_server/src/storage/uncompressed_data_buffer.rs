@@ -29,7 +29,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::storage;
-use modelardb_common::types::{
+use modelardb_types::types::{
     Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 use object_store::path::Path;
@@ -259,7 +259,7 @@ impl UncompressedOnDiskDataBuffer {
         data_points: RecordBatch,
     ) -> Result<Self, IOError> {
         // Create a path that uses the first timestamp as the filename.
-        let timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
+        let timestamps = modelardb_types::array!(data_points, 0, TimestampArray);
         let file_path = Path::from(format!(
             "{UNCOMPRESSED_DATA_FOLDER}/{tag_hash}/{}.parquet",
             timestamps.value(0)
@@ -356,9 +356,9 @@ impl UncompressedOnDiskDataBuffer {
     ) -> Result<UncompressedInMemoryDataBuffer, ParquetError> {
         let data_points = self.record_batch().await?;
 
-        let timestamp_column_array = modelardb_common::array!(data_points, 0, TimestampArray);
+        let timestamp_column_array = modelardb_types::array!(data_points, 0, TimestampArray);
         let field_column_arrays: Vec<_> = (1..data_points.num_columns())
-            .map(|index| modelardb_common::array!(data_points, index, ValueArray))
+            .map(|index| modelardb_types::array!(data_points, index, ValueArray))
             .collect();
 
         let mut in_memory_buffer = UncompressedInMemoryDataBuffer::new(
@@ -548,7 +548,7 @@ mod tests {
 
         let data = runtime.block_on(uncompressed_buffer.record_batch()).unwrap();
         assert_eq!(data.num_columns(), 3);
-        let timestamps = modelardb_common::array!(data, 0, TimestampArray);
+        let timestamps = modelardb_types::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
     }
     }
@@ -656,7 +656,7 @@ mod tests {
 
         let data = runtime.block_on(uncompressed_on_disk_buffer.record_batch()).unwrap();
         assert_eq!(data.num_columns(), 3);
-        let timestamps = modelardb_common::array!(data, 0, TimestampArray);
+        let timestamps = modelardb_types::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
 
         let spilled_buffers = runtime.block_on(object_store.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER))).collect::<Vec<_>>());

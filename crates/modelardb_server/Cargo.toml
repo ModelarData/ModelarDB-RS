@@ -34,6 +34,7 @@ datafusion.workspace = true
 deltalake = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
+modelardb_types = { path = "../modelardb_types" }
 modelardb_compression = { path = "../modelardb_compression" }
 modelardb_query = { path = "../modelardb_query" }
 object_store = { workspace = true, features = ["aws", "azure"] }

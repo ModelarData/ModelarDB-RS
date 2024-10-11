@@ -31,6 +31,8 @@ use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSou
 use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use datafusion::sql::TableReference;
+use modelardb_types::functions::normalize_name; // Fully imported to not conflict.
+use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 use sqlparser::ast::{
     ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType, GeneratedAs,
     HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TableEngine, TimezoneInfo,
@@ -41,8 +43,6 @@ use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Token;
 
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::metadata::normalize_name;
-use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 
 /// Constant specifying that a model table should be created.
 pub const CREATE_MODEL_TABLE_ENGINE: &str = "ModelTable";

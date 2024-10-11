@@ -20,9 +20,9 @@ use std::sync::Arc;
 
 use arrow::array::{BinaryBuilder, Float32Builder, UInt16Builder, UInt64Builder, UInt8Builder};
 use arrow::record_batch::RecordBatch;
-use modelardb_common::metadata;
-use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{
+use modelardb_types::functions;
+use modelardb_types::schemas::COMPRESSED_SCHEMA;
+use modelardb_types::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
@@ -461,7 +461,7 @@ impl CompressedSegmentBatchBuilder {
         residuals: &[u8],
         error: f32,
     ) {
-        let field_column_index = metadata::univariate_id_to_column_index(univariate_id);
+        let field_column_index = functions::univariate_id_to_column_index(univariate_id);
         self.univariate_ids.append_value(univariate_id);
         self.model_type_ids.append_value(model_type_id);
         self.start_times.append_value(start_time);
@@ -504,7 +504,7 @@ mod tests {
     use arrow::array::BinaryArray;
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
-    use modelardb_common::types::{TimestampArray, ValueArray};
+    use modelardb_types::types::{TimestampArray, ValueArray};
 
     use crate::compression;
 
@@ -814,9 +814,9 @@ mod tests {
         let batch = compressed_segment_batch_builder.finish();
         assert_eq!(1, batch.num_rows());
 
-        let segment_min_value = modelardb_common::array!(batch, 5, ValueArray).value(0);
-        let segment_max_value = modelardb_common::array!(batch, 6, ValueArray).value(0);
-        let segment_values = modelardb_common::array!(batch, 7, BinaryArray).value(0);
+        let segment_min_value = modelardb_types::array!(batch, 5, ValueArray).value(0);
+        let segment_max_value = modelardb_types::array!(batch, 6, ValueArray).value(0);
+        let segment_values = modelardb_types::array!(batch, 7, BinaryArray).value(0);
 
         assert_eq!(expected_segment_min_value, segment_min_value);
         assert_eq!(expected_segment_max_value, segment_max_value);
