@@ -22,13 +22,14 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 
 ### All
 2. Install the latest stable [Rust Toolchain](https://rustup.rs/).
-3. Build, test, and run the system using Cargo:
+3. Clone the repository: `git clone https://github.com/ModelarData/ModelarDB-RS`
+4. Build, test, and run the system using Cargo:
    - Debug Build: `cargo build`
    - Release Build: `cargo build --release`
    - Run Tests: `cargo test`
    - Run DBMS Server: `cargo run --bin modelardbd path_to_local_data_folder`
    - Run Client: `cargo run --bin modelardb [server_address] [query_file]`
-4. Move `modelardbd`, `modelardbm`, and `modelardb` from the `target` directory to any directory.
+5. Move `modelardbd`, `modelardbm`, and `modelardb` from the `target` directory to any directory.
 
 ## Usage
 ModelarDB consists of three binaries: `modelardbd` is a DBMS server that manages data and executes SQL queries,
@@ -49,7 +50,7 @@ of the instances in the cloud is to execute queries on the data in the object st
 Thus, when `modelardbd` is deployed in edge mode, it executes queries against local storage for low latency queries on
 the latest data and when it is deployed in cloud mode, it executes queries against the object store for efficient
 analytics on all the data transferred to the cloud. `modelardbm` implements the [Apache Arrow Flight
-protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for retrieving the `modelardbd` instance in
+protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for looking up the `modelardbd` instance in
 the cloud to use for executing each query, thus providing a single, workload-balanced, interface for querying the data
 in the object store using the `modelardbd` instances in the cloud.
 
@@ -60,9 +61,9 @@ has different requirements and supports different features.
 1. Start `modelardbd` in edge mode using only local storage - This is a simple and easy-to-use single-node deployment
 for use cases where a redundant object store is not required, e.g., when testing or experimenting. In edge mode without
 an object store, data is ingested to and queried from local storage. Thus, `modelardbd` instances in this configuration
-does not support transferring ingested data to an object store and does not support querying data from the object store.
-To run `modelardbd` in edge mode using only local storage, simply pass the path to the local folder `modelardbd` should
-use as its data folder:
+do not support transferring ingested data to an object store and do not support querying data from the object store. To
+run `modelardbd` in edge mode using only local storage, simply pass the path to the local folder `modelardbd` should use
+as its data folder:
 
 ```shell
 modelardbd path_to_local_data_folder
@@ -80,7 +81,7 @@ configuration supports ingesting data to a local folder in the cloud, transferri
 object store, and querying the data in the object store in the cloud.
 
 The following environment variables must be set to appropriate values if an Amazon S3-compatible object store is used so
-`modelardbm` and `modelardbd` knows how to connect to it:
+`modelardbm` and `modelardbd` know how to connect to it:
 
 ```shell
 AWS_ENDPOINT
@@ -89,7 +90,7 @@ AWS_SECRET_ACCESS_KEY
 ```
 
 For example, to use a local instance of [MinIO](https://min.io/), assuming the access key id `KURo1eQeMhDeVsrz` and the
-secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` has been created through MinIO's command line tool or web
+secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` have been created through MinIO's command line tool or web
 interface, set the environment variables as follows:
 
 ```shell
@@ -140,26 +141,26 @@ connected to it. Note that the manager uses `9998` as the default port and that 
 default port. The ports can be changed by specifying different ports with the following environment variables:
 
 ```shell
-MODELARDBM_PORT=8888
-MODELARDBD_PORT=8889
+MODELARDBM_PORT=8888  # By default modelardbm uses port 9998.
+MODELARDBD_PORT=8889  # By default modelardbd uses port 9999.
 ```
 
 ### Ingest Data
 Before data can be ingested into `modelardbd`, tables must be created. `modelardbd` supports two types of tables,
-standard relational tables created through `CREATE TABLE` statements and model tables created through `CREATE MODEL
-TABLE` statements. From a user's perspective, a model table functions like a standard relational table and can be
-queried using SQL. However, the implementation of a model table is highly optimized for time series and a model table
-must contain a single column with timestamps, one or more columns with fields (measurements as floating-point values),
-and zero or more columns with tags (metadata as strings). As stated, model tables can be created using `CREATE MODEL
-TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD`, an error bound can optionally be
-specified in parentheses to enable lossy compression with a per-value error bound. The error bound can be absolute or
-relative, e.g., `FIELD(1.0)` creates a column with an absolute per-value error bound that allows each value to deviate
-by at most 1.0 while `FIELD(1.0%)` creates a column with a relative per-value error bound that allows each value to
-deviate by at most 1.0%. `FIELD` columns default to an error bound of zero when none is specified. Thus, by default
-lossless compression is used and lossy compression is only used if explicitly requested. If the values in a `FIELD`
-column can be computed from other columns they need not be stored. Instead, if a `FIELD` column is defined using the
-syntax `FIELD AS (expression)`, e.g., `FIELD AS (column_one + column_two)`, the values of the `FIELD` column will be the
-result of the expression. As these generated `FIELD` columns do not store any data, an error bound cannot be defined.
+standard relational tables created with `CREATE TABLE` statements and model tables created with `CREATE MODEL TABLE`
+statements. From a user's perspective, a model table functions like a standard relational table and can be queried using
+SQL. However, the implementation of a model table is highly optimized for time series and a model table must contain a
+single column with timestamps, one or more columns with fields (measurements as floating-point values), and zero or more
+columns with tags (metadata as strings). As stated, model tables can be created using `CREATE MODEL TABLE` statements
+with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD`, an error bound can optionally be specified in
+parentheses to enable lossy compression with a per-value error bound. The error bound can be absolute or relative, e.g.,
+`FIELD(1.0)` creates a column with an absolute per-value error bound that allows each value to deviate by at most 1.0
+while `FIELD(1.0%)` creates a column with a relative per-value error bound that allows each value to deviate by at most
+1.0%. `FIELD` columns default to an error bound of zero when none is specified. Thus, by default lossless compression is
+used and lossy compression is only used if explicitly requested. If the values in a `FIELD` column can be computed from
+other columns they need not be stored. Instead, if a `FIELD` column is defined using the syntax `FIELD AS (expression)`,
+e.g., `FIELD AS (column_one + column_two)`, the values of the `FIELD` column will be the result of the expression. As
+these generated `FIELD` columns do not store any data, an error bound cannot be defined.
 
 As both `CREATE MODEL TABLE` and `CREATE TABLE` are just SQL statements, both types of tables can be created using
 `modelardb` or programmatically using Apache Arrow Flight. For example, a model table storing a simple multivariate

@@ -39,11 +39,11 @@ other crates.
 - [modelardb_compression](/crates/modelardb_compression) - Library providing lossless and lossy model-based compression
 of time series.
   - **Models** - Multiple types of models used for compressing time series within different kinds of error bounds
-  (possible 0% error).
-  - **Compression** - Compresses univariate time series within user-defined error bounds (possible 0% error) and outputs
+  (possibly 0% error).
+  - **Compression** - Compresses univariate time series within user-defined error bounds (possibly 0% error) and outputs
   compressed segments.
   - **Merge** - Merges compressed segments if possible within the error bound to further decrease the amount of storage
-  bandwidth required.
+  and bandwidth required.
   For example, if a time series has the same structure at the end of a batch of data points and the start of the
   following batch of data points.
   - **Types** - Types used throughout modelardb_compression, e.g., for creating compressed segments and accumulating
@@ -81,7 +81,7 @@ this repository, are covered here.
 
 ### Documentation
 All modules must have an accompanying doc comment that describes the general functionality of the module and its
-content. Thus, a brief description of the central structs, functions, etc should be included if important to understand
+content. Thus, a brief description of the central structs, functions, etc. should be included if important to understand
 the module.
 
 Functions and methods should be ordered by visibility and the order in which they are expected to be used. For example,
@@ -89,9 +89,9 @@ for a struct its public constructors should be placed first, then the most commo
 most commonly used public methods, and so on. Private functions and methods should be placed right after the last public
 function or method that calls them.
 
-All public and private structs, traits, functions, and methods must have an accompanying doc comment that describes
-their purpose. Generally, these doc comments should include a description of the main parameters, the return value, and,
-if beneficial, examples.
+All public and private structs, traits, functions, and methods must have accompanying doc comments that describes their
+purpose. Generally, these doc comments should include a description of the main parameters, the return value, and, if
+beneficial, examples.
 
 ### Terminology
 The following terminology must be used throughout the ModelarDB project.
@@ -100,9 +100,9 @@ The following terminology must be used throughout the ModelarDB project.
 - **try** - Used as a prefix for functions and methods that return `Result` or `Option` to indicate it may return a
 value.
 - **normal table** A relational table that stores data directly in Apache Parquet files managed by Delta Lake and thus
-use the same schema at the logical and physical layer.
+uses the same schema at the logical and physical layer.
 - **model table** A relational table that stores time series data as compressed segments containing metadata and models
-in Apache Parquet files managed by Delta Lake and thus use different schemas at the logical and physical layer.
+in Apache Parquet files managed by Delta Lake and thus uses different schemas at the logical and physical layer.
 - **table** A normal table or a model table, e.g., used when a function or method accepts both types of tables.
 
 ### Testing and Linting
