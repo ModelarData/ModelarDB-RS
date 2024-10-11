@@ -423,7 +423,7 @@ impl FlightService for FlightServiceHandler {
     /// * `CreateTable`: Execute a SQL query containing a command that creates a table.
     /// These commands can be `CREATE TABLE table_name(...` which creates a normal table, and
     /// `CREATE MODEL TABLE table_name(...` which creates a model table.
-		/// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
+    /// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
     /// table that should be dropped must be provided in the body of the action. All data in the
     /// table, both in memory and on disk, is deleted.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
@@ -722,7 +722,7 @@ impl FlightService for FlightServiceHandler {
 
         let output = stream::iter(vec![
             Ok(create_table_action),
-						Ok(drop_table_action),
+            Ok(drop_table_action),
             Ok(flush_memory_action),
             Ok(flush_node_action),
             Ok(kill_node_action),

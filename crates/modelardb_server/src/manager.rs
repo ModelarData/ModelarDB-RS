@@ -199,7 +199,7 @@ mod tests {
         "UpdateConfiguration",
     ];
 
-    const RESTRICTED_ACTIONS: [&str; 2] = ["CreateTable", "KillNode", "DropTable"];
+    const RESTRICTED_ACTIONS: [&str; 3] = ["CreateTable", "KillNode", "DropTable"];
 
     // Tests for validate_action_request().
     #[tokio::test]

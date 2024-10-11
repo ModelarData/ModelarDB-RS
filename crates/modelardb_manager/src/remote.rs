@@ -390,7 +390,7 @@ impl FlightService for FlightServiceHandler {
     /// commands can be `CREATE TABLE table_name(...` which creates a normal table, and
     /// `CREATE MODEL TABLE table_name(...` which creates a model table. The table is created
     /// for all nodes controlled by the manager.
-		/// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
+    /// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
     /// the table that should be dropped must be provided in the body of the action. The table is
     /// dropped for all nodes controlled by the manager and all data in the table, both locally on
     /// the nodes and in the remote object store, is deleted.
@@ -612,7 +612,7 @@ impl FlightService for FlightServiceHandler {
         let output = stream::iter(vec![
             Ok(initialize_database_action),
             Ok(create_table_action),
-						Ok(drop_table_action),
+            Ok(drop_table_action),
             Ok(register_node_action),
             Ok(remove_node_action),
         ]);
