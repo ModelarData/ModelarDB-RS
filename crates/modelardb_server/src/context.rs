@@ -291,7 +291,7 @@ impl Context {
         }
 
         // Deregister the table from the Apache DataFusion session. This is done first to
-        // avoid ingesting data into the table while it is being deleted.
+        // avoid data being ingested into the table while it is being deleted.
         self.session
             .deregister_table(table_name)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
