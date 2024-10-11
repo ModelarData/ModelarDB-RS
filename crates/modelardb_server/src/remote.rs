@@ -423,6 +423,9 @@ impl FlightService for FlightServiceHandler {
     /// * `CreateTable`: Execute a SQL query containing a command that creates a table.
     /// These commands can be `CREATE TABLE table_name(...` which creates a normal table, and
     /// `CREATE MODEL TABLE table_name(...` which creates a model table.
+    /// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
+    /// table that should be dropped must be provided in the body of the action. All data in the
+    /// table, both in memory and on disk, is deleted.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -475,6 +478,19 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             // Confirm the table was created.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "DropTable" {
+            // Read the table name from the action body.
+            let table_name = str::from_utf8(&action.body)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            info!("Received request to drop table '{}'.", table_name);
+
+            self.context
+                .drop_table(table_name)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Confirm the table was dropped.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "FlushMemory" {
             self.context
@@ -659,6 +675,11 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
+        let drop_table_action = ActionType {
+            r#type: "DropTable".to_owned(),
+            description: "Drop a table and all its data.".to_owned(),
+        };
+
         let flush_memory_action = ActionType {
             r#type: "FlushMemory".to_owned(),
             description: "Flush the uncompressed data to disk by compressing and saving the data."
@@ -701,6 +722,7 @@ impl FlightService for FlightServiceHandler {
 
         let output = stream::iter(vec![
             Ok(create_table_action),
+            Ok(drop_table_action),
             Ok(flush_memory_action),
             Ok(flush_node_action),
             Ok(kill_node_action),

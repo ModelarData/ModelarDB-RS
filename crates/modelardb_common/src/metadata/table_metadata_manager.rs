@@ -33,6 +33,7 @@ use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
+use datafusion::logical_expr::lit;
 use datafusion::prelude::col;
 use deltalake::kernel::{DataType, StructField};
 use deltalake::DeltaTableError;
@@ -359,6 +360,82 @@ impl TableMetadataManager {
                     .await?;
             }
         }
+
+        Ok(())
+    }
+
+    /// Depending on the type of the table with `table_name`, delete either the normal table
+    /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
+    /// exist or the metadata could not be deleted, [`DeltaTableError`] is returned.
+    pub async fn delete_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        if self.table_names().await?.contains(&table_name.to_owned()) {
+            self.delete_normal_table_metadata(table_name).await
+        } else if self
+            .model_table_names()
+            .await?
+            .contains(&table_name.to_owned())
+        {
+            self.delete_model_table_metadata(table_name).await
+        } else {
+            Err(DeltaTableError::NotATable(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
+        }
+    }
+
+    /// Delete the metadata for the normal table with `table_name` from the `table_metadata` table in the
+    /// metadata Delta Lake. If the metadata could not be deleted, [`DeltaTableError`] is returned.
+    async fn delete_normal_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        let ops = self
+            .metadata_delta_lake
+            .metadata_table_delta_ops("table_metadata")
+            .await?;
+
+        ops.delete()
+            .with_predicate(col("table_name").eq(lit(table_name)))
+            .await?;
+
+        Ok(())
+    }
+
+    /// Delete the metadata for the model table with `table_name` from the metadata Delta Lake.
+    /// This includes deleting the tags table for the model table, deleting a row from the
+    /// `model_table_metadata` table, deleting a row from the `model_table_field_columns` table for
+    /// each field column, and deleting the tag metadata from the `model_table_hash_table_name` table
+    /// and the tag cache. If the metadata could not be deleted, [`DeltaTableError`] is returned.
+    async fn delete_model_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        // Delete the model_table_name_tags table.
+        self.metadata_delta_lake
+            .drop_delta_lake_table(&format!("{table_name}_tags"))
+            .await?;
+
+        // Delete the table metadata from the model_table_metadata table.
+        self.metadata_delta_lake
+            .metadata_table_delta_ops("model_table_metadata")
+            .await?
+            .delete()
+            .with_predicate(col("table_name").eq(lit(table_name)))
+            .await?;
+
+        // Delete the column metadata from the model_table_field_columns table.
+        self.metadata_delta_lake
+            .metadata_table_delta_ops("model_table_field_columns")
+            .await?
+            .delete()
+            .with_predicate(col("table_name").eq(lit(table_name)))
+            .await?;
+
+        // Delete the tag metadata from the model_table_hash_table_name table.
+        self.metadata_delta_lake
+            .metadata_table_delta_ops("model_table_hash_table_name")
+            .await?
+            .delete()
+            .with_predicate(col("table_name").eq(lit(table_name)))
+            .await?;
+
+        // Delete the tag metadata from the tag cache. The table name is always the last part of the cache key.
+        self.tag_value_hashes
+            .retain(|key, _| key.split(';').last() != Some(table_name));
 
         Ok(())
     }
@@ -873,20 +950,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_table_metadata() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
-            .await
-            .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_1", "CREATE TABLE table_1")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_2", "CREATE TABLE table_2")
-            .await
-            .unwrap();
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
         // Retrieve the table from the metadata Delta Lake.
         let batch = metadata_manager
@@ -910,20 +974,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_table_names() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
-            .await
-            .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_1", "CREATE TABLE table_1")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .save_table_metadata("table_2", "CREATE TABLE table_2")
-            .await
-            .unwrap();
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
         let table_names = metadata_manager.table_names().await.unwrap();
         assert_eq!(table_names, vec!["table_2", "table_1"]);
@@ -1005,6 +1056,117 @@ mod tests {
             StringArray::from(vec![None, None] as Vec<Option<&str>>)
         );
         assert_eq!(**batch.column(6), BinaryArray::from(vec![None, None]));
+    }
+
+    #[tokio::test]
+    async fn test_delete_table_metadata() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        metadata_manager
+            .delete_table_metadata("table_2")
+            .await
+            .unwrap();
+
+        // Verify that table_2 was deleted from the table_metadata table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .await
+            .unwrap();
+
+        assert_eq!(**batch.column(0), StringArray::from(vec!["table_1"]));
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_table_metadata() {
+        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        metadata_manager
+            .delete_table_metadata(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // Verify that the tags table was deleted from the Delta Lake.
+        let tags_table_name = format!("{}_tags", test::MODEL_TABLE_NAME);
+        assert!(!temp_dir
+            .path()
+            .join("metadata")
+            .join(tags_table_name)
+            .exists());
+
+        // Verify that the model table was deleted from the model_table_metadata table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                "model_table_metadata",
+                "SELECT table_name FROM model_table_metadata",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the field columns were deleted from the model_table_field_columns table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                "model_table_field_columns",
+                "SELECT table_name FROM model_table_field_columns",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the tag metadata was deleted from the model_table_hash_table_name table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                "model_table_hash_table_name",
+                "SELECT table_name FROM model_table_hash_table_name",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the tag cache was cleared.
+        assert!(metadata_manager.tag_value_hashes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_table_metadata_for_missing_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        assert!(metadata_manager
+            .delete_table_metadata("missing_table")
+            .await
+            .is_err());
+    }
+
+    async fn create_metadata_manager_and_save_tables() -> (TempDir, TableMetadataManager) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
+
+        metadata_manager
+            .save_table_metadata("table_1", "CREATE TABLE table_1")
+            .await
+            .unwrap();
+
+        metadata_manager
+            .save_table_metadata("table_2", "CREATE TABLE table_2")
+            .await
+            .unwrap();
+
+        (temp_dir, metadata_manager)
     }
 
     #[tokio::test]
@@ -1315,11 +1477,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mapping_from_hash_to_tags_with_invalid_table() {
+    async fn test_mapping_from_hash_to_tags_with_missing_model_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let result = metadata_manager
-            .mapping_from_hash_to_tags("invalid_table_name", &["tag"])
+            .mapping_from_hash_to_tags("missing_model_table", &["tag"])
             .await;
 
         assert!(result.is_err());

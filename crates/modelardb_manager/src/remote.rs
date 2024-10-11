@@ -185,6 +185,40 @@ impl FlightServiceHandler {
 
         Ok(())
     }
+
+    /// Drop the table from the metadata Delta Lake, the data Delta Lake, and from each node
+    /// controlled by the manager. If the table does not exist or the table cannot be dropped from
+    /// the remote data folder and from each node, return [`Status`].
+    async fn drop_cluster_table(&self, table_name: &str) -> Result<(), Status> {
+        // Drop the table from the remote data folder metadata Delta Lake. This will return an error
+        // if the table does not exist.
+        self.context
+            .remote_data_folder
+            .metadata_manager
+            .table_metadata_manager
+            .delete_table_metadata(table_name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        // Drop the table from the remote data folder data Delta lake.
+        self.context
+            .remote_data_folder
+            .delta_lake
+            .drop_delta_lake_table(table_name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        // Drop the table from the nodes controlled by the manager.
+        self.context
+            .cluster
+            .read()
+            .await
+            .drop_tables(table_name, &self.context.key)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
@@ -356,6 +390,10 @@ impl FlightService for FlightServiceHandler {
     /// commands can be `CREATE TABLE table_name(...` which creates a normal table, and
     /// `CREATE MODEL TABLE table_name(...` which creates a model table. The table is created
     /// for all nodes controlled by the manager.
+    /// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
+    /// the table that should be dropped must be provided in the body of the action. The table is
+    /// dropped for all nodes controlled by the manager and all data in the table, both locally on
+    /// the nodes and in the remote object store, is deleted.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
     /// to the cluster of nodes controlled by the manager and the key and object store used in the
     /// cluster is returned.
@@ -458,6 +496,18 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "DropTable" {
+            // Extract the table name from the action body.
+            let table_name = str::from_utf8(&action.body)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            info!("Received request to drop table '{}'.", table_name);
+
+            // Drop the table from the metadata Delta Lake, the data Delta Lake, and from each
+            // node controlled by the manager.
+            self.drop_cluster_table(table_name).await?;
+
+            // Confirm the table was dropped.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let (url, offset_data) = decode_argument(&action.body)?;
@@ -543,6 +593,11 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
+        let drop_table_action = ActionType {
+            r#type: "DropTable".to_owned(),
+            description: "Drop a table and all its data.".to_owned(),
+        };
+
         let register_node_action = ActionType {
             r#type: "RegisterNode".to_owned(),
             description: "Register either an edge or cloud node with the manager.".to_owned(),
@@ -557,6 +612,7 @@ impl FlightService for FlightServiceHandler {
         let output = stream::iter(vec![
             Ok(initialize_database_action),
             Ok(create_table_action),
+            Ok(drop_table_action),
             Ok(register_node_action),
             Ok(remove_node_action),
         ]);

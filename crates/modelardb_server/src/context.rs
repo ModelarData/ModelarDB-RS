@@ -277,6 +277,57 @@ impl Context {
         Ok(())
     }
 
+    /// Drop the table with `table_name` if it exists. The table is deregistered from the Apache
+    /// Arrow Datafusion session and deleted from the storage engine, metadata Delta Lake, and data
+    /// Delta Lake. If the table does not exist or if it could not be dropped, [`ModelarDbError`]
+    /// is returned.
+    pub async fn drop_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+        // Deregistering the table from the Apache DataFusion session and deleting the table from
+        // the storage engine does not require the table to exist, so the table is checked first.
+        if self.check_if_table_exists(table_name).await.is_ok() {
+            return Err(ModelarDbError::TableError(format!(
+                "Table with name '{table_name}' does not exist."
+            )));
+        }
+
+        // Deregister the table from the Apache DataFusion session. This is done first to
+        // avoid data being ingested into the table while it is being deleted.
+        self.session
+            .deregister_table(table_name)
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        // Drop the table from the storage engine by flushing the data managers. The table is
+        // marked as dropped in the data transfer component first to avoid transferring data to the
+        // remote data folder when flushing.
+        let storage_engine = self.storage_engine.write().await;
+        storage_engine.mark_table_as_dropped(table_name).await;
+
+        storage_engine
+            .flush()
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        storage_engine.clear_table(table_name).await;
+
+        // Delete the table metadata from the metadata Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .delete_table_metadata(table_name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        // Delete the table from the Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .delta_lake
+            .drop_delta_lake_table(table_name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        Ok(())
+    }
+
     /// Lookup the [`ModelTableMetadata`] of the model table with name `table_name` if it exists.
     /// Specifically, the method returns:
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
@@ -517,6 +568,84 @@ mod tests {
 
         // Register the table with Apache DataFusion.
         context_2.register_model_tables().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_drop_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        context
+            .parse_and_create_table(test::TABLE_SQL)
+            .await
+            .unwrap();
+
+        assert!(context.check_if_table_exists("table_name").await.is_err());
+
+        context.drop_table("table_name").await.unwrap();
+
+        // The table should be deregistered from the Apache DataFusion session.
+        assert!(context.check_if_table_exists("table_name").await.is_ok());
+
+        // The table should be deleted from the metadata Delta Lake.
+        let table_names = context
+            .data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .table_names()
+            .await
+            .unwrap();
+
+        assert!(table_names.is_empty());
+
+        // The table should be deleted from the Delta Lake.
+        assert!(!temp_dir.path().join("tables").exists());
+    }
+
+    #[tokio::test]
+    async fn test_drop_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        context
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
+
+        context.drop_table(test::MODEL_TABLE_NAME).await.unwrap();
+
+        // The model table should be deregistered from the Apache DataFusion session.
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_ok());
+
+        // The model table should be deleted from the metadata Delta Lake.
+        let model_table_metadata = context
+            .data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .model_table_metadata()
+            .await
+            .unwrap();
+
+        assert!(model_table_metadata.is_empty());
+
+        // The model table should be deleted from the Delta Lake.
+        assert!(!temp_dir.path().join("tables").exists());
+    }
+
+    #[tokio::test]
+    async fn test_drop_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        assert!(context.drop_table(test::MODEL_TABLE_NAME).await.is_err());
     }
 
     #[tokio::test]
