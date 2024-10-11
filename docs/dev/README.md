@@ -89,7 +89,7 @@ for a struct its public constructors should be placed first, then the most commo
 most commonly used public methods, and so on. Private functions and methods should be placed right after the last public
 function or method that calls them.
 
-All public and private structs, traits, functions, and methods must have accompanying doc comments that describes their
+All public and private structs, traits, functions, and methods must have accompanying doc comments that describe their
 purpose. Generally, these doc comments should include a description of the main parameters, the return value, and, if
 beneficial, examples.
 
