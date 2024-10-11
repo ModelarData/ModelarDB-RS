@@ -45,10 +45,10 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-use modelardb_common::schemas::GRID_SCHEMA;
 use modelardb_common::storage;
-use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
+use modelardb_types::schemas::GRID_SCHEMA;
+use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 
 use super::{QUERY_ORDER_DATA_POINT, QUERY_ORDER_SEGMENT};
 
@@ -269,7 +269,7 @@ impl GridStream {
         let batch = storage::univariate_ids_int64_to_uint64(batch);
 
         // Retrieve the arrays from batch and cast them to their concrete type.
-        modelardb_common::arrays!(
+        modelardb_types::arrays!(
             batch,
             univariate_ids,
             model_type_ids,
@@ -295,15 +295,15 @@ impl GridStream {
         // Copy over the data points from the current batch to keep the resulting batch sorted.
         let current_batch = &self.current_batch; // Required as self cannot be passed to array!.
         univariate_id_builder.append_slice(
-            &modelardb_common::array!(current_batch, 0, UInt64Array).values()
+            &modelardb_types::array!(current_batch, 0, UInt64Array).values()
                 [self.current_batch_offset..],
         );
         timestamp_builder.append_slice(
-            &modelardb_common::array!(current_batch, 1, TimestampArray).values()
+            &modelardb_types::array!(current_batch, 1, TimestampArray).values()
                 [self.current_batch_offset..],
         );
         value_builder.append_slice(
-            &modelardb_common::array!(current_batch, 2, ValueArray).values()
+            &modelardb_types::array!(current_batch, 2, ValueArray).values()
                 [self.current_batch_offset..],
         );
 

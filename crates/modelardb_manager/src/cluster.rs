@@ -22,8 +22,8 @@ use arrow_flight::Action;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::info;
-use modelardb_common::errors::ModelarDbError;
-use modelardb_common::types::ServerMode;
+use modelardb_types::errors::ModelarDbError;
+use modelardb_types::types::ServerMode;
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::Request;
 

@@ -27,8 +27,8 @@ use datafusion::arrow::array::StringArray;
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::StreamExt;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+use modelardb_types::schemas::COMPRESSED_SCHEMA;
+use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::path::{Path, PathPart};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
@@ -731,7 +731,7 @@ impl UncompressedDataManager {
             )))
         })?;
 
-        let uncompressed_timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
+        let uncompressed_timestamps = modelardb_types::array!(data_points, 0, TimestampArray);
 
         let compressed_segments = model_table_metadata
             .field_column_indices
@@ -740,7 +740,7 @@ impl UncompressedDataManager {
             .map(|(value_index, field_column_index)| {
                 // One is added to value_index as the first array contains the timestamps.
                 let uncompressed_values =
-                    modelardb_common::array!(data_points, value_index + 1, ValueArray);
+                    modelardb_types::array!(data_points, value_index + 1, ValueArray);
                 let univariate_id = tag_hash | (*field_column_index as u64);
                 let error_bound = model_table_metadata.error_bounds[*field_column_index];
 
@@ -809,9 +809,9 @@ mod tests {
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
-    use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
-    use modelardb_common::types::{TimestampBuilder, ValueBuilder};
+    use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
+    use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
     use tempfile::TempDir;

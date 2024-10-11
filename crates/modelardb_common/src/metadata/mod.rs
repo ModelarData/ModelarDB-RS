@@ -344,39 +344,3 @@ impl MetadataDeltaLake {
         format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
     }
 }
-
-/// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
-pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
-    univariate_id & 18446744073709550592
-}
-
-/// Extract the last 10-bits from `univariate_id` which is the index of the time series column.
-pub fn univariate_id_to_column_index(univariate_id: u64) -> u16 {
-    (univariate_id & 1023) as u16
-}
-
-/// Normalize `name` to allow direct comparisons between names.
-pub fn normalize_name(name: &str) -> String {
-    name.to_lowercase()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Tests for normalize_name().
-    #[test]
-    fn test_normalize_table_name_lowercase_no_effect() {
-        assert_eq!("table_name", normalize_name("table_name"));
-    }
-
-    #[test]
-    fn test_normalize_table_name_uppercase() {
-        assert_eq!("table_name", normalize_name("TABLE_NAME"));
-    }
-
-    #[test]
-    fn test_normalize_table_name_mixed_case() {
-        assert_eq!("table_name", normalize_name("Table_Name"));
-    }
-}

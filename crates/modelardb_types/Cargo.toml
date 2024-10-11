@@ -13,7 +13,7 @@
 # limitations under the License.
 
 [package]
-name = "modelardb_compression"
+name = "modelardb_types"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2021"
@@ -21,7 +21,6 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
 arrow.workspace = true
-modelardb_types = { path = "../modelardb_types" }
 
 [dev-dependencies]
 modelardb_common = { path = "../modelardb_common" }

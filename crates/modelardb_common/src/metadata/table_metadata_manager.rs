@@ -37,12 +37,12 @@ use datafusion::logical_expr::lit;
 use datafusion::prelude::col;
 use deltalake::kernel::{DataType, StructField};
 use deltalake::DeltaTableError;
+use modelardb_types::types::ErrorBound;
 
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataDeltaLake;
 use crate::parser;
 use crate::test::ERROR_BOUND_ZERO;
-use crate::types::ErrorBound;
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -258,7 +258,7 @@ impl TableMetadataManager {
             )
             .await?;
 
-        let table_names = crate::array!(batch, 0, StringArray);
+        let table_names = modelardb_types::array!(batch, 0, StringArray);
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
     }
 
@@ -454,8 +454,8 @@ impl TableMetadataManager {
             .await?;
 
         let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
-        let table_name_array = crate::array!(batch, 0, StringArray);
-        let query_schema_bytes_array = crate::array!(batch, 1, BinaryArray);
+        let table_name_array = modelardb_types::array!(batch, 0, StringArray);
+        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryArray);
 
         for row_index in 0..batch.num_rows() {
             let table_name = table_name_array.value(row_index);
@@ -490,8 +490,8 @@ impl TableMetadataManager {
             return Err(DeltaTableError::NoMetadata);
         }
 
-        let table_name_array = crate::array!(batch, 0, StringArray);
-        let query_schema_bytes_array = crate::array!(batch, 1, BinaryArray);
+        let table_name_array = modelardb_types::array!(batch, 0, StringArray);
+        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryArray);
 
         let table_name = table_name_array.value(0);
         let query_schema_bytes = query_schema_bytes_array.value(0);
@@ -549,9 +549,9 @@ impl TableMetadataManager {
         let mut column_to_error_bound =
             vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(); query_schema_columns];
 
-        let column_index_array = crate::array!(batch, 0, Int16Array);
-        let error_bound_value_array = crate::array!(batch, 1, Float32Array);
-        let error_bound_is_relative_array = crate::array!(batch, 2, BooleanArray);
+        let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
+        let error_bound_value_array = modelardb_types::array!(batch, 1, Float32Array);
+        let error_bound_is_relative_array = modelardb_types::array!(batch, 2, BooleanArray);
 
         for row_index in 0..batch.num_rows() {
             let error_bound_index = column_index_array.value(row_index);
@@ -594,9 +594,9 @@ impl TableMetadataManager {
 
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
-        let column_index_array = crate::array!(batch, 0, Int16Array);
-        let generated_column_expr_array = crate::array!(batch, 1, StringArray);
-        let generated_column_sources_array = crate::array!(batch, 2, BinaryArray);
+        let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
+        let generated_column_expr_array = modelardb_types::array!(batch, 1, StringArray);
+        let generated_column_sources_array = modelardb_types::array!(batch, 2, BinaryArray);
 
         for row_index in 0..batch.num_rows() {
             let generated_column_index = column_index_array.value(row_index);
@@ -780,7 +780,7 @@ impl TableMetadataManager {
             )
             .await?;
 
-        let table_names = crate::array!(batch, 0, StringArray);
+        let table_names = modelardb_types::array!(batch, 0, StringArray);
         if table_names.is_empty() {
             Err(DeltaTableError::Generic(format!(
                 "No table contains a time series with tag hash '{tag_hash}'."
@@ -815,13 +815,13 @@ impl TableMetadataManager {
             )
             .await?;
 
-        let hash_array = crate::array!(batch, 0, Int64Array);
+        let hash_array = modelardb_types::array!(batch, 0, Int64Array);
 
         // For each tag column, get the corresponding column array.
         let tag_arrays: Vec<&StringArray> = tag_column_names
             .iter()
             .enumerate()
-            .map(|(index, _tag_column)| crate::array!(batch, index + 1, StringArray))
+            .map(|(index, _tag_column)| modelardb_types::array!(batch, index + 1, StringArray))
             .collect();
 
         let mut hash_to_tags = HashMap::new();
@@ -907,7 +907,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::test;
-    use crate::types::{ArrowTimestamp, ArrowValue};
+    use modelardb_types::types::{ArrowTimestamp, ArrowValue};
 
     // Tests for TableMetadataManager.
     #[tokio::test]

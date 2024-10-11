@@ -20,8 +20,8 @@
 /// # use std::sync::Arc;
 /// #
 /// # use arrow::record_batch::RecordBatch;
-/// # use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
-/// # use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+/// # use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
+/// # use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};
 /// #
 /// # let record_batch = RecordBatch::try_new(
 /// #     UNCOMPRESSED_SCHEMA.0.clone(),
@@ -30,7 +30,7 @@
 /// #         Arc::new(ValueArray::from(Vec::<Value>::new())),
 /// #     ],
 /// # ).unwrap();
-/// let array = modelardb_common::array!(record_batch, 0, TimestampArray);
+/// let array = modelardb_types::array!(record_batch, 0, TimestampArray);
 /// ```
 ///
 /// # Panics
@@ -56,8 +56,8 @@ macro_rules! array {
 /// #
 /// # use arrow::array::{BinaryArray, Float32Array, UInt8Array, UInt16Array, UInt64Array};
 /// # use arrow::record_batch::RecordBatch;
-/// # use modelardb_common::schemas::COMPRESSED_SCHEMA;
-/// # use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+/// # use modelardb_types::schemas::COMPRESSED_SCHEMA;
+/// # use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};
 /// #
 /// # let record_batch = RecordBatch::try_new(
 /// #     COMPRESSED_SCHEMA.0.clone(),
@@ -75,7 +75,7 @@ macro_rules! array {
 /// #         Arc::new(UInt16Array::from(Vec::<u16>::new())),
 /// #     ],
 /// # ).unwrap();
-/// modelardb_common::arrays!(record_batch, field_columns, univariate_ids, model_type_ids,
+/// modelardb_types::arrays!(record_batch, field_columns, univariate_ids, model_type_ids,
 /// start_times, end_times, timestamps, min_values, max_values, values, residuals, errors);
 /// ```
 ///

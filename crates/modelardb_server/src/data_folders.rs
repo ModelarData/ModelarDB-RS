@@ -21,7 +21,7 @@ use std::sync::Arc;
 use deltalake::DeltaTableError;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
-use modelardb_common::types::ServerMode;
+use modelardb_types::types::ServerMode;
 
 use crate::manager::Manager;
 use crate::ClusterMode;

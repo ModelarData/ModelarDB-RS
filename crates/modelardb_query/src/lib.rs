@@ -27,7 +27,7 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::physical_plan::insert::DataSink;
 use datafusion::prelude::SessionContext;
 use deltalake::DeltaTable;
-use modelardb_common::errors::ModelarDbError;
+use modelardb_types::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 

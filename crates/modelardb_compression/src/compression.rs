@@ -18,9 +18,9 @@
 //! models.
 
 use arrow::record_batch::RecordBatch;
-use modelardb_common::errors::ModelarDbError;
-use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{ErrorBound, TimestampArray, ValueArray};
+use modelardb_types::errors::ModelarDbError;
+use modelardb_types::schemas::COMPRESSED_SCHEMA;
+use modelardb_types::types::{ErrorBound, TimestampArray, ValueArray};
 
 use crate::models::gorilla::Gorilla;
 use crate::models::{self, timestamps, GORILLA_ID};
@@ -266,7 +266,7 @@ mod tests {
     };
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
-    use modelardb_common::types::{TimestampBuilder, ValueBuilder};
+    use modelardb_types::types::{TimestampBuilder, ValueBuilder};
 
     use crate::{models, MODEL_TYPE_NAMES};
 
@@ -693,7 +693,7 @@ mod tests {
             compressed_record_batch,
         );
 
-        let model_type_ids = modelardb_common::array!(compressed_record_batch, 1, UInt8Array);
+        let model_type_ids = modelardb_types::array!(compressed_record_batch, 1, UInt8Array);
         assert_eq!(model_type_ids.values(), expected_model_type_ids);
     }
 
@@ -897,7 +897,7 @@ mod tests {
         let mut timestamp_builder = TimestampBuilder::new();
         let mut value_builder = ValueBuilder::new();
 
-        modelardb_common::arrays!(
+        modelardb_types::arrays!(
             compressed_record_batch,
             univariate_ids,
             model_type_ids,
@@ -976,7 +976,7 @@ mod tests {
         );
 
         let compressed_record_batch = compressed_segment_batch_builder.finish();
-        modelardb_common::arrays!(
+        modelardb_types::arrays!(
             compressed_record_batch,
             univariate_ids,
             model_type_ids,

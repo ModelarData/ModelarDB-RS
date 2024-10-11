@@ -38,9 +38,9 @@ use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use deltalake::DeltaTableError;
-use modelardb_common::errors::ModelarDbError;
+use modelardb_types::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::types::TimestampArray;
+use modelardb_types::types::TimestampArray;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::Status;
@@ -59,9 +59,9 @@ use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 const UNCOMPRESSED_DATA_FOLDER: &str = "buffers";
 
 /// The capacity of each uncompressed data buffer as the number of elements in the buffer where each
-/// element is a [`Timestamp`](modelardb_common::types::Timestamp) and a
-/// [`Value`](modelardb_common::types::Value). Note that the resulting size of the buffer has to be
-/// a multiple of 64 bytes to avoid the actual capacity being larger than the requested due to
+/// element is a [`Timestamp`](modelardb_types::types::Timestamp) and a
+/// [`Value`](modelardb_types::types::Value). Note that the resulting size of the buffer has to be a
+/// multiple of 64 bytes to avoid the actual capacity being larger than the requested due to
 /// internal alignment when allocating memory for the two array builders.
 pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: LazyLock<usize> = LazyLock::new(|| {
     env::var("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY").map_or(64 * 1024, |value| {

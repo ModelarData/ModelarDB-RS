@@ -24,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, Sender};
 use datafusion::arrow::array::UInt32Array;
-use modelardb_common::types::{Timestamp, TimestampArray};
+use modelardb_types::types::{Timestamp, TimestampArray};
 // rustc 1.77.2 warns about Observer being unused but ringbuf 0.4.0 requires it to be imported.
 #[allow(unused_imports)]
 use ringbuf::traits::Observer;

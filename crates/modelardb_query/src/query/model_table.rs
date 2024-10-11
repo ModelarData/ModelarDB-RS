@@ -42,8 +42,8 @@ use deltalake::kernel::LogicalFile;
 use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_common::schemas::{DISK_QUERY_COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
-use modelardb_common::types::{ArrowTimestamp, ArrowValue};
+use modelardb_types::schemas::{DISK_QUERY_COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
+use modelardb_types::types::{ArrowTimestamp, ArrowValue};
 
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
@@ -589,7 +589,7 @@ mod tests {
     use datafusion::logical_expr::lit;
     use datafusion::prelude::Expr;
     use modelardb_common::test;
-    use modelardb_common::types::Timestamp;
+    use modelardb_types::types::Timestamp;
 
     const TIMESTAMP_PREDICATE_VALUE: Timestamp = 37;
 

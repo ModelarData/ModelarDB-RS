@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use modelardb_types::schemas::COMPRESSED_SCHEMA;
 
 /// Compressed segments representing data points from a column in a model table as one
 /// [`RecordBatch`].

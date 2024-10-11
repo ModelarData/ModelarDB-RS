@@ -19,7 +19,7 @@
 use std::env;
 use std::sync::Arc;
 
-use modelardb_common::errors::ModelarDbError;
+use modelardb_types::errors::ModelarDbError;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;

@@ -34,7 +34,7 @@
 
 use std::mem;
 
-use modelardb_common::types::{Timestamp, TimestampBuilder};
+use modelardb_types::types::{Timestamp, TimestampBuilder};
 
 use crate::models::bits::{BitReader, BitVecBuilder};
 

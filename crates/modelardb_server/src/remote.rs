@@ -42,9 +42,10 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
-use modelardb_common::types::TimestampBuilder;
-use modelardb_common::{arguments, metadata, remote};
+use modelardb_common::{arguments, remote};
+use modelardb_types::functions;
+use modelardb_types::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
+use modelardb_types::types::TimestampBuilder;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -383,7 +384,7 @@ impl FlightService for FlightServiceHandler {
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
         let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
-        let normalized_table_name = metadata::normalize_name(table_name);
+        let normalized_table_name = functions::normalize_name(table_name);
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table_metadata) = self

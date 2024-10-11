@@ -37,7 +37,7 @@ use datafusion::physical_plan::{
 };
 use futures::stream::Stream;
 use futures::StreamExt;
-use modelardb_common::types::{TimestampArray, ValueArray};
+use modelardb_types::types::{TimestampArray, ValueArray};
 
 /// A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using
 /// [`GeneratedAsStream`] with the location it must be at and the [`PhysicalExpr`] that compute it.

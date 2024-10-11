@@ -23,8 +23,8 @@
 //! [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
-use modelardb_common::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
-use modelardb_common::types::{
+use modelardb_types::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
+use modelardb_types::types::{
     ErrorBound, Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
 };
 
@@ -394,7 +394,7 @@ mod tests {
     use modelardb_common::test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
     };
-    use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
+    use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
     use proptest::num::f32 as ProptestValue;
     use proptest::strategy::Strategy;
     use proptest::{num, prop_assert, prop_assert_eq, prop_assume, proptest};
@@ -899,7 +899,7 @@ mod tests {
         let segments = crate::try_compress(1, error_bound, &timestamps, &values).unwrap();
 
         // Extract the individual columns from the record batch.
-        modelardb_common::arrays!(
+        modelardb_types::arrays!(
             segments,
             _univariate_id_array,
             model_type_id_array,

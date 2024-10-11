@@ -22,7 +22,7 @@
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
-use modelardb_common::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
+use modelardb_types::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 use crate::models;
 use crate::models::bits::{BitReader, BitVecBuilder};

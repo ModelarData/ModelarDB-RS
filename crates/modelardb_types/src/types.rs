@@ -136,7 +136,7 @@ mod tests {
     use proptest::num;
     use proptest::proptest;
 
-    use crate::test::ERROR_BOUND_ZERO;
+    use modelardb_common::test::ERROR_BOUND_ZERO;
 
     // Tests for ErrorBound.
     #[test]
