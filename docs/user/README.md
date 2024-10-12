@@ -1,7 +1,7 @@
 # ModelarDB Installation and Usage
-This document describes how to set up and use ModelarDB. Installation instructions are provided for
-Linux, macOS, FreeBSD, and Windows. To support running ModelarDB in a containerized environment, instructions for
-setting up a Docker environment are also provided. Once installed, using ModelarDB is consistent across all platforms.
+This document describes how to set up and use ModelarDB. Installation instructions are provided for Linux, macOS,
+FreeBSD, and Windows. To support running ModelarDB in a containerized environment, instructions for setting up a Docker
+environment are also provided. Once installed, using ModelarDB is consistent across all platforms.
 
 ## Installation
 ### Linux
@@ -17,113 +17,112 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 
 ### Windows
 1. Install the latest versions of the Microsoft Visual C++ Prerequisites for Rust:
-   - Microsoft Visual C++ Prerequisites for Rust: see [The rustup book](https://rust-lang.github.io/rustup/installation/windows-msvc.html).
+   - Microsoft Visual C++ Prerequisites for Rust: see [The rustup
+   book](https://rust-lang.github.io/rustup/installation/windows-msvc.html).
 
 ### All
 2. Install the latest stable [Rust Toolchain](https://rustup.rs/).
-3. Build, test, and run the system using Cargo:
+3. Clone the repository: `git clone https://github.com/ModelarData/ModelarDB-RS`
+4. Build, test, and run the system using Cargo:
    - Debug Build: `cargo build`
    - Release Build: `cargo build --release`
    - Run Tests: `cargo test`
-   - Run Server: `cargo run --bin modelardbd path_to_local_data_folder`
+   - Run DBMS Server: `cargo run --bin modelardbd path_to_local_data_folder`
    - Run Client: `cargo run --bin modelardb [server_address] [query_file]`
-4. Move `modelardbd`, `modelardbm`, and `modelardb` from the `target` directory to any directory.
+5. Move `modelardbd`, `modelardbm`, and `modelardb` from the `target` directory to any directory.
 
 ## Usage
-ModelarDB includes two binaries that can be deployed individually or together to support different use cases.
-`modelardbd` is a server that can be deployed in either *edge* or *cloud* mode and supports ingesting, compressing,
-and querying time series. `modelardbm` is a manager that can be deployed to manage a cluster of `modelardbd` edge and
-cloud instances. Specifically, `modelardbm` is responsible for keeping the database schema and access to external
-components consistent across all `modelardbd` instances in the cluster. Furthermore, `modelardbm` implements the
-[Arrow Flight RPC protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for querying data from
-the cluster, thus providing a single, workload-balanced, interface for querying data from all `modelardbd` instances in
-the cluster.
+ModelarDB consists of three binaries: `modelardbd` is a DBMS server that manages data and executes SQL queries,
+`modelardbm` is a manager for one or more DBMS servers deployed on the *edge* or in the *cloud*, and `modelardb` is a
+command-line client for connecting to a DBMS server and executing commands and SQL queries. `modelardbd` uses local
+storage on the edge and an Amazon S3-compatible or Azure Blob Storage object store in the cloud. `modelardbd` can be
+deployed alone or together with `modelardbm` depending on the use cases.
 
-For storage, `modelardbd` uses local storage and an Amazon S3-compatible or Azure Blob Storage object store. The
-execution mode dictates where queries are executed. When `modelardbd` is deployed in edge mode, it executes queries
-against local storage and when it is deployed in cloud mode, it executes queries against the object store.
+`modelardbd` can be deployed on a single node to manage data in a local folder. In this configuration `modelardbm` is
+not needed. `modelardbd` can also be deployed in a distributed configuration across edge and cloud. In this
+configuration, `modelardbm` must first be deployed in the cloud to manage the `modelardbd` instances on the edge and in
+the cloud. Specifically, `modelardbm` is responsible for keeping the database schema consistent across all `modelardbd`
+instances in the cluster. After deploying `modelardbm`, instances of `modelardbd` can be deployed on the edge and in
+cloud. While the `modelardbd` instances on the edge and in cloud provides the same functionality, the primary purpose of
+the instances on the edge is to collect data and transfer it to an object store in the cloud while the primary purpose
+of the instances in the cloud is to execute queries on the data in the object store.
+
+Thus, when `modelardbd` is deployed in edge mode, it executes queries against local storage for low latency queries on
+the latest data and when it is deployed in cloud mode, it executes queries against the object store for efficient
+analytics on all the data transferred to the cloud. `modelardbm` implements the [Apache Arrow Flight
+protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for looking up the `modelardbd` instance in
+the cloud to use for executing each query, thus providing a single, workload-balanced, interface for querying the data
+in the object store using the `modelardbd` instances in the cloud.
 
 ### Start Server
 There are three options available when starting `modelardbd` depending on the desired deployment use case. Each option
 has different requirements and supports different features.
 
-1. Start `modelardbd` in edge mode using only local storage - This is a simple and easy-to-use deployment that is ideal
-for testing and experimentation. It does not support transferring ingested time series to an object store and does not
-support querying data from the object store. However, it does support ingesting data to and querying data from local
-storage.
-2. Start `modelardbd` in edge mode with a manager - An already running instance of `modelardbm`, an object store, and a
-PostgreSQL database are required to start `modelardbd` in edge mode with a manager. This deployment supports transferring
-ingested time series to an object store but still queries data from local storage.
-3. Start `modelardbd` in cloud mode with a manager - As above, an already running instance of `modelardbm`, an object
-store, and a PostgreSQL database are required to start `modelardbd` in cloud mode with a manager. This deployment
-supports transferring ingested time series to an object store and queries data from the same object store.
-
-To run `modelardbd` in edge mode using only local storage, i.e., without transferring the ingested time series to an
-object store, simply pass the path to the local folder `modelardbd` should use as its data folder:
+1. Start `modelardbd` in edge mode using only local storage - This is a simple and easy-to-use single-node deployment
+for use cases where a redundant object store is not required, e.g., when testing or experimenting. In edge mode without
+an object store, data is ingested to and queried from local storage. Thus, `modelardbd` instances in this configuration
+do not support transferring ingested data to an object store and do not support querying data from the object store. To
+run `modelardbd` in edge mode using only local storage, simply pass the path to the local folder `modelardbd` should use
+as its data folder:
 
 ```shell
+modelardbd path_to_local_data_folder
+# or
 modelardbd edge path_to_local_data_folder
 ```
 
-To automatically transfer ingested time series to an object store, a manager must first be started. The manager requires
-a PostgreSQL database to store metadata and an Amazon S3-compatible or Azure Blob Storage object store to store the
-transferred time series. The following environment variables must first be set to appropriate values so `modelardbm`
-knows how to connect to the PostgreSQL database:
+2. Start `modelardbd` in edge mode with a manager - A running instance of `modelardbm` and an Amazon S3-compatible or
+Azure Blob Storage object store are required to start `modelardbd` in edge mode with a manager. This configuration
+supports ingesting data to a local folder on the edge, querying the data in the local folder on the edge, and
+transferring data in the local data folder to the object store.
+3. Start `modelardbd` in cloud mode with a manager - As above, a running instance of `modelardbm` and an Amazon
+S3-compatible or Azure Blob Storage object store are required to start `modelardbd` in cloud mode with a manager. This
+configuration supports ingesting data to a local folder in the cloud, transferring data in the local data folder to the
+object store, and querying the data in the object store in the cloud.
+
+The following environment variables must be set to appropriate values if an Amazon S3-compatible object store is used so
+`modelardbm` and `modelardbd` know how to connect to it:
 
 ```shell
-METADATA_DB_HOST
-METADATA_DB_PASSWORD
-METADATA_DB_USER
-```
-
-Furthermore, the following environment variables must be set to appropriate values so `modelardbm` knows which object
-store to connect to, how to authenticate, and if an HTTP connection is allowed or if HTTPS is required:
-
-```shell
+AWS_ENDPOINT
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
-AWS_DEFAULT_REGION
-AWS_ENDPOINT
-AWS_ALLOW_HTTP
 ```
 
 For example, to use a local instance of [MinIO](https://min.io/), assuming the access key id `KURo1eQeMhDeVsrz` and the
-secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` has been created through
-MinIO's command line tool or web interface, set the environment variables as follows:
+secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` have been created through MinIO's command line tool or web
+interface, set the environment variables as follows:
 
 ```shell
+AWS_ENDPOINT="http://127.0.0.1:9000"
 AWS_ACCESS_KEY_ID="KURo1eQeMhDeVsrz"
 AWS_SECRET_ACCESS_KEY="sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p"
-AWS_DEFAULT_REGION=""
-AWS_ENDPOINT="http://127.0.0.1:9000"
-AWS_ALLOW_HTTP="true"
 ```
 
-Then, assuming a bucket named `wind-turbine` has been created through MinIO's command line tool or web interface and
-a PostgreSQL database named `metadata` has been created, `modelardbm` can be started with the following command:
+Then, assuming a bucket named `wind-turbine` has been created through MinIO's command line tool or web interface,
+`modelardbm` can be started with the following command:
 
 ```shell
-modelardbm metadata s3://wind-turbine
+modelardbm s3://wind-turbine
 ```
 
 `modelardbm` also supports using [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/)
-for the remote object store. To use [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/),
-set the following environment variables instead:
+for the remote object store. To use Azure Blob Storage, set the following environment variables:
 
 ```shell
 AZURE_STORAGE_ACCOUNT_NAME
 AZURE_STORAGE_ACCESS_KEY
 ```
 
-Assuming a container named `wind-turbine` already exists, `modelardbm` can then be started with transfer of the ingested
-time series to the [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/) container `wind-turbine`:
+Then, assuming a container named `wind-turbine` has been created, `modelardbm` can be started with the following
+command:
 
 ```shell
-modelardbm metadata azureblobstorage://wind-turbine
+modelardbm azureblobstorage://wind-turbine
 ```
 
-When a manager is running, `modelardbd` can be started in edge mode with transfer of the ingested time series to the
-object store given to `modelardbm` using the following command:
+When a manager is running, `modelardbd` can be started in edge mode with transfer of the ingested data to the object
+store given to `modelardbm` using the following command:
 
 ```shell
 modelardbd edge path_to_local_data_folder manager_url
@@ -137,30 +136,31 @@ storage.
 modelardbd cloud path_to_local_data_folder manager_url
 ```
 
-In both cases, access to the PostgreSQL metadata database and the object store is automatically provided by the manager
-when the `modelardbd` instances are connected to it. Note that the manager uses `9998` as the default port and
-that the server uses `9999` as the default port. The ports can be changed by specifying different ports with the
-following environment variables:
+In both cases, access to the object store is automatically provided by the manager when `modelardbd` instances are
+connected to it. Note that the manager uses `9998` as the default port and that the DBMS server uses `9999` as the
+default port. The ports can be changed by specifying different ports with the following environment variables:
 
 ```shell
-MODELARDBM_PORT=8888
-MODELARDBD_PORT=8889
+MODELARDBM_PORT=8888  # By default modelardbm uses port 9998.
+MODELARDBD_PORT=8889  # By default modelardbd uses port 9999.
 ```
 
 ### Ingest Data
-Before time series can be ingested into `modelardbd`, a model table must be created. From a user's perspective, a model
-table functions like any other table and can be queried using SQL. However, the implementation of a model table is highly
-optimized for time series and a model table must contain a single column with timestamps, one or more columns with
-fields (measurements as floating-point values), and zero or more columns with tags (metadata as strings). Model tables
-can be created using `CREATE MODEL TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD`
-an error bound can optionally be specified in parentheses to enable lossy compression with a per-value error bound.
-The error bound can be absolute or relative, e.g., `FIELD(1.0)` creates a column with an absolute per-value error bound that
-allows each value to deviate by at most 1.0 while `FIELD(1.0%)` creates a column with a relative per-value error bound that
-allows each value to deviate by at most 1.0%. `FIELD` columns default to an error bound of zero when none is specified.
-If the values in a `FIELD` column can be computed from other columns they need not be stored. Instead, if a `FIELD` column
-is defined using the syntax `FIELD AS expression`, e.g., `FIELD AS column_one + column_two`, the values of the `FIELD` column
-will be the result of the expression. As these generated `FIELD` columns do not store any data, an error bound cannot be
-defined. `modelardb` also supports normal tables created through `CREATE TABLE` statements.
+Before data can be ingested into `modelardbd`, tables must be created. `modelardbd` supports two types of tables,
+standard relational tables created with `CREATE TABLE` statements and model tables created with `CREATE MODEL TABLE`
+statements. From a user's perspective, a model table functions like a standard relational table and can be queried using
+SQL. However, the implementation of a model table is highly optimized for time series and a model table must contain a
+single column with timestamps, one or more columns with fields (measurements as floating-point values), and zero or more
+columns with tags (metadata as strings). As stated, model tables can be created using `CREATE MODEL TABLE` statements
+with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD`, an error bound can optionally be specified in
+parentheses to enable lossy compression with a per-value error bound. The error bound can be absolute or relative, e.g.,
+`FIELD(1.0)` creates a column with an absolute per-value error bound that allows each value to deviate by at most 1.0
+while `FIELD(1.0%)` creates a column with a relative per-value error bound that allows each value to deviate by at most
+1.0%. `FIELD` columns default to an error bound of zero when none is specified. Thus, by default lossless compression is
+used and lossy compression is only used if explicitly requested. If the values in a `FIELD` column can be computed from
+other columns they need not be stored. Instead, if a `FIELD` column is defined using the syntax `FIELD AS (expression)`,
+e.g., `FIELD AS (column_one + column_two)`, the values of the `FIELD` column will be the result of the expression. As
+these generated `FIELD` columns do not store any data, an error bound cannot be defined.
 
 As both `CREATE MODEL TABLE` and `CREATE TABLE` are just SQL statements, both types of tables can be created using
 `modelardb` or programmatically using Apache Arrow Flight. For example, a model table storing a simple multivariate
@@ -184,12 +184,12 @@ result = flight_client.do_action(action)
 print(list(result))
 ```
 
-When running a larger cluster of `modelardbd` instances, it is required to use `modelardbm` to create tables and model
-tables. This is a necessity as `modelardbm` is responsible for keeping the database schema consistent across all
-`modelardbd` instances in the cluster. The process for creating a table on the manager is the same as when creating the
-table directly on a `modelardbd` instance, as shown above. The only difference is that the gRPC URL should be changed to
-connect to the manager instead. When the table is created through `modelardbm`, the table is created in all `modelardbd`
-instances managed by `modelardbm` automatically.
+When running a cluster of `modelardbd` instances, it is required to use `modelardbm` to create tables and model tables.
+This is a necessity as `modelardbm` is responsible for keeping the database schema consistent across all `modelardbd`
+instances in the cluster. The process for creating a table on the manager is the same as when creating the table
+directly on a `modelardbd` instance, as shown above. The only difference is that the gRPC URL should be changed to
+connect to the manager instead of the DBMS server. When the table is created through `modelardbm`, the table is
+automatically created in all `modelardbd` instances managed by `modelardbm`.
 
 After creating a table or a model table, data can be ingested into `modelardbd` with `INSERT` in `modelardb`. Be aware that
 `INSERT` statements currently must contain values for all columns but that the values for generated columns will be dropped
@@ -217,16 +217,18 @@ writer.close()
 ```
 
 While this example simply ingests three data points from memory, it is simple to extend such that it reads from other
-data sources. For example, [this Python script](https://github.com/ModelarData/Utilities/blob/main/Apache-Parquet-Loader/main.py)
-makes it simple to bulk load time series from Apache Parquet files with the same schema by reading the Apache Parquet
-files, creating a model table that matches their schema if it does not exist, and transferring the data in the Apache
-Parquet files to `modelardbd` using Apache Arrow Flight.
+data sources. For example, [this Python
+script](https://github.com/ModelarData/Utilities/blob/main/Apache-Parquet-Loader/main.py) makes it simple to bulk load
+time series from Apache Parquet files with the same schema by reading the Apache Parquet files, creating a model table
+that matches their schema if it does not exist, and transferring the data in the Apache Parquet files to `modelardbd`
+using Apache Arrow Flight.
 
-Time series can also be ingested into `modelardbd` using [Telegraf](https://www.influxdata.com/time-series-platform/telegraf/)
-with the [Apache Arrow Flight output plugin](https://github.com/ModelarData/Telegraf-Output-Apache-Arrow-Flight).
-By using Telegraf, data points can be efficiently streamed into `modelardbd` from a large
-[collection of data sources](https://www.influxdata.com/time-series-platform/telegraf/telegraf-input-plugin/)
-such as [MQTT](https://mqtt.org/) and [OPC-UA](https://opcfoundation.org/about/opc-technologies/opc-ua/).
+Time series can also be ingested into `modelardbd` using
+[Telegraf](https://www.influxdata.com/time-series-platform/telegraf/) with the [Apache Arrow Flight output
+plugin](https://github.com/ModelarData/Telegraf-Output-Apache-Arrow-Flight). By using Telegraf, data points can be
+efficiently streamed into `modelardbd` from a large [collection of data
+sources](https://www.influxdata.com/time-series-platform/telegraf/telegraf-input-plugin/) such as
+[MQTT](https://mqtt.org/) and [OPC-UA](https://opcfoundation.org/about/opc-technologies/opc-ua/).
 
 It should be noted that the ingested data is only transferred to the remote object store when `modelardbd` is deployed
 in edge mode with a manager or in cloud mode with a manager. When `modelardbd` is deployed in edge mode without a
@@ -274,8 +276,8 @@ necessary to specify a port:
 modelardb 10.0.0.37
 ```
 
-However, if `modelardbd` has been configured to use another port using the environment variable `MODELARDBD_PORT`,
-the same port must also be passed to the client:
+Also, if `modelardbd` has been configured to use another port using the environment variable `MODELARDBD_PORT`, the same
+port must also be passed to the client:
 
 ```shell
 modelardb 10.0.0.37:9998
@@ -287,11 +289,11 @@ modelardb 10.0.0.37:9998
 modelardb 10.0.0.37 path_to_file_with_sql_statements.sql
 ```
 
-`modelardbd` can also be queried programmatically [from many different programming languages](https://arrow.apache.org/docs/index.html)
-using Apache Arrow Flight. The following Python example shows how to execute a simple SQL query against `modelardbd`
-and process the resulting stream of data points using [`pyarrow`](https://pypi.org/project/pyarrow/) and
-[`pandas`](https://pypi.org/project/pandas/). A PEP 249 compatible connector is also available for Python in the
-form of [PyModelarDB](https://github.com/ModelarData/PyModelarDB).
+`modelardbd` can also be queried programmatically [from many different programming
+languages](https://arrow.apache.org/docs/index.html) using Apache Arrow Flight. The following Python example shows how
+to execute a simple SQL query against `modelardbd` and process the resulting stream of data points using
+[`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/). A PEP 249 compatible
+connector is also available for Python in the form of [PyModelarDB](https://github.com/ModelarData/PyModelarDB).
 
 ```python
 from pyarrow import flight
@@ -306,16 +308,16 @@ for flight_stream_chunk in flight_stream_reader:
     print(pandas_data_frame)
 ```
 
-When running a larger cluster of `modelardbd` instances, it is recommended to use `modelardbm` to query the data in the
-remote object store. As mentioned above, `modelardbm` implements the
-[Arrow Flight RPC protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for querying data. This
-means that a request is made to the manager first to determine which `modelardbd` cloud instance in the cluster should
-be queried. The workload of the queries sent to the manager is balanced across all `modelardbd` cloud instances and
-at least one `modelardbd` cloud instance must be running for the manager to accept queries. The following Python example
-shows how to execute a simple SQL query using a `modelardbm` instance and how to process the resulting stream of data
-points using [`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/). It should
-be noted that the manager is only responsible for workload balancing and that the query is sent directly to the `modelardbd`
-cloud instance chosen by the manager which then sends the result set directly back to the requesting client.
+When running a cluster of `modelardbd` instances, it is recommended to use `modelardbm` to query the data in the remote
+object store. As mentioned above, `modelardbm` implements the [Apache Arrow Flight
+protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for querying data. This means that a
+request is made to the manager first to determine which `modelardbd` cloud instance in the cluster should be queried.
+The workload of the queries sent to the manager is balanced across all `modelardbd` cloud instances and at least one
+`modelardbd` cloud instance must be running for the manager to accept queries. The following Python example shows how to
+execute a simple SQL query using a `modelardbm` instance and how to process the resulting stream of data points using
+[`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/). It should be noted that
+the manager is only responsible for workload balancing and that the query is sent directly to the `modelardbd` cloud
+instance chosen by the manager which then sends the result set directly back to the client.
 
 ```python
 from pyarrow import flight
@@ -355,12 +357,12 @@ variables is provided here. If an environment variable is not set, the specified
 ## Docker
 Two different [Docker](https://docs.docker.com/) environments are included to make it easy to experiment with the
 different use cases of ModelarDB. The first environment sets up a single instance of `modelardbd` that only uses local
-storage. Time series data can be ingested into this instance, compressed, and saved to local storage. The compressed
-data in local storage can then be queried. The second environment covers the more complex use case of ModelarDB where
-multiple instances of `modelardbd` are deployed in a cluster with a manager that is responsible for managing the
-cluster. A single edge node and a single cloud node is set up in the cluster. Data can be ingested into the edge or
-cloud node, compressed, and transferred to a remote object store. The compressed data in the remote object store can
-then be queried through the cloud node or by directing the query through the manager node.
+storage. Data can be ingested into this instance, compressed, and saved to local storage. The compressed data in local
+storage can then be queried. The second environment covers the more complex use case of ModelarDB where multiple
+instances of `modelardbd` are deployed in a cluster with a manager that is responsible for managing the cluster. A
+single edge node and a single cloud node is set up in the cluster. Data can be ingested into the edge or cloud node,
+compressed, and transferred to a remote object store. The compressed data in the remote object store can then be queried
+through the cloud node or by directing the query through the manager node.
 
 Note that since [Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic ModelarDB configuration
 might be needed, it is not recommended to use the [Docker](https://docs.docker.com/) environments during active
@@ -370,49 +372,48 @@ make maintenance of the created containers easier.
 
 ### Single edge deployment
 Once [Docker](https://docs.docker.com/) is set up, the single edge deployment can be started by running the following
-command from the root of the ModelarDB-RS repository:
+command from the root of the ModelarDB repository:
+
 
 ```shell
 docker-compose -p modelardb-single -f docker-compose-single.yml up
 ```
 
-Note that `-p modelardb-single` is only used to name the project to make it easier to manage in
-[Docker Desktop](https://docs.docker.com/desktop/). Once created, the container can be started and stopped using
-[Docker Desktop](https://docs.docker.com/desktop/) or by using the corresponding commands:
+Note that `-p modelardb-single` is only used to name the project to make it easier to manage in [Docker
+Desktop](https://docs.docker.com/desktop/). Once created, the container can be started and stopped using Docker Desktop
+or by using the corresponding commands:
 
 ```console
 docker-compose -p modelardb-single start
 docker-compose -p modelardb-single stop
 ```
 
-The single edge is running locally on port `9999` and can be accessed using the `modelardb` client or through
-Apache Arrow Flight as described above. Tables can be created and data can be ingested, compressed, and saved to local
-disk. The compressed data on local disk can then be queried.
+The single edge is running locally on port `9999` and can be accessed using the `modelardb` client or through Apache
+Arrow Flight as described above. Tables can be created and data can be ingested, compressed, and saved to local disk.
+The compressed data on local disk can then be queried.
 
 ### Cluster deployment
-Once [Docker](https://docs.docker.com/) is set up, the cluster deployment can be started by running the following
-command from the root of the ModelarDB-RS repository:
+Once Docker is set up, the cluster deployment can be started by running the following command from the root of the
+ModelarDB repository:
 
 ```shell
 docker-compose -p modelardb-cluster -f docker-compose-cluster.yml up
 ```
 
-Note that `-p modelardb-cluster` is only used to name the project to make it easier to manage in
-[Docker Desktop](https://docs.docker.com/desktop/). Once created, the containers can be started and stopped using
-[Docker Desktop](https://docs.docker.com/desktop/) or by using the corresponding commands:
+Note that `-p modelardb-cluster` is only used to name the project to make it easier to manage in Docker Desktop. Once
+created, the containers can be started and stopped using Docker Desktop or by using the corresponding commands:
 
 ```console
 docker-compose -p modelardb-cluster start
 docker-compose -p modelardb-cluster stop
 ```
 
-The cluster deployment sets up a [MinIO](https://min.io/) object store and a [MinIO](https://min.io/) client is used to
-initialize the bucket `modelardb` in the object store. [MinIO](https://min.io/) can be administered through its
-[web interface](http://127.0.0.1:9001). The default username and password, `minioadmin`, can be used to log in.
+The cluster deployment sets up a MinIO object store and a MinIO client is used to initialize the bucket `modelardb` in
+the object store. MinIO can be administered through its [web interface](http://127.0.0.1:9001). The default username and
+password, `minioadmin`, can be used to log in.
 
 The cluster itself consists of a manager node, an edge node, and a cloud node. The manager node can be accessed using
 the URL `grpc://127.0.0.1:9998`, the edge node using the URL `grpc://127.0.0.1:9999`, and the cloud node using the URL
 `grpc://127.0.0.1:9997`. Tables can be created through the manager node and data can be ingested, compressed, and
-transferred to the object store through the edge node or the cloud node. The compressed data in the
-[MinIO](https://min.io/) object store can then be queried through the cloud node or by directing the query through
-the manager node.
+transferred to the object store through the edge node or the cloud node. The compressed data in the MinIO object store
+can then be queried through the cloud node or by directing the query through the manager node.
