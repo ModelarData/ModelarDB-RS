@@ -23,6 +23,10 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+/// Result type used throughout the system. `std::result::Result` is used to not make the definition
+/// of `Result` cyclic.
+pub type Result<T> = std::result::Result<T, ModelarDbError>;
+
 /// Error type used throughout the system.
 #[derive(Debug)]
 #[allow(clippy::enum_variant_names)]
