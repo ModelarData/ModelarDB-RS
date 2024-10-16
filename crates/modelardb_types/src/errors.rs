@@ -22,6 +22,7 @@
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::io::Error as IoError;
 
 /// Result type used throughout the system. `std::result::Result` is used to not make the definition
 /// of `Result` cyclic.
@@ -33,6 +34,8 @@ pub type Result<T> = std::result::Result<T, ModelarDbError>;
 pub enum ModelarDbError {
     /// Error returned when an invalid argument was passed.
     InvalidArgumentError(String),
+    /// Error returned from IO operations.
+    IoError(IoError),
     /// Error returned when failing to create a new instance of a struct or when updating a struct
     /// field with an invalid value.
     ConfigurationError(String),
@@ -49,11 +52,20 @@ pub enum ModelarDbError {
 
 impl Error for ModelarDbError {}
 
+impl From<IoError> for ModelarDbError {
+    fn from(error: IoError) -> ModelarDbError {
+        ModelarDbError::IoError(error)
+    }
+}
+
 impl Display for ModelarDbError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             ModelarDbError::InvalidArgumentError(reason) => {
                 write!(f, "InvalidArgumentError Error: {reason}")
+            }
+            ModelarDbError::IoError(reason) => {
+                write!(f, "IOError Error: {reason}")
             }
             ModelarDbError::ConfigurationError(reason) => {
                 write!(f, "Configuration Error: {reason}")
