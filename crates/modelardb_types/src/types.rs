@@ -22,7 +22,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::errors::ModelarDbError;
+use crate::errors::{ModelarDbError, Result};
 
 // Types used for a univariate id.
 pub type UnivariateId = std::primitive::u64;
@@ -78,9 +78,9 @@ pub enum ErrorBound {
 impl ErrorBound {
     /// Return an [`ErrorBound::Absolute`] with `value` as its absolute per-value bound. A
     /// [`ModelarDbError`] is returned if a negative or non-normal value is passed.
-    pub fn try_new_absolute(value: f32) -> Result<Self, ModelarDbError> {
+    pub fn try_new_absolute(value: f32) -> Result<Self> {
         if !value.is_finite() || value < 0.0 {
-            Err(ModelarDbError::CompressionError(
+            Err(ModelarDbError::InvalidArgumentError(
                 "An absolute error bound must be a positive finite value.".to_owned(),
             ))
         } else {
@@ -90,9 +90,9 @@ impl ErrorBound {
 
     /// Return an [ErrorBound::Relative`] with `percentage` as its relative per-value bound. A
     /// [`ModelarDbError`] is returned if a value below 0% or a value above 100% is passed.
-    pub fn try_new_relative(percentage: f32) -> Result<Self, ModelarDbError> {
+    pub fn try_new_relative(percentage: f32) -> Result<Self> {
         if !(0.0..=100.0).contains(&percentage) {
-            Err(ModelarDbError::CompressionError(
+            Err(ModelarDbError::InvalidArgumentError(
                 "A relative error bound must be a value from 0.0% to 100.0%.".to_owned(),
             ))
         } else {
@@ -109,13 +109,15 @@ pub enum ServerMode {
 }
 
 impl FromStr for ServerMode {
-    type Err = String;
+    type Err = ModelarDbError;
 
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
+    fn from_str(value: &str) -> Result<Self> {
         match value {
             "cloud" => Ok(ServerMode::Cloud),
             "edge" => Ok(ServerMode::Edge),
-            _ => Err(format!("'{value}' is not a valid value for ServerMode.")),
+            _ => Err(ModelarDbError::InvalidArgumentError(format!(
+                "'{value}' is not a valid value for ServerMode."
+            ))),
         }
     }
 }

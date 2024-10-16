@@ -31,8 +31,8 @@ pub type Result<T> = std::result::Result<T, ModelarDbError>;
 #[derive(Debug)]
 #[allow(clippy::enum_variant_names)]
 pub enum ModelarDbError {
-    /// Error returned by the model types.
-    CompressionError(String),
+    /// Error returned when an invalid argument was passed.
+    InvalidArgumentError(String),
     /// Error returned when failing to create a new instance of a struct or when updating a struct
     /// field with an invalid value.
     ConfigurationError(String),
@@ -52,7 +52,9 @@ impl Error for ModelarDbError {}
 impl Display for ModelarDbError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDbError::CompressionError(reason) => write!(f, "Compression Error: {reason}"),
+            ModelarDbError::InvalidArgumentError(reason) => {
+                write!(f, "InvalidArgumentError Error: {reason}")
+            }
             ModelarDbError::ConfigurationError(reason) => {
                 write!(f, "Configuration Error: {reason}")
             }
