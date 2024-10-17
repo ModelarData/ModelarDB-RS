@@ -22,10 +22,11 @@ use arrow_flight::Action;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::info;
-use modelardb_types::errors::ModelarDbError;
 use modelardb_types::types::ServerMode;
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::Request;
+
+use crate::errors::{ModelarDbManagerError, Result};
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
 /// or a cloud node. A node cannot be another manager.
@@ -62,14 +63,14 @@ impl Cluster {
     }
 
     /// Checks if the node is already registered and adds it to the current nodes if not. If it
-    /// already exists, [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned.
-    pub fn register_node(&mut self, node: Node) -> Result<(), ModelarDbError> {
+    /// already exists, [`ModelarDbManagerError`] is returned.
+    pub fn register_node(&mut self, node: Node) -> Result<()> {
         if self
             .nodes
             .iter()
             .any(|n| n.url.to_lowercase() == node.url.to_lowercase())
         {
-            Err(ModelarDbError::ConfigurationError(format!(
+            Err(ModelarDbManagerError::InvalidArgument(format!(
                 "A node with the url `{}` is already registered.",
                 node.url
             )))
@@ -87,12 +88,8 @@ impl Cluster {
 
     /// Remove the node with a url matching `url` from the current nodes, flush the node, and
     /// finally kill the process running on the node. If no node with `url` exists,
-    /// [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned.
-    pub async fn remove_node(
-        &mut self,
-        url: &str,
-        key: &MetadataValue<Ascii>,
-    ) -> Result<(), ModelarDbError> {
+    /// [`ModelarDbManagerError`] is returned.
+    pub async fn remove_node(&mut self, url: &str, key: &MetadataValue<Ascii>) -> Result<()> {
         if self
             .nodes
             .iter()
@@ -102,9 +99,7 @@ impl Cluster {
             self.query_queue.retain(|n| n.url != url);
 
             // Flush the node and kill the process running on the node.
-            let mut flight_client = FlightServiceClient::connect(url.to_owned())
-                .await
-                .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+            let mut flight_client = FlightServiceClient::connect(url.to_owned()).await?;
 
             let action = Action {
                 r#type: "KillNode".to_owned(),
@@ -121,36 +116,36 @@ impl Cluster {
 
             Ok(())
         } else {
-            Err(ModelarDbError::ConfigurationError(format!(
+            Err(ModelarDbManagerError::InvalidArgument(format!(
                 "A node with the url `{url}` does not exist."
             )))
         }
     }
 
-    /// Return the cloud node in the cluster that is currently most capable of running a query.
-    /// If there are no cloud nodes in the cluster, return [`ClusterError`](ModelarDbError::ClusterError).
-    pub fn query_node(&mut self) -> Result<Node, ModelarDbError> {
+    /// Return the cloud node in the cluster that is currently most capable of running a query. If
+    /// there are no cloud nodes in the cluster, return [`ModelarDbManagerError`].
+    pub fn query_node(&mut self) -> Result<Node> {
         if let Some(query_node) = self.query_queue.pop_front() {
             // Add the cloud node back to the queue.
             self.query_queue.push_back(query_node.clone());
 
             Ok(query_node)
         } else {
-            Err(ModelarDbError::ClusterError(
+            Err(ModelarDbManagerError::InvalidState(
                 "There are no cloud nodes to execute the query in the cluster.".to_owned(),
             ))
         }
     }
 
-    /// For each node in the cluster, use the `CreateTable` action to create the table
-    /// given by `sql`. If the table was successfully created for each node, return
-    /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
+    /// For each node in the cluster, use the `CreateTable` action to create the table given by
+    /// `sql`. If the table was successfully created for each node, return [`Ok`], otherwise return
+    /// [`ModelarDbManagerError`].
     pub async fn create_tables(
         &self,
         table_name: &str,
         sql: &str,
         key: &MetadataValue<Ascii>,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         let action = Action {
             r#type: "CreateTable".to_owned(),
             body: sql.to_owned().into(),
@@ -177,12 +172,8 @@ impl Cluster {
 
     /// For each node in the cluster, use the `DropTable` action to drop the table given by
     /// `table_name`. If the table was successfully dropped for each node, return [`Ok`], otherwise
-    /// return [`ClusterError`](ModelarDbError::ClusterError).
-    pub async fn drop_tables(
-        &self,
-        table_name: &str,
-        key: &MetadataValue<Ascii>,
-    ) -> Result<(), ModelarDbError> {
+    /// return [`ModelarDbManagerError`].
+    pub async fn drop_tables(&self, table_name: &str, key: &MetadataValue<Ascii>) -> Result<()> {
         let action = Action {
             r#type: "DropTable".to_owned(),
             body: table_name.to_owned().into(),
@@ -207,25 +198,20 @@ impl Cluster {
 
     /// Connect to the Apache Arrow flight client given by `url` and make a request to do `action`.
     /// If the action was successfully executed, return the url of the node, otherwise return
-    /// [`ClusterError`](ModelarDbError::ClusterError).
+    /// [`ModelarDbManagerError`].
     async fn connect_and_do_action(
         &self,
         url: &str,
         action: Action,
         key: &MetadataValue<Ascii>,
-    ) -> Result<String, ModelarDbError> {
-        let mut flight_client = FlightServiceClient::connect(url.to_owned())
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+    ) -> Result<String> {
+        let mut flight_client = FlightServiceClient::connect(url.to_owned()).await?;
 
         // Add the key to the request metadata to indicate that the request is from the manager.
         let mut request = Request::new(action);
         request.metadata_mut().insert("x-manager-key", key.clone());
 
-        flight_client
-            .do_action(request)
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+        flight_client.do_action(request).await?;
 
         Ok(url.to_owned())
     }

@@ -16,9 +16,9 @@
 //! Functions for collecting and using command line arguments in both the server and manager.
 //! Functionality for validating remote data folders extracted from arguments is also provided.
 
-use std::env;
 use std::io::Write;
 use std::str;
+use std::{env, process};
 
 use crate::errors::{ModelarDbCommonError, Result};
 
@@ -78,6 +78,18 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>> {
             REMOTE_DATA_FOLDER_ERROR.to_owned(),
         )),
     }
+}
+
+/// Prints a usage message with `parameters` appended to the name of the binary executing this
+/// function to stderr and exit with the status code one to indicate that an error has occurred.
+pub fn print_usage_and_exit_with_error(parameters: &str) -> ! {
+    // The errors are consciously ignored as the program is terminating.
+    let binary_path = std::env::current_exe().unwrap();
+    let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+
+    // An punctuation at the end does not seem to be common in the usage message of Unix tools.
+    eprintln!("Usage: {binary_name} {parameters}.");
+    process::exit(1);
 }
 
 /// Convert the given `argument` into bytes that contain the length of the byte representation of
