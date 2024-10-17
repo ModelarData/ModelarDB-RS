@@ -25,8 +25,8 @@ use rustyline::error::ReadlineError as RustyLineError;
 use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
 
-/// Result type used throughout the system. `std::result::Result` is used to not make the definition
-/// of `Result` cyclic.
+/// Result type used throughout the system. [`std::result::Result`] is used to not make the
+/// definition of `Result` cyclic.
 pub type Result<T> = std::result::Result<T, ModelarDbClientError>;
 
 /// Error type used throughout the client.

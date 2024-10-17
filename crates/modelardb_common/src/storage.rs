@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path as StdPath;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::array::{Int64Array, RecordBatch, UInt64Array};
@@ -47,6 +48,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::arguments;
+use crate::errors::{ModelarDbCommonError, Result};
 
 /// The folder storing compressed data in the data folders.
 const COMPRESSED_DATA_FOLDER: &str = "tables";
@@ -68,8 +70,8 @@ pub struct DeltaLake {
 
 impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages the Delta tables in `data_folder_path`. Returns a
-    /// [`DeltaTableError`] if `data_folder_path` does not exist and could not be created.
-    pub fn try_from_local_path(data_folder_path: &StdPath) -> Result<Self, DeltaTableError> {
+    /// [`ModelarDbCommonError`] if `data_folder_path` does not exist and could not be created.
+    pub fn try_from_local_path(data_folder_path: &StdPath) -> Result<Self> {
         // Ensure the directories in the path exists as LocalFileSystem otherwise returns an error.
         fs::create_dir_all(data_folder_path)
             .map_err(|error| DeltaTableError::generic(error.to_string()))?;
@@ -95,11 +97,9 @@ impl DeltaLake {
     }
 
     /// Create a new [`DeltaLake`] that manages Delta tables in the remote object store given by
-    /// `connection_info`. Returns [`DeltaTableError`] if `connection_info` could not be parsed or a
-    /// connection to the specified object store cannot be created.
-    pub async fn try_remote_from_connection_info(
-        connection_info: &[u8],
-    ) -> Result<Self, DeltaTableError> {
+    /// `connection_info`. Returns [`ModelarDbCommonError`] if `connection_info` could not be parsed
+    /// or a connection to the specified object store cannot be created.
+    pub async fn try_remote_from_connection_info(connection_info: &[u8]) -> Result<Self> {
         let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
@@ -132,21 +132,21 @@ impl DeltaLake {
                     container_name.to_owned(),
                 )
             }
-            _ => Err(DeltaTableError::Generic(format!(
+            _ => Err(ModelarDbCommonError::InvalidArgument(format!(
                 "{object_store_type} is not supported."
             ))),
         }
     }
 
     /// Create a new [`DeltaLake`] that manages the Delta tables in an object store with an
-    /// S3-compatible API. Returns a [`DeltaTableError`] if a connection to the object store cannot
-    /// be made.
+    /// S3-compatible API. Returns a [`ModelarDbCommonError`] if a connection to the object store
+    /// cannot be made.
     pub fn try_from_s3_configuration(
         endpoint: String,
         bucket_name: String,
         access_key_id: String,
         secret_access_key: String,
-    ) -> Result<Self, DeltaTableError> {
+    ) -> Result<Self> {
         let location = format!("s3://{bucket_name}");
 
         // TODO: Determine if it is safe to use AWS_S3_ALLOW_UNSAFE_RENAME.
@@ -158,8 +158,8 @@ impl DeltaLake {
             ("aws_s3_allow_unsafe_rename".to_owned(), "true".to_owned()),
         ]);
 
-        let url =
-            Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+        let url = Url::parse(&location)
+            .map_err(|error| ModelarDbCommonError::InvalidArgument(error.to_string()))?;
 
         // Build the Amazon S3 object store with the given storage options manually to allow http.
         let object_store = storage_options
@@ -184,13 +184,13 @@ impl DeltaLake {
     }
 
     /// Create a new [`DeltaLake`] that manages the Delta tables in an object store with an
-    /// Azure-compatible API. Returns a [`DeltaTableError`] if a connection to the object store
+    /// Azure-compatible API. Returns a [`ModelarDbCommonError`] if a connection to the object store
     /// cannot be made.
     pub fn try_from_azure_configuration(
         account_name: String,
         access_key: String,
         container_name: String,
-    ) -> Result<Self, DeltaTableError> {
+    ) -> Result<Self> {
         let location = format!("az://{container_name}");
 
         // TODO: Needs to be tested.
@@ -199,8 +199,8 @@ impl DeltaLake {
             ("azure_storage_account_key".to_owned(), access_key),
             ("azure_container_name".to_owned(), container_name),
         ]);
-        let url =
-            Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+        let url = Url::parse(&location)
+            .map_err(|error| ModelarDbCommonError::InvalidArgument(error.to_string()))?;
         let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
 
         Ok(DeltaLake {
@@ -223,38 +223,39 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
-    /// [`DeltaTableError`] if a connection cannot be established or the table does not exist.
-    pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable, DeltaTableError> {
+    /// [`ModelarDbCommonError`] if a connection cannot be established or the table does not exist.
+    pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_compressed_table(table_name);
-        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone()).await
+        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone())
+            .await
+            .map_err(|error| error.into())
     }
 
     /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or a
-    /// [`DeltaTableError`] if a connection cannot be established or the table does not exist.
-    pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps, DeltaTableError> {
+    /// [`ModelarDbCommonError`] if a connection cannot be established or the table does not exist.
+    pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
         let table_path = self.location_of_compressed_table(table_name);
-        DeltaOps::try_from_uri_with_storage_options(&table_path, self.storage_options.clone()).await
+        DeltaOps::try_from_uri_with_storage_options(&table_path, self.storage_options.clone())
+            .await
+            .map_err(|error| error.into())
     }
 
     /// Create a Delta Lake table for a normal table with `table_name` and `schema` if it does not
     /// already exist. If the table could not be created, e.g., because it already exists,
-    /// [`DeltaTableError`] is returned.
+    /// [`ModelarDbCommonError`] is returned.
     pub async fn create_delta_lake_table(
         &self,
         table_name: &str,
         schema: &Schema,
-    ) -> Result<DeltaTable, DeltaTableError> {
+    ) -> Result<DeltaTable> {
         self.create_partitioned_delta_lake_table(table_name, schema, &[])
             .await
     }
 
     /// Create a Delta Lake table for a model table with `table_name` and [`DISK_COMPRESSED_SCHEMA`]
     /// if it does not already exist. Returns [`DeltaTable`] if the table could be created and
-    /// [`DeltaTableError`] if it could not.
-    pub async fn create_delta_lake_model_table(
-        &self,
-        table_name: &str,
-    ) -> Result<DeltaTable, DeltaTableError> {
+    /// [`ModelarDbCommonError`] if it could not.
+    pub async fn create_delta_lake_model_table(&self, table_name: &str) -> Result<DeltaTable> {
         self.create_partitioned_delta_lake_table(
             table_name,
             &DISK_COMPRESSED_SCHEMA.0,
@@ -265,13 +266,13 @@ impl DeltaLake {
 
     /// Create a Delta Lake table with `table_name`, `schema`, and `partition_columns` if it does
     /// not already exist. Returns [`DeltaTable`] if the table could be created and
-    /// [`DeltaTableError`] if it could not.
+    /// [`ModelarDbCommonError`] if it could not.
     async fn create_partitioned_delta_lake_table(
         &self,
         table_name: &str,
         schema: &Schema,
         partition_columns: &[String],
-    ) -> Result<DeltaTable, DeltaTableError> {
+    ) -> Result<DeltaTable> {
         let is_model_table = partition_columns == [FIELD_COLUMN.to_owned()];
 
         let mut columns: Vec<StructField> = Vec::with_capacity(schema.fields().len());
@@ -285,9 +286,9 @@ impl DeltaLake {
             match field.data_type() {
                 _ if is_model_table => {} // Exception for model_type_id and field_column.
                 DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
-                    return Err(DeltaTableError::SchemaMismatch {
+                    Err(DeltaTableError::SchemaMismatch {
                         msg: "Unsigned integers are not supported.".to_owned(),
-                    })
+                    })?
                 }
                 _ => {} // All possible cases must be handled.
             }
@@ -305,16 +306,15 @@ impl DeltaLake {
             .with_columns(columns)
             .with_partition_columns(partition_columns)
             .await
+            .map_err(|error| error.into())
     }
 
-    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file related
-    /// to the table. The table folder cannot be deleted directly since folders do not exist in object
-    /// stores and therefore cannot be operated upon. If the table was dropped successfully, the
-    /// paths to the deleted files are returned, otherwise a [`DeltaTableError`] is returned.
-    pub async fn drop_delta_lake_table(
-        &self,
-        table_name: &str,
-    ) -> Result<Vec<Path>, DeltaTableError> {
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file
+    /// related to the table. The table folder cannot be deleted directly since folders do not exist
+    /// in object stores and therefore cannot be operated upon. If the table was dropped
+    /// successfully, the paths to the deleted files are returned, otherwise a
+    /// [`ModelarDbCommonError`] is returned.
+    pub async fn drop_delta_lake_table(&self, table_name: &str) -> Result<Vec<Path>> {
         // List all files in the Delta Lake table folder.
         let table_path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}");
         let file_locations = self
@@ -335,12 +335,12 @@ impl DeltaLake {
 
     /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`. Returns
     /// an updated [`DeltaTable`] version if the file was written successfully, otherwise returns
-    /// [`DeltaTableError`].
+    /// [`ModelarDbCommonError`].
     pub async fn write_record_batch_to_table(
         &self,
         table_name: &str,
         record_batch: RecordBatch,
-    ) -> Result<DeltaTable, DeltaTableError> {
+    ) -> Result<DeltaTable> {
         let writer_properties = apache_parquet_writer_properties(None);
         self.write_record_batch_to_delta_table(
             table_name,
@@ -353,12 +353,12 @@ impl DeltaLake {
 
     /// Write `compressed_segments` to a Delta Lake table for a model table with `table_name`.
     /// Returns an updated [`DeltaTable`] if the file was written successfully, otherwise returns
-    /// [`DeltaTableError`].
+    /// [`ModelarDbCommonError`].
     pub async fn write_compressed_segments_to_model_table(
         &self,
         table_name: &str,
         mut compressed_segments: Vec<RecordBatch>,
-    ) -> Result<DeltaTable, DeltaTableError> {
+    ) -> Result<DeltaTable> {
         // Reinterpret univariate_ids from uint64 to int64 if necessary to fix #187 as a stopgap until #197.
         maybe_univariate_ids_uint64_to_int64(&mut compressed_segments);
 
@@ -383,14 +383,14 @@ impl DeltaLake {
     /// Write `record_batches` to a Delta Lake table with `table_name` using `writer_properties`.
     /// `partition_columns` can optionally be provided to specify that `record_batch` should be
     /// partitioned by these columns. Returns an updated [`DeltaTable`]` if the file was written
-    /// successfully, otherwise returns [`ParquetError`].
+    /// successfully, otherwise returns [`ModelarDbCommonError`].
     async fn write_record_batch_to_delta_table(
         &self,
         table_name: &str,
         record_batches: Vec<RecordBatch>,
         partition_columns: Vec<String>,
         writer_properties: WriterProperties,
-    ) -> Result<DeltaTable, DeltaTableError> {
+    ) -> Result<DeltaTable> {
         let delta_table_ops = self.delta_ops(table_name).await?;
         let write_builder = delta_table_ops.write(record_batches);
 
@@ -399,6 +399,7 @@ impl DeltaLake {
             .with_partition_columns(partition_columns)
             .with_writer_properties(writer_properties)
             .await
+            .map_err(|error| error.into())
     }
 
     /// Return the location of the compressed model or normal table with `table_name`.
@@ -457,11 +458,11 @@ pub fn univariate_ids_int64_to_uint64(compressed_segments: &RecordBatch) -> Reco
 
 /// Read all rows from the Apache Parquet file at the location given by `file_path` in
 /// `object_store` and return them as a [`RecordBatch`]. If the file could not be read successfully,
-/// [`ParquetError`] is returned.
+/// [`ModelarDbCommonError`] is returned.
 pub async fn read_record_batch_from_apache_parquet_file(
     file_path: &Path,
     object_store: Arc<dyn ObjectStore>,
-) -> Result<RecordBatch, ParquetError> {
+) -> Result<RecordBatch> {
     // Create an object reader for the Apache Parquet file.
     let file_metadata = object_store
         .head(file_path)
@@ -474,19 +475,16 @@ pub async fn read_record_batch_from_apache_parquet_file(
     let record_batches = read_batches_from_apache_parquet_file(reader).await?;
 
     let schema = record_batches[0].schema();
-    compute::concat_batches(&schema, &record_batches)
-        .map_err(|error| ParquetError::General(error.to_string()))
+    compute::concat_batches(&schema, &record_batches).map_err(|error| error.into())
 }
 
 /// Read each batch of data from the Apache Parquet file given by `reader` and return them as a
 /// [`Vec`] of [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is
 /// returned.
-pub async fn read_batches_from_apache_parquet_file<R>(
-    reader: R,
-) -> Result<Vec<RecordBatch>, ParquetError>
+pub async fn read_batches_from_apache_parquet_file<R>(reader: R) -> Result<Vec<RecordBatch>>
 where
     R: AsyncFileReader + Send + Unpin + 'static,
-    ParquetRecordBatchStream<R>: StreamExt<Item = Result<RecordBatch, ParquetError>>,
+    ParquetRecordBatchStream<R>: StreamExt<Item = StdResult<RecordBatch, ParquetError>>,
 {
     let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
     let mut stream = builder.build()?;
@@ -502,14 +500,14 @@ where
 
 /// Write `compressed_segments` for the column `field_column_index` in the table with `table_name`
 /// to an Apache Parquet file with a `UUID` as the file name in `compressed_data_folder`. Return the
-/// path to the file if the file was written successfully, otherwise return [`ParquetError`].
+/// path to the file if the file was written successfully, otherwise return [`ModelarDbCommonError`].
 pub async fn write_compressed_segments_to_apache_parquet_file(
     compressed_data_folder: &str,
     table_name: &str,
     field_column_index: u16,
     compressed_segments: &RecordBatch,
     object_store: &dyn ObjectStore,
-) -> Result<Path, ParquetError> {
+) -> Result<Path> {
     if compressed_segments.schema() == COMPRESSED_SCHEMA.0 {
         // Use a UUID for the file name to make it very likely that the name is unique.
         let uuid = Uuid::new_v4();
@@ -535,20 +533,21 @@ pub async fn write_compressed_segments_to_apache_parquet_file(
     } else {
         Err(ParquetError::General(
             "The data in the record batch is not compressed segments.".to_string(),
-        ))
+        )
+        .into())
     }
 }
 
 /// Write the rows in `record_batch` to an Apache Parquet file at the location given by `file_path`
-/// in `object_store`. `file_path` must use the extension `.parquet`. `sorting_columns` can be
-/// set to control the sorting order of the rows in the written file. Return [`Ok`] if the file
-/// was written successfully, otherwise return [`ParquetError`].
+/// in `object_store`. `file_path` must use the extension `.parquet`. `sorting_columns` can be set
+/// to control the sorting order of the rows in the written file. Return [`Ok`] if the file was
+/// written successfully, otherwise return [`ModelarDbCommonError`].
 pub async fn write_record_batch_to_apache_parquet_file(
     file_path: &Path,
     record_batch: &RecordBatch,
     sorting_columns: Option<Vec<SortingColumn>>,
     object_store: &dyn ObjectStore,
-) -> Result<(), ParquetError> {
+) -> Result<()> {
     // Check if the extension of the given path is correct.
     if file_path.extension() == Some("parquet") {
         let props = apache_parquet_writer_properties(sorting_columns);
@@ -570,7 +569,7 @@ pub async fn write_record_batch_to_apache_parquet_file(
         Err(ParquetError::General(format!(
             "'{}' is not a valid file path for an Apache Parquet file.",
             file_path.as_ref()
-        )))
+        )))?
     }
 }
 
@@ -715,7 +714,7 @@ mod tests {
     async fn write_record_batch_to_temp_dir(
         file_path: &Path,
         record_batch: &RecordBatch,
-    ) -> (TempDir, Result<(), ParquetError>) {
+    ) -> (TempDir, Result<()>) {
         let temp_dir = tempfile::tempdir().unwrap();
         let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
@@ -783,7 +782,7 @@ mod tests {
     async fn write_compressed_segments_to_temp_dir(
         temp_dir: &TempDir,
         compressed_segments: &RecordBatch,
-    ) -> Result<Path, ParquetError> {
+    ) -> Result<Path> {
         let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
         write_compressed_segments_to_apache_parquet_file(

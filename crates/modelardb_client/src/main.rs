@@ -135,7 +135,9 @@ async fn parse_command_line_arguments(
 /// server cannot be established.
 async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>> {
     let address = format!("grpc://{host}:{port}");
-    Ok(FlightServiceClient::connect(address).await?)
+    FlightServiceClient::connect(address)
+        .await
+        .map_err(|error| error.into())
 }
 
 /// Execute the actions, commands, and queries in `query_file`.

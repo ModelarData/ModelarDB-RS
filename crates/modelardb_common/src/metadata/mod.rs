@@ -31,7 +31,7 @@ use datafusion::prelude::SessionContext;
 use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
-use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
+use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable};
 use futures::{StreamExt, TryStreamExt};
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -40,6 +40,7 @@ use object_store::ObjectStore;
 use url::Url;
 
 use crate::arguments;
+use crate::errors::{ModelarDbCommonError, Result};
 
 pub mod model_table_metadata;
 pub mod table_metadata_manager;
@@ -63,21 +64,21 @@ pub struct MetadataDeltaLake {
 impl MetadataDeltaLake {
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] under
     /// `folder_path`.
-    pub fn from_path(folder_path: &StdPath) -> Result<MetadataDeltaLake, DeltaTableError> {
+    pub fn from_path(folder_path: &StdPath) -> Result<MetadataDeltaLake> {
         // Ensure the directories in the path exists as LocalFileSystem otherwise returns an error.
-        fs::create_dir_all(folder_path)
-            .map_err(|error| DeltaTableError::generic(error.to_string()))?;
+        fs::create_dir_all(folder_path)?;
 
         // Use with_automatic_cleanup to ensure empty directories are deleted automatically.
-        let local_file_system = Arc::new(
-            LocalFileSystem::new_with_prefix(folder_path)
-                .map_err(|error| DeltaTableError::generic(error.to_string()))?
-                .with_automatic_cleanup(true),
-        );
+        let local_file_system =
+            Arc::new(LocalFileSystem::new_with_prefix(folder_path)?.with_automatic_cleanup(true));
 
         let location = folder_path
             .to_str()
-            .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8."))?
+            .ok_or_else(|| {
+                ModelarDbCommonError::InvalidArgument(
+                    "Local data folder path is not UTF-8.".to_owned(),
+                )
+            })?
             .to_owned();
 
         Ok(MetadataDeltaLake {
@@ -89,13 +90,10 @@ impl MetadataDeltaLake {
     }
 
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a
-    /// remote object store given by `connection_info`. Returns [`DeltaTableError`] if
+    /// remote object store given by `connection_info`. Returns [`ModelarDbCommonError`] if
     /// `connection_info` could not be parsed or a connection cannot be made.
-    pub fn try_from_connection_info(
-        connection_info: &[u8],
-    ) -> Result<MetadataDeltaLake, DeltaTableError> {
-        let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
-            .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+    pub fn try_from_connection_info(connection_info: &[u8]) -> Result<MetadataDeltaLake> {
+        let (object_store_type, offset_data) = arguments::decode_argument(connection_info)?;
 
         match object_store_type {
             "s3" => {
@@ -105,8 +103,7 @@ impl MetadataDeltaLake {
                 deltalake::aws::register_handlers(None);
 
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
-                    arguments::extract_s3_arguments(offset_data)
-                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+                    arguments::extract_s3_arguments(offset_data)?;
 
                 Self::try_from_s3_configuration(
                     endpoint.to_owned(),
@@ -117,8 +114,7 @@ impl MetadataDeltaLake {
             }
             "azureblobstorage" => {
                 let (account, access_key, container_name, _offset_data) =
-                    arguments::extract_azure_blob_storage_arguments(offset_data)
-                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+                    arguments::extract_azure_blob_storage_arguments(offset_data)?;
 
                 Self::try_from_azure_configuration(
                     account.to_owned(),
@@ -126,21 +122,21 @@ impl MetadataDeltaLake {
                     container_name.to_owned(),
                 )
             }
-            _ => Err(DeltaTableError::Generic(format!(
+            _ => Err(ModelarDbCommonError::InvalidArgument(format!(
                 "{object_store_type} is not supported."
             ))),
         }
     }
 
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a
-    /// remote S3-compatible object store. If a connection cannot be created [`DeltaTableError`] is
-    /// returned.
+    /// remote S3-compatible object store. If a connection cannot be created
+    /// [`ModelarDbCommonError`] is returned.
     pub fn try_from_s3_configuration(
         endpoint: String,
         bucket_name: String,
         access_key_id: String,
         secret_access_key: String,
-    ) -> Result<Self, DeltaTableError> {
+    ) -> Result<Self> {
         let location = format!("s3://{bucket_name}");
 
         // TODO: Determine if it is safe to use AWS_S3_ALLOW_UNSAFE_RENAME.
@@ -152,8 +148,12 @@ impl MetadataDeltaLake {
             ("aws_s3_allow_unsafe_rename".to_owned(), "true".to_owned()),
         ]);
 
-        let url =
-            Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+        let url = Url::parse(&location).map_err(|error| {
+            ModelarDbCommonError::InvalidArgument(format!(
+                "Unable to parse S3 location: {}",
+                error.to_string()
+            ))
+        })?;
 
         // Build the Amazon S3 object store with the given storage options manually to allow http.
         let object_store = storage_options
@@ -178,13 +178,13 @@ impl MetadataDeltaLake {
     }
 
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a
-    /// remote Azure-compatible object store. If a connection cannot be created [`DeltaTableError`]
-    /// is returned.
+    /// remote Azure-compatible object store. If a connection cannot be created
+    /// [`ModelarDbCommonError`] is returned.
     pub fn try_from_azure_configuration(
         account_name: String,
         access_key: String,
         container_name: String,
-    ) -> Result<Self, DeltaTableError> {
+    ) -> Result<Self> {
         let location = format!("az://{container_name}");
 
         // TODO: Needs to be tested.
@@ -193,8 +193,12 @@ impl MetadataDeltaLake {
             ("azure_storage_account_key".to_owned(), access_key),
             ("azure_container_name".to_owned(), container_name),
         ]);
-        let url =
-            Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+        let url = Url::parse(&location).map_err(|error| {
+            ModelarDbCommonError::InvalidArgument(format!(
+                "Unable to parse S3 location: {}",
+                error.to_string()
+            ))
+        })?;
         let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
 
         Ok(MetadataDeltaLake {
@@ -208,12 +212,12 @@ impl MetadataDeltaLake {
     /// Use `table_name` to create a Delta Lake table with `columns` in the location given by
     /// `location` and `storage_options` if it does not already exist. The created table is
     /// registered in the Apache Arrow Datafusion session. If the table could not be created or
-    /// registered, return [`DeltaTableError`].
+    /// registered, return [`ModelarDbCommonError`].
     pub async fn create_delta_lake_table(
         &self,
         table_name: &str,
         columns: Vec<StructField>,
-    ) -> Result<(), DeltaTableError> {
+    ) -> Result<()> {
         let location = self.location_of_metadata_table(table_name);
 
         // SaveMode::Ignore is used to avoid errors if the table already exists.
@@ -232,14 +236,12 @@ impl MetadataDeltaLake {
         Ok(())
     }
 
-    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file related
-    /// to the table. The table folder cannot be deleted directly since folders do not exist in object
-    /// stores and therefore cannot be operated upon. If the table was dropped successfully, the
-    /// paths to the deleted files are returned, otherwise a [`DeltaTableError`] is returned.
-    pub async fn drop_delta_lake_table(
-        &self,
-        table_name: &str,
-    ) -> Result<Vec<Path>, DeltaTableError> {
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file
+    /// related to the table. The table folder cannot be deleted directly since folders do not exist
+    /// in object stores and therefore cannot be operated upon. If the table was dropped
+    /// successfully, the paths to the deleted files are returned, otherwise a
+    /// [`ModelarDbCommonError`] is returned.
+    pub async fn drop_delta_lake_table(&self, table_name: &str) -> Result<Vec<Path>> {
         // List all files in the metadata Delta Lake table folder.
         let table_path = format!("{METADATA_FOLDER}/{table_name}");
         let file_locations = self
@@ -260,13 +262,13 @@ impl MetadataDeltaLake {
         Ok(deleted_paths)
     }
 
-    /// Append `rows` to the table with the given `table_name`. If `rows` are appended to
-    /// the table, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
+    /// Append `rows` to the table with the given `table_name`. If `rows` are appended to the table,
+    /// return the updated [`DeltaTable`], otherwise return [`ModelarDbCommonError`].
     pub async fn append_to_table(
         &self,
         table_name: &str,
         rows: Vec<ArrayRef>,
-    ) -> Result<DeltaTable, DeltaTableError> {
+    ) -> Result<DeltaTable> {
         let table = self.metadata_delta_table(table_name).await?;
 
         // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
@@ -274,17 +276,17 @@ impl MetadataDeltaLake {
         let batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
 
         let ops = DeltaOps::from(table);
-        ops.write(vec![batch]).await
+        ops.write(vec![batch]).await.map_err(|error| error.into())
     }
 
     /// Return a [`DataFrame`] with the given `rows` for the metadata table with the given
     /// `table_name`. If the table does not exist or the [`DataFrame`] cannot be created, return
-    /// [`DeltaTableError`].
+    /// [`ModelarDbCommonError`].
     pub async fn metadata_table_data_frame(
         &self,
         table_name: &str,
         rows: Vec<ArrayRef>,
-    ) -> Result<DataFrame, DeltaTableError> {
+    ) -> Result<DataFrame> {
         let table = self.metadata_delta_table(table_name).await?;
 
         // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
@@ -297,23 +299,16 @@ impl MetadataDeltaLake {
     // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
     // TODO: Maybe we need to use the return value every time we do a table action to update the table.
     /// Return the [`DeltaOps`] for the metadata table with the given `table_name`. If the
-    /// [`DeltaOps`] cannot be retrieved, return [`DeltaTableError`].
-    pub async fn metadata_table_delta_ops(
-        &self,
-        table_name: &str,
-    ) -> Result<DeltaOps, DeltaTableError> {
+    /// [`DeltaOps`] cannot be retrieved, return [`ModelarDbCommonError`].
+    pub async fn metadata_table_delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
         let table = self.metadata_delta_table(table_name).await?;
         Ok(DeltaOps::from(table))
     }
 
     // TODO: Find a way to avoid having to re-register the table every time we want to read from it.
     /// Query the table with the given `table_name` using the given `query`. If the table is queried,
-    /// return a [`RecordBatch`] with the query result, otherwise return [`DeltaTableError`].
-    pub async fn query_table(
-        &self,
-        table_name: &str,
-        query: &str,
-    ) -> Result<RecordBatch, DeltaTableError> {
+    /// return a [`RecordBatch`] with the query result, otherwise return [`ModelarDbCommonError`].
+    pub async fn query_table(&self, table_name: &str, query: &str) -> Result<RecordBatch> {
         let table = self.metadata_delta_table(table_name).await?;
 
         self.session.deregister_table(table_name)?;
@@ -329,14 +324,13 @@ impl MetadataDeltaLake {
     }
 
     /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
-    /// metadata Delta Lake, or a [`DeltaTableError`] if a connection cannot be established or
+    /// metadata Delta Lake, or a [`ModelarDbCommonError`] if a connection cannot be established or
     /// the table does not exist.
-    pub async fn metadata_delta_table(
-        &self,
-        table_name: &str,
-    ) -> Result<DeltaTable, DeltaTableError> {
+    pub async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_metadata_table(table_name);
-        open_table_with_storage_options(&table_path, self.storage_options.clone()).await
+        open_table_with_storage_options(&table_path, self.storage_options.clone())
+            .await
+            .map_err(|error| error.into())
     }
 
     /// Return the location of the metadata table with `table_name`.
