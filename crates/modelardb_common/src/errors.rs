@@ -29,7 +29,7 @@ use object_store::Error as ObjectStoreError;
 use sqlparser::parser::ParserError;
 use datafusion::parquet::errors::ParquetError;
 
-/// Result type used throughout the system. [`std::result::Result`] is used to not make the
+/// Result type used throughout `modelardb_common`. [`std::result::Result`] is used to not make the
 /// definition of `Result` cyclic.
 pub type Result<T> = std::result::Result<T, ModelarDbCommonError>;
 

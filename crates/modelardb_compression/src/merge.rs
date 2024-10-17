@@ -22,12 +22,12 @@ use std::collections::HashMap;
 
 use arrow::array::{Array, BinaryArray, Float32Array, UInt64Array, UInt8Array};
 use arrow::record_batch::RecordBatch;
-use modelardb_types::errors::{ModelarDbError, Result};
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray};
 
 use crate::models::{self, timestamps};
 use crate::types::CompressedSegmentBatchBuilder;
+use crate::errors::{ModelarDbCompressionError, Result};
 
 /// Merge segments in `compressed_segments` if their schema is [`COMPRESSED_SCHEMA`] and they:
 /// * Are from same time series.
@@ -40,7 +40,7 @@ use crate::types::CompressedSegmentBatchBuilder;
 /// `compressed_segments` a segment that overlaps with B will be created if A and C are merged.
 pub fn try_merge_segments(compressed_segments: RecordBatch) -> Result<RecordBatch> {
     if compressed_segments.schema() != COMPRESSED_SCHEMA.0 {
-        return Err(ModelarDbError::InvalidArgumentError(
+        return Err(ModelarDbCompressionError::InvalidArgumentError(
             "The schema for the compressed segments is incorrect.".to_owned(),
         ));
     }

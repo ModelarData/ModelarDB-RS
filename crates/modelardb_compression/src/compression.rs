@@ -18,10 +18,10 @@
 //! models.
 
 use arrow::record_batch::RecordBatch;
-use modelardb_types::errors::{ModelarDbError, Result};
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{ErrorBound, TimestampArray, ValueArray};
 
+use crate::errors::{ModelarDbCompressionError, Result};
 use crate::models::gorilla::Gorilla;
 use crate::models::{self, timestamps, GORILLA_ID};
 use crate::types::{CompressedSegmentBatchBuilder, CompressedSegmentBuilder, ModelBuilder};
@@ -50,7 +50,7 @@ pub fn try_compress(
     // and a ValueArray is the only supported input. However, as a result it is necessary to verify
     // they have the same length.
     if uncompressed_timestamps.len() != uncompressed_values.len() {
-        return Err(ModelarDbError::InvalidArgumentError(
+        return Err(ModelarDbCompressionError::InvalidArgumentError(
             "Uncompressed timestamps and uncompressed values have different lengths.".to_owned(),
         ));
     }

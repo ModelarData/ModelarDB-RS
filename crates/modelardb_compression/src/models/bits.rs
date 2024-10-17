@@ -16,7 +16,7 @@
 //! Implementation of types for reading and writing bits from and to a sequence
 //! of bytes.
 
-use modelardb_types::errors::{ModelarDbError, Result};
+use crate::errors::{ModelarDbCompressionError, Result};
 
 /// Read one or multiple bits from a `[u8]`. [`BitReader`] is implemented based
 /// on [code published by Ilkka Rauta] dual-licensed under MIT and Apache2.
@@ -33,7 +33,7 @@ impl<'a> BitReader<'a> {
     /// Return a [`BitReader`] if `bytes` is not empty, otherwise [`String`].
     pub fn try_new(bytes: &'a [u8]) -> Result<Self> {
         if bytes.is_empty() {
-            Err(ModelarDbError::InvalidArgumentError(
+            Err(ModelarDbCompressionError::InvalidArgumentError(
                 "The bytes slice must not be empty.".to_owned(),
             ))
         } else {
