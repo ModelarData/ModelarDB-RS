@@ -18,7 +18,6 @@
 //! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
 use std::collections::HashMap;
-use std::error::Error;
 use std::net::SocketAddr;
 use std::result::Result as StdResult;
 use std::str;

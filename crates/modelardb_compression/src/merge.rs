@@ -25,9 +25,9 @@ use arrow::record_batch::RecordBatch;
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray};
 
+use crate::errors::{ModelarDbCompressionError, Result};
 use crate::models::{self, timestamps};
 use crate::types::CompressedSegmentBatchBuilder;
-use crate::errors::{ModelarDbCompressionError, Result};
 
 /// Merge segments in `compressed_segments` if their schema is [`COMPRESSED_SCHEMA`] and they:
 /// * Are from same time series.

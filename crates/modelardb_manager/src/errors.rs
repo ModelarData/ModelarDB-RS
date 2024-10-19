@@ -49,7 +49,6 @@ pub enum ModelarDbManagerError {
 
 impl Error for ModelarDbManagerError {}
 
-
 impl From<DeltaTableError> for ModelarDbManagerError {
     fn from(error: DeltaTableError) -> ModelarDbManagerError {
         ModelarDbManagerError::DeltaLake(error)

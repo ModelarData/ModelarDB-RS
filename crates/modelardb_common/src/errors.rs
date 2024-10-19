@@ -23,11 +23,11 @@ use std::str::Utf8Error;
 
 use arrow::error::ArrowError;
 use datafusion::error::DataFusionError;
+use datafusion::parquet::errors::ParquetError;
 use deltalake::errors::DeltaTableError;
 use object_store::path::Error as ObjectStorePathError;
 use object_store::Error as ObjectStoreError;
 use sqlparser::parser::ParserError;
-use datafusion::parquet::errors::ParquetError;
 
 /// Result type used throughout `modelardb_common`. [`std::result::Result`] is used to not make the
 /// definition of `Result` cyclic.

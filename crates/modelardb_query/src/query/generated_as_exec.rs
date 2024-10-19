@@ -209,7 +209,10 @@ impl GeneratedAsStream {
     /// Format and return the first row in `batch` that causes `physical_expr` to fail when
     /// generating values. If `physical_expr` never fails the string Unknown Row is returned, and a
     /// [`DataFusionError`] is returned if `batch` is from a normal table.
-    fn failing_row(batch: &RecordBatch, physical_expr: &Arc<dyn PhysicalExpr>) -> DataFusionResult<String> {
+    fn failing_row(
+        batch: &RecordBatch,
+        physical_expr: &Arc<dyn PhysicalExpr>,
+    ) -> DataFusionResult<String> {
         for row_index in 0..batch.num_rows() {
             if physical_expr.evaluate(&batch.slice(row_index, 1)).is_err() {
                 let schema = batch.schema();

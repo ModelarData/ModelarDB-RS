@@ -32,7 +32,7 @@ use tracing::{debug, error, warn};
 
 use crate::context::Context;
 use crate::data_folders::DataFolder;
-use crate::errors::{ModelarDbServerError, Result};
+use crate::errors::Result;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::types::Channels;
 use crate::storage::types::MemoryPool;

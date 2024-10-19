@@ -16,19 +16,17 @@
 //! Support for managing all compressed data that is inserted into the
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
-use std::io::{Error as IOError, ErrorKind};
 use std::sync::{Arc, Mutex};
 
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
-use deltalake::DeltaTableError;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::data_folders::DataFolder;
-use crate::errors::{ModelarDbServerError, Result};
+use crate::errors::Result;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
@@ -120,7 +118,6 @@ impl CompressedDataManager {
     pub(super) fn process_compressed_messages(&self, runtime: Arc<Runtime>) -> Result<()> {
         loop {
             let message = self.channels.compressed_data_receiver.recv()?;
-            use crate::{ModelarDbServerError, Result};
 
             match message {
                 Message::Data(compressed_segment_batch) => {

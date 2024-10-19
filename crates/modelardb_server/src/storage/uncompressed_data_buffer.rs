@@ -25,7 +25,6 @@ use std::sync::Arc;
 use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::errors::ParquetError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::storage;
 use modelardb_types::types::{
@@ -35,7 +34,7 @@ use object_store::path::Path;
 use object_store::ObjectStore;
 use tracing::debug;
 
-use crate::errors::{ModelarDbServerError, Result};
+use crate::errors::Result;
 use crate::storage::{UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
 
 /// Number of [`RecordBatches`](RecordBatch) that must be ingested without modifying an

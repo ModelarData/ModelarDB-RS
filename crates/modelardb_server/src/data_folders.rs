@@ -25,7 +25,7 @@ use modelardb_types::types::ServerMode;
 
 use crate::manager::Manager;
 use crate::ClusterMode;
-use crate::{ModelarDbServerError, Result};
+use crate::Result;
 
 /// Folder for storing metadata and data in Apache Parquet files.
 #[derive(Clone)]

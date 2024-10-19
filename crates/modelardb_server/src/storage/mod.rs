@@ -30,20 +30,15 @@ mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
 use std::env;
-use std::io::{Error as IOError, ErrorKind};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::errors::ParquetError;
-use deltalake::DeltaTableError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_types::errors::ModelarDbError;
 use modelardb_types::types::TimestampArray;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
-use tonic::Status;
 use tracing::error;
 
 use crate::configuration::ConfigurationManager;

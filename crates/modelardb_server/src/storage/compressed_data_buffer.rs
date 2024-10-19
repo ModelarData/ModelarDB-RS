@@ -15,7 +15,6 @@
 
 //! Buffer for compressed segments from the same table.
 
-use std::io::{Error as IOError, ErrorKind};
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;

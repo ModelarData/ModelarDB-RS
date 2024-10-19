@@ -17,23 +17,20 @@
 //! is managed here until it is of a sufficient size to be transferred efficiently.
 
 use std::collections::HashSet;
-use std::io::Error as IOError;
-use std::io::ErrorKind::Other;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dashmap::DashMap;
-use datafusion::parquet::errors::ParquetError;
 use deltalake::arrow::array::RecordBatch;
-use deltalake::{DeltaOps, DeltaTableError};
+use deltalake::DeltaOps;
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
 
 use crate::data_folders::DataFolder;
+use crate::errors::Result;
 use crate::storage::Metric;
-use crate::errors::{ModelarDbServerError, Result};
 
 // TODO: Handle the case where a connection can not be established when transferring data.
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid
