@@ -20,7 +20,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod compression;
-mod errors;
+pub mod errors;
 mod merge;
 mod models;
 mod types;

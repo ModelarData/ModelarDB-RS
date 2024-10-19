@@ -140,7 +140,7 @@ impl CompressedDataManager {
 
     /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
     /// with `table_name`. If `compressed_segments` is saved successfully, return [`Ok`], otherwise
-    /// return [`ModelarDbServerError`].
+    /// return [`crate::errors::ModelarDbServerError`].
     async fn insert_compressed_segments(
         &self,
         compressed_segment_batch: CompressedSegmentBatch,
@@ -196,7 +196,7 @@ impl CompressedDataManager {
 
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until at least `size_in_bytes`
     /// bytes of memory is available. If all the data is saved successfully, return [`Ok`],
-    /// otherwise return [`ModelarDbServerError`].
+    /// otherwise return [`crate::errors::ModelarDbServerError`].
     async fn save_compressed_data_to_free_memory(&self, size_in_bytes: usize) -> Result<()> {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
@@ -224,7 +224,7 @@ impl CompressedDataManager {
     }
 
     /// Flush the data that the [`CompressedDataManager`] is currently managing. Returns an
-    /// [`ModelarDbServerError`] if the data cannot be flushed.
+    /// [`crate::errors::ModelarDbServerError`] if the data cannot be flushed.
     async fn flush(&self) -> Result<()> {
         info!(
             "Flushing the remaining {} compressed data buffers.",
@@ -241,7 +241,8 @@ impl CompressedDataManager {
 
     /// Save the compressed data that belongs to the table with `table_name` The size of the saved
     /// compressed data is added back to the remaining compressed memory. If the data is written
-    /// successfully to disk, return [`Ok`], otherwise return [`ModelarDbServerError`].
+    /// successfully to disk, return [`Ok`], otherwise return
+    /// [`crate::errors::ModelarDbServerError`].
     async fn save_compressed_data(&self, table_name: &str) -> Result<()> {
         debug!("Saving compressed segments to disk for {table_name}.");
 
@@ -295,7 +296,7 @@ impl CompressedDataManager {
 
     /// Change the amount of memory for compressed data in bytes according to `value_change`. If
     /// less than zero bytes remain, save compressed data to free memory. If all the data is saved
-    /// successfully return [`Ok`], otherwise return [`ModelarDbServerError`].
+    /// successfully return [`Ok`], otherwise return [`crate::errors::ModelarDbServerError`].
     pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
         &self,
         value_change: isize,

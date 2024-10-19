@@ -71,7 +71,7 @@ pub fn register_table(
 
 /// Register the model table stored in `delta_table` with `model_table_metadata` from
 /// `table_metadata_manager` and `data_sink` in `session_context`. If the model table could not be
-/// registered with Apache DataFusion, return [`ModelarDbQueryError`].
+/// registered with Apache DataFusion, return [`crate::errors::ModelarDbQueryError`].
 pub fn register_model_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,

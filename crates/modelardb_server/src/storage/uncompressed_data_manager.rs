@@ -50,8 +50,9 @@ pub(super) struct UncompressedDataManager {
     pub local_data_folder: DataFolder,
     /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
     pub maybe_remote_data_folder: Option<DataFolder>,
-    /// Counter incremented for each [`RecordBatch`] of data points ingested. The value is assigned
-    /// to buffers that are created or updated and is used to flush buffers that are no longer used.
+    /// Counter incremented for each [`datafusion::arrow::array::RecordBatch`] of data points
+    /// ingested. The value is assigned to buffers that are created or updated and is used to flush
+    /// buffers that are no longer used.
     current_batch_index: AtomicU64,
     /// [`UncompressedInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) that are ready to be
     /// filled with ingested data points. In-memory and on-disk buffers are stored separately to
@@ -187,7 +188,8 @@ impl UncompressedDataManager {
     }
 
     /// Insert `ingested_data_buffer` into in-memory buffers managed by the storage engine. Returns
-    /// [`ModelarDbServerError`] if the channel or the metadata Delta Lake could not be read from.
+    /// [`crate::errors::ModelarDbServerError`] if the channel or the metadata Delta Lake could not
+    /// be read from.
     async fn insert_data_points(&self, ingested_data_buffer: IngestedDataBuffer) -> Result<()> {
         let data_points = ingested_data_buffer.data_points;
         let model_table_metadata = ingested_data_buffer.model_table_metadata;
@@ -300,8 +302,8 @@ impl UncompressedDataManager {
     /// buffer has been spilled, read it back into memory. If no buffer exists for `tag_hash`,
     /// allocate a new buffer that will be compressed within the error bound in
     /// `model_table_metadata`. Returns [`true`] if a buffer was spilled, [`false`] if not, and
-    /// [`ModelarDbServerError`] if the error bound cannot be retrieved from the metadata Delta
-    /// Lake.
+    /// [`crate::errors::ModelarDbServerError`] if the error bound cannot be retrieved from the
+    /// metadata Delta Lake.
     async fn insert_data_point(
         &self,
         tag_hash: u64,
@@ -446,7 +448,7 @@ impl UncompressedDataManager {
     /// spill one before a new buffer can ever be allocated. To keep the implementation simple, it
     /// spills a random buffer and does not check if the last uncompressed in-memory data buffer has
     /// been read from the channel but is not yet compressed. Returns [`true`] if a buffer was
-    /// spilled, [`false`] if not, and [`ModelarDbServerError`] if spilling fails.
+    /// spilled, [`false`] if not, and [`crate::errors::ModelarDbServerError`] if spilling fails.
     async fn reserve_uncompressed_memory_for_in_memory_data_buffer(
         &self,
         number_of_fields: usize,
@@ -464,8 +466,9 @@ impl UncompressedDataManager {
         }
     }
 
-    /// Spill a random [`UncompressedInMemoryDataBuffer`]. Returns an [`ModelarDbServerError`] if no
-    /// data buffers are currently in memory or if the writing to disk fails.
+    /// Spill a random [`UncompressedInMemoryDataBuffer`]. Returns an
+    /// [`crate::errors::ModelarDbServerError`] if no data buffers are currently in memory or if the
+    /// writing to disk fails.
     async fn spill_in_memory_data_buffer(&self) -> Result<()> {
         // Extract tag_hash but drop the reference to the map element as remove() may deadlock if
         // called when holding any sort of reference into the map.
@@ -591,8 +594,8 @@ impl UncompressedDataManager {
     }
 
     /// Send the uncompressed data buffers that the [`UncompressedDataManager`] is managing to the
-    /// compressor. Returns [`ModelarDbServerError`] if a [`Message`] cannot be sent to the
-    /// compressor.
+    /// compressor. Returns [`crate::errors::ModelarDbServerError`] if a [`Message`] cannot be sent
+    /// to the compressor.
     fn flush(&self) -> Result<()> {
         // In-memory tag hashes are copied to prevent multiple concurrent borrows to the map.
         let in_memory_tag_hashes: Vec<u64> = self
@@ -656,7 +659,7 @@ impl UncompressedDataManager {
 
     /// Compress `uncompressed_data_buffer` and send the compressed segments to the
     /// [`CompressedDataManager`](super::CompressedDataManager) over a channel. Returns
-    /// [`ModelarDbServerError`] if a [`Message`] cannot be sent to
+    /// [`crate::errors::ModelarDbServerError`] if a [`Message`] cannot be sent to
     /// [`CompressedDataManager`](super::CompressedDataManager).
     async fn compress_finished_buffer(
         &self,
@@ -736,8 +739,8 @@ impl UncompressedDataManager {
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
-    /// Restores the configuration and returns [`ModelarDbServerError`] if an in-memory buffer
-    /// cannot be spilled.
+    /// Restores the configuration and returns [`crate::errors::ModelarDbServerError`] if an
+    /// in-memory buffer cannot be spilled.
     pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(
         &self,
         value_change: isize,

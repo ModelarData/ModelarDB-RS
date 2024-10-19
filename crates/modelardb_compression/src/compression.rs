@@ -37,9 +37,9 @@ const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 /// regular and delta-of-deltas followed by a variable length binary encoding if irregular.
 /// `uncompressed_values` is compressed within `error_bound` using the model types in `models`.
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted according to
-/// `uncompressed_timestamps`. Returns [`ModelarDbError`] if `uncompressed_timestamps` and
-/// `uncompressed_values` have different lengths, otherwise the resulting compressed segments are
-/// returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`] schema.
+/// `uncompressed_timestamps`. Returns [`ModelarDbCompressionError`] if `uncompressed_timestamps`
+/// and `uncompressed_values` have different lengths, otherwise the resulting compressed segments
+/// are returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`] schema.
 pub fn try_compress(
     univariate_id: u64,
     error_bound: ErrorBound,
