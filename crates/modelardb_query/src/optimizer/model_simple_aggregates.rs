@@ -224,14 +224,14 @@ fn try_rewrite_aggregate_exprs(
                     rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Avg))
                 }
                 _ => {
-                    return Err(DataFusionError::Internal(format!(
+                    return Err(DataFusionError::NotImplemented(format!(
                         "Aggregate function expression {} is currently not supported.",
                         aggregate_function_expr_name
                     )))
                 }
             }
         } else {
-            return Err(DataFusionError::Internal(format!(
+            return Err(DataFusionError::NotImplemented(format!(
                 "Aggregate expression {} is currently not supported.",
                 aggregate_expr.name()
             )));

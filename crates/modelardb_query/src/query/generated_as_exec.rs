@@ -240,7 +240,7 @@ impl GeneratedAsStream {
                         formatted_values.push(format!("{name}: {}", tags.value(row_index)));
                     } else {
                         // The method has been called for a table with unsupported column types.
-                        return Err(DataFusionError::Internal("Not a model table.".to_owned()));
+                        return Err(DataFusionError::Execution("Not a model table.".to_owned()));
                     }
                 }
 

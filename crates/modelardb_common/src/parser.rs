@@ -649,9 +649,12 @@ fn column_defs_to_model_table_query_schema(
                             );
                         }
                         option => {
-                            return Err(DataFusionError::Internal(format!(
-                                "{option} is not supported in model tables."
-                            )))
+                            return Err(DataFusionError::SQL(
+                                ParserError::ParserError(format!(
+                                    "{option} is not supported in model tables."
+                                )),
+                                None,
+                            ))
                         }
                     }
                 }
@@ -660,9 +663,12 @@ fn column_defs_to_model_table_query_schema(
             }
             SQLDataType::Text => Field::new(normalized_name, DataType::Utf8, false),
             data_type => {
-                return Err(DataFusionError::Internal(format!(
-                    "{data_type} is not supported in model tables."
-                )))
+                return Err(DataFusionError::SQL(
+                    ParserError::ParserError(format!(
+                        "{data_type} is not supported in model tables."
+                    )),
+                    None,
+                ))
             }
         };
 

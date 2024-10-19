@@ -104,7 +104,7 @@ impl TableProvider for Table {
         delta_table
             .load()
             .await
-            .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         delta_table.scan(state, projection, filters, limit).await
     }

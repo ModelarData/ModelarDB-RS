@@ -282,8 +282,8 @@ fn convert_logical_expr_to_physical_expr(
 }
 
 /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
-/// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError::Plan`] if the
-/// necessary metadata cannot be retrieved from the metadata Delta Lake.
+/// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError`] if the necessary
+/// metadata cannot be retrieved from the metadata Delta Lake.
 fn new_apache_parquet_exec(
     delta_table: &DeltaTable,
     partition_filters: &[PartitionFilter],
@@ -293,9 +293,9 @@ fn new_apache_parquet_exec(
     // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
     let mut logical_files = delta_table
         .get_active_add_actions_by_partitions(partition_filters)
-        .map_err(|error| DataFusionError::Internal(error.to_string()))?
+        .map_err(|error| DataFusionError::Plan(error.to_string()))?
         .collect::<StdResult<Vec<LogicalFile>, DeltaTableError>>()
-        .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
     // TODO: prune the Apache Parquet files using metadata and maybe_parquet_filters if possible.
     logical_files.sort_by_key(|logical_file| logical_file.modification_time());
@@ -341,7 +341,7 @@ fn logical_file_to_partitioned_file(
 ) -> DataFusionResult<PartitionedFile> {
     let last_modified = logical_file
         .modification_datetime()
-        .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
     let object_meta = ObjectMeta {
         location: logical_file.object_store_path(),
@@ -403,7 +403,7 @@ impl TableProvider for ModelTable {
         delta_table
             .load()
             .await
-            .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // Register the object store as done in DeltaTable so paths are from the table root.
         let log_store = delta_table.log_store();
