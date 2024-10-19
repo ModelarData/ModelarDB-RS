@@ -20,7 +20,7 @@ use std::fmt::{Display, Formatter};
 use std::io::Error as IoError;
 
 use deltalake::errors::DeltaTableError;
-use modelardb_common::errors::ModelarDbCommonError;
+use modelardb_common::error::ModelarDbCommonError;
 use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
 

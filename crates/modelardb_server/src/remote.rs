@@ -56,7 +56,7 @@ use tracing::{debug, error, info};
 
 use crate::context::Context;
 use crate::ClusterMode;
-use crate::{ModelarDbServerError, Result};
+use crate::error::{ModelarDbServerError, Result};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to the methods that
 /// process the requests through [`FlightServiceHandler`].

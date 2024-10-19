@@ -44,7 +44,7 @@ use tracing::error;
 use crate::configuration::ConfigurationManager;
 use crate::context::Context;
 use crate::data_folders::DataFolders;
-use crate::errors::{ModelarDbServerError, Result};
+use crate::error::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};

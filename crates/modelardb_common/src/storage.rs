@@ -48,7 +48,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::arguments;
-use crate::errors::{ModelarDbCommonError, Result};
+use crate::error::{ModelarDbCommonError, Result};
 
 /// The folder storing compressed data in the data folders.
 const COMPRESSED_DATA_FOLDER: &str = "tables";

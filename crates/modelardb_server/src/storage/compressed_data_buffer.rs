@@ -21,7 +21,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
 
-use crate::errors::{ModelarDbServerError, Result};
+use crate::error::{ModelarDbServerError, Result};
 
 /// Compressed segments representing data points from a column in a model table as one
 /// [`RecordBatch`].

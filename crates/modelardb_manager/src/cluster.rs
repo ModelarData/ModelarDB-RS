@@ -26,7 +26,7 @@ use modelardb_types::types::ServerMode;
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::Request;
 
-use crate::errors::{ModelarDbManagerError, Result};
+use crate::error::{ModelarDbManagerError, Result};
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
 /// or a cloud node. A node cannot be another manager.

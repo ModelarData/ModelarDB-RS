@@ -20,7 +20,7 @@
 mod configuration;
 mod context;
 mod data_folders;
-mod errors;
+mod error;
 mod manager;
 mod remote;
 mod storage;
@@ -34,7 +34,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::context::Context;
 use crate::data_folders::DataFolders;
-use crate::errors::{ModelarDbServerError, Result};
+use crate::error::{ModelarDbServerError, Result};
 use crate::manager::Manager;
 
 #[global_allocator]

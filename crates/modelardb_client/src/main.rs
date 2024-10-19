@@ -15,7 +15,7 @@
 
 //! Implementation of ModelarDB's command line client.
 
-mod errors;
+mod error;
 mod helper;
 
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ use rustyline::Editor;
 use tonic::transport::Channel;
 use tonic::{Request, Streaming};
 
-use crate::errors::{ModelarDbClientError, Result};
+use crate::error::{ModelarDbClientError, Result};
 use crate::helper::ClientHelper;
 
 /// Default host to connect to.

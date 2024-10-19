@@ -44,7 +44,7 @@ use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
 use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Token;
 
-use crate::errors::{ModelarDbCommonError, Result};
+use crate::error::{ModelarDbCommonError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 
 /// Constant specifying that a model table should be created.

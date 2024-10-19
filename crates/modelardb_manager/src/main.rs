@@ -16,7 +16,7 @@
 //! Implementation of ModelarDB manager's main function.
 
 mod cluster;
-mod errors;
+mod error;
 mod metadata;
 mod remote;
 
@@ -32,7 +32,7 @@ use tonic::metadata::{Ascii, MetadataValue};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
-use crate::errors::{ModelarDbManagerError, Result};
+use crate::error::{ModelarDbManagerError, Result};
 use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
 

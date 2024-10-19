@@ -45,7 +45,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
 use crate::cluster::Node;
-use crate::errors::{ModelarDbManagerError, Result};
+use crate::error::{ModelarDbManagerError, Result};
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.

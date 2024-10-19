@@ -17,7 +17,7 @@
 //! rewritten by Apache DataFusion's optimizer to make it more efficient to execute. Additional
 //! rules are added to this optimizer to execute queries directly on the compressed segments.
 
-pub mod errors;
+pub mod error;
 mod optimizer;
 mod query;
 
@@ -31,7 +31,7 @@ use deltalake::DeltaTable;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 
-use crate::errors::Result;
+use crate::error::Result;
 use crate::query::model_table::ModelTable;
 use crate::query::table::Table;
 
@@ -55,7 +55,7 @@ pub fn create_session_context() -> SessionContext {
 
 /// Register the table stored in `delta_table` with `table_name` and `data_sink` in
 /// `session_context`. If the table could not be registered with Apache DataFusion, return
-/// [`ModelarDbQueryError`](crate::errors::ModelarDbQueryError).
+/// [`ModelarDbQueryError`](crate::error::ModelarDbQueryError).
 pub fn register_table(
     session_context: &SessionContext,
     table_name: &str,
@@ -71,7 +71,7 @@ pub fn register_table(
 
 /// Register the model table stored in `delta_table` with `model_table_metadata` from
 /// `table_metadata_manager` and `data_sink` in `session_context`. If the model table could not be
-/// registered with Apache DataFusion, return [`crate::errors::ModelarDbQueryError`].
+/// registered with Apache DataFusion, return [`crate::error::ModelarDbQueryError`].
 pub fn register_model_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,

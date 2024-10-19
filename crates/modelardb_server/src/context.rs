@@ -29,7 +29,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::configuration::ConfigurationManager;
-use crate::errors::{ModelarDbServerError, Result};
+use crate::error::{ModelarDbServerError, Result};
 use crate::storage::data_sinks::{ModelTableDataSink, TableDataSink};
 use crate::storage::StorageEngine;
 use crate::{ClusterMode, DataFolders};

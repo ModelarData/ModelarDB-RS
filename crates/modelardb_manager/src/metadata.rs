@@ -29,7 +29,7 @@ use modelardb_types::types::ServerMode;
 use uuid::Uuid;
 
 use crate::cluster::Node;
-use crate::errors::{ModelarDbManagerError, Result};
+use crate::error::{ModelarDbManagerError, Result};
 
 /// Stores the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.

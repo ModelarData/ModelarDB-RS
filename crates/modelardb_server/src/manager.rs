@@ -30,7 +30,7 @@ use tonic::Request;
 
 use crate::context::Context;
 use crate::PORT;
-use crate::{ModelarDbServerError, Result};
+use crate::error::{ModelarDbServerError, Result};
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
 #[derive(Clone, Debug)]

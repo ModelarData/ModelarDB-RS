@@ -20,7 +20,7 @@ use std::io::Write;
 use std::str;
 use std::{env, process};
 
-use crate::errors::{ModelarDbCommonError, Result};
+use crate::error::{ModelarDbCommonError, Result};
 
 /// Error to emit when an unknown remote data folder type is used.
 const REMOTE_DATA_FOLDER_ERROR: &str =
