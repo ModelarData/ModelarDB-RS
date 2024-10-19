@@ -17,7 +17,7 @@
 //! rewritten by Apache DataFusion's optimizer to make it more efficient to execute. Additional
 //! rules are added to this optimizer to execute queries directly on the compressed segments.
 
-mod errors;
+pub mod errors;
 mod optimizer;
 mod query;
 
@@ -71,7 +71,7 @@ pub fn register_table(
 
 /// Register the model table stored in `delta_table` with `model_table_metadata` from
 /// `table_metadata_manager` and `data_sink` in `session_context`. If the model table could not be
-/// registered with Apache DataFusion, return [`ModelarDbError`].
+/// registered with Apache DataFusion, return [`ModelarDbQueryError`].
 pub fn register_model_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,

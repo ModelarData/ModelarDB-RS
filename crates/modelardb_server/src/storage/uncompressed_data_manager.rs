@@ -21,13 +21,10 @@ use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crossbeam_channel::SendError;
 use dashmap::DashMap;
 use datafusion::arrow::array::StringArray;
-use datafusion::arrow::record_batch::RecordBatch;
 use futures::StreamExt;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::path::{Path, PathPart};
 use tokio::runtime::Runtime;
@@ -35,6 +32,7 @@ use tracing::{debug, error, warn};
 
 use crate::context::Context;
 use crate::data_folders::DataFolder;
+use crate::errors::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::types::Channels;
 use crate::storage::types::MemoryPool;
@@ -105,7 +103,7 @@ impl UncompressedDataManager {
 
     /// Add references to the [`UncompressedDataBuffers`](UncompressedDataBuffer) currently on disk
     /// to [`UncompressedDataManager`] which immediately will start compressing them.
-    pub(super) async fn initialize(&self, context: &Context) -> Result<(), IOError> {
+    pub(super) async fn initialize(&self, context: &Context) -> Result<()> {
         let mut initial_disk_space = 0;
         let local_data_folder = self.local_data_folder.delta_lake.object_store();
 
@@ -148,8 +146,7 @@ impl UncompressedDataManager {
 
             self.channels
                 .uncompressed_data_sender
-                .send(Message::Data(UncompressedDataBuffer::OnDisk(buffer)))
-                .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
+                .send(Message::Data(UncompressedDataBuffer::OnDisk(buffer)))?;
         }
 
         // Record the used disk space of the uncompressed data buffers currently on disk.
@@ -164,36 +161,23 @@ impl UncompressedDataManager {
 
     /// Read and process messages received from the [`StorageEngine`](super::StorageEngine) to
     /// either ingest uncompressed data, flush buffers, or stop.
-    pub(super) fn process_uncompressed_messages(
-        &self,
-        runtime: Arc<Runtime>,
-    ) -> Result<(), String> {
+    pub(super) fn process_uncompressed_messages(&self, runtime: Arc<Runtime>) -> Result<()> {
         loop {
-            let message = self
-                .channels
-                .ingested_data_receiver
-                .recv()
-                .map_err(|error| error.to_string())?;
+            let message = self.channels.ingested_data_receiver.recv()?;
 
             match message {
                 Message::Data(ingested_data_buffer) => {
-                    runtime
-                        .block_on(self.insert_data_points(ingested_data_buffer))
-                        .map_err(|error| error.to_string())?;
+                    runtime.block_on(self.insert_data_points(ingested_data_buffer))?;
                 }
                 Message::Flush => {
                     self.flush_and_log_errors();
                     self.channels
                         .uncompressed_data_sender
-                        .send(Message::Flush)
-                        .map_err(|error| error.to_string())?;
+                        .send(Message::Flush)?;
                 }
                 Message::Stop => {
                     self.flush_and_log_errors();
-                    self.channels
-                        .uncompressed_data_sender
-                        .send(Message::Stop)
-                        .map_err(|error| error.to_string())?;
+                    self.channels.uncompressed_data_sender.send(Message::Stop)?;
                     break;
                 }
             }
@@ -203,11 +187,8 @@ impl UncompressedDataManager {
     }
 
     /// Insert `ingested_data_buffer` into in-memory buffers managed by the storage engine. Returns
-    /// [`String`] if the channel or the metadata Delta Lake could not be read from.
-    async fn insert_data_points(
-        &self,
-        ingested_data_buffer: IngestedDataBuffer,
-    ) -> Result<(), String> {
+    /// [`ModelarDbServerError`] if the channel or the metadata Delta Lake could not be read from.
+    async fn insert_data_points(&self, ingested_data_buffer: IngestedDataBuffer) -> Result<()> {
         let data_points = ingested_data_buffer.data_points;
         let model_table_metadata = ingested_data_buffer.model_table_metadata;
 
@@ -264,8 +245,7 @@ impl UncompressedDataManager {
                 .local_data_folder
                 .table_metadata_manager
                 .lookup_or_compute_tag_hash(&model_table_metadata, &tag_values)
-                .await
-                .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
+                .await?;
 
             // If the server was started with a manager, transfer the tag hash metadata if it was
             // saved to the server metadata Delta Lake. We purposely transfer tag metadata before the
@@ -275,8 +255,7 @@ impl UncompressedDataManager {
                     remote_data_folder
                         .table_metadata_manager
                         .save_tag_hash_metadata(&model_table_metadata, tag_hash, &tag_values)
-                        .await
-                        .map_err(|error| error.to_string())?;
+                        .await?;
                 }
             }
 
@@ -291,16 +270,13 @@ impl UncompressedDataManager {
                     model_table_metadata.clone(),
                     current_batch_index,
                 )
-                .await
-                .map_err(|error| error.to_string())?;
+                .await?;
         }
 
         // Unused buffers are purposely only finished at the end of insert_data_points() so that the
         // buffers required for any of the data points in the current batch are never finished.
         let current_batch_index = self.current_batch_index.fetch_add(1, Ordering::Relaxed);
-        self.finish_unused_buffers(current_batch_index)
-            .await
-            .map_err(|error| error.to_string())?;
+        self.finish_unused_buffers(current_batch_index).await?;
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_ingested_memory_metric
@@ -324,7 +300,8 @@ impl UncompressedDataManager {
     /// buffer has been spilled, read it back into memory. If no buffer exists for `tag_hash`,
     /// allocate a new buffer that will be compressed within the error bound in
     /// `model_table_metadata`. Returns [`true`] if a buffer was spilled, [`false`] if not, and
-    /// [`IOError`] if the error bound cannot be retrieved from the metadata Delta Lake.
+    /// [`ModelarDbServerError`] if the error bound cannot be retrieved from the metadata Delta
+    /// Lake.
     async fn insert_data_point(
         &self,
         tag_hash: u64,
@@ -332,7 +309,7 @@ impl UncompressedDataManager {
         values: &mut dyn Iterator<Item = Value>,
         model_table_metadata: Arc<ModelTableMetadata>,
         current_batch_index: u64,
-    ) -> Result<bool, IOError> {
+    ) -> Result<bool> {
         debug!("Add data point at {timestamp} to uncompressed data buffer for {tag_hash}.");
 
         // Track if any buffers are spilled during ingestion so this information can be returned to
@@ -454,7 +431,7 @@ impl UncompressedDataManager {
                     full_uncompressed_in_memory_data_buffer,
                 )))
                 .map(|_| buffers_are_spilled)
-                .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error));
+                .map_err(|error| error.into());
         }
 
         Ok(buffers_are_spilled)
@@ -464,16 +441,16 @@ impl UncompressedDataManager {
     /// enough available memory for an uncompressed in-memory data buffer the memory is reserved and
     /// the method returns. Otherwise, if there are buffers waiting to be compressed, it is assumed
     /// that some of them are in-memory and the thread is blocked until memory have been returned to
-    /// the pool. If there are no buffers waiting to be compressed, all the memory for
-    /// uncompressed data is used for unfinished uncompressed in-memory data buffers, and it is
-    /// necessary to spill one before a new buffer can ever be allocated. To keep the implementation
-    /// simple, it spills a random buffer and does not check if the last uncompressed in-memory data
-    /// buffer has been read from the channel but is not yet compressed. Returns [`true`] if a
-    /// buffer was spilled, [`false`] if not, and [`IOError`] if spilling fails.
+    /// the pool. If there are no buffers waiting to be compressed, all the memory for uncompressed
+    /// data is used for unfinished uncompressed in-memory data buffers, and it is necessary to
+    /// spill one before a new buffer can ever be allocated. To keep the implementation simple, it
+    /// spills a random buffer and does not check if the last uncompressed in-memory data buffer has
+    /// been read from the channel but is not yet compressed. Returns [`true`] if a buffer was
+    /// spilled, [`false`] if not, and [`ModelarDbServerError`] if spilling fails.
     async fn reserve_uncompressed_memory_for_in_memory_data_buffer(
         &self,
         number_of_fields: usize,
-    ) -> Result<bool, IOError> {
+    ) -> Result<bool> {
         // It is not guaranteed that compressing the data buffers in the channel releases any memory
         // as all the data buffers that are waiting to be compressed may all be stored on disk.
         if self.memory_pool.wait_for_uncompressed_memory_until(
@@ -487,9 +464,9 @@ impl UncompressedDataManager {
         }
     }
 
-    /// Spill a random [`UncompressedInMemoryDataBuffer`]. Returns an [`IOError`] if no data buffers
-    /// are currently in memory or if the writing to disk fails.
-    async fn spill_in_memory_data_buffer(&self) -> Result<(), IOError> {
+    /// Spill a random [`UncompressedInMemoryDataBuffer`]. Returns an [`ModelarDbServerError`] if no
+    /// data buffers are currently in memory or if the writing to disk fails.
+    async fn spill_in_memory_data_buffer(&self) -> Result<()> {
         // Extract tag_hash but drop the reference to the map element as remove() may deadlock if
         // called when holding any sort of reference into the map.
         let tag_hash = {
@@ -554,7 +531,7 @@ impl UncompressedDataManager {
 
     /// Finish active in-memory and on-disk data buffers that are no longer used to free memory and
     /// bound latency.
-    async fn finish_unused_buffers(&self, current_batch_index: u64) -> Result<(), IOError> {
+    async fn finish_unused_buffers(&self, current_batch_index: u64) -> Result<()> {
         debug!("Freeing memory by finishing in-memory and on-disk buffers that are not used.");
 
         // In-memory tag hashes are copied to prevent multiple concurrent borrows to the map.
@@ -572,12 +549,9 @@ impl UncompressedDataManager {
                 .remove(&tag_hash)
                 .unwrap();
 
-            self.channels
-                .uncompressed_data_sender
-                .send(Message::Data(UncompressedDataBuffer::InMemory(
-                    uncompressed_in_memory_data_buffer,
-                )))
-                .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
+            self.channels.uncompressed_data_sender.send(Message::Data(
+                UncompressedDataBuffer::InMemory(uncompressed_in_memory_data_buffer),
+            ))?;
 
             debug!("Finished in-memory buffer for {tag_hash} as it is no longer used.");
         }
@@ -597,12 +571,9 @@ impl UncompressedDataManager {
                 .remove(&tag_hash)
                 .unwrap();
 
-            self.channels
-                .uncompressed_data_sender
-                .send(Message::Data(UncompressedDataBuffer::OnDisk(
-                    uncompressed_on_disk_data_buffer,
-                )))
-                .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
+            self.channels.uncompressed_data_sender.send(Message::Data(
+                UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer),
+            ))?;
 
             debug!("Finished on-disk buffer for {tag_hash} as it is no longer used.");
         }
@@ -620,8 +591,9 @@ impl UncompressedDataManager {
     }
 
     /// Send the uncompressed data buffers that the [`UncompressedDataManager`] is managing to the
-    /// compressor. Returns [`SendError`] if a [`Message`] cannot be sent to the compressor.
-    fn flush(&self) -> Result<(), SendError<Message<UncompressedDataBuffer>>> {
+    /// compressor. Returns [`ModelarDbServerError`] if a [`Message`] cannot be sent to the
+    /// compressor.
+    fn flush(&self) -> Result<()> {
         // In-memory tag hashes are copied to prevent multiple concurrent borrows to the map.
         let in_memory_tag_hashes: Vec<u64> = self
             .uncompressed_in_memory_data_buffers
@@ -661,31 +633,19 @@ impl UncompressedDataManager {
 
     /// Read and process messages received from the [`UncompressedDataManager`] to either compress
     /// uncompressed data, forward a flush message, or stop.
-    pub(super) fn process_compressor_messages(&self, runtime: Arc<Runtime>) -> Result<(), String> {
+    pub(super) fn process_compressor_messages(&self, runtime: Arc<Runtime>) -> Result<()> {
         loop {
-            let message = self
-                .channels
-                .uncompressed_data_receiver
-                .recv()
-                .map_err(|error| error.to_string())?;
+            let message = self.channels.uncompressed_data_receiver.recv()?;
 
             match message {
                 Message::Data(data_buffer) => {
-                    runtime
-                        .block_on(self.compress_finished_buffer(data_buffer))
-                        .map_err(|error| error.to_string())?;
+                    runtime.block_on(self.compress_finished_buffer(data_buffer))?;
                 }
                 Message::Flush => {
-                    self.channels
-                        .compressed_data_sender
-                        .send(Message::Flush)
-                        .map_err(|error| error.to_string())?;
+                    self.channels.compressed_data_sender.send(Message::Flush)?;
                 }
                 Message::Stop => {
-                    self.channels
-                        .compressed_data_sender
-                        .send(Message::Stop)
-                        .map_err(|error| error.to_string())?;
+                    self.channels.compressed_data_sender.send(Message::Stop)?;
                     break;
                 }
             }
@@ -696,12 +656,12 @@ impl UncompressedDataManager {
 
     /// Compress `uncompressed_data_buffer` and send the compressed segments to the
     /// [`CompressedDataManager`](super::CompressedDataManager) over a channel. Returns
-    /// [`SendError`] if a [`Message`] cannot be sent to
+    /// [`ModelarDbServerError`] if a [`Message`] cannot be sent to
     /// [`CompressedDataManager`](super::CompressedDataManager).
     async fn compress_finished_buffer(
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
-    ) -> Result<(), SendError<Message<CompressedSegmentBatch>>> {
+    ) -> Result<()> {
         let (memory_use, disk_use, maybe_data_points, tag_hash, model_table_metadata) =
             match uncompressed_data_buffer {
                 UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
@@ -724,13 +684,7 @@ impl UncompressedDataManager {
                 ),
             };
 
-        let data_points = maybe_data_points.map_err(|_| {
-            SendError(Message::Data(CompressedSegmentBatch::new(
-                model_table_metadata.clone(),
-                vec![RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone())],
-            )))
-        })?;
-
+        let data_points = maybe_data_points?;
         let uncompressed_timestamps = modelardb_types::array!(data_points, 0, TimestampArray);
 
         let compressed_segments = model_table_metadata
@@ -782,11 +736,12 @@ impl UncompressedDataManager {
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
-    /// Restores the configuration and returns [`IOError`] if an in-memory buffer cannot be spilled.
+    /// Restores the configuration and returns [`ModelarDbServerError`] if an in-memory buffer
+    /// cannot be spilled.
     pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(
         &self,
         value_change: isize,
-    ) -> Result<(), IOError> {
+    ) -> Result<()> {
         self.memory_pool.adjust_uncompressed_memory(value_change);
 
         while self.memory_pool.remaining_uncompressed_memory_in_bytes() < 0 {

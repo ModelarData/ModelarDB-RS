@@ -18,13 +18,14 @@
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use deltalake::DeltaTableError;
+use modelardb_common::arguments;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
 use modelardb_types::types::ServerMode;
 
 use crate::manager::Manager;
 use crate::ClusterMode;
+use crate::{ModelarDbServerError, Result};
 
 /// Folder for storing metadata and data in Apache Parquet files.
 #[derive(Clone)]
@@ -37,9 +38,9 @@ pub struct DataFolder {
 
 impl DataFolder {
     /// Return a [`DataFolder`] created from `data_folder_path`. If the folder does not exist, it is
-    /// created. If the folder does not exist and could not be created or if the metadata tables could
-    /// not be created, [`DeltaTableError`] is returned.
-    pub async fn try_from_path(data_folder_path: &StdPath) -> Result<Self, DeltaTableError> {
+    /// created. If the folder does not exist and could not be created or if the metadata tables
+    /// could not be created, [`ModelarDbServerError`] is returned.
+    pub async fn try_from_path(data_folder_path: &StdPath) -> Result<Self> {
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
         let table_metadata_manager = TableMetadataManager::try_from_path(data_folder_path).await?;
 
@@ -49,9 +50,10 @@ impl DataFolder {
         })
     }
 
-    /// Return a [`DataFolder`] created from `connection_info`. If the connection information could not
-    /// be parsed or if the metadata tables could not be created, [`DeltaTableError`] is returned.
-    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self, DeltaTableError> {
+    /// Return a [`DataFolder`] created from `connection_info`. If the connection information could
+    /// not be parsed or if the metadata tables could not be created, [`ModelarDbServerError`] is
+    /// returned.
+    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
         let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
 
         let remote_table_metadata_manager =
@@ -92,16 +94,16 @@ impl DataFolders {
 
     /// Parse the given command line arguments into a [`ClusterMode`] and an instance of
     /// [`DataFolders`]. If the necessary command line arguments are not provided, too many
-    /// arguments are provided, or if the arguments are malformed, [`String`] is returned.
+    /// arguments are provided, or if the arguments are malformed, [`ModelarDbServerError`] is
+    /// returned.
     pub async fn try_from_command_line_arguments(
         arguments: &[&str],
-    ) -> Result<(ClusterMode, Self), String> {
+    ) -> Result<(ClusterMode, Self)> {
         // Match the provided command line arguments to the supported inputs.
         match arguments {
             &["edge", local_data_folder] | &[local_data_folder] => {
-                let local_data_folder = DataFolder::try_from_path(StdPath::new(local_data_folder))
-                    .await
-                    .map_err(|error| error.to_string())?;
+                let local_data_folder =
+                    DataFolder::try_from_path(StdPath::new(local_data_folder)).await?;
 
                 Ok((
                     ClusterMode::SingleNode,
@@ -110,17 +112,13 @@ impl DataFolders {
             }
             &["cloud", local_data_folder, manager_url] => {
                 let (manager, connection_info) =
-                    Manager::register_node(manager_url, ServerMode::Cloud)
-                        .await
-                        .map_err(|error| error.to_string())?;
+                    Manager::register_node(manager_url, ServerMode::Cloud).await?;
 
-                let local_data_folder = DataFolder::try_from_path(StdPath::new(local_data_folder))
-                    .await
-                    .map_err(|error| error.to_string())?;
+                let local_data_folder =
+                    DataFolder::try_from_path(StdPath::new(local_data_folder)).await?;
 
-                let remote_data_folder = DataFolder::try_from_connection_info(&connection_info)
-                    .await
-                    .map_err(|error| error.to_string())?;
+                let remote_data_folder =
+                    DataFolder::try_from_connection_info(&connection_info).await?;
 
                 Ok((
                     ClusterMode::MultiNode(manager),
@@ -133,17 +131,13 @@ impl DataFolders {
             }
             &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
                 let (manager, connection_info) =
-                    Manager::register_node(manager_url, ServerMode::Edge)
-                        .await
-                        .map_err(|error| error.to_string())?;
+                    Manager::register_node(manager_url, ServerMode::Edge).await?;
 
-                let local_data_folder = DataFolder::try_from_path(StdPath::new(local_data_folder))
-                    .await
-                    .map_err(|error| error.to_string())?;
+                let local_data_folder =
+                    DataFolder::try_from_path(StdPath::new(local_data_folder)).await?;
 
-                let remote_data_folder = DataFolder::try_from_connection_info(&connection_info)
-                    .await
-                    .map_err(|error| error.to_string())?;
+                let remote_data_folder =
+                    DataFolder::try_from_connection_info(&connection_info).await?;
 
                 Ok((
                     ClusterMode::MultiNode(manager),
@@ -154,14 +148,9 @@ impl DataFolders {
                     ),
                 ))
             }
-            _ => {
-                // The errors are consciously ignored as the program is terminating.
-                let binary_path = std::env::current_exe().unwrap();
-                let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-                Err(format!(
-                    "Usage: {binary_name} [server_mode] local_data_folder [manager_url]."
-                ))
-            }
+            _ => arguments::print_usage_and_exit_with_error(
+                "[server_mode] local_data_folder [manager_url]",
+            ),
         }
     }
 }

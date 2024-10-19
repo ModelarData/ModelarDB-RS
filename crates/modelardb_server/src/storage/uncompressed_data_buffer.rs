@@ -18,10 +18,9 @@
 //! supports inserting and storing data in-memory, while [`UncompressedOnDiskDataBuffer`] provides
 //! support for storing uncompressed data points in Apache Parquet files on disk.
 
-use std::fmt::Formatter;
-use std::io::Error as IOError;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::mem;
 use std::sync::Arc;
-use std::{fmt, mem};
 
 use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::compute;
@@ -36,6 +35,7 @@ use object_store::path::Path;
 use object_store::ObjectStore;
 use tracing::debug;
 
+use crate::errors::{ModelarDbServerError, Result};
 use crate::storage::{UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
 
 /// Number of [`RecordBatches`](RecordBatch) that must be ingested without modifying an
@@ -154,7 +154,7 @@ impl UncompressedInMemoryDataBuffer {
     }
 
     /// Finish the array builders and return the data in a [`RecordBatch`] sorted by time.
-    pub(super) async fn record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
+    pub(super) async fn record_batch(&mut self) -> Result<RecordBatch> {
         let timestamps = self.timestamps.finish();
 
         // lexsort() is not used as it is unclear in what order it sorts multiple arrays, instead a
@@ -196,7 +196,7 @@ impl UncompressedInMemoryDataBuffer {
     pub(super) async fn spill_to_apache_parquet(
         &mut self,
         local_data_folder: Arc<dyn ObjectStore>,
-    ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
+    ) -> Result<UncompressedOnDiskDataBuffer> {
         // unwrap() is safe since the schema is known and the columns are always the same length.
         let data_points = self.record_batch().await.unwrap();
 
@@ -211,8 +211,8 @@ impl UncompressedInMemoryDataBuffer {
     }
 }
 
-impl fmt::Debug for UncompressedInMemoryDataBuffer {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl Debug for UncompressedInMemoryDataBuffer {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(
             f,
             "UncompressedInMemoryDataBuffer({}, {}, {}, {})",
@@ -250,14 +250,14 @@ pub(super) struct UncompressedOnDiskDataBuffer {
 impl UncompressedOnDiskDataBuffer {
     /// Spill the in-memory `data_points` from the time series with `tag_hash` to an Apache Parquet
     /// file in `local_data_folder`. If the Apache Parquet file is written successfully, return an
-    /// [`UncompressedOnDiskDataBuffer`], otherwise return [`IOError`].
+    /// [`UncompressedOnDiskDataBuffer`], otherwise return [`ModelarDbServerError`].
     pub(super) async fn try_spill(
         tag_hash: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
         updated_by_batch_index: u64,
         local_data_folder: Arc<dyn ObjectStore>,
         data_points: RecordBatch,
-    ) -> Result<Self, IOError> {
+    ) -> Result<Self> {
         // Create a path that uses the first timestamp as the filename.
         let timestamps = modelardb_types::array!(data_points, 0, TimestampArray);
         let file_path = Path::from(format!(
@@ -283,14 +283,14 @@ impl UncompressedOnDiskDataBuffer {
     }
 
     /// Return an [`UncompressedOnDiskDataBuffer`] with the data points for `tag_hash` in
-    /// `file_path` if a file at `file_path` exists, otherwise [`IOError`] is returned.
+    /// `file_path` if a file at `file_path` exists, otherwise [`ModelarDbServerError`] is returned.
     pub(super) fn try_new(
         tag_hash: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
         updated_by_batch_index: u64,
         local_data_folder: Arc<dyn ObjectStore>,
         file_name: &str,
-    ) -> Result<Self, IOError> {
+    ) -> Result<Self> {
         let file_path = Path::from(format!("{UNCOMPRESSED_DATA_FOLDER}/{tag_hash}/{file_name}"));
 
         Ok(Self {
@@ -303,19 +303,16 @@ impl UncompressedOnDiskDataBuffer {
     }
 
     /// Read the data from the Apache Parquet file, delete the Apache Parquet file, and return the
-    /// data as a [`RecordBatch`] sorted by time. Return [`ParquetError`] if the Apache Parquet file
-    /// cannot be read or deleted.
-    pub(super) async fn record_batch(&self) -> Result<RecordBatch, ParquetError> {
+    /// data as a [`RecordBatch`] sorted by time. Return [`ModelarDbServerError`] if the Apache
+    /// Parquet file cannot be read or deleted.
+    pub(super) async fn record_batch(&self) -> Result<RecordBatch> {
         let data_points = storage::read_record_batch_from_apache_parquet_file(
             &self.file_path,
             self.local_data_folder.clone(),
         )
         .await?;
 
-        self.local_data_folder
-            .delete(&self.file_path)
-            .await
-            .map_err(|error| ParquetError::General(error.to_string()))?;
+        self.local_data_folder.delete(&self.file_path).await?;
 
         Ok(data_points)
     }
@@ -348,12 +345,12 @@ impl UncompressedOnDiskDataBuffer {
     }
 
     /// Read the data from the Apache Parquet file, delete the Apache Parquet file, and return the
-    /// data as a [`UncompressedInMemoryDataBuffer`] sorted by time. Return [`ParquetError`] if the
-    /// Apache Parquet file cannot be read or deleted.
+    /// data as a [`UncompressedInMemoryDataBuffer`] sorted by time. Return [`ModelarDbServerError`]
+    /// if the Apache Parquet file cannot be read or deleted.
     pub(super) async fn read_from_apache_parquet(
         &self,
         current_batch_index: u64,
-    ) -> Result<UncompressedInMemoryDataBuffer, ParquetError> {
+    ) -> Result<UncompressedInMemoryDataBuffer> {
         let data_points = self.record_batch().await?;
 
         let timestamp_column_array = modelardb_types::array!(data_points, 0, TimestampArray);
@@ -381,8 +378,8 @@ impl UncompressedOnDiskDataBuffer {
     }
 }
 
-impl fmt::Debug for UncompressedOnDiskDataBuffer {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl Debug for UncompressedOnDiskDataBuffer {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(
             f,
             "UncompressedOnDiskDataBuffer({}, {})",

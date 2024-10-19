@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
+use std::result::Result as StdResult;
 use std::str;
 use std::sync::Arc;
 
@@ -56,16 +57,21 @@ use tracing::{debug, error, info};
 
 use crate::context::Context;
 use crate::ClusterMode;
+use crate::{ModelarDbServerError, Result};
 
-/// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
-/// the methods that process the requests through [`FlightServiceHandler`].
+/// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to the methods that
+/// process the requests through [`FlightServiceHandler`].
 pub fn start_apache_arrow_flight_server(
     context: Arc<Context>,
     runtime: &Arc<Runtime>,
     port: u16,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
-    let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
+    let localhost_with_port: SocketAddr = localhost_with_port.parse().map_err(|error| {
+        ModelarDbServerError::InvalidArgument(format!(
+            "Unable to parse {localhost_with_port}: {error}"
+        ))
+    })?;
     let handler = FlightServiceHandler::new(context);
 
     // Increase the maximum message size from 4 MiB to 16 MiB to allow bulk-loading larger batches.
@@ -80,7 +86,7 @@ pub fn start_apache_arrow_flight_server(
                 .serve(localhost_with_port)
                 .await
         })
-        .map_err(|e| e.into())
+        .map_err(|error| error.into())
 }
 
 /// Read [`RecordBatches`](RecordBatch) from `query_result_stream` and send them one at a time to
@@ -88,8 +94,8 @@ pub fn start_apache_arrow_flight_server(
 /// the result cannot be sent through `sender`.
 async fn send_query_result(
     mut query_result_stream: SendableRecordBatchStream,
-    sender: Sender<Result<FlightData, Status>>,
-) -> Result<(), Status> {
+    sender: Sender<StdResult<FlightData, Status>>,
+) -> StdResult<(), Status> {
     // Serialize and send the schema.
     let schema = query_result_stream.schema();
     let options = IpcWriteOptions::default();
@@ -128,9 +134,9 @@ async fn send_query_result(
 /// Send `flight_data_or_error` to [`FlightService`] using `sender`. Returns [`Status`] with the
 /// code [`tonic::Code::Internal`] if the result cannot be send through `sender`.
 async fn send_flight_data(
-    sender: &Sender<Result<FlightData, Status>>,
-    flight_data_or_error: Result<FlightData, Status>,
-) -> Result<(), Status> {
+    sender: &Sender<StdResult<FlightData, Status>>,
+    flight_data_or_error: StdResult<FlightData, Status>,
+) -> StdResult<(), Status> {
     sender
         .send(flight_data_or_error)
         .await
@@ -141,7 +147,7 @@ async fn send_flight_data(
 fn send_record_batch(
     schema: SchemaRef,
     batch: RecordBatch,
-) -> Result<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
+) -> StdResult<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
     let options = IpcWriteOptions::default();
     let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options)
         .map_err(|error| Status::internal(error.to_string()))?;
@@ -191,7 +197,7 @@ impl FlightServiceHandler {
         table_name: &str,
         schema: &SchemaRef,
         flight_data_stream: &mut Streaming<FlightData>,
-    ) -> Result<(), Status> {
+    ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
             let record_batch = remote::flight_data_to_record_batch(
@@ -220,7 +226,7 @@ impl FlightServiceHandler {
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
         flight_data_stream: &mut Streaming<FlightData>,
-    ) -> Result<(), Status> {
+    ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
             let data_points = remote::flight_data_to_record_batch(
@@ -246,19 +252,19 @@ impl FlightServiceHandler {
 
 #[tonic::async_trait]
 impl FlightService for FlightServiceHandler {
-    type HandshakeStream = BoxStream<'static, Result<HandshakeResponse, Status>>;
-    type ListFlightsStream = BoxStream<'static, Result<FlightInfo, Status>>;
-    type DoGetStream = BoxStream<'static, Result<FlightData, Status>>;
-    type DoPutStream = BoxStream<'static, Result<PutResult, Status>>;
-    type DoExchangeStream = BoxStream<'static, Result<FlightData, Status>>;
-    type DoActionStream = BoxStream<'static, Result<FlightResult, Status>>;
-    type ListActionsStream = BoxStream<'static, Result<ActionType, Status>>;
+    type HandshakeStream = BoxStream<'static, StdResult<HandshakeResponse, Status>>;
+    type ListFlightsStream = BoxStream<'static, StdResult<FlightInfo, Status>>;
+    type DoGetStream = BoxStream<'static, StdResult<FlightData, Status>>;
+    type DoPutStream = BoxStream<'static, StdResult<PutResult, Status>>;
+    type DoExchangeStream = BoxStream<'static, StdResult<FlightData, Status>>;
+    type DoActionStream = BoxStream<'static, StdResult<FlightResult, Status>>;
+    type ListActionsStream = BoxStream<'static, StdResult<ActionType, Status>>;
 
     /// Not implemented.
     async fn handshake(
         &self,
         _request: Request<Streaming<HandshakeRequest>>,
-    ) -> Result<Response<Self::HandshakeStream>, Status> {
+    ) -> StdResult<Response<Self::HandshakeStream>, Status> {
         Err(Status::unimplemented("Not implemented."))
     }
 
@@ -266,7 +272,7 @@ impl FlightService for FlightServiceHandler {
     async fn list_flights(
         &self,
         _request: Request<Criteria>,
-    ) -> Result<Response<Self::ListFlightsStream>, Status> {
+    ) -> StdResult<Response<Self::ListFlightsStream>, Status> {
         let table_names = self
             .context
             .default_database_schema()
@@ -283,7 +289,7 @@ impl FlightService for FlightServiceHandler {
     async fn get_flight_info(
         &self,
         _request: Request<FlightDescriptor>,
-    ) -> Result<Response<FlightInfo>, Status> {
+    ) -> StdResult<Response<FlightInfo>, Status> {
         Err(Status::unimplemented("Not implemented."))
     }
 
@@ -291,7 +297,7 @@ impl FlightService for FlightServiceHandler {
     async fn poll_flight_info(
         &self,
         _request: Request<FlightDescriptor>,
-    ) -> Result<Response<PollInfo>, Status> {
+    ) -> StdResult<Response<PollInfo>, Status> {
         Err(Status::unimplemented("Not implemented."))
     }
 
@@ -300,7 +306,7 @@ impl FlightService for FlightServiceHandler {
     async fn get_schema(
         &self,
         request: Request<FlightDescriptor>,
-    ) -> Result<Response<SchemaResult>, Status> {
+    ) -> StdResult<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
         let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
         let schema = self
@@ -322,7 +328,7 @@ impl FlightService for FlightServiceHandler {
     async fn do_get(
         &self,
         request: Request<Ticket>,
-    ) -> Result<Response<Self::DoGetStream>, Status> {
+    ) -> StdResult<Response<Self::DoGetStream>, Status> {
         let ticket = request.into_inner();
 
         // Extract the query.
@@ -371,7 +377,7 @@ impl FlightService for FlightServiceHandler {
     async fn do_put(
         &self,
         request: Request<Streaming<FlightData>>,
-    ) -> Result<Response<Self::DoPutStream>, Status> {
+    ) -> StdResult<Response<Self::DoPutStream>, Status> {
         let mut flight_data_stream = request.into_inner();
 
         // Extract the table name and schema.
@@ -415,7 +421,7 @@ impl FlightService for FlightServiceHandler {
     async fn do_exchange(
         &self,
         _request: Request<Streaming<FlightData>>,
-    ) -> Result<Response<Self::DoExchangeStream>, Status> {
+    ) -> StdResult<Response<Self::DoExchangeStream>, Status> {
         Err(Status::unimplemented("Not implemented."))
     }
 
@@ -451,7 +457,7 @@ impl FlightService for FlightServiceHandler {
     async fn do_action(
         &self,
         request: Request<Action>,
-    ) -> Result<Response<Self::DoActionStream>, Status> {
+    ) -> StdResult<Response<Self::DoActionStream>, Status> {
         let metadata = request.metadata().clone();
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
@@ -500,21 +506,33 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .flush()
                 .await
-                .map_err(Status::internal)?;
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "FlushNode" {
             let mut storage_engine = self.context.storage_engine.write().await;
-            storage_engine.flush().await.map_err(Status::internal)?;
-            storage_engine.transfer().await?;
+            storage_engine
+                .flush()
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+            storage_engine
+                .transfer()
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "KillNode" {
             let mut storage_engine = self.context.storage_engine.write().await;
-            storage_engine.flush().await.map_err(Status::internal)?;
-            storage_engine.transfer().await?;
+            storage_engine
+                .flush()
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+            storage_engine
+                .transfer()
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             // Since the process is killed, a conventional response cannot be given. If the action
             // returns a "Stream removed" message, the edge was successfully flushed and killed.
@@ -594,8 +612,10 @@ impl FlightService for FlightServiceHandler {
 
             send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateConfiguration" {
-            let (setting, offset_data) = arguments::decode_argument(&action.body)?;
-            let (new_value, _offset_data) = arguments::decode_argument(offset_data)?;
+            let (setting, offset_data) = arguments::decode_argument(&action.body)
+                .map_err(|error| Status::internal(error.to_string()))?;
+            let (new_value, _offset_data) = arguments::decode_argument(offset_data)
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             // Parse the new value into None if it is empty and a usize integer if it is not empty.
             let new_value: Option<usize> = (!new_value.is_empty())
@@ -669,7 +689,7 @@ impl FlightService for FlightServiceHandler {
     async fn list_actions(
         &self,
         _request: Request<Empty>,
-    ) -> Result<Response<Self::ListActionsStream>, Status> {
+    ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let create_table_action = ActionType {
             r#type: "CreateTable".to_owned(),
             description: "Execute a SQL query containing a command that creates a table."
