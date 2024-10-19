@@ -18,7 +18,7 @@
 //! result. Generated columns can be computed from other columns and constant values.
 
 use std::any::Any;
-use std::fmt::{self, Formatter};
+use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
@@ -27,7 +27,7 @@ use datafusion::arrow::array::StringArray;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::temporal_conversions;
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::EquivalenceProperties;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
@@ -130,7 +130,7 @@ impl ExecutionPlan for GeneratedAsExec {
     fn with_new_children(
         self: Arc<Self>,
         mut children: Vec<Arc<(dyn ExecutionPlan)>>,
-    ) -> Result<Arc<(dyn ExecutionPlan)>> {
+    ) -> DataFusionResult<Arc<(dyn ExecutionPlan)>> {
         if children.len() == 1 {
             Ok(GeneratedAsExec::new(
                 self.schema.clone(),
@@ -150,7 +150,7 @@ impl ExecutionPlan for GeneratedAsExec {
         &self,
         partition: usize,
         task_context: Arc<TaskContext>,
-    ) -> Result<SendableRecordBatchStream> {
+    ) -> DataFusionResult<SendableRecordBatchStream> {
         Ok(Box::pin(GeneratedAsStream::new(
             self.schema.clone(),
             self.columns_to_generate.clone(),
@@ -160,7 +160,7 @@ impl ExecutionPlan for GeneratedAsExec {
     }
 
     /// Specify that [`GeneratedAsExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> Result<Statistics, DataFusionError> {
+    fn statistics(&self) -> DataFusionResult<Statistics> {
         Ok(Statistics::new_unknown(&self.schema))
     }
 
@@ -173,7 +173,7 @@ impl ExecutionPlan for GeneratedAsExec {
 impl DisplayAs for GeneratedAsExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "{}", self.name())
     }
 }
@@ -209,7 +209,7 @@ impl GeneratedAsStream {
     /// Format and return the first row in `batch` that causes `physical_expr` to fail when
     /// generating values. If `physical_expr` never fails the string Unknown Row is returned, and a
     /// [`DataFusionError`] is returned if `batch` is from a normal table.
-    fn failing_row(batch: &RecordBatch, physical_expr: &Arc<dyn PhysicalExpr>) -> Result<String> {
+    fn failing_row(batch: &RecordBatch, physical_expr: &Arc<dyn PhysicalExpr>) -> DataFusionResult<String> {
         for row_index in 0..batch.num_rows() {
             if physical_expr.evaluate(&batch.slice(row_index, 1)).is_err() {
                 let schema = batch.schema();
@@ -251,8 +251,8 @@ impl GeneratedAsStream {
 }
 
 impl Stream for GeneratedAsStream {
-    /// Specify that [`GeneratedAsStream`] returns [`Result<RecordBatch>`] when polled.
-    type Item = Result<RecordBatch>;
+    /// Specify that [`GeneratedAsStream`] returns [`DataFusionResult<RecordBatch>`] when polled.
+    type Item = DataFusionResult<RecordBatch>;
 
     /// Try to poll the next batch of data points from the [`GeneratedAsStream`] and returns:
     /// * `Poll::Pending` if the next batch is not yet ready.

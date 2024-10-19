@@ -22,7 +22,7 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::fmt::{self, Formatter};
+use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
@@ -30,7 +30,7 @@ use std::task::{Context as StdTaskContext, Poll};
 use datafusion::arrow::array::{ArrayRef, StringBuilder, UInt64Array};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, PhysicalSortRequirement};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
@@ -133,7 +133,7 @@ impl ExecutionPlan for SortedJoinExec {
     fn with_new_children(
         self: Arc<Self>,
         children: Vec<Arc<(dyn ExecutionPlan)>>,
-    ) -> Result<Arc<(dyn ExecutionPlan)>> {
+    ) -> DataFusionResult<Arc<(dyn ExecutionPlan)>> {
         if !children.is_empty() {
             Ok(SortedJoinExec::new(
                 self.schema.clone(),
@@ -154,12 +154,12 @@ impl ExecutionPlan for SortedJoinExec {
         &self,
         partition: usize,
         task_context: Arc<TaskContext>,
-    ) -> Result<SendableRecordBatchStream> {
+    ) -> DataFusionResult<SendableRecordBatchStream> {
         let streams = self
             .inputs
             .iter()
             .map(|input| input.execute(partition, task_context.clone()))
-            .collect::<Result<Vec<SendableRecordBatchStream>>>()?;
+            .collect::<DataFusionResult<Vec<SendableRecordBatchStream>>>()?;
 
         Ok(Box::pin(SortedJoinStream::new(
             self.schema.clone(),
@@ -171,7 +171,7 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Specify that [`SortedJoinExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> Result<Statistics, DataFusionError> {
+    fn statistics(&self) -> DataFusionResult<Statistics> {
         Ok(Statistics::new_unknown(&self.schema))
     }
 
@@ -199,7 +199,7 @@ impl ExecutionPlan for SortedJoinExec {
 impl DisplayAs for SortedJoinExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "{}", self.name())
     }
 }
@@ -245,7 +245,7 @@ impl SortedJoinStream {
     fn poll_all_pending_inputs(
         &mut self,
         cx: &mut StdTaskContext<'_>,
-    ) -> Option<Poll<Option<Result<RecordBatch>>>> {
+    ) -> Option<Poll<Option<DataFusionResult<RecordBatch>>>> {
         let mut reason_for_not_ok = None;
         for index in 0..self.batches.len() {
             if self.batches[index].is_none() {
@@ -287,7 +287,7 @@ impl SortedJoinStream {
     /// Create a [`RecordBatch`] containing the requested timestamp, field, and tag columns, delete
     /// the [`RecordBatches`](RecordBatch) read from the inputs, and return the [`RecordBatch`]
     /// containing the requested timestamp, field, and tag columns.
-    fn sorted_join(&self) -> Poll<Option<Result<RecordBatch>>> {
+    fn sorted_join(&self) -> Poll<Option<DataFusionResult<RecordBatch>>> {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
         // Compute the requested tag columns, so they can be assigned to the batch by index.
@@ -345,8 +345,8 @@ impl SortedJoinStream {
 }
 
 impl Stream for SortedJoinStream {
-    /// Specify that [`SortedJoinStream`] returns [`Result<RecordBatch>`] when polled.
-    type Item = Result<RecordBatch>;
+    /// Specify that [`SortedJoinStream`] returns [`DataFusionResult<RecordBatch>`] when polled.
+    type Item = DataFusionResult<RecordBatch>;
 
     /// Try to poll the next batch of data points from the [`SortedJoinStream`] and returns:
     /// * `Poll::Pending` if the next batch is not yet ready.
