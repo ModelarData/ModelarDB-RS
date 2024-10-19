@@ -55,9 +55,10 @@ pub enum ClusterMode {
 /// Setup tracing that prints to stdout, parse the command line arguments to extract
 /// [`DataFolders`], construct a [`Context`] with the systems components, initialize the tables and
 /// model tables in the metadata Delta Lake, initialize a CTRL+C handler that flushes the data in
-/// memory to disk, and start the Apache Arrow Flight interface. Returns [`ModelarDbServerError`] if
-/// the command line arguments cannot be parsed, if the metadata cannot be read from the database,
-/// or if the Apache Arrow Flight interface cannot be started.
+/// memory to disk, and start the Apache Arrow Flight interface. Returns
+/// [`crate::error::ModelarDbServerError`] if the command line arguments cannot be parsed, if the
+/// metadata cannot be read from the database, or if the Apache Arrow Flight interface cannot be
+/// started.
 fn main() -> Result<()> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
