@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::errors::Result;
+use crate::error::Result;
 use crate::storage::StorageEngine;
 use crate::ClusterMode;
 

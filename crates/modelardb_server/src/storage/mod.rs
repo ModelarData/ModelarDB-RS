@@ -303,10 +303,7 @@ impl StorageEngine {
         self.channels.ingested_data_sender.send(Message::Flush)?;
 
         // Wait until all the data in the storage engine has been flushed.
-        self.channels
-            .result_receiver
-            .recv()?
-            .map_err(|error| error.into())
+        self.channels.result_receiver.recv()?
     }
 
     /// Transfer all the compressed data the [`StorageEngine`] is managing to the remote object store.

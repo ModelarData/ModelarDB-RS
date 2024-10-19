@@ -18,6 +18,7 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::Error as IoError;
+use std::result::Result as StdResult;
 
 use arrow::error::ArrowError;
 use object_store::Error as ObjectStoreError;
@@ -25,9 +26,8 @@ use rustyline::error::ReadlineError as RustyLineError;
 use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
 
-/// Result type used throughout the system. [`std::result::Result`] is used to not make the
-/// definition of `Result` cyclic.
-pub type Result<T> = std::result::Result<T, ModelarDbClientError>;
+/// Result type used throughout the system.
+pub type Result<T> = StdResult<T, ModelarDbClientError>;
 
 /// Error type used throughout the client.
 #[derive(Debug)]

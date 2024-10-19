@@ -18,15 +18,15 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::Error as IoError;
+use std::result::Result as StdResult;
 
 use deltalake::errors::DeltaTableError;
 use modelardb_common::error::ModelarDbCommonError;
 use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
 
-/// Result type used throughout `modelardb_manager`. [`std::result::Result`] is used to not make the
-/// definition of `Result` cyclic.
-pub type Result<T> = std::result::Result<T, ModelarDbManagerError>;
+/// Result type used throughout `modelardb_manager`.
+pub type Result<T> = StdResult<T, ModelarDbManagerError>;
 
 /// Error type used throughout the client.
 #[derive(Debug)]

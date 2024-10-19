@@ -37,7 +37,7 @@ use datafusion::prelude::col;
 use deltalake::kernel::{DataType, StructField};
 use modelardb_types::types::ErrorBound;
 
-use crate::errors::{ModelarDbCommonError, Result};
+use crate::error::{ModelarDbCommonError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataDeltaLake;
 use crate::parser;

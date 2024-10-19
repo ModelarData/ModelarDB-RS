@@ -89,7 +89,7 @@ pub fn print_usage_and_exit_with_error(parameters: &str) -> ! {
 
     // An punctuation at the end does not seem to be common in the usage message of Unix tools.
     eprintln!("Usage: {binary_name} {parameters}.");
-    process::exit(1);
+    process::exit(0);
 }
 
 /// Convert the given `argument` into bytes that contain the length of the byte representation of

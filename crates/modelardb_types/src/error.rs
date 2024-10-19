@@ -13,26 +13,20 @@
  * limitations under the License.
  */
 
-//! The error types used throughout the system. Their design is based on [Rust
-//! by Example], [Apache Arrow], and [Apache Arrow DataFusion].
-//!
-//! [Rust by Example]: https://doc.rust-lang.org/rust-by-example/error/multiple_error_types/define_error_type.html
-//! [Apache Arrow]: https://github.com/apache/arrow-rs/blob/master/arrow/src/error.rs
-//! [Apache Arrow DataFusion]: https://github.com/apache/arrow-datafusion/blob/master/datafusion/common/src/error.rs
+//! The error types used throughout `modelardb_types`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::result::Result as StdResult;
 
-/// Result type used throughout the system. `std::result::Result` is used to not make the definition
-/// of `Result` cyclic.
-pub type Result<T> = std::result::Result<T, ModelarDbTypesError>;
+/// Result type used throughout `modelardb_types`.
+pub type Result<T> = StdResult<T, ModelarDbTypesError>;
 
-/// Error type used throughout the system.
+/// Error type used throughout `modelardb_types`.
 #[derive(Debug)]
-#[allow(clippy::enum_variant_names)]
 pub enum ModelarDbTypesError {
     /// Error returned when an invalid argument was passed.
-    InvalidArgumentError(String),
+    InvalidArgument(String),
 }
 
 impl Error for ModelarDbTypesError {}
@@ -40,7 +34,7 @@ impl Error for ModelarDbTypesError {}
 impl Display for ModelarDbTypesError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDbTypesError::InvalidArgumentError(reason) => {
+            ModelarDbTypesError::InvalidArgument(reason) => {
                 write!(f, "InvalidArgumentError Error: {reason}")
             }
         }

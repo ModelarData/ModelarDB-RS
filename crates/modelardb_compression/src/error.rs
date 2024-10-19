@@ -16,15 +16,14 @@
 //! The error types used throughout `modelardb_compression`.
 
 use std::error::Error;
+use std::result::Result as StdResult;
 use std::fmt::{Display, Formatter};
 
-/// Result type used throughout `modelardb_compression`. `std::result::Result` is used to not make
-/// the definition of `Result` cyclic.
-pub type Result<T> = std::result::Result<T, ModelarDbCompressionError>;
+/// Result type used throughout `modelardb_compression`.
+pub type Result<T> = StdResult<T, ModelarDbCompressionError>;
 
 /// Error type used throughout the system.
 #[derive(Debug)]
-#[allow(clippy::enum_variant_names)]
 pub enum ModelarDbCompressionError {
     /// Error returned when an invalid argument was passed.
     InvalidArgumentError(String),

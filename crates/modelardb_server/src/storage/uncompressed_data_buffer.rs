@@ -34,7 +34,7 @@ use object_store::path::Path;
 use object_store::ObjectStore;
 use tracing::debug;
 
-use crate::errors::Result;
+use crate::error::Result;
 use crate::storage::{UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
 
 /// Number of [`RecordBatches`](RecordBatch) that must be ingested without modifying an

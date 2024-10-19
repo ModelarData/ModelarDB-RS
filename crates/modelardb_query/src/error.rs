@@ -13,16 +13,16 @@
  * limitations under the License.
  */
 
-//! The error type used throughout modelardb_manager.
+//! The error type used throughout `modelardb_query`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::result::Result as StdResult;
 
 use datafusion::error::DataFusionError;
 
-/// Result type used throughout `modelardb_query`. [`std::result::Result`] is used to not make the
-/// definition of `Result` cyclic.
-pub type Result<T> = std::result::Result<T, ModelarDbQueryError>;
+/// Result type used throughout `modelardb_query`.
+pub type Result<T> = StdResult<T, ModelarDbQueryError>;
 
 /// Error type used throughout the client.
 #[derive(Debug)]

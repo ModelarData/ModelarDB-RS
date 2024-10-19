@@ -13,39 +13,33 @@
  * limitations under the License.
  */
 
-//! The error types used throughout the system. Their design is based on [Rust
-//! by Example], [Apache Arrow], and [Apache Arrow DataFusion].
-//!
-//! [Rust by Example]: https://doc.rust-lang.org/rust-by-example/error/multiple_error_types/define_error_type.html
-//! [Apache Arrow]: https://github.com/apache/arrow-rs/blob/master/arrow/src/error.rs
-//! [Apache Arrow DataFusion]: https://github.com/apache/arrow-datafusion/blob/master/datafusion/common/src/error.rs
+//! The error types used throughout the system.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::Error as IoError;
+use std::result::Result as StdResult;
 
 use crossbeam_channel::RecvError as CrossbeamRecvError;
 use crossbeam_channel::SendError as CrossbeamSendError;
 use datafusion::error::DataFusionError;
 use deltalake::errors::DeltaTableError;
-use modelardb_common::errors::ModelarDbCommonError;
-use modelardb_query::errors::ModelarDbQueryError;
+use modelardb_common::error::ModelarDbCommonError;
+use modelardb_query::error::ModelarDbQueryError;
 use object_store::Error as ObjectStoreError;
 use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
 
-/// Result type used throughout the system. `std::result::Result` is used to not make the definition
-/// of `Result` cyclic.
-pub type Result<T> = std::result::Result<T, ModelarDbServerError>;
+/// Result type used throughout the system.
+pub type Result<T> = StdResult<T, ModelarDbServerError>;
 
 /// Error type used throughout the system.
 #[derive(Debug)]
-#[allow(clippy::enum_variant_names)]
 pub enum ModelarDbServerError {
     /// Error returned by crossbeam when sending data.
-    CrossbeamSendError(String),
+    CrossbeamSend(String),
     /// Error returned by crossbeam when receiving data.
-    CrossbeamRecvError(String),
+    CrossbeamRecv(String),
     /// Error returned by Apache DataFusion.
     DataFusion(DataFusionError),
     /// Error returned by Delta Lake.
@@ -72,13 +66,13 @@ impl Error for ModelarDbServerError {}
 
 impl<T> From<CrossbeamSendError<T>> for ModelarDbServerError {
     fn from(error: CrossbeamSendError<T>) -> ModelarDbServerError {
-        ModelarDbServerError::CrossbeamSendError(error.to_string())
+        ModelarDbServerError::CrossbeamSend(error.to_string())
     }
 }
 
 impl From<CrossbeamRecvError> for ModelarDbServerError {
     fn from(error: CrossbeamRecvError) -> ModelarDbServerError {
-        ModelarDbServerError::CrossbeamRecvError(error.to_string())
+        ModelarDbServerError::CrossbeamRecv(error.to_string())
     }
 }
 
@@ -133,10 +127,10 @@ impl From<TonicTransportError> for ModelarDbServerError {
 impl Display for ModelarDbServerError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDbServerError::CrossbeamSendError(reason) => {
+            ModelarDbServerError::CrossbeamSend(reason) => {
                 write!(f, "Crossbeam Send Error: {reason}")
             }
-            ModelarDbServerError::CrossbeamRecvError(reason) => {
+            ModelarDbServerError::CrossbeamRecv(reason) => {
                 write!(f, "Crossbeam Recv Error: {reason}")
             }
             ModelarDbServerError::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),

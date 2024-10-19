@@ -19,6 +19,7 @@ use std::env::VarError;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::Error as IoError;
+use std::result::Result as StdResult;
 use std::str::Utf8Error;
 
 use arrow::error::ArrowError;
@@ -29,9 +30,8 @@ use object_store::path::Error as ObjectStorePathError;
 use object_store::Error as ObjectStoreError;
 use sqlparser::parser::ParserError;
 
-/// Result type used throughout `modelardb_common`. [`std::result::Result`] is used to not make the
-/// definition of `Result` cyclic.
-pub type Result<T> = std::result::Result<T, ModelarDbCommonError>;
+/// Result type used throughout `modelardb_common`.
+pub type Result<T> = StdResult<T, ModelarDbCommonError>;
 
 /// Error type used throughout the client.
 #[derive(Debug)]

@@ -80,7 +80,7 @@ impl ErrorBound {
     /// [`ModelarDbTypesError`] is returned if a negative or non-normal value is passed.
     pub fn try_new_absolute(value: f32) -> Result<Self> {
         if !value.is_finite() || value < 0.0 {
-            Err(ModelarDbTypesError::InvalidArgumentError(
+            Err(ModelarDbTypesError::InvalidArgument(
                 "An absolute error bound must be a positive finite value.".to_owned(),
             ))
         } else {
@@ -92,7 +92,7 @@ impl ErrorBound {
     /// [`ModelarDbTypesError`] is returned if a value below 0% or a value above 100% is passed.
     pub fn try_new_relative(percentage: f32) -> Result<Self> {
         if !(0.0..=100.0).contains(&percentage) {
-            Err(ModelarDbTypesError::InvalidArgumentError(
+            Err(ModelarDbTypesError::InvalidArgument(
                 "A relative error bound must be a value from 0.0% to 100.0%.".to_owned(),
             ))
         } else {
@@ -115,7 +115,7 @@ impl FromStr for ServerMode {
         match value {
             "cloud" => Ok(ServerMode::Cloud),
             "edge" => Ok(ServerMode::Edge),
-            _ => Err(ModelarDbTypesError::InvalidArgumentError(format!(
+            _ => Err(ModelarDbTypesError::InvalidArgument(format!(
                 "'{value}' is not a valid value for ServerMode."
             ))),
         }

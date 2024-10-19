@@ -26,7 +26,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::data_folders::DataFolder;
-use crate::errors::Result;
+use crate::error::Result;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;

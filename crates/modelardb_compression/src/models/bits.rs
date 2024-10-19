@@ -16,7 +16,7 @@
 //! Implementation of types for reading and writing bits from and to a sequence
 //! of bytes.
 
-use crate::errors::{ModelarDbCompressionError, Result};
+use crate::error::{ModelarDbCompressionError, Result};
 
 /// Read one or multiple bits from a `[u8]`. [`BitReader`] is implemented based
 /// on [code published by Ilkka Rauta] dual-licensed under MIT and Apache2.

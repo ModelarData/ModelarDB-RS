@@ -30,7 +30,7 @@ use ringbuf::traits::Observer;
 use ringbuf::traits::{Consumer, RingBuffer};
 use ringbuf::HeapRb;
 
-use crate::errors::Result;
+use crate::error::Result;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::uncompressed_data_buffer::{IngestedDataBuffer, UncompressedDataBuffer};
 

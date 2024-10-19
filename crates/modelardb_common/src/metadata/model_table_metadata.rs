@@ -22,7 +22,7 @@ use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
 use datafusion::logical_expr::expr::Expr;
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 
-use crate::errors::{ModelarDbCommonError, Result};
+use crate::error::{ModelarDbCommonError, Result};
 
 /// Metadata required to ingest data into a model table and query a model table.
 #[derive(Debug, Clone)]

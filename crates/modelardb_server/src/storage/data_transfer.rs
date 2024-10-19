@@ -29,7 +29,7 @@ use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
 
 use crate::data_folders::DataFolder;
-use crate::errors::Result;
+use crate::error::Result;
 use crate::storage::Metric;
 
 // TODO: Handle the case where a connection can not be established when transferring data.

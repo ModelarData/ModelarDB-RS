@@ -25,7 +25,7 @@ use arrow::record_batch::RecordBatch;
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray};
 
-use crate::errors::{ModelarDbCompressionError, Result};
+use crate::error::{ModelarDbCompressionError, Result};
 use crate::models::{self, timestamps};
 use crate::types::CompressedSegmentBatchBuilder;
 

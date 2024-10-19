@@ -40,7 +40,7 @@ use object_store::ObjectStore;
 use url::Url;
 
 use crate::arguments;
-use crate::errors::{ModelarDbCommonError, Result};
+use crate::error::{ModelarDbCommonError, Result};
 
 pub mod model_table_metadata;
 pub mod table_metadata_manager;
@@ -149,10 +149,7 @@ impl MetadataDeltaLake {
         ]);
 
         let url = Url::parse(&location).map_err(|error| {
-            ModelarDbCommonError::InvalidArgument(format!(
-                "Unable to parse S3 location: {}",
-                error.to_string()
-            ))
+            ModelarDbCommonError::InvalidArgument(format!("Unable to parse S3 location: {error}"))
         })?;
 
         // Build the Amazon S3 object store with the given storage options manually to allow http.
@@ -194,10 +191,7 @@ impl MetadataDeltaLake {
             ("azure_container_name".to_owned(), container_name),
         ]);
         let url = Url::parse(&location).map_err(|error| {
-            ModelarDbCommonError::InvalidArgument(format!(
-                "Unable to parse S3 location: {}",
-                error.to_string()
-            ))
+            ModelarDbCommonError::InvalidArgument(format!("Unable to parse S3 location: {error}"))
         })?;
         let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
 
