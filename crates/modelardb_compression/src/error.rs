@@ -16,27 +16,33 @@
 //! The error types used throughout `modelardb_compression`.
 
 use std::error::Error;
-use std::result::Result as StdResult;
 use std::fmt::{Display, Formatter};
+use std::result::Result as StdResult;
 
 /// Result type used throughout `modelardb_compression`.
 pub type Result<T> = StdResult<T, ModelarDbCompressionError>;
 
-/// Error type used throughout the system.
+/// Error type used throughout `modelardb_compression`.
 #[derive(Debug)]
 pub enum ModelarDbCompressionError {
     /// Error returned when an invalid argument was passed.
-    InvalidArgumentError(String),
+    InvalidArgument(String),
 }
-
-impl Error for ModelarDbCompressionError {}
 
 impl Display for ModelarDbCompressionError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDbCompressionError::InvalidArgumentError(reason) => {
+            ModelarDbCompressionError::InvalidArgument(reason) => {
                 write!(f, "InvalidArgumentError Error: {reason}")
             }
+        }
+    }
+}
+
+impl Error for ModelarDbCompressionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ModelarDbCompressionError::InvalidArgument(_reason) => None,
         }
     }
 }

@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error type used throughout modelardb_common.
+//! The error type used throughout `modelardb_common`.
 
 use std::env::VarError;
 use std::error::Error;
@@ -33,7 +33,7 @@ use sqlparser::parser::ParserError;
 /// Result type used throughout `modelardb_common`.
 pub type Result<T> = StdResult<T, ModelarDbCommonError>;
 
-/// Error type used throughout the client.
+/// Error type used throughout `modelardb_common`.
 #[derive(Debug)]
 pub enum ModelarDbCommonError {
     /// Error returned by Apache Arrow.
@@ -60,7 +60,45 @@ pub enum ModelarDbCommonError {
     Var(VarError),
 }
 
-impl Error for ModelarDbCommonError {}
+impl Display for ModelarDbCommonError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            ModelarDbCommonError::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
+            ModelarDbCommonError::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
+            ModelarDbCommonError::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
+            ModelarDbCommonError::InvalidArgument(reason) => {
+                write!(f, "InvalidArgument Error: {reason}")
+            }
+            ModelarDbCommonError::Io(reason) => write!(f, "Io Error: {reason}"),
+            ModelarDbCommonError::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
+            ModelarDbCommonError::ObjectStorePath(reason) => {
+                write!(f, "ObjectStore Path Error: {reason}")
+            }
+            ModelarDbCommonError::Parquet(reason) => write!(f, "Parquet Error: {reason}"),
+            ModelarDbCommonError::Parser(reason) => write!(f, "Parser Error: {reason}"),
+            ModelarDbCommonError::Utf8(reason) => write!(f, "UTF-8 Error: {reason}"),
+            ModelarDbCommonError::Var(reason) => write!(f, "Environment Variable Error: {reason}"),
+        }
+    }
+}
+
+impl Error for ModelarDbCommonError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ModelarDbCommonError::Arrow(reason) => Some(reason),
+            ModelarDbCommonError::DataFusion(reason) => Some(reason),
+            ModelarDbCommonError::DeltaLake(reason) => Some(reason),
+            ModelarDbCommonError::InvalidArgument(_reason) => None,
+            ModelarDbCommonError::Io(reason) => Some(reason),
+            ModelarDbCommonError::ObjectStore(reason) => Some(reason),
+            ModelarDbCommonError::ObjectStorePath(reason) => Some(reason),
+            ModelarDbCommonError::Parquet(reason) => Some(reason),
+            ModelarDbCommonError::Parser(reason) => Some(reason),
+            ModelarDbCommonError::Utf8(reason) => Some(reason),
+            ModelarDbCommonError::Var(reason) => Some(reason),
+        }
+    }
+}
 
 impl From<ArrowError> for ModelarDbCommonError {
     fn from(error: ArrowError) -> ModelarDbCommonError {
@@ -119,27 +157,5 @@ impl From<Utf8Error> for ModelarDbCommonError {
 impl From<VarError> for ModelarDbCommonError {
     fn from(error: VarError) -> ModelarDbCommonError {
         ModelarDbCommonError::Var(error)
-    }
-}
-
-impl Display for ModelarDbCommonError {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            ModelarDbCommonError::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
-            ModelarDbCommonError::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
-            ModelarDbCommonError::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
-            ModelarDbCommonError::InvalidArgument(reason) => {
-                write!(f, "InvalidArgument Error: {reason}")
-            }
-            ModelarDbCommonError::Io(reason) => write!(f, "Io Error: {reason}"),
-            ModelarDbCommonError::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
-            ModelarDbCommonError::ObjectStorePath(reason) => {
-                write!(f, "ObjectStore Path Error: {reason}")
-            }
-            ModelarDbCommonError::Parquet(reason) => write!(f, "Parquet Error: {reason}"),
-            ModelarDbCommonError::Parser(reason) => write!(f, "Parser Error: {reason}"),
-            ModelarDbCommonError::Utf8(reason) => write!(f, "UTF-8 Error: {reason}"),
-            ModelarDbCommonError::Var(reason) => write!(f, "Environment Variable Error: {reason}"),
-        }
     }
 }

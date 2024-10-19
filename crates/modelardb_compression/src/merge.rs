@@ -40,7 +40,7 @@ use crate::types::CompressedSegmentBatchBuilder;
 /// `compressed_segments` a segment that overlaps with B will be created if A and C are merged.
 pub fn try_merge_segments(compressed_segments: RecordBatch) -> Result<RecordBatch> {
     if compressed_segments.schema() != COMPRESSED_SCHEMA.0 {
-        return Err(ModelarDbCompressionError::InvalidArgumentError(
+        return Err(ModelarDbCompressionError::InvalidArgument(
             "The schema for the compressed segments is incorrect.".to_owned(),
         ));
     }

@@ -29,14 +29,20 @@ pub enum ModelarDbTypesError {
     InvalidArgument(String),
 }
 
-impl Error for ModelarDbTypesError {}
-
 impl Display for ModelarDbTypesError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             ModelarDbTypesError::InvalidArgument(reason) => {
                 write!(f, "InvalidArgumentError Error: {reason}")
             }
+        }
+    }
+}
+
+impl Error for ModelarDbTypesError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ModelarDbTypesError::InvalidArgument(_reason) => None,
         }
     }
 }

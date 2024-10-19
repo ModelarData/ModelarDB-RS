@@ -50,7 +50,7 @@ pub fn try_compress(
     // and a ValueArray is the only supported input. However, as a result it is necessary to verify
     // they have the same length.
     if uncompressed_timestamps.len() != uncompressed_values.len() {
-        return Err(ModelarDbCompressionError::InvalidArgumentError(
+        return Err(ModelarDbCompressionError::InvalidArgument(
             "Uncompressed timestamps and uncompressed values have different lengths.".to_owned(),
         ));
     }

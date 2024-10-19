@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error type used throughout modelardb_manager.
+//! The error type used throughout `modelardb_manager`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -28,7 +28,7 @@ use tonic::Status as TonicStatusError;
 /// Result type used throughout `modelardb_manager`.
 pub type Result<T> = StdResult<T, ModelarDbManagerError>;
 
-/// Error type used throughout the client.
+/// Error type used throughout `modelardb_manager`.
 #[derive(Debug)]
 pub enum ModelarDbManagerError {
     /// Error returned by Delta Lake.
@@ -47,7 +47,43 @@ pub enum ModelarDbManagerError {
     TonicTransport(TonicTransportError),
 }
 
-impl Error for ModelarDbManagerError {}
+impl Display for ModelarDbManagerError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            ModelarDbManagerError::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
+            ModelarDbManagerError::InvalidArgument(reason) => {
+                write!(f, "InvalidArgument Error: {reason}")
+            }
+            ModelarDbManagerError::InvalidState(reason) => {
+                write!(f, "InvalidArgument Error: {reason}")
+            }
+            ModelarDbManagerError::Io(reason) => write!(f, "Io Error: {reason}"),
+            ModelarDbManagerError::ModelarDbCommon(reason) => {
+                write!(f, "ModelarDB Common Error: {reason}")
+            }
+            ModelarDbManagerError::TonicStatus(reason) => {
+                write!(f, "Tonic Status Error: {reason}")
+            }
+            ModelarDbManagerError::TonicTransport(reason) => {
+                write!(f, "Tonic Transport Error: {reason}")
+            }
+        }
+    }
+}
+
+impl Error for ModelarDbManagerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ModelarDbManagerError::DeltaLake(reason) => Some(reason),
+            ModelarDbManagerError::InvalidArgument(_reason) => None,
+            ModelarDbManagerError::InvalidState(_reason) => None,
+            ModelarDbManagerError::Io(reason) => Some(reason),
+            ModelarDbManagerError::ModelarDbCommon(reason) => Some(reason),
+            ModelarDbManagerError::TonicStatus(reason) => Some(reason),
+            ModelarDbManagerError::TonicTransport(reason) => Some(reason),
+        }
+    }
+}
 
 impl From<DeltaTableError> for ModelarDbManagerError {
     fn from(error: DeltaTableError) -> ModelarDbManagerError {
@@ -76,29 +112,5 @@ impl From<TonicStatusError> for ModelarDbManagerError {
 impl From<TonicTransportError> for ModelarDbManagerError {
     fn from(error: TonicTransportError) -> ModelarDbManagerError {
         ModelarDbManagerError::TonicTransport(error)
-    }
-}
-
-impl Display for ModelarDbManagerError {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            ModelarDbManagerError::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
-            ModelarDbManagerError::InvalidArgument(reason) => {
-                write!(f, "InvalidArgument Error: {reason}")
-            }
-            ModelarDbManagerError::InvalidState(reason) => {
-                write!(f, "InvalidArgument Error: {reason}")
-            }
-            ModelarDbManagerError::Io(reason) => write!(f, "Io Error: {reason}"),
-            ModelarDbManagerError::ModelarDbCommon(reason) => {
-                write!(f, "ModelarDB Common Error: {reason}")
-            }
-            ModelarDbManagerError::TonicStatus(reason) => {
-                write!(f, "Tonic Status Error: {reason}")
-            }
-            ModelarDbManagerError::TonicTransport(reason) => {
-                write!(f, "Tonic Transport Error: {reason}")
-            }
-        }
     }
 }

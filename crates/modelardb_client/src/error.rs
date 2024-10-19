@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error type used throughout modelardb_client.
+//! The error type used throughout `modelardb_client``.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -26,13 +26,13 @@ use rustyline::error::ReadlineError as RustyLineError;
 use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
 
-/// Result type used throughout the system.
+/// Result type used throughout `modelardb_client`.
 pub type Result<T> = StdResult<T, ModelarDbClientError>;
 
-/// Error type used throughout the client.
+/// Error type used throughout `modelardb_client`.
 #[derive(Debug)]
 pub enum ModelarDbClientError {
-    /// Error returned by Arrow.
+    /// Error returned by Apache Arrow.
     Arrow(ArrowError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
@@ -48,7 +48,47 @@ pub enum ModelarDbClientError {
     TonicTransport(TonicTransportError),
 }
 
-impl Error for ModelarDbClientError {}
+impl Display for ModelarDbClientError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            ModelarDbClientError::Arrow(reason) => {
+                write!(f, "Arrow Error: {reason}")
+            }
+            ModelarDbClientError::InvalidArgument(reason) => {
+                write!(f, "InvalidArgument Error: {reason}")
+            }
+            ModelarDbClientError::Io(reason) => {
+                write!(f, "Io Error: {reason}")
+            }
+            ModelarDbClientError::ObjectStore(reason) => {
+                write!(f, "ObjectStore Error: {reason}")
+            }
+            ModelarDbClientError::RustyLine(reason) => {
+                write!(f, "RustyLine Error: {reason}")
+            }
+            ModelarDbClientError::TonicStatus(reason) => {
+                write!(f, "Tonic Status Error: {reason}")
+            }
+            ModelarDbClientError::TonicTransport(reason) => {
+                write!(f, "Tonic Transport Error: {reason}")
+            }
+        }
+    }
+}
+
+impl Error for ModelarDbClientError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ModelarDbClientError::Arrow(reason) => Some(reason),
+            ModelarDbClientError::InvalidArgument(_reason) => None,
+            ModelarDbClientError::Io(reason) => Some(reason),
+            ModelarDbClientError::ObjectStore(reason) => Some(reason),
+            ModelarDbClientError::RustyLine(reason) => Some(reason),
+            ModelarDbClientError::TonicStatus(reason) => Some(reason),
+            ModelarDbClientError::TonicTransport(reason) => Some(reason),
+        }
+    }
+}
 
 impl From<ArrowError> for ModelarDbClientError {
     fn from(error: ArrowError) -> ModelarDbClientError {
@@ -83,33 +123,5 @@ impl From<TonicStatusError> for ModelarDbClientError {
 impl From<TonicTransportError> for ModelarDbClientError {
     fn from(error: TonicTransportError) -> ModelarDbClientError {
         ModelarDbClientError::TonicTransport(error)
-    }
-}
-
-impl Display for ModelarDbClientError {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            ModelarDbClientError::Arrow(reason) => {
-                write!(f, "Arrow Error: {reason}")
-            }
-            ModelarDbClientError::InvalidArgument(reason) => {
-                write!(f, "InvalidArgument Error: {reason}")
-            }
-            ModelarDbClientError::Io(reason) => {
-                write!(f, "Io Error: {reason}")
-            }
-            ModelarDbClientError::ObjectStore(reason) => {
-                write!(f, "ObjectStore Error: {reason}")
-            }
-            ModelarDbClientError::RustyLine(reason) => {
-                write!(f, "RustyLine Error: {reason}")
-            }
-            ModelarDbClientError::TonicStatus(reason) => {
-                write!(f, "Tonic Status Error: {reason}")
-            }
-            ModelarDbClientError::TonicTransport(reason) => {
-                write!(f, "Tonic Transport Error: {reason}")
-            }
-        }
     }
 }

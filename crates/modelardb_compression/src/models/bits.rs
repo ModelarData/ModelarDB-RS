@@ -33,7 +33,7 @@ impl<'a> BitReader<'a> {
     /// Return a [`BitReader`] if `bytes` is not empty, otherwise [`String`].
     pub fn try_new(bytes: &'a [u8]) -> Result<Self> {
         if bytes.is_empty() {
-            Err(ModelarDbCompressionError::InvalidArgumentError(
+            Err(ModelarDbCompressionError::InvalidArgument(
                 "The bytes slice must not be empty.".to_owned(),
             ))
         } else {

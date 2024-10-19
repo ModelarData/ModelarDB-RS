@@ -24,7 +24,7 @@ use datafusion::error::DataFusionError;
 /// Result type used throughout `modelardb_query`.
 pub type Result<T> = StdResult<T, ModelarDbQueryError>;
 
-/// Error type used throughout the client.
+/// Error type used throughout `modelardb_query`.
 #[derive(Debug)]
 pub enum ModelarDbQueryError {
     /// Error returned by Apache DataFusion.
@@ -33,11 +33,12 @@ pub enum ModelarDbQueryError {
     InvalidArgument(String),
 }
 
-impl Error for ModelarDbQueryError {}
-
-impl From<DataFusionError> for ModelarDbQueryError {
-    fn from(error: DataFusionError) -> ModelarDbQueryError {
-        ModelarDbQueryError::DataFusion(error)
+impl Error for ModelarDbQueryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ModelarDbQueryError::DataFusion(reason) => Some(reason),
+            ModelarDbQueryError::InvalidArgument(_reason) => None,
+        }
     }
 }
 
@@ -49,5 +50,11 @@ impl Display for ModelarDbQueryError {
                 write!(f, "InvalidArgument Error: {reason}")
             }
         }
+    }
+}
+
+impl From<DataFusionError> for ModelarDbQueryError {
+    fn from(error: DataFusionError) -> ModelarDbQueryError {
+        ModelarDbQueryError::DataFusion(error)
     }
 }

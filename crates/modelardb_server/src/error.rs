@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error types used throughout the system.
+//! The error types used throughout `modelardb_server`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -30,10 +30,10 @@ use object_store::Error as ObjectStoreError;
 use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
 
-/// Result type used throughout the system.
+/// Result type used throughout `modelardb_server`.
 pub type Result<T> = StdResult<T, ModelarDbServerError>;
 
-/// Error type used throughout the system.
+/// Error type used throughout `modelardb_server`.
 #[derive(Debug)]
 pub enum ModelarDbServerError {
     /// Error returned by crossbeam when sending data.
@@ -62,7 +62,55 @@ pub enum ModelarDbServerError {
     TonicTransport(TonicTransportError),
 }
 
-impl Error for ModelarDbServerError {}
+impl Display for ModelarDbServerError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            ModelarDbServerError::CrossbeamSend(reason) => {
+                write!(f, "Crossbeam Send Error: {reason}")
+            }
+            ModelarDbServerError::CrossbeamRecv(reason) => {
+                write!(f, "Crossbeam Recv Error: {reason}")
+            }
+            ModelarDbServerError::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
+            ModelarDbServerError::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
+            ModelarDbServerError::InvalidArgument(reason) => {
+                write!(f, "InvalidArgumentError Error: {reason}")
+            }
+            ModelarDbServerError::InvalidState(reason) => write!(f, "InvalidState Error: {reason}"),
+            ModelarDbServerError::Io(reason) => write!(f, "IO Error: {reason}"),
+            ModelarDbServerError::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
+            ModelarDbServerError::ModelarDbCommon(reason) => {
+                write!(f, "ModelarDB Common Error: {reason}")
+            }
+            ModelarDbServerError::ModelarDbQuery(reason) => {
+                write!(f, "ModelarDB Query Error: {reason}")
+            }
+            ModelarDbServerError::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
+            ModelarDbServerError::TonicTransport(reason) => {
+                write!(f, "Tonic Transport Error: {reason}")
+            }
+        }
+    }
+}
+
+impl Error for ModelarDbServerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ModelarDbServerError::CrossbeamSend(_reason) => None,
+            ModelarDbServerError::CrossbeamRecv(_reason) => None,
+            ModelarDbServerError::DataFusion(reason) => Some(reason),
+            ModelarDbServerError::DeltaLake(reason) => Some(reason),
+            ModelarDbServerError::InvalidArgument(_reason) => None,
+            ModelarDbServerError::InvalidState(_reason) => None,
+            ModelarDbServerError::Io(reason) => Some(reason),
+            ModelarDbServerError::ObjectStore(reason) => Some(reason),
+            ModelarDbServerError::ModelarDbCommon(reason) => Some(reason),
+            ModelarDbServerError::ModelarDbQuery(reason) => Some(reason),
+            ModelarDbServerError::TonicStatus(reason) => Some(reason),
+            ModelarDbServerError::TonicTransport(reason) => Some(reason),
+        }
+    }
+}
 
 impl<T> From<CrossbeamSendError<T>> for ModelarDbServerError {
     fn from(error: CrossbeamSendError<T>) -> ModelarDbServerError {
@@ -121,36 +169,5 @@ impl From<TonicStatusError> for ModelarDbServerError {
 impl From<TonicTransportError> for ModelarDbServerError {
     fn from(error: TonicTransportError) -> ModelarDbServerError {
         ModelarDbServerError::TonicTransport(error)
-    }
-}
-
-impl Display for ModelarDbServerError {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            ModelarDbServerError::CrossbeamSend(reason) => {
-                write!(f, "Crossbeam Send Error: {reason}")
-            }
-            ModelarDbServerError::CrossbeamRecv(reason) => {
-                write!(f, "Crossbeam Recv Error: {reason}")
-            }
-            ModelarDbServerError::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
-            ModelarDbServerError::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
-            ModelarDbServerError::InvalidArgument(reason) => {
-                write!(f, "InvalidArgumentError Error: {reason}")
-            }
-            ModelarDbServerError::InvalidState(reason) => write!(f, "InvalidState Error: {reason}"),
-            ModelarDbServerError::Io(reason) => write!(f, "IO Error: {reason}"),
-            ModelarDbServerError::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
-            ModelarDbServerError::ModelarDbCommon(reason) => {
-                write!(f, "ModelarDB Common Error: {reason}")
-            }
-            ModelarDbServerError::ModelarDbQuery(reason) => {
-                write!(f, "ModelarDB Query Error: {reason}")
-            }
-            ModelarDbServerError::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
-            ModelarDbServerError::TonicTransport(reason) => {
-                write!(f, "Tonic Transport Error: {reason}")
-            }
-        }
     }
 }
