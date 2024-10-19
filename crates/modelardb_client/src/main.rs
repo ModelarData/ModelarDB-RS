@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
             "Usage: {} [server host or host:port] [query_file].",
             binary_name.to_str().unwrap()
         );
-        process::exit(1);
+        process::exit(0);
     }
     let (maybe_host, maybe_port, maybe_query_file) =
         parse_command_line_arguments(args, &local_file_system).await?;
