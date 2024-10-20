@@ -32,7 +32,7 @@ use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileScanConfig, ParquetExec};
 use datafusion::datasource::provider::TableProviderFilterPushDown;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::planner;
@@ -128,7 +128,10 @@ impl ModelTable {
     /// Return the index of the column in schema that has the same name as the column in query
     /// schema with the index `query_schema_index`. If a column with that name does not exist in
     /// schema a [`DataFusionError::Plan`] is returned.
-    fn query_schema_index_to_schema_index(&self, query_schema_index: usize) -> Result<usize> {
+    fn query_schema_index_to_schema_index(
+        &self,
+        query_schema_index: usize,
+    ) -> DataFusionResult<usize> {
         let query_schema = &self.model_table_metadata.query_schema;
         let column_name = query_schema.field(query_schema_index).name();
         Ok(self.model_table_metadata.schema.index_of(column_name)?)
@@ -257,7 +260,7 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
 fn maybe_convert_logical_expr_to_physical_expr(
     maybe_expr: Option<&Expr>,
     query_schema: SchemaRef,
-) -> Result<Option<Arc<dyn PhysicalExpr>>> {
+) -> DataFusionResult<Option<Arc<dyn PhysicalExpr>>> {
     // Option.map() is not used so errors can be returned with ?.
     if let Some(maybe_expr) = maybe_expr {
         Ok(Some(convert_logical_expr_to_physical_expr(
@@ -273,26 +276,26 @@ fn maybe_convert_logical_expr_to_physical_expr(
 fn convert_logical_expr_to_physical_expr(
     expr: &Expr,
     query_schema: SchemaRef,
-) -> Result<Arc<dyn PhysicalExpr>> {
+) -> DataFusionResult<Arc<dyn PhysicalExpr>> {
     let df_query_schema = query_schema.clone().to_dfschema()?;
     planner::create_physical_expr(expr, &df_query_schema, &ExecutionProps::new())
 }
 
 /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
-/// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError::Plan`] if the
-/// necessary metadata cannot be retrieved from the metadata Delta Lake.
+/// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError`] if the necessary
+/// metadata cannot be retrieved from the metadata Delta Lake.
 fn new_apache_parquet_exec(
     delta_table: &DeltaTable,
     partition_filters: &[PartitionFilter],
     maybe_limit: Option<usize>,
     maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
-) -> Result<Arc<dyn ExecutionPlan>> {
+) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
     // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
     let mut logical_files = delta_table
         .get_active_add_actions_by_partitions(partition_filters)
-        .map_err(|error| DataFusionError::Internal(error.to_string()))?
+        .map_err(|error| DataFusionError::Plan(error.to_string()))?
         .collect::<StdResult<Vec<LogicalFile>, DeltaTableError>>()
-        .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
     // TODO: prune the Apache Parquet files using metadata and maybe_parquet_filters if possible.
     logical_files.sort_by_key(|logical_file| logical_file.modification_time());
@@ -301,7 +304,7 @@ fn new_apache_parquet_exec(
     let partitioned_files = logical_files
         .iter()
         .map(|logical_file| logical_file_to_partitioned_file(logical_file))
-        .collect::<Result<Vec<PartitionedFile>>>()?;
+        .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
 
     // TODO: give the optimizer more info for timestamps and values through statistics, e.g, min
     // can be computed using only the metadata Delta Lake due to the aggregate_statistics rule.
@@ -333,10 +336,12 @@ fn new_apache_parquet_exec(
 
 // Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
 // returned if the time the file was last modified cannot be read from `logical_file`.
-fn logical_file_to_partitioned_file(logical_file: &LogicalFile) -> Result<PartitionedFile> {
+fn logical_file_to_partitioned_file(
+    logical_file: &LogicalFile,
+) -> DataFusionResult<PartitionedFile> {
     let last_modified = logical_file
         .modification_datetime()
-        .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
     let object_meta = ObjectMeta {
         location: logical_file.object_store_path(),
@@ -382,7 +387,7 @@ impl TableProvider for ModelTable {
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // Create shorthands for the metadata used during planning to improve readability.
         let table_name = self.model_table_metadata.name.as_str();
         let schema = &self.model_table_metadata.schema;
@@ -398,7 +403,7 @@ impl TableProvider for ModelTable {
         delta_table
             .load()
             .await
-            .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // Register the object store as done in DeltaTable so paths are from the table root.
         let log_store = delta_table.log_store();
@@ -552,7 +557,7 @@ impl TableProvider for ModelTable {
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
-    ) -> Result<Vec<TableProviderFilterPushDown>> {
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         Ok(filters
             .iter()
             .map(|_filter| TableProviderFilterPushDown::Inexact)
@@ -570,7 +575,7 @@ impl TableProvider for ModelTable {
         _state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
         _overwrite: bool,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let data_sink_exec = Arc::new(DataSinkExec::new(
             input,
             self.data_sink.clone(),

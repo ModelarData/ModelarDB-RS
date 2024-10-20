@@ -23,7 +23,7 @@ use std::{any::Any, sync::Arc};
 use datafusion::catalog::Session;
 use datafusion::common::Constraints;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{Expr, LogicalPlan, TableProviderFilterPushDown};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
@@ -95,7 +95,7 @@ impl TableProvider for Table {
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // Clone the Delta Lake table and update it to the latest version. self.delta_lake.load(
         // &mut self) is not an option due to TypeProvider::scan(&self, ...). Storing the DeltaTable
         // in a Mutex and RwLock is also not an option since most of the methods in TypeProvider
@@ -104,7 +104,7 @@ impl TableProvider for Table {
         delta_table
             .load()
             .await
-            .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         delta_table.scan(state, projection, filters, limit).await
     }
@@ -113,7 +113,7 @@ impl TableProvider for Table {
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
-    ) -> Result<Vec<TableProviderFilterPushDown>> {
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.delta_table.supports_filters_pushdown(filters)
     }
 
@@ -131,7 +131,7 @@ impl TableProvider for Table {
         _state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
         _overwrite: bool,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let file_sink = Arc::new(DataSinkExec::new(
             input,
             self.data_sink.clone(),

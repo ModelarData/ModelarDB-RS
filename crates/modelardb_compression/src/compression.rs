@@ -18,10 +18,10 @@
 //! models.
 
 use arrow::record_batch::RecordBatch;
-use modelardb_types::errors::ModelarDbError;
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{ErrorBound, TimestampArray, ValueArray};
 
+use crate::error::{ModelarDbCompressionError, Result};
 use crate::models::gorilla::Gorilla;
 use crate::models::{self, timestamps, GORILLA_ID};
 use crate::types::{CompressedSegmentBatchBuilder, CompressedSegmentBuilder, ModelBuilder};
@@ -37,21 +37,20 @@ const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 /// regular and delta-of-deltas followed by a variable length binary encoding if irregular.
 /// `uncompressed_values` is compressed within `error_bound` using the model types in `models`.
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted according to
-/// `uncompressed_timestamps`. Returns [`CompressionError`](ModelarDbError::CompressionError) if
-/// `uncompressed_timestamps` and `uncompressed_values` have different lengths, otherwise the
-/// resulting compressed segments are returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`]
-/// schema.
+/// `uncompressed_timestamps`. Returns [`ModelarDbCompressionError`] if `uncompressed_timestamps`
+/// and `uncompressed_values` have different lengths, otherwise the resulting compressed segments
+/// are returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`] schema.
 pub fn try_compress(
     univariate_id: u64,
     error_bound: ErrorBound,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
-) -> Result<RecordBatch, ModelarDbError> {
+) -> Result<RecordBatch> {
     // The uncompressed data must be passed as arrays instead of a RecordBatch as a TimestampArray
     // and a ValueArray is the only supported input. However, as a result it is necessary to verify
     // they have the same length.
     if uncompressed_timestamps.len() != uncompressed_values.len() {
-        return Err(ModelarDbError::CompressionError(
+        return Err(ModelarDbCompressionError::InvalidArgument(
             "Uncompressed timestamps and uncompressed values have different lengths.".to_owned(),
         ));
     }

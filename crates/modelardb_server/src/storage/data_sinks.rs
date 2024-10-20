@@ -17,11 +17,11 @@
 //! [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) to [`StorageEngine`].
 
 use std::any::Any;
-use std::fmt::{self, Debug, Formatter};
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::TaskContext;
 use datafusion::physical_plan::insert::DataSink;
 use datafusion::physical_plan::metrics::MetricsSet;
@@ -69,7 +69,7 @@ impl DataSink for TableDataSink {
         &self,
         mut data: SendableRecordBatchStream,
         _context: &Arc<TaskContext>,
-    ) -> Result<u64> {
+    ) -> DataFusionResult<u64> {
         let mut rows_inserted: u64 = 0;
 
         while let Some(record_batch) = data.next().await {
@@ -80,7 +80,7 @@ impl DataSink for TableDataSink {
             storage_engine
                 .insert_record_batch(&self.table_name, record_batch)
                 .await
-                .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+                .map_err(|error| DataFusionError::External(Box::new(error)))?;
         }
 
         Ok(rows_inserted)
@@ -90,7 +90,7 @@ impl DataSink for TableDataSink {
 impl Debug for TableDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let name = &self.table_name;
         write!(f, "TableDataSink for {name}")
     }
@@ -99,7 +99,7 @@ impl Debug for TableDataSink {
 impl DisplayAs for TableDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> FmtResult {
         let name = &self.table_name;
         write!(f, "TableDataSink for {name}")
     }
@@ -145,7 +145,7 @@ impl DataSink for ModelTableDataSink {
         &self,
         mut data: SendableRecordBatchStream,
         _context: &Arc<TaskContext>,
-    ) -> Result<u64> {
+    ) -> DataFusionResult<u64> {
         let mut data_points_inserted: u64 = 0;
 
         while let Some(record_batch) = data.next().await {
@@ -160,7 +160,7 @@ impl DataSink for ModelTableDataSink {
             storage_engine
                 .insert_data_points(self.model_table_metadata.clone(), record_batch)
                 .await
-                .map_err(DataFusionError::Execution)?;
+                .map_err(|error| DataFusionError::External(Box::new(error)))?;
         }
 
         Ok(data_points_inserted)
@@ -170,7 +170,7 @@ impl DataSink for ModelTableDataSink {
 impl Debug for ModelTableDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let name = &self.model_table_metadata.name;
         write!(f, "ModelTableDataSink for {name}")
     }
@@ -179,7 +179,7 @@ impl Debug for ModelTableDataSink {
 impl DisplayAs for ModelTableDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> FmtResult {
         let name = &self.model_table_metadata.name;
         write!(f, "ModelTableDataSink for {name}")
     }

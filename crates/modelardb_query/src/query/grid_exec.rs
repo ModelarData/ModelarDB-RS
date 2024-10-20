@@ -19,7 +19,7 @@
 
 use std::any::Any;
 use std::borrow::Cow;
-use std::fmt::{self, Formatter};
+use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
@@ -33,7 +33,7 @@ use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, PhysicalSortRequirement};
 use datafusion::physical_plan::metrics::{
@@ -137,7 +137,7 @@ impl ExecutionPlan for GridExec {
     fn with_new_children(
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
             Ok(GridExec::new(
                 self.maybe_predicate.clone(),
@@ -158,7 +158,7 @@ impl ExecutionPlan for GridExec {
         &self,
         partition: usize,
         task_context: Arc<TaskContext>,
-    ) -> Result<SendableRecordBatchStream> {
+    ) -> DataFusionResult<SendableRecordBatchStream> {
         // Must be read before GridStream as task_context are moved into input.
         let batch_size = task_context.session_config().batch_size();
         let grid_stream_metrics = GridStreamMetrics::new(&self.metrics, partition);
@@ -174,7 +174,7 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Specify that [`GridExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> Result<Statistics, DataFusionError> {
+    fn statistics(&self) -> DataFusionResult<Statistics> {
         Ok(Statistics::new_unknown(&self.schema))
     }
 
@@ -202,7 +202,7 @@ impl ExecutionPlan for GridExec {
 impl DisplayAs for GridExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "{}: limit={:?}", self.name(), self.limit)
     }
 }
@@ -360,8 +360,8 @@ impl GridStream {
 }
 
 impl Stream for GridStream {
-    /// Specify that [`GridStream`] returns [`Result<RecordBatch>`] when polled.
-    type Item = Result<RecordBatch>;
+    /// Specify that [`GridStream`] returns [`DataFusionResult<RecordBatch>`] when polled.
+    type Item = DataFusionResult<RecordBatch>;
 
     /// Try to poll the next batch of data points from the [`GridStream`] and returns:
     /// * `Poll::Pending` if the next batch is not yet ready.

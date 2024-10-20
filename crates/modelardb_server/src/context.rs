@@ -24,12 +24,12 @@ use datafusion::prelude::SessionContext;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::parser::{self, ValidStatement};
-use modelardb_types::errors::ModelarDbError;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::configuration::ConfigurationManager;
+use crate::error::{ModelarDbServerError, Result};
 use crate::storage::data_sinks::{ModelTableDataSink, TableDataSink};
 use crate::storage::StorageEngine;
 use crate::{ClusterMode, DataFolders};
@@ -47,25 +47,20 @@ pub struct Context {
 }
 
 impl Context {
-    /// Create the components needed in the [`Context`] and use them to create the [`Context`]. If
-    /// a metadata manager or storage engine could not be created, [`ModelarDbError`] is returned.
+    /// Create the components needed in the [`Context`] and use them to create the [`Context`]. If a
+    /// metadata manager or storage engine could not be created, [`ModelarDbServerError`] is
+    /// returned.
     pub async fn try_new(
         runtime: Arc<Runtime>,
         data_folders: DataFolders,
         cluster_mode: ClusterMode,
-    ) -> Result<Self, ModelarDbError> {
+    ) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
         let session = modelardb_query::create_session_context();
 
         let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(runtime, data_folders.clone(), &configuration_manager)
-                .await
-                .map_err(|error| {
-                    ModelarDbError::ConfigurationError(format!(
-                        "Unable to create a StorageEngine: {error}"
-                    ))
-                })?,
+            StorageEngine::try_new(runtime, data_folders.clone(), &configuration_manager).await?,
         ));
 
         Ok(Context {
@@ -77,15 +72,13 @@ impl Context {
     }
 
     /// Parse `sql` and create a normal table or a model table based on the SQL. If `sql` is not
-    /// valid or the table could not be created, return [`ModelarDbError`].
-    pub(crate) async fn parse_and_create_table(&self, sql: &str) -> Result<(), ModelarDbError> {
+    /// valid or the table could not be created, return [`ModelarDbServerError`].
+    pub(crate) async fn parse_and_create_table(&self, sql: &str) -> Result<()> {
         // Parse the SQL.
-        let statement = parser::tokenize_and_parse_sql(sql)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+        let statement = parser::tokenize_and_parse_sql(sql)?;
 
         // Perform semantic checks to ensure the parsed SQL is supported.
-        let valid_statement = parser::semantic_checks_for_create_table(statement)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+        let valid_statement = parser::semantic_checks_for_create_table(statement)?;
 
         // Create the table or model table if it does not already exist.
         match valid_statement {
@@ -106,20 +99,19 @@ impl Context {
 
     /// Create a normal table, register it with Apache DataFusion, and save it to the Delta Lake. If
     /// the table exists, cannot be registered with Apache DataFusion, or cannot be saved to the
-    /// Delta Lake, return [`ModelarDbError`] error.
+    /// Delta Lake, return [`ModelarDbServerError`] error.
     async fn register_and_save_table(
         &self,
         table_name: &str,
         sql: &str,
         schema: Schema,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
             .delta_lake
             .create_delta_lake_table(table_name, &schema)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         // Register the table with Apache DataFusion.
         self.register_table(table_name).await?;
@@ -129,8 +121,7 @@ impl Context {
             .local_data_folder
             .table_metadata_manager
             .save_table_metadata(table_name, sql)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         info!("Created table '{}'.", table_name);
 
@@ -139,19 +130,18 @@ impl Context {
 
     /// Create a model table, register it in Apache DataFusion, and save it to the Delta Lake. If
     /// the table exists, cannot be registered with Apache DataFusion, or cannot be saved to the
-    /// Delta Lake, return [`ModelarDbError`] error.
+    /// Delta Lake, return [`ModelarDbServerError`] error.
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
         sql: &str,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
             .delta_lake
             .create_delta_lake_model_table(&model_table_metadata.name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         let table_metadata_manager = self
             .data_folders
@@ -168,8 +158,7 @@ impl Context {
             .local_data_folder
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
 
@@ -178,8 +167,8 @@ impl Context {
 
     /// For each normal table saved in the metadata Delta Lake, register the normal table in Apache
     /// DataFusion. If the normal tables could not be retrieved from the metadata Delta Lake or a
-    /// normal table could not be registered, return [`ModelarDbError`].
-    pub async fn register_tables(&self) -> Result<(), ModelarDbError> {
+    /// normal table could not be registered, return [`ModelarDbServerError`].
+    pub async fn register_tables(&self) -> Result<()> {
         // We register the tables in the local data folder to avoid registering tables that
         // TableDataSink cannot write data to.
         let table_names = self
@@ -187,8 +176,7 @@ impl Context {
             .local_data_folder
             .table_metadata_manager
             .table_names()
-            .await
-            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+            .await?;
 
         for table_name in table_names {
             self.register_table(&table_name).await?;
@@ -198,15 +186,15 @@ impl Context {
     }
 
     /// Register the normal table with `table_name` in Apache DataFusion. If the normal table does
-    /// not exist or could not be registered with Apache DataFusion, return [`ModelarDbError`].
-    async fn register_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+    /// not exist or could not be registered with Apache DataFusion, return
+    /// [`ModelarDbServerError`].
+    async fn register_table(&self, table_name: &str) -> Result<()> {
         let delta_table = self
             .data_folders
             .query_data_folder
             .delta_lake
             .delta_table(table_name)
-            .await
-            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+            .await?;
 
         let table_data_sink = Arc::new(TableDataSink::new(
             table_name.to_owned(),
@@ -222,8 +210,8 @@ impl Context {
 
     /// For each model table saved in the metadata Delta Lake, register the model table in Apache
     /// DataFusion. If the model tables could not be retrieved from the metadata Delta Lake or a
-    /// model table could not be registered, return [`ModelarDbError`].
-    pub async fn register_model_tables(&self) -> Result<(), ModelarDbError> {
+    /// model table could not be registered, return [`ModelarDbServerError`].
+    pub async fn register_model_tables(&self) -> Result<()> {
         // We register the model tables in the local data folder to avoid registering tables that
         // ModelTableDataSink cannot write data to.
         let model_table_metadata = self
@@ -231,8 +219,7 @@ impl Context {
             .local_data_folder
             .table_metadata_manager
             .model_table_metadata()
-            .await
-            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+            .await?;
 
         let table_metadata_manager = &self.data_folders.query_data_folder.table_metadata_manager;
         for metadata in model_table_metadata {
@@ -245,19 +232,18 @@ impl Context {
 
     /// Register the model table with `model_table_metadata` from `table_metadata_manager` in Apache
     /// DataFusion. If the model table does not exist or could not be registered with Apache
-    /// DataFusion, return [`ModelarDbError`].
+    /// DataFusion, return [`ModelarDbServerError`].
     async fn register_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
         table_metadata_manager: Arc<TableMetadataManager>,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         let delta_table = self
             .data_folders
             .query_data_folder
             .delta_lake
             .delta_table(&model_table_metadata.name)
-            .await
-            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+            .await?;
 
         let model_table_data_sink = Arc::new(ModelTableDataSink::new(
             model_table_metadata.clone(),
@@ -279,34 +265,27 @@ impl Context {
 
     /// Drop the table with `table_name` if it exists. The table is deregistered from the Apache
     /// Arrow Datafusion session and deleted from the storage engine, metadata Delta Lake, and data
-    /// Delta Lake. If the table does not exist or if it could not be dropped, [`ModelarDbError`]
-    /// is returned.
-    pub async fn drop_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+    /// Delta Lake. If the table does not exist or if it could not be dropped,
+    /// [`ModelarDbServerError`] is returned.
+    pub async fn drop_table(&self, table_name: &str) -> Result<()> {
         // Deregistering the table from the Apache DataFusion session and deleting the table from
         // the storage engine does not require the table to exist, so the table is checked first.
         if self.check_if_table_exists(table_name).await.is_ok() {
-            return Err(ModelarDbError::TableError(format!(
+            return Err(ModelarDbServerError::InvalidArgument(format!(
                 "Table with name '{table_name}' does not exist."
             )));
         }
 
         // Deregister the table from the Apache DataFusion session. This is done first to
         // avoid data being ingested into the table while it is being deleted.
-        self.session
-            .deregister_table(table_name)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+        self.session.deregister_table(table_name)?;
 
         // Drop the table from the storage engine by flushing the data managers. The table is
         // marked as dropped in the data transfer component first to avoid transferring data to the
         // remote data folder when flushing.
         let storage_engine = self.storage_engine.write().await;
         storage_engine.mark_table_as_dropped(table_name).await;
-
-        storage_engine
-            .flush()
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
+        storage_engine.flush().await?;
         storage_engine.clear_table(table_name).await;
 
         // Delete the table metadata from the metadata Delta Lake.
@@ -314,16 +293,14 @@ impl Context {
             .local_data_folder
             .table_metadata_manager
             .delete_table_metadata(table_name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         // Delete the table from the Delta Lake.
         self.data_folders
             .local_data_folder
             .delta_lake
             .drop_delta_lake_table(table_name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         Ok(())
     }
@@ -332,27 +309,19 @@ impl Context {
     /// Specifically, the method returns:
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
     /// * [`None`] if a table with the name `table_name` exists.
-    /// * [`ModelarDbError`] if the default catalog, the default schema, a table with the name
+    /// * [`ModelarDbServerError`] if the default catalog, the default schema, a table with the name
     ///   `table_name`, or a model table with the name `table_name` does not exist.
     pub async fn model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,
-    ) -> Result<Option<Arc<ModelTableMetadata>>, ModelarDbError> {
+    ) -> Result<Option<Arc<ModelTableMetadata>>> {
         let database_schema = self.default_database_schema()?;
 
-        let maybe_model_table = database_schema
-            .table(table_name)
-            .await
-            .map_err(|error| {
-                ModelarDbError::DataRetrievalError(format!(
-                    "Failed to retrieve metadata for '{table_name}' due to: {error}"
-                ))
-            })?
-            .ok_or_else(|| {
-                ModelarDbError::DataRetrievalError(format!(
-                    "Table with name '{table_name}' does not exist."
-                ))
-            })?;
+        let maybe_model_table = database_schema.table(table_name).await?.ok_or_else(|| {
+            ModelarDbServerError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            ))
+        })?;
 
         let maybe_model_table_metadata =
             modelardb_query::maybe_model_table_to_model_table_metadata(maybe_model_table);
@@ -360,11 +329,11 @@ impl Context {
         Ok(maybe_model_table_metadata)
     }
 
-    /// Return [`ModelarDbError`] if a table named `table_name` exists in the default catalog.
-    pub async fn check_if_table_exists(&self, table_name: &str) -> Result<(), ModelarDbError> {
+    /// Return [`ModelarDbServerError`] if a table named `table_name` exists in the default catalog.
+    pub async fn check_if_table_exists(&self, table_name: &str) -> Result<()> {
         let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.await.is_ok() {
-            return Err(ModelarDbError::ConfigurationError(format!(
+            return Err(ModelarDbServerError::InvalidArgument(format!(
                 "Table with name '{table_name}' already exists."
             )));
         }
@@ -372,41 +341,33 @@ impl Context {
     }
 
     /// Return the schema of `table_name` if the table exists in the default database schema,
-    /// otherwise a [`ModelarDbError`] indicating at what level the lookup failed is returned.
+    /// otherwise a [`ModelarDbServerError`] indicating at what level the lookup failed is returned.
     pub async fn schema_of_table_in_default_database_schema(
         &self,
         table_name: &str,
-    ) -> Result<SchemaRef, ModelarDbError> {
+    ) -> Result<SchemaRef> {
         let database_schema = self.default_database_schema()?;
 
-        let table = database_schema
-            .table(table_name)
-            .await
-            .map_err(|error| {
-                ModelarDbError::DataRetrievalError(format!(
-                    "Failed to retrieve schema for '{table_name}' due to: {error}"
-                ))
-            })?
-            .ok_or_else(|| {
-                ModelarDbError::DataRetrievalError(format!(
-                    "Table with name '{table_name}' does not exist."
-                ))
-            })?;
+        let table = database_schema.table(table_name).await?.ok_or_else(|| {
+            ModelarDbServerError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            ))
+        })?;
 
         Ok(table.schema())
     }
 
-    /// Return the default database schema if it exists, otherwise a [`ModelarDbError`] indicating
-    /// at what level the lookup failed is returned.
-    pub fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>, ModelarDbError> {
+    /// Return the default database schema if it exists, otherwise a [`ModelarDbServerError`]
+    /// indicating at what level the lookup failed is returned.
+    pub fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>> {
         let session = self.session.clone();
 
         let catalog = session.catalog("datafusion").ok_or_else(|| {
-            ModelarDbError::ImplementationError("Default catalog does not exist.".to_owned())
+            ModelarDbServerError::InvalidState("Default catalog does not exist.".to_owned())
         })?;
 
         let schema = catalog.schema("public").ok_or_else(|| {
-            ModelarDbError::ImplementationError("Default schema does not exist.".to_owned())
+            ModelarDbServerError::InvalidState("Default schema does not exist.".to_owned())
         })?;
 
         Ok(schema)

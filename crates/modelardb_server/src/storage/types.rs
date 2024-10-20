@@ -15,8 +15,7 @@
 
 //! The minor types used throughout the [`StorageEngine`](crate::storage::StorageEngine).
 
-use std::error::Error;
-use std::fmt;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::mem;
 use std::sync::Condvar;
 use std::sync::Mutex;
@@ -31,6 +30,7 @@ use ringbuf::traits::Observer;
 use ringbuf::traits::{Consumer, RingBuffer};
 use ringbuf::HeapRb;
 
+use crate::error::Result;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::uncompressed_data_buffer::{IngestedDataBuffer, UncompressedDataBuffer};
 
@@ -233,12 +233,12 @@ pub(super) struct Channels {
     /// [`UncompressedDataManager`](super::UncompressedDataManager) or
     /// [`CompressedDataManager`](super::CompressedDataManager) to indicate that an asynchronous
     /// process has succeeded or failed to [`StorageEngine`](super::StorageEngine).
-    pub(super) result_sender: Sender<Result<(), Box<dyn Error + Send + Sync>>>,
+    pub(super) result_sender: Sender<Result<()>>,
     /// Receiver of [`Results`](Result) from
     /// [`UncompressedDataManager`](super::UncompressedDataManager) or
     /// [`CompressedDataManager`](super::CompressedDataManager) to indicate that an asynchronous
     /// process has succeeded or failed to [`StorageEngine`](super::StorageEngine).
-    pub(super) result_receiver: Receiver<Result<(), Box<dyn Error + Send + Sync>>>,
+    pub(super) result_receiver: Receiver<Result<()>>,
 }
 
 impl Channels {
@@ -270,8 +270,8 @@ pub enum MetricType {
     UsedDiskSpace,
 }
 
-impl fmt::Display for MetricType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for MetricType {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
             Self::UsedIngestedMemory => write!(f, "used_ingested_memory"),
             Self::UsedUncompressedMemory => write!(f, "used_uncompressed_memory"),
