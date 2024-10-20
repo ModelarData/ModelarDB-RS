@@ -51,27 +51,13 @@ pub enum ModelarDbClientError {
 impl Display for ModelarDbClientError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDbClientError::Arrow(reason) => {
-                write!(f, "Arrow Error: {reason}")
-            }
-            ModelarDbClientError::InvalidArgument(reason) => {
-                write!(f, "InvalidArgument Error: {reason}")
-            }
-            ModelarDbClientError::Io(reason) => {
-                write!(f, "Io Error: {reason}")
-            }
-            ModelarDbClientError::ObjectStore(reason) => {
-                write!(f, "ObjectStore Error: {reason}")
-            }
-            ModelarDbClientError::RustyLine(reason) => {
-                write!(f, "RustyLine Error: {reason}")
-            }
-            ModelarDbClientError::TonicStatus(reason) => {
-                write!(f, "Tonic Status Error: {reason}")
-            }
-            ModelarDbClientError::TonicTransport(reason) => {
-                write!(f, "Tonic Transport Error: {reason}")
-            }
+            Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "InvalidArgument Error: {reason}"),
+            Self::Io(reason) => write!(f, "Io Error: {reason}"),
+            Self::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
+            Self::RustyLine(reason) => write!(f, "RustyLine Error: {reason}"),
+            Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
+            Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
         }
     }
 }
@@ -79,49 +65,49 @@ impl Display for ModelarDbClientError {
 impl Error for ModelarDbClientError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            ModelarDbClientError::Arrow(reason) => Some(reason),
-            ModelarDbClientError::InvalidArgument(_reason) => None,
-            ModelarDbClientError::Io(reason) => Some(reason),
-            ModelarDbClientError::ObjectStore(reason) => Some(reason),
-            ModelarDbClientError::RustyLine(reason) => Some(reason),
-            ModelarDbClientError::TonicStatus(reason) => Some(reason),
-            ModelarDbClientError::TonicTransport(reason) => Some(reason),
+            Self::Arrow(reason) => Some(reason),
+            Self::InvalidArgument(_reason) => None,
+            Self::Io(reason) => Some(reason),
+            Self::ObjectStore(reason) => Some(reason),
+            Self::RustyLine(reason) => Some(reason),
+            Self::TonicStatus(reason) => Some(reason),
+            Self::TonicTransport(reason) => Some(reason),
         }
     }
 }
 
 impl From<ArrowError> for ModelarDbClientError {
-    fn from(error: ArrowError) -> ModelarDbClientError {
-        ModelarDbClientError::Arrow(error)
+    fn from(error: ArrowError) -> Self {
+        Self::Arrow(error)
     }
 }
 
 impl From<IoError> for ModelarDbClientError {
-    fn from(error: IoError) -> ModelarDbClientError {
-        ModelarDbClientError::Io(error)
+    fn from(error: IoError) -> Self {
+        Self::Io(error)
     }
 }
 
 impl From<ObjectStoreError> for ModelarDbClientError {
-    fn from(error: ObjectStoreError) -> ModelarDbClientError {
-        ModelarDbClientError::ObjectStore(error)
+    fn from(error: ObjectStoreError) -> Self {
+        Self::ObjectStore(error)
     }
 }
 
 impl From<RustyLineError> for ModelarDbClientError {
-    fn from(error: RustyLineError) -> ModelarDbClientError {
-        ModelarDbClientError::RustyLine(error)
+    fn from(error: RustyLineError) -> Self {
+        Self::RustyLine(error)
     }
 }
 
 impl From<TonicStatusError> for ModelarDbClientError {
-    fn from(error: TonicStatusError) -> ModelarDbClientError {
-        ModelarDbClientError::TonicStatus(error)
+    fn from(error: TonicStatusError) -> Self {
+        Self::TonicStatus(error)
     }
 }
 
 impl From<TonicTransportError> for ModelarDbClientError {
-    fn from(error: TonicTransportError) -> ModelarDbClientError {
-        ModelarDbClientError::TonicTransport(error)
+    fn from(error: TonicTransportError) -> Self {
+        Self::TonicTransport(error)
     }
 }

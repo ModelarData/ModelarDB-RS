@@ -65,30 +65,18 @@ pub enum ModelarDbServerError {
 impl Display for ModelarDbServerError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDbServerError::CrossbeamSend(reason) => {
-                write!(f, "Crossbeam Send Error: {reason}")
-            }
-            ModelarDbServerError::CrossbeamRecv(reason) => {
-                write!(f, "Crossbeam Recv Error: {reason}")
-            }
-            ModelarDbServerError::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
-            ModelarDbServerError::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
-            ModelarDbServerError::InvalidArgument(reason) => {
-                write!(f, "InvalidArgumentError Error: {reason}")
-            }
-            ModelarDbServerError::InvalidState(reason) => write!(f, "InvalidState Error: {reason}"),
-            ModelarDbServerError::Io(reason) => write!(f, "IO Error: {reason}"),
-            ModelarDbServerError::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
-            ModelarDbServerError::ModelarDbCommon(reason) => {
-                write!(f, "ModelarDB Common Error: {reason}")
-            }
-            ModelarDbServerError::ModelarDbQuery(reason) => {
-                write!(f, "ModelarDB Query Error: {reason}")
-            }
-            ModelarDbServerError::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
-            ModelarDbServerError::TonicTransport(reason) => {
-                write!(f, "Tonic Transport Error: {reason}")
-            }
+            Self::CrossbeamSend(reason) => write!(f, "Crossbeam Send Error: {reason}"),
+            Self::CrossbeamRecv(reason) => write!(f, "Crossbeam Recv Error: {reason}"),
+            Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
+            Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "InvalidArgumentError Error: {reason}"),
+            Self::InvalidState(reason) => write!(f, "InvalidState Error: {reason}"),
+            Self::Io(reason) => write!(f, "IO Error: {reason}"),
+            Self::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
+            Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
+            Self::ModelarDbQuery(reason) => write!(f, "ModelarDB Query Error: {reason}"),
+            Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
+            Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
         }
     }
 }
@@ -96,78 +84,78 @@ impl Display for ModelarDbServerError {
 impl Error for ModelarDbServerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            ModelarDbServerError::CrossbeamSend(_reason) => None,
-            ModelarDbServerError::CrossbeamRecv(_reason) => None,
-            ModelarDbServerError::DataFusion(reason) => Some(reason),
-            ModelarDbServerError::DeltaLake(reason) => Some(reason),
-            ModelarDbServerError::InvalidArgument(_reason) => None,
-            ModelarDbServerError::InvalidState(_reason) => None,
-            ModelarDbServerError::Io(reason) => Some(reason),
-            ModelarDbServerError::ObjectStore(reason) => Some(reason),
-            ModelarDbServerError::ModelarDbCommon(reason) => Some(reason),
-            ModelarDbServerError::ModelarDbQuery(reason) => Some(reason),
-            ModelarDbServerError::TonicStatus(reason) => Some(reason),
-            ModelarDbServerError::TonicTransport(reason) => Some(reason),
+            Self::CrossbeamSend(_reason) => None,
+            Self::CrossbeamRecv(_reason) => None,
+            Self::DataFusion(reason) => Some(reason),
+            Self::DeltaLake(reason) => Some(reason),
+            Self::InvalidArgument(_reason) => None,
+            Self::InvalidState(_reason) => None,
+            Self::Io(reason) => Some(reason),
+            Self::ObjectStore(reason) => Some(reason),
+            Self::ModelarDbCommon(reason) => Some(reason),
+            Self::ModelarDbQuery(reason) => Some(reason),
+            Self::TonicStatus(reason) => Some(reason),
+            Self::TonicTransport(reason) => Some(reason),
         }
     }
 }
 
 impl<T> From<CrossbeamSendError<T>> for ModelarDbServerError {
-    fn from(error: CrossbeamSendError<T>) -> ModelarDbServerError {
-        ModelarDbServerError::CrossbeamSend(error.to_string())
+    fn from(error: CrossbeamSendError<T>) -> Self {
+        Self::CrossbeamSend(error.to_string())
     }
 }
 
 impl From<CrossbeamRecvError> for ModelarDbServerError {
-    fn from(error: CrossbeamRecvError) -> ModelarDbServerError {
-        ModelarDbServerError::CrossbeamRecv(error.to_string())
+    fn from(error: CrossbeamRecvError) -> Self {
+        Self::CrossbeamRecv(error.to_string())
     }
 }
 
 impl From<DataFusionError> for ModelarDbServerError {
-    fn from(error: DataFusionError) -> ModelarDbServerError {
-        ModelarDbServerError::DataFusion(error)
+    fn from(error: DataFusionError) -> Self {
+        Self::DataFusion(error)
     }
 }
 
 impl From<DeltaTableError> for ModelarDbServerError {
-    fn from(error: DeltaTableError) -> ModelarDbServerError {
-        ModelarDbServerError::DeltaLake(error)
+    fn from(error: DeltaTableError) -> Self {
+        Self::DeltaLake(error)
     }
 }
 
 impl From<IoError> for ModelarDbServerError {
-    fn from(error: IoError) -> ModelarDbServerError {
-        ModelarDbServerError::Io(error)
+    fn from(error: IoError) -> Self {
+        Self::Io(error)
     }
 }
 
 impl From<ModelarDbCommonError> for ModelarDbServerError {
-    fn from(error: ModelarDbCommonError) -> ModelarDbServerError {
-        ModelarDbServerError::ModelarDbCommon(error)
+    fn from(error: ModelarDbCommonError) -> Self {
+        Self::ModelarDbCommon(error)
     }
 }
 
 impl From<ModelarDbQueryError> for ModelarDbServerError {
-    fn from(error: ModelarDbQueryError) -> ModelarDbServerError {
-        ModelarDbServerError::ModelarDbQuery(error)
+    fn from(error: ModelarDbQueryError) -> Self {
+        Self::ModelarDbQuery(error)
     }
 }
 
 impl From<ObjectStoreError> for ModelarDbServerError {
-    fn from(error: ObjectStoreError) -> ModelarDbServerError {
-        ModelarDbServerError::ObjectStore(error)
+    fn from(error: ObjectStoreError) -> Self {
+        Self::ObjectStore(error)
     }
 }
 
 impl From<TonicStatusError> for ModelarDbServerError {
-    fn from(error: TonicStatusError) -> ModelarDbServerError {
-        ModelarDbServerError::TonicStatus(error)
+    fn from(error: TonicStatusError) -> Self {
+        Self::TonicStatus(error)
     }
 }
 
 impl From<TonicTransportError> for ModelarDbServerError {
-    fn from(error: TonicTransportError) -> ModelarDbServerError {
-        ModelarDbServerError::TonicTransport(error)
+    fn from(error: TonicTransportError) -> Self {
+        Self::TonicTransport(error)
     }
 }

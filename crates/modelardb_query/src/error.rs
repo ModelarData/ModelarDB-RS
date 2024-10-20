@@ -36,8 +36,8 @@ pub enum ModelarDbQueryError {
 impl Error for ModelarDbQueryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            ModelarDbQueryError::DataFusion(reason) => Some(reason),
-            ModelarDbQueryError::InvalidArgument(_reason) => None,
+            Self::DataFusion(reason) => Some(reason),
+            Self::InvalidArgument(_reason) => None,
         }
     }
 }
@@ -45,16 +45,14 @@ impl Error for ModelarDbQueryError {
 impl Display for ModelarDbQueryError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDbQueryError::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
-            ModelarDbQueryError::InvalidArgument(reason) => {
-                write!(f, "InvalidArgument Error: {reason}")
-            }
+            Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "InvalidArgument Error: {reason}"),
         }
     }
 }
 
 impl From<DataFusionError> for ModelarDbQueryError {
-    fn from(error: DataFusionError) -> ModelarDbQueryError {
-        ModelarDbQueryError::DataFusion(error)
+    fn from(error: DataFusionError) -> Self {
+        Self::DataFusion(error)
     }
 }

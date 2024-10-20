@@ -32,9 +32,7 @@ pub enum ModelarDbCompressionError {
 impl Display for ModelarDbCompressionError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDbCompressionError::InvalidArgument(reason) => {
-                write!(f, "InvalidArgumentError Error: {reason}")
-            }
+            Self::InvalidArgument(reason) => write!(f, "InvalidArgumentError Error: {reason}"),
         }
     }
 }
@@ -42,7 +40,7 @@ impl Display for ModelarDbCompressionError {
 impl Error for ModelarDbCompressionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            ModelarDbCompressionError::InvalidArgument(_reason) => None,
+            Self::InvalidArgument(_reason) => None,
         }
     }
 }
