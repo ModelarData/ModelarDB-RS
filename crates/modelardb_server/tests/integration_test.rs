@@ -713,6 +713,7 @@ fn test_can_list_actions() {
             "FlushNode",
             "GetConfiguration",
             "KillNode",
+            "TruncateTable",
             "UpdateConfiguration",
         ]
     );
