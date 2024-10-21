@@ -296,18 +296,7 @@ impl Context {
             .deregister_table(table_name)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Drop the table from the storage engine by flushing the data managers. The table is
-        // marked as dropped in the data transfer component first to avoid transferring data to the
-        // remote data folder when flushing.
-        let storage_engine = self.storage_engine.write().await;
-        storage_engine.mark_table_as_dropped(table_name).await;
-
-        storage_engine
-            .flush()
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-        storage_engine.clear_table(table_name).await;
+        self.delete_table_from_storage_engine(table_name).await?;
 
         // Delete the table metadata from the metadata Delta Lake.
         self.data_folders
@@ -340,11 +329,32 @@ impl Context {
             )));
         }
 
-        // TODO: Delete the table data from the storage engine.
+        self.delete_table_from_storage_engine(table_name).await?;
 
         // TODO: Delete the table data from the metadata Delta Lake.
 
         // TODO: Delete the table data from the data Delta Lake.
+
+        Ok(())
+    }
+
+    /// Delete the table from the storage engine by flushing the data managers and clearing the
+    /// table from the data transfer component. The table is marked as dropped in the data transfer
+    /// component first to avoid transferring data to the remote data folder when flushing. If the
+    /// table could not be deleted, [`ModelarDbError`] is returned.
+    async fn delete_table_from_storage_engine(
+        &self,
+        table_name: &str,
+    ) -> Result<(), ModelarDbError> {
+        let storage_engine = self.storage_engine.write().await;
+        storage_engine.mark_table_as_dropped(table_name).await;
+
+        storage_engine
+            .flush()
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        storage_engine.clear_table(table_name).await;
 
         Ok(())
     }
