@@ -339,7 +339,13 @@ impl Context {
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // TODO: Delete the table data from the data Delta Lake.
+        // Delete the table data from the data Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .delta_lake
+            .truncate_delta_lake_table(table_name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         Ok(())
     }
