@@ -328,6 +328,27 @@ impl Context {
         Ok(())
     }
 
+    /// Delete all data from the table with `table_name` if it exists. The table data is deleted
+    /// from the storage engine, metadata Delta Lake, and data Delta Lake. If the table does not
+    /// exist or if it could not be truncated, [`ModelarDbError`] is returned.
+    pub async fn truncate_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+        // Deleting the table from the storage engine does not require the table to exist, so the
+        // table is checked first.
+        if self.check_if_table_exists(table_name).await.is_ok() {
+            return Err(ModelarDbError::TableError(format!(
+                "Table with name '{table_name}' does not exist."
+            )));
+        }
+
+        // TODO: Delete the table data from the storage engine.
+
+        // TODO: Delete the table data from the metadata Delta Lake.
+
+        // TODO: Delete the table data from the data Delta Lake.
+
+        Ok(())
+    }
+
     /// Lookup the [`ModelTableMetadata`] of the model table with name `table_name` if it exists.
     /// Specifically, the method returns:
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
@@ -647,6 +668,15 @@ mod tests {
 
         assert!(context.drop_table(test::MODEL_TABLE_NAME).await.is_err());
     }
+
+    #[tokio::test]
+    async fn test_truncate_table() {}
+
+    #[tokio::test]
+    async fn test_truncate_model_table() {}
+
+    #[tokio::test]
+    async fn test_truncate_missing_table() {}
 
     #[tokio::test]
     async fn test_model_table_metadata_from_default_database_schema() {
