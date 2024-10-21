@@ -425,17 +425,8 @@ impl TableMetadataManager {
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
 
-        // Delete the tag metadata from the model_table_hash_table_name table.
-        self.metadata_delta_lake
-            .metadata_table_delta_ops("model_table_hash_table_name")
-            .await?
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
-
-        // Delete the tag metadata from the tag cache. The table name is always the last part of the cache key.
-        self.tag_value_hashes
-            .retain(|key, _| key.split(';').last() != Some(table_name));
+        // Delete the tag hash metadata from the metadata Delta Lake and the tag cache.
+        self.delete_tag_hash_metadata(table_name).await?;
 
         Ok(())
     }
@@ -466,6 +457,36 @@ impl TableMetadataManager {
     /// from the `model_table_hash_table_name` table and the tag cache. If the metadata could not
     /// be truncated, [`DeltaTableError`] is returned.
     async fn truncate_model_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        // Truncate the model_table_name_tags table.
+        self.metadata_delta_lake
+            .metadata_table_delta_ops(&format!("{table_name}_tags"))
+            .await?
+            .delete()
+            .await?;
+
+        // Delete the tag hash metadata from the metadata Delta Lake and the tag cache.
+        self.delete_tag_hash_metadata(table_name).await?;
+
+        Ok(())
+    }
+
+    /// Delete the tag hash metadata for the model table with `table_name` from the
+    /// `model_table_hash_table_name` table and the tag cache. If the metadata could not be deleted,
+    /// [`DeltaTableError`] is returned.
+    async fn delete_tag_hash_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        // Delete the tag metadata from the model_table_hash_table_name table.
+        self.metadata_delta_lake
+            .metadata_table_delta_ops("model_table_hash_table_name")
+            .await?
+            .delete()
+            .with_predicate(col("table_name").eq(lit(table_name)))
+            .await?;
+
+        // Delete the tag metadata from the tag cache. The table name is always the last part of
+        // the cache key.
+        self.tag_value_hashes
+            .retain(|key, _| key.split(';').last() != Some(table_name));
+
         Ok(())
     }
 
