@@ -364,18 +364,18 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Depending on the type of the table with `table_name`, delete either the normal table
+    /// Depending on the type of the table with `table_name`, drop either the normal table
     /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
-    /// exist or the metadata could not be deleted, [`DeltaTableError`] is returned.
-    pub async fn delete_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// exist or the metadata could not be dropped, [`DeltaTableError`] is returned.
+    pub async fn drop_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
         if self.table_names().await?.contains(&table_name.to_owned()) {
-            self.delete_normal_table_metadata(table_name).await
+            self.drop_normal_table_metadata(table_name).await
         } else if self
             .model_table_names()
             .await?
             .contains(&table_name.to_owned())
         {
-            self.delete_model_table_metadata(table_name).await
+            self.drop_model_table_metadata(table_name).await
         } else {
             Err(DeltaTableError::NotATable(format!(
                 "Table with name '{table_name}' does not exist."
@@ -383,9 +383,9 @@ impl TableMetadataManager {
         }
     }
 
-    /// Delete the metadata for the normal table with `table_name` from the `table_metadata` table in the
-    /// metadata Delta Lake. If the metadata could not be deleted, [`DeltaTableError`] is returned.
-    async fn delete_normal_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// Drop the metadata for the normal table with `table_name` from the `table_metadata` table in the
+    /// metadata Delta Lake. If the metadata could not be dropped, [`DeltaTableError`] is returned.
+    async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
         let ops = self
             .metadata_delta_lake
             .metadata_table_delta_ops("table_metadata")
@@ -398,13 +398,13 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Delete the metadata for the model table with `table_name` from the metadata Delta Lake.
-    /// This includes deleting the tags table for the model table, deleting a row from the
+    /// Drop the metadata for the model table with `table_name` from the metadata Delta Lake.
+    /// This includes dropping the tags table for the model table, deleting a row from the
     /// `model_table_metadata` table, deleting a row from the `model_table_field_columns` table for
     /// each field column, and deleting the tag metadata from the `model_table_hash_table_name` table
-    /// and the tag cache. If the metadata could not be deleted, [`DeltaTableError`] is returned.
-    async fn delete_model_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
-        // Delete the model_table_name_tags table.
+    /// and the tag cache. If the metadata could not be dropped, [`DeltaTableError`] is returned.
+    async fn drop_model_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        // Drop the model_table_name_tags table.
         self.metadata_delta_lake
             .drop_delta_lake_table(&format!("{table_name}_tags"))
             .await?;
@@ -1059,11 +1059,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_table_metadata() {
+    async fn test_drop_normal_table_metadata() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
         metadata_manager
-            .delete_table_metadata("table_2")
+            .drop_table_metadata("table_2")
             .await
             .unwrap();
 
@@ -1078,7 +1078,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_model_table_metadata() {
+    async fn test_drop_model_table_metadata() {
         let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = test::model_table_metadata();
@@ -1088,7 +1088,7 @@ mod tests {
             .unwrap();
 
         metadata_manager
-            .delete_table_metadata(test::MODEL_TABLE_NAME)
+            .drop_table_metadata(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -1141,11 +1141,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_table_metadata_for_missing_table() {
+    async fn test_drop_table_metadata_for_missing_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
         assert!(metadata_manager
-            .delete_table_metadata("missing_table")
+            .drop_table_metadata("missing_table")
             .await
             .is_err());
     }

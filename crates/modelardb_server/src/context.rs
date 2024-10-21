@@ -298,15 +298,15 @@ impl Context {
 
         self.delete_table_from_storage_engine(table_name).await?;
 
-        // Delete the table metadata from the metadata Delta Lake.
+        // Drop the table metadata from the metadata Delta Lake.
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .delete_table_metadata(table_name)
+            .drop_table_metadata(table_name)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Delete the table from the Delta Lake.
+        // Drop the table from the Delta Lake.
         self.data_folders
             .local_data_folder
             .delta_lake
