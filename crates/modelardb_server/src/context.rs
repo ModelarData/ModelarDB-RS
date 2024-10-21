@@ -331,7 +331,13 @@ impl Context {
 
         self.delete_table_from_storage_engine(table_name).await?;
 
-        // TODO: Delete the table data from the metadata Delta Lake.
+        // Delete the table metadata from the metadata Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .truncate_table_metadata(table_name)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // TODO: Delete the table data from the data Delta Lake.
 

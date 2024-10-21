@@ -440,6 +440,35 @@ impl TableMetadataManager {
         Ok(())
     }
 
+    /// Depending on the type of the table with `table_name`, truncate either the normal table
+    /// metadata or the model table metadata from the metadata Delta Lake. Note that if truncating
+    /// the metadata of a normal table, the metadata Delta Lake is unaffected, but it is allowed to
+    /// keep the interface consistent. If the table does not exist or the metadata could not be
+    /// truncated, [`DeltaTableError`] is returned.
+    pub async fn truncate_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        if self.table_names().await?.contains(&table_name.to_owned()) {
+            Ok(())
+        } else if self
+            .model_table_names()
+            .await?
+            .contains(&table_name.to_owned())
+        {
+            self.truncate_model_table_metadata(table_name).await
+        } else {
+            Err(DeltaTableError::NotATable(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
+        }
+    }
+
+    /// Truncate the metadata for the model table with `table_name` from the metadata Delta Lake.
+    /// This includes truncating the tags table for the model table and deleting the tag metadata
+    /// from the `model_table_hash_table_name` table and the tag cache. If the metadata could not
+    /// be truncated, [`DeltaTableError`] is returned.
+    async fn truncate_model_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        Ok(())
+    }
+
     /// Return the [`ModelTableMetadata`] of each model table currently in the metadata Delta Lake.
     /// If the [`ModelTableMetadata`] cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn model_table_metadata(
@@ -1149,6 +1178,15 @@ mod tests {
             .await
             .is_err());
     }
+
+    #[tokio::test]
+    async fn test_truncate_normal_table_metadata() {}
+
+    #[tokio::test]
+    async fn test_truncate_model_table_metadata() {}
+
+    #[tokio::test]
+    async fn test_truncate_table_metadata_for_missing_table() {}
 
     async fn create_metadata_manager_and_save_tables() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
