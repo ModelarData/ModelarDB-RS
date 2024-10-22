@@ -205,6 +205,36 @@ impl Cluster {
         Ok(())
     }
 
+    /// For each node in the cluster, use the `TruncateTable` action to truncate the table given by
+    /// `table_name`. If the table was successfully truncated for each node, return [`Ok`], otherwise
+    /// return [`ClusterError`](ModelarDbError::ClusterError).
+    pub async fn truncate_tables(
+        &self,
+        table_name: &str,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<(), ModelarDbError> {
+        let action = Action {
+            r#type: "TruncateTable".to_owned(),
+            body: table_name.to_owned().into(),
+        };
+
+        let mut truncate_table_futures: FuturesUnordered<_> = self
+            .nodes
+            .iter()
+            .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
+            .collect();
+
+        // Run the futures concurrently and log when the table has been truncated on each node.
+        while let Some(result) = truncate_table_futures.next().await {
+            info!(
+                "Truncated table '{}' on node with url '{}'.",
+                table_name, result?
+            );
+        }
+
+        Ok(())
+    }
+
     /// Connect to the Apache Arrow flight client given by `url` and make a request to do `action`.
     /// If the action was successfully executed, return the url of the node, otherwise return
     /// [`ClusterError`](ModelarDbError::ClusterError).
