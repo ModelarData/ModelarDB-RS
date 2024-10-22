@@ -460,7 +460,10 @@ impl Context {
 mod tests {
     use super::*;
 
+    use datafusion::arrow::record_batch::RecordBatch;
+    use datafusion::datasource::TableProvider;
     use modelardb_common::test;
+    use modelardb_types::types::{TimestampArray, ValueArray};
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
@@ -614,7 +617,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_table() {
+    async fn test_drop_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -692,7 +695,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_truncate_table() {}
+    async fn test_truncate_normal_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        context
+            .parse_and_create_table(test::TABLE_SQL)
+            .await
+            .unwrap();
+
+        let local_data_folder = &context.data_folders.local_data_folder;
+        let mut delta_table = local_data_folder
+            .delta_lake
+            .delta_table("table_name")
+            .await
+            .unwrap();
+
+        // Write data to the table that should be deleted when the table is truncated.
+        let record_batch = RecordBatch::try_new(
+            TableProvider::schema(&delta_table),
+            vec![
+                Arc::new(TimestampArray::from(vec![1, 2, 3])),
+                Arc::new(ValueArray::from(vec![1.0, 2.0, 3.0])),
+                Arc::new(ValueArray::from(vec![1.0, 2.0, 3.0])),
+            ],
+        )
+        .unwrap();
+
+        local_data_folder
+            .delta_lake
+            .write_record_batch_to_table("table_name", record_batch)
+            .await
+            .unwrap();
+
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 1);
+
+        context.truncate_table("table_name").await.unwrap();
+
+        // The table should not be deleted from the metadata Delta Lake.
+        let table_names = local_data_folder
+            .table_metadata_manager
+            .table_names()
+            .await
+            .unwrap();
+
+        assert!(table_names.contains(&"table_name".to_owned()));
+
+        // The table data should be deleted from the Delta Lake.
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 0);
+    }
 
     #[tokio::test]
     async fn test_truncate_model_table() {}
