@@ -748,7 +748,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_truncate_model_table() {}
+    async fn test_truncate_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        context
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let local_data_folder = &context.data_folders.local_data_folder;
+        let mut delta_table = local_data_folder
+            .delta_lake
+            .delta_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // Write data to the table that should be deleted when the table is truncated.
+        let record_batch = test::compressed_segments_record_batch();
+        local_data_folder
+            .delta_lake
+            .write_compressed_segments_to_model_table(test::MODEL_TABLE_NAME, vec![record_batch])
+            .await
+            .unwrap();
+
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 1);
+
+        context
+            .truncate_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // The model table should not be deleted from the metadata Delta Lake.
+        let model_table_names = local_data_folder
+            .table_metadata_manager
+            .model_table_names()
+            .await
+            .unwrap();
+
+        assert!(model_table_names.contains(&test::MODEL_TABLE_NAME.to_owned()));
+
+        // The model table data should be deleted from the Delta Lake.
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 0);
+    }
 
     #[tokio::test]
     async fn test_truncate_missing_table() {
