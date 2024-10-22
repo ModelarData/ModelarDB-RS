@@ -292,6 +292,20 @@ impl TestContext {
             .block_on(async { self.client.do_action(Request::new(action)).await })
     }
 
+    /// Truncate a table in the server through the `do_action()` method and the `TruncateTable` action.
+    fn truncate_table(
+        &mut self,
+        table_name: &str,
+    ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
+        let action = Action {
+            r#type: "TruncateTable".to_owned(),
+            body: table_name.to_owned().into(),
+        };
+
+        self.runtime
+            .block_on(async { self.client.do_action(Request::new(action)).await })
+    }
+
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
     /// depending on `generate_irregular_timestamps`, generated values with noise depending on
     /// `multiply_noise_range`, and an optional tag.
@@ -660,6 +674,15 @@ fn test_cannot_drop_missing_table() {
     let result = test_context.drop_table(TABLE_NAME);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_can_truncate_normal_table() {}
+
+#[test]
+fn test_can_truncate_model_table() {}
+
+#[test]
+fn test_cannot_truncate_missing_table() {}
 
 #[test]
 fn test_can_get_schema() {
