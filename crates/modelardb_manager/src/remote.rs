@@ -394,6 +394,10 @@ impl FlightService for FlightServiceHandler {
     /// the table that should be dropped must be provided in the body of the action. The table is
     /// dropped for all nodes controlled by the manager and all data in the table, both locally on
     /// the nodes and in the remote object store, is deleted.
+    /// * `TruncateTable`: Truncate a table previously created with `CreateTable`. The name of
+    /// the table that should be truncated must be provided in the body of the action. The table is
+    /// truncated for all nodes controlled by the manager and all data in the table, both locally on
+    /// the nodes and in the remote object store, is deleted.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
     /// to the cluster of nodes controlled by the manager and the key and object store used in the
     /// cluster is returned.
@@ -508,6 +512,18 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the table was dropped.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "TruncateTable" {
+            // Extract the table name from the action body.
+            let table_name = str::from_utf8(&action.body)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            info!("Received request to truncate table '{}'.", table_name);
+
+            // Truncate the table in the metadata Delta Lake, the data Delta Lake, and from each
+            // node controlled by the manager.
+            self.truncate_cluster_table(table_name).await?;
+
+            // Confirm the table was truncated.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let (url, offset_data) = decode_argument(&action.body)?;
@@ -598,6 +614,11 @@ impl FlightService for FlightServiceHandler {
             description: "Drop a table and all its data.".to_owned(),
         };
 
+        let truncate_table_action = ActionType {
+            r#type: "TruncateTable".to_owned(),
+            description: "Delete all data from a table.".to_owned(),
+        };
+
         let register_node_action = ActionType {
             r#type: "RegisterNode".to_owned(),
             description: "Register either an edge or cloud node with the manager.".to_owned(),
@@ -613,6 +634,7 @@ impl FlightService for FlightServiceHandler {
             Ok(initialize_database_action),
             Ok(create_table_action),
             Ok(drop_table_action),
+            Ok(truncate_table_action),
             Ok(register_node_action),
             Ok(remove_node_action),
         ]);

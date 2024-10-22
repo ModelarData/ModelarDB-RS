@@ -427,8 +427,9 @@ impl FlightService for FlightServiceHandler {
     /// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
     /// table that should be dropped must be provided in the body of the action. All data in the
     /// table, both in memory and on disk, is deleted.
-    /// * `TruncateTable`: Delete all data in memory and on disk from a specific table. The name of
-    /// the table that should be truncated must be provided in the body of the action.
+    /// * `TruncateTable`: Truncate a table previously created with `CreateTable`. The name of
+    /// the table that should be truncated must be provided in the body of the action. All data in
+    /// the table, both in memory and on disk, is deleted.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -698,7 +699,7 @@ impl FlightService for FlightServiceHandler {
 
         let truncate_table_action = ActionType {
             r#type: "TruncateTable".to_owned(),
-            description: "Delete all data in memory and on disk from a specific table.".to_owned(),
+            description: "Delete all data from a table.".to_owned(),
         };
 
         let flush_memory_action = ActionType {
