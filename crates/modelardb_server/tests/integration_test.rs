@@ -697,7 +697,25 @@ fn test_can_truncate_normal_table() {
 }
 
 #[test]
-fn test_can_truncate_model_table() {}
+fn test_can_truncate_model_table() {
+    let mut test_context = TestContext::new();
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        &[time_series.clone()],
+        TableType::ModelTable,
+    );
+
+    test_context.truncate_table(TABLE_NAME).unwrap();
+
+    let query_result = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
+
+    // The model table should be empty after truncating it.
+    assert_eq!(query_result.num_rows(), 0);
+}
 
 #[test]
 fn test_cannot_truncate_missing_table() {
