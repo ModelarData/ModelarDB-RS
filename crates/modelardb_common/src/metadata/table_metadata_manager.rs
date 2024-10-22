@@ -1201,13 +1201,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_truncate_normal_table_metadata() {}
+    async fn test_truncate_normal_table_metadata() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        metadata_manager
+            .truncate_table_metadata("table_1")
+            .await
+            .unwrap();
+
+        // Verify that the metadata Delta Lake was left unchanged.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec!["table_2", "table_1"])
+        );
+    }
 
     #[tokio::test]
     async fn test_truncate_model_table_metadata() {}
 
     #[tokio::test]
-    async fn test_truncate_table_metadata_for_missing_table() {}
+    async fn test_truncate_table_metadata_for_missing_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        assert!(metadata_manager
+            .truncate_table_metadata("missing_table")
+            .await
+            .is_err());
+    }
 
     async fn create_metadata_manager_and_save_tables() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
