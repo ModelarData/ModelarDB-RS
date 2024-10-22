@@ -1223,7 +1223,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_truncate_model_table_metadata() {}
+    async fn test_truncate_model_table_metadata() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        metadata_manager
+            .truncate_table_metadata(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // Verify that the tags table was truncated.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                &format!("{}_tags", test::MODEL_TABLE_NAME),
+                &format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the tag metadata was deleted from the model_table_hash_table_name table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                "model_table_hash_table_name",
+                "SELECT table_name FROM model_table_hash_table_name",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the tag cache was cleared.
+        assert!(metadata_manager.tag_value_hashes.is_empty());
+    }
 
     #[tokio::test]
     async fn test_truncate_table_metadata_for_missing_table() {
