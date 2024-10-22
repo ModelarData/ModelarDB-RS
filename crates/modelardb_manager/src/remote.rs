@@ -219,6 +219,40 @@ impl FlightServiceHandler {
 
         Ok(())
     }
+
+    /// Truncate the table in the metadata Delta Lake, the data Delta Lake, and in each node
+    /// controlled by the manager. If the table does not exist or the table cannot be truncated in
+    /// the remote data folder and in each node, return [`Status`].
+    async fn truncate_cluster_table(&self, table_name: &str) -> Result<(), Status> {
+        // Truncate the table in the remote data folder metadata Delta Lake. This will return an
+        // error if the table does not exist.
+        self.context
+            .remote_data_folder
+            .metadata_manager
+            .table_metadata_manager
+            .truncate_table_metadata(table_name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        // Truncate the table in the remote data folder data Delta lake.
+        self.context
+            .remote_data_folder
+            .delta_lake
+            .truncate_delta_lake_table(table_name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        // Truncate the table in the nodes controlled by the manager.
+        self.context
+            .cluster
+            .read()
+            .await
+            .truncate_tables(table_name, &self.context.key)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
