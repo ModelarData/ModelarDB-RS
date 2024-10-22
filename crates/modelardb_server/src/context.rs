@@ -751,7 +751,15 @@ mod tests {
     async fn test_truncate_model_table() {}
 
     #[tokio::test]
-    async fn test_truncate_missing_table() {}
+    async fn test_truncate_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        assert!(context
+            .truncate_table(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
+    }
 
     #[tokio::test]
     async fn test_model_table_metadata_from_default_database_schema() {
