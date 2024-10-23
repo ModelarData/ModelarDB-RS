@@ -333,6 +333,15 @@ impl DeltaLake {
         Ok(deleted_paths)
     }
 
+    /// Truncate the Delta Lake table with `table_name` by deleting all rows in the table. If the
+    /// rows could not be deleted, a [`DeltaTableError`] is returned.
+    pub async fn truncate_delta_lake_table(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        let delta_table_ops = self.delta_ops(table_name).await?;
+        delta_table_ops.delete().await?;
+
+        Ok(())
+    }
+
     /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`. Returns
     /// an updated [`DeltaTable`] version if the file was written successfully, otherwise returns
     /// [`DeltaTableError`].
