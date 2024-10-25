@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error types used throughout `modelardb_types`.
+//! The [`Error`] and [`Result`] types used throughout `modelardb_types`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -32,13 +32,14 @@ pub enum ModelarDbTypesError {
 impl Display for ModelarDbTypesError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Self::InvalidArgument(reason) => write!(f, "InvalidArgumentError Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
         }
     }
 }
 
 impl Error for ModelarDbTypesError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // Return the error that caused self to occur if one exists.
         match self {
             Self::InvalidArgument(_reason) => None,
         }

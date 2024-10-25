@@ -118,8 +118,8 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the amount of memory for uncompressed data in the storage
-    /// engine. Returns [`crate::error::ModelarDbServerError`] if the memory cannot be updated
-    /// because a buffer cannot be spilled.
+    /// engine. Returns [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the memory
+    /// cannot be updated because a buffer cannot be spilled.
     pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: usize,
@@ -147,7 +147,7 @@ impl ConfigurationManager {
 
     /// Set the new value and update the amount of memory for compressed data in the storage engine.
     /// If the value was updated, return [`Ok`], otherwise return
-    /// [`crate::error::ModelarDbServerError`].
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(crate) async fn set_compressed_reserved_memory_in_bytes(
         &mut self,
         new_compressed_reserved_memory_in_bytes: usize,
@@ -174,7 +174,8 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the transfer batch size in the storage engine. If the value was
-    /// updated, return [`Ok`], otherwise return [`crate::error::ModelarDbServerError`].
+    /// updated, return [`Ok`], otherwise return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(crate) async fn set_transfer_batch_size_in_bytes(
         &mut self,
         new_transfer_batch_size_in_bytes: Option<usize>,
@@ -196,7 +197,8 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the transfer time in the storage engine. If the value was
-    /// updated, return [`Ok`], otherwise return [`crate::error::ModelarDbServerError`].
+    /// updated, return [`Ok`], otherwise return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(crate) async fn set_transfer_time_in_seconds(
         &mut self,
         new_transfer_time_in_seconds: Option<usize>,

@@ -18,11 +18,11 @@
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use modelardb_common::arguments;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::storage::DeltaLake;
 use modelardb_types::types::ServerMode;
 
+use crate::error::ModelarDbServerError;
 use crate::manager::Manager;
 use crate::ClusterMode;
 use crate::Result;
@@ -39,7 +39,7 @@ pub struct DataFolder {
 impl DataFolder {
     /// Return a [`DataFolder`] created from `data_folder_path`. If the folder does not exist, it is
     /// created. If the folder does not exist and could not be created or if the metadata tables
-    /// could not be created, [`crate::error::ModelarDbServerError`] is returned.
+    /// could not be created, [`ModelarDbServerError`] is returned.
     pub async fn try_from_path(data_folder_path: &StdPath) -> Result<Self> {
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
         let table_metadata_manager = TableMetadataManager::try_from_path(data_folder_path).await?;
@@ -51,8 +51,8 @@ impl DataFolder {
     }
 
     /// Return a [`DataFolder`] created from `connection_info`. If the connection information could
-    /// not be parsed or if the metadata tables could not be created,
-    /// [`crate::error::ModelarDbServerError`] is returned.
+    /// not be parsed or if the metadata tables could not be created, [`ModelarDbServerError`] is
+    /// returned.
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
         let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
 
@@ -94,8 +94,8 @@ impl DataFolders {
 
     /// Parse the given command line arguments into a [`ClusterMode`] and an instance of
     /// [`DataFolders`]. If the necessary command line arguments are not provided, too many
-    /// arguments are provided, or if the arguments are malformed,
-    /// [`crate::error::ModelarDbServerError`] is returned.
+    /// arguments are provided, or if the arguments are malformed, [`ModelarDbServerError`] is
+    /// returned.
     pub async fn try_from_command_line_arguments(
         arguments: &[&str],
     ) -> Result<(ClusterMode, Self)> {
@@ -148,9 +148,9 @@ impl DataFolders {
                     ),
                 ))
             }
-            _ => arguments::print_usage_and_exit_with_error(
-                "[server_mode] local_data_folder [manager_url]",
-            ),
+            _ => Err(ModelarDbServerError::InvalidArgument(
+                "Too few, too many, or malformed arguments.".to_owned(),
+            )),
         }
     }
 }

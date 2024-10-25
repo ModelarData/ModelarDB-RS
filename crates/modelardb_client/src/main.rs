@@ -70,12 +70,11 @@ async fn main() -> Result<()> {
     if args.len() > 3 {
         // The errors are consciously ignored as the client is terminating.
         let binary_path = env::current_exe().unwrap();
-        let binary_name = binary_path.file_name().unwrap();
-        eprintln!(
-            "Usage: {} [server host or host:port] [query_file].",
-            binary_name.to_str().unwrap()
-        );
-        process::exit(0);
+        let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+
+        // Punctuation at the end does not seem to be common in the usage message of Unix tools.
+        eprintln!("Usage: {binary_name} [server host or host:port] [query_file]",);
+        process::exit(1);
     }
     let (maybe_host, maybe_port, maybe_query_file) =
         parse_command_line_arguments(args, &local_file_system).await?;

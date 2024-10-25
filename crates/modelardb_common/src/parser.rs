@@ -15,7 +15,7 @@
 
 //! Methods for tokenizing and parsing SQL commands. They are tokenized and parsed using [sqlparser]
 //! as it is already used by Apache Arrow DataFusion. Only public functions return
-//! [`ModelarDbCommonError`] to simplify use of trait from [sqlparser] and Apache Arrow DataFusion.
+//! [`ModelarDbCommonError`] to simplify use of traits from [sqlparser] and Apache Arrow DataFusion.
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
@@ -356,7 +356,7 @@ pub enum ValidStatement {
 
 /// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE command in
 /// `statement` was correct. A [`ModelarDbCommonError`] is returned if `statement` is not a
-/// [`Statement::CreateTable`] or a semantic check fails. If all semantics checks are successful a
+/// [`Statement::CreateTable`] or a semantic check fails. If all semantic checks are successful a
 /// [`ValidStatement`] is returned.
 pub fn semantic_checks_for_create_table(statement: Statement) -> Result<ValidStatement> {
     // Ensure it is a create table and only supported features are enabled.
@@ -1159,7 +1159,7 @@ mod tests {
 
         assert_eq!(
             error.unwrap_err().to_string(),
-            "InvalidArgument Error: Multiple SQL commands are not supported."
+            "Invalid Argument Error: Multiple SQL commands are not supported."
         );
     }
 
@@ -1217,7 +1217,7 @@ mod tests {
             assert_eq!(
                 result.unwrap_err().to_string(),
                 format!(
-                    "InvalidArgument Error: Reserved keyword '{}' cannot be used as a table name.",
+                    "Invalid Argument Error: Reserved keyword '{}' cannot be used as a table name.",
                     keyword_to_table_name(keyword)
                 )
             );

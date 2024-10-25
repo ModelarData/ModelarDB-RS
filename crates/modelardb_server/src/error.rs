@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error types used throughout `modelardb_server`.
+//! The [`Error`] and [`Result`] types used throughout `modelardb_server`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -36,9 +36,9 @@ pub type Result<T> = StdResult<T, ModelarDbServerError>;
 /// Error type used throughout `modelardb_server`.
 #[derive(Debug)]
 pub enum ModelarDbServerError {
-    /// Error returned by crossbeam when sending data.
+    /// Error returned by Crossbeam when sending data.
     CrossbeamSend(String),
-    /// Error returned by crossbeam when receiving data.
+    /// Error returned by Crossbeam when receiving data.
     CrossbeamRecv(String),
     /// Error returned by Apache DataFusion.
     DataFusion(DataFusionError),
@@ -69,10 +69,10 @@ impl Display for ModelarDbServerError {
             Self::CrossbeamRecv(reason) => write!(f, "Crossbeam Recv Error: {reason}"),
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
             Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
-            Self::InvalidArgument(reason) => write!(f, "InvalidArgumentError Error: {reason}"),
-            Self::InvalidState(reason) => write!(f, "InvalidState Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
+            Self::InvalidState(reason) => write!(f, "Invalid State Error: {reason}"),
             Self::Io(reason) => write!(f, "IO Error: {reason}"),
-            Self::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
+            Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
             Self::ModelarDbQuery(reason) => write!(f, "ModelarDB Query Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
@@ -83,6 +83,7 @@ impl Display for ModelarDbServerError {
 
 impl Error for ModelarDbServerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // Return the error that caused self to occur if one exists.
         match self {
             Self::CrossbeamSend(_reason) => None,
             Self::CrossbeamRecv(_reason) => None,

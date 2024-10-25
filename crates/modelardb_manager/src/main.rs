@@ -65,7 +65,8 @@ impl RemoteDataFolder {
         }
     }
 
-    /// Create a [`RemoteDataFolder`] from `remote_data_folder_str`. If the arguments are malformed,
+    /// Create a [`RemoteDataFolder`] from `remote_data_folder_str`. If `remote_data_folder_str`
+    /// cannot be parsed or a connection to the object store cannot be created,
     /// [`ModelarDbManagerError`] is returned.
     async fn try_new(remote_data_folder_str: &str) -> Result<Self> {
         let connection_info = arguments::argument_to_connection_info(remote_data_folder_str)?;

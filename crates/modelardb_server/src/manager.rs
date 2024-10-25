@@ -111,12 +111,12 @@ impl Manager {
         Ok(())
     }
 
-    /// If `action_type` is `CreateTable` or `KillNode`, check that the request actually came from
-    /// the manager. If the request is valid, return [`Ok`], otherwise return
+    /// If `action_type` is `CreateTable`, `DropTable`, or `KillNode`, check that the request
+    /// actually came from the manager. If the request is valid, return [`Ok`], otherwise return
     /// [`ModelarDbServerError`].
     pub fn validate_action_request(&self, action_type: &str, metadata: &MetadataMap) -> Result<()> {
         // If the server is started with a manager, these actions require a manager key.
-        let restricted_actions = ["CreateTable", "KillNode", "DropTable"];
+        let restricted_actions = ["CreateTable", "DropTable", "KillNode"];
 
         if restricted_actions.iter().any(|&a| a == action_type) {
             let request_key =

@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error type used throughout `modelardb_manager`.
+//! The [`Error`] and [`Result`] types used throughout `modelardb_manager`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -51,8 +51,8 @@ impl Display for ModelarDbManagerError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
-            Self::InvalidArgument(reason) => write!(f, "InvalidArgument Error: {reason}"),
-            Self::InvalidState(reason) => write!(f, "InvalidArgument Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
+            Self::InvalidState(reason) => write!(f, "Invalid State Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
@@ -63,6 +63,7 @@ impl Display for ModelarDbManagerError {
 
 impl Error for ModelarDbManagerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // Return the error that caused self to occur if one exists.
         match self {
             Self::DeltaLake(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,

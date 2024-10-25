@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error type used throughout `modelardb_common`.
+//! The [`Error`] and [`Result`] types used throughout `modelardb_common`.
 
 use std::env::VarError;
 use std::error::Error;
@@ -66,10 +66,10 @@ impl Display for ModelarDbCommonError {
             Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
             Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
-            Self::InvalidArgument(reason) => write!(f, "InvalidArgument Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
-            Self::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
-            Self::ObjectStorePath(reason) => write!(f, "ObjectStore Path Error: {reason}"),
+            Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
+            Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
             Self::Parquet(reason) => write!(f, "Parquet Error: {reason}"),
             Self::Parser(reason) => write!(f, "Parser Error: {reason}"),
             Self::Utf8(reason) => write!(f, "UTF-8 Error: {reason}"),
@@ -80,6 +80,7 @@ impl Display for ModelarDbCommonError {
 
 impl Error for ModelarDbCommonError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // Return the error that caused self to occur if one exists.
         match self {
             Self::Arrow(reason) => Some(reason),
             Self::DataFusion(reason) => Some(reason),

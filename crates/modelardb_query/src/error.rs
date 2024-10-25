@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error type used throughout `modelardb_query`.
+//! The [`Error`] and [`Result`] types used throughout `modelardb_query`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -35,6 +35,7 @@ pub enum ModelarDbQueryError {
 
 impl Error for ModelarDbQueryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // Return the error that caused self to occur if one exists.
         match self {
             Self::DataFusion(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
@@ -46,7 +47,7 @@ impl Display for ModelarDbQueryError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
-            Self::InvalidArgument(reason) => write!(f, "InvalidArgument Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
         }
     }
 }

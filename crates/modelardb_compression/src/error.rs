@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error types used throughout `modelardb_compression`.
+//! The [`Error`] and [`Result`] types used throughout `modelardb_compression`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -32,13 +32,14 @@ pub enum ModelarDbCompressionError {
 impl Display for ModelarDbCompressionError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Self::InvalidArgument(reason) => write!(f, "InvalidArgumentError Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
         }
     }
 }
 
 impl Error for ModelarDbCompressionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // Return the error that caused self to occur if one exists.
         match self {
             Self::InvalidArgument(_reason) => None,
         }

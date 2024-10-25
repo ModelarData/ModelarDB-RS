@@ -191,7 +191,7 @@ impl MetadataDeltaLake {
             ("azure_container_name".to_owned(), container_name),
         ]);
         let url = Url::parse(&location).map_err(|error| {
-            ModelarDbCommonError::InvalidArgument(format!("Unable to parse S3 location: {error}"))
+            ModelarDbCommonError::InvalidArgument(format!("Unable to parse Azure location: {error}"))
         })?;
         let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
 

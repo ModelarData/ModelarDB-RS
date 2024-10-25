@@ -249,7 +249,8 @@ pub(super) struct UncompressedOnDiskDataBuffer {
 impl UncompressedOnDiskDataBuffer {
     /// Spill the in-memory `data_points` from the time series with `tag_hash` to an Apache Parquet
     /// file in `local_data_folder`. If the Apache Parquet file is written successfully, return an
-    /// [`UncompressedOnDiskDataBuffer`], otherwise return [`crate::error::ModelarDbServerError`].
+    /// [`UncompressedOnDiskDataBuffer`], otherwise return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(super) async fn try_spill(
         tag_hash: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
@@ -283,7 +284,7 @@ impl UncompressedOnDiskDataBuffer {
 
     /// Return an [`UncompressedOnDiskDataBuffer`] with the data points for `tag_hash` in
     /// `file_path` if a file at `file_path` exists, otherwise
-    /// [`crate::error::ModelarDbServerError`] is returned.
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) is returned.
     pub(super) fn try_new(
         tag_hash: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
@@ -303,8 +304,9 @@ impl UncompressedOnDiskDataBuffer {
     }
 
     /// Read the data from the Apache Parquet file, delete the Apache Parquet file, and return the
-    /// data as a [`RecordBatch`] sorted by time. Return [`crate::error::ModelarDbServerError`] if
-    /// the Apache Parquet file cannot be read or deleted.
+    /// data as a [`RecordBatch`] sorted by time. Return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the Apache Parquet file
+    /// cannot be read or deleted.
     pub(super) async fn record_batch(&self) -> Result<RecordBatch> {
         let data_points = storage::read_record_batch_from_apache_parquet_file(
             &self.file_path,
@@ -346,8 +348,8 @@ impl UncompressedOnDiskDataBuffer {
 
     /// Read the data from the Apache Parquet file, delete the Apache Parquet file, and return the
     /// data as a [`UncompressedInMemoryDataBuffer`] sorted by time. Return
-    /// [`crate::error::ModelarDbServerError`] if the Apache Parquet file cannot be read or
-    /// deleted.
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the Apache Parquet file
+    /// cannot be read or deleted.
     pub(super) async fn read_from_apache_parquet(
         &self,
         current_batch_index: u64,

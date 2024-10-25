@@ -28,7 +28,7 @@ mod storage;
 use std::env;
 use std::sync::{Arc, LazyLock};
 
-use modelardb_common::arguments::collect_command_line_arguments;
+use modelardb_common::arguments::{self, collect_command_line_arguments};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -56,9 +56,9 @@ pub enum ClusterMode {
 /// [`DataFolders`], construct a [`Context`] with the systems components, initialize the tables and
 /// model tables in the metadata Delta Lake, initialize a CTRL+C handler that flushes the data in
 /// memory to disk, and start the Apache Arrow Flight interface. Returns
-/// [`crate::error::ModelarDbServerError`] if the command line arguments cannot be parsed, if the
-/// metadata cannot be read from the database, or if the Apache Arrow Flight interface cannot be
-/// started.
+/// [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the command line arguments
+/// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
+/// Flight interface cannot be started.
 fn main() -> Result<()> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
@@ -70,8 +70,13 @@ fn main() -> Result<()> {
 
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
-    let (cluster_mode, data_folders) =
-        runtime.block_on(DataFolders::try_from_command_line_arguments(&arguments))?;
+    let (cluster_mode, data_folders) = if let Ok(cluster_mode_and_data_folders) =
+        runtime.block_on(DataFolders::try_from_command_line_arguments(&arguments))
+    {
+        cluster_mode_and_data_folders
+    } else {
+        arguments::print_usage_and_exit_with_error("[server_mode] local_data_folder [manager_url]");
+    };
 
     let context = Arc::new(runtime.block_on(Context::try_new(
         runtime.clone(),

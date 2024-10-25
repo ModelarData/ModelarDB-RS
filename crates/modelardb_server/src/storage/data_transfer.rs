@@ -59,7 +59,8 @@ pub struct DataTransfer {
 impl DataTransfer {
     /// Create a new data transfer instance and initialize it with the data already in
     /// `local_data_folder_path`. If `local_data_folder_path` or a path within
-    /// `local_data_folder_path` could not be read, return [`crate::error::ModelarDbServerError`].
+    /// `local_data_folder_path` could not be read, return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub async fn try_new(
         local_data_folder: DataFolder,
         remote_data_folder: DataFolder,
@@ -158,7 +159,7 @@ impl DataTransfer {
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
     /// for, check if the amount of data exceeds `new_value` and transfer all the data if it does.
     /// If the value is changed successfully return [`Ok`], otherwise return
-    /// [`crate::error::ModelarDbServerError`].
+    /// (`ModelarDbServerError`)[crate::error::ModelarDbServerError].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &mut self,
         new_value: Option<usize>,
@@ -211,9 +212,10 @@ impl DataTransfer {
 
     /// Transfer all compressed files from tables currently using more than `threshold` bytes in the
     /// data folder to the remote object store. Return [`Ok`] if all files were transferred
-    /// successfully, otherwise [`crate::error::ModelarDbServerError`]. Note that if the function
-    /// fails, some of the compressed files may still have been transferred. Since the data is
-    /// transferred separately for each table, the function can be called again if it failed.
+    /// successfully, otherwise [`ModelarDbServerError`](crate::error::ModelarDbServerError). Note
+    /// that if the function fails, some of the compressed files may still have been transferred.
+    /// Since the data is transferred separately for each table, the function can be called again if
+    /// it failed.
     pub(crate) async fn transfer_larger_than_threshold(&self, threshold: usize) -> Result<()> {
         // The clone is performed to not create a deadlock with transfer_data().
         for table_name_size_in_bytes in self.table_size_in_bytes.clone().iter() {
@@ -230,7 +232,8 @@ impl DataTransfer {
 
     /// Transfer the data stored locally for the table with `table_name` to the remote object store.
     /// Once successfully transferred, the data is deleted from local storage. Return [`Ok`] if the
-    /// files were transferred successfully, otherwise [`crate::error::ModelarDbServerError`].
+    /// files were transferred successfully, otherwise
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn transfer_data(&self, table_name: &str) -> Result<()> {
         // Check if the table has been dropped and should not be transferred.
         if self.dropped_tables.contains(table_name) {

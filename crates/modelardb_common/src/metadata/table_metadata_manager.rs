@@ -486,7 +486,7 @@ impl TableMetadataManager {
 
         if batch.num_rows() == 0 {
             return Err(ModelarDbCommonError::InvalidArgument(format!(
-                "No metadata for model table named {table_name}."
+                "No metadata for model table named '{table_name}'."
             )));
         }
 
@@ -877,7 +877,7 @@ fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
 fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
     if bytes.len() % mem::size_of::<usize>() != 0 {
         Err(ModelarDbCommonError::InvalidArgument(
-            "Bytes is not a vector of usizes".to_owned(),
+            "Bytes is not a vector of usizes.".to_owned(),
         ))
     } else {
         // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().

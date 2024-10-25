@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! The error type used throughout `modelardb_client``.
+//! The [`Error`] and [`Result`] types used throughout `modelardb_client`.
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -40,7 +40,7 @@ pub enum ModelarDbClientError {
     Io(IoError),
     /// Error returned by ObjectStore.
     ObjectStore(ObjectStoreError),
-    /// Error returned by RustyLine..
+    /// Error returned by RustyLine.
     RustyLine(RustyLineError),
     /// Status returned by Tonic.
     TonicStatus(TonicStatusError),
@@ -52,9 +52,9 @@ impl Display for ModelarDbClientError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
-            Self::InvalidArgument(reason) => write!(f, "InvalidArgument Error: {reason}"),
+            Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
-            Self::ObjectStore(reason) => write!(f, "ObjectStore Error: {reason}"),
+            Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::RustyLine(reason) => write!(f, "RustyLine Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
@@ -64,6 +64,7 @@ impl Display for ModelarDbClientError {
 
 impl Error for ModelarDbClientError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // Return the error that caused self to occur if one exists.
         match self {
             Self::Arrow(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
