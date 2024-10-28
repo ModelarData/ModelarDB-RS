@@ -145,7 +145,7 @@ impl Cluster {
     /// For each node in the cluster, use the `CreateTable` action to create the table
     /// given by `sql`. If the table was successfully created for each node, return
     /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
-    pub async fn create_tables(
+    pub async fn create_table(
         &self,
         sql: &str,
         key: &MetadataValue<Ascii>,
@@ -161,7 +161,7 @@ impl Cluster {
     /// For each node in the cluster, use the `DropTable` action to drop the table given by
     /// `table_name`. If the table was successfully dropped for each node, return [`Ok`], otherwise
     /// return [`ClusterError`](ModelarDbError::ClusterError).
-    pub async fn drop_tables(
+    pub async fn drop_table(
         &self,
         table_name: &str,
         key: &MetadataValue<Ascii>,
@@ -177,7 +177,7 @@ impl Cluster {
     /// For each node in the cluster, use the `TruncateTable` action to truncate the table given by
     /// `table_name`. If the table was successfully truncated for each node, return [`Ok`], otherwise
     /// return [`ClusterError`](ModelarDbError::ClusterError).
-    pub async fn truncate_tables(
+    pub async fn truncate_table(
         &self,
         table_name: &str,
         key: &MetadataValue<Ascii>,
