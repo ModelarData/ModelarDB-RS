@@ -13,12 +13,14 @@
  * limitations under the License.
  */
 
-//! Methods for tokenizing and parsing SQL commands. They are tokenized and
-//! parsed using [sqlparser] as it is already used by Apache Arrow DataFusion.
+//! Methods for tokenizing and parsing SQL commands. They are tokenized and parsed using [sqlparser]
+//! as it is already used by Apache Arrow DataFusion. Only public functions return
+//! [`ModelarDbCommonError`] to simplify use of traits from [sqlparser] and Apache Arrow DataFusion.
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
 use std::collections::HashMap;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::datatypes::TimeUnit;
@@ -42,13 +44,14 @@ use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
 use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Token;
 
+use crate::error::{ModelarDbCommonError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 
 /// Constant specifying that a model table should be created.
 pub const CREATE_MODEL_TABLE_ENGINE: &str = "ModelTable";
 
-/// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for
-/// parsing CREATE MODEL TABLE table_name DDL commands.
+/// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE MODEL
+/// TABLE table_name DDL commands.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -62,8 +65,8 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Return [`true`] if the token stream starts with CREATE MODEL TABLE,
-    /// otherwise [`false`] is returned. The method does not consume tokens.
+    /// Return [`true`] if the token stream starts with CREATE MODEL TABLE, otherwise [`false`] is
+    /// returned. The method does not consume tokens.
     fn next_tokens_are_create_model_table(&self, parser: &Parser) -> bool {
         // CREATE.
         if let Token::Word(word) = parser.peek_nth_token(0).token {
@@ -84,10 +87,9 @@ impl ModelarDbDialect {
         false
     }
 
-    /// Parse CREATE MODEL TABLE table_name DDL commands to a
-    /// [`Statement::CreateTable`]. A [`ParserError`] is returned if the column
-    /// names and the column types cannot be parsed.
-    fn parse_create_model_table(&self, parser: &mut Parser) -> Result<Statement, ParserError> {
+    /// Parse CREATE MODEL TABLE table_name DDL commands to a [`Statement::CreateTable`]. A
+    /// [`ParserError`] is returned if the column names and the column types cannot be parsed.
+    fn parse_create_model_table(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // CREATE MODEL TABLE.
         parser.expect_keyword(Keyword::CREATE)?;
         self.expect_word_value(parser, "MODEL")?;
@@ -102,9 +104,9 @@ impl ModelarDbDialect {
         Ok(Self::new_create_model_table_statement(name, columns))
     }
 
-    /// Parse (column name and type*) to a [`Vec<ColumnDef>`]. A [`ParserError`]
-    /// is returned if the column names and the column types cannot be parsed.
-    fn parse_columns(&self, parser: &mut Parser) -> Result<Vec<ColumnDef>, ParserError> {
+    /// Parse (column name and type*) to a [`Vec<ColumnDef>`]. A [`ParserError`] is returned if the
+    /// column names and the column types cannot be parsed.
+    fn parse_columns(&self, parser: &mut Parser) -> StdResult<Vec<ColumnDef>, ParserError> {
         let mut columns = vec![];
         let mut parsed_all_columns = false;
         parser.expect_token(&Token::LParen)?;
@@ -171,9 +173,9 @@ impl ModelarDbDialect {
         Ok(columns)
     }
 
-    /// Return [`Ok`] if the next [`Token`] is a [`Token::Word`] with the value
-    /// `expected`, otherwise a [`ParserError`] is returned.
-    fn expect_word_value(&self, parser: &mut Parser, expected: &str) -> Result<(), ParserError> {
+    /// Return [`Ok`] if the next [`Token`] is a [`Token::Word`] with the value `expected`,
+    /// otherwise a [`ParserError`] is returned.
+    fn expect_word_value(&self, parser: &mut Parser, expected: &str) -> StdResult<(), ParserError> {
         if let Ok(string) = self.parse_word_value(parser) {
             if string.to_uppercase() == expected.to_uppercase() {
                 return Ok(());
@@ -184,7 +186,7 @@ impl ModelarDbDialect {
 
     /// Return its value as a [`String`] if the next [`Token`] is a
     /// [`Token::Word`], otherwise a [`ParserError`] is returned.
-    fn parse_word_value(&self, parser: &mut Parser) -> Result<String, ParserError> {
+    fn parse_word_value(&self, parser: &mut Parser) -> StdResult<String, ParserError> {
         let token_with_location = parser.next_token();
         match token_with_location.token {
             Token::Word(word) => Ok(word.value),
@@ -192,9 +194,9 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Return its value as a [`f32`] if the next [`Token`] is a
-    /// [`Token::Number`], otherwise a [`ParserError`] is returned.
-    fn parse_positive_literal_f32(&self, parser: &mut Parser) -> Result<f32, ParserError> {
+    /// Return its value as a [`f32`] if the next [`Token`] is a [`Token::Number`], otherwise a
+    /// [`ParserError`] is returned.
+    fn parse_positive_literal_f32(&self, parser: &mut Parser) -> StdResult<f32, ParserError> {
         let token_with_location = parser.next_token();
         match token_with_location.token {
             Token::Number(maybe_f32, _) => maybe_f32.parse::<f32>().map_err(|error| {
@@ -206,8 +208,7 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Create a new [`ColumnDef`] with the provided `column_name`, `data_type`,
-    /// and `options`.
+    /// Create a new [`ColumnDef`] with the provided `column_name`, `data_type`, and `options`.
     fn new_column_def(
         column_name: &str,
         data_type: SQLDataType,
@@ -234,14 +235,14 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Create a new [`Statement::CreateTable`] with the provided `table_name`
-    /// and `columns`, and with `engine` set to [`CREATE_MODEL_TABLE_ENGINE`].
+    /// Create a new [`Statement::CreateTable`] with the provided `table_name` and `columns`, and
+    /// with `engine` set to [`CREATE_MODEL_TABLE_ENGINE`].
     fn new_create_model_table_statement(
         table_name: ObjectName,
         columns: Vec<ColumnDef>,
     ) -> Statement {
-        // Designed to match the Statement::CreateTable created by sqlparser for
-        // CREATE TABLE as closely as possible so semantic checks can be shared.
+        // Designed to match the Statement::CreateTable created by sqlparser for CREATE TABLE as
+        // closely as possible so semantic checks can be shared.
         Statement::CreateTable(CreateTable {
             or_replace: false,
             temporary: false,
@@ -298,24 +299,23 @@ impl ModelarDbDialect {
 }
 
 impl Dialect for ModelarDbDialect {
-    /// Return [`true`] if a character is a valid start character for an
-    /// unquoted identifier, otherwise [`false`] is returned.
+    /// Return [`true`] if a character is a valid start character for an unquoted identifier,
+    /// otherwise [`false`] is returned.
     fn is_identifier_start(&self, c: char) -> bool {
         self.dialect.is_identifier_start(c)
     }
 
-    /// Return [`true`] if a character is a valid unquoted identifier character,
-    /// otherwise [`false`] is returned.
+    /// Return [`true`] if a character is a valid unquoted identifier character, otherwise [`false`]
+    /// is returned.
     fn is_identifier_part(&self, c: char) -> bool {
         self.dialect.is_identifier_part(c)
     }
 
-    /// Check if the next tokens are CREATE MODEL TABLE, if so, attempt to parse
-    /// the token stream as a CREATE MODEL TABLE DDL command. If parsing
-    /// succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is
-    /// returned. If the next tokens are not CREATE MODEL TABLE, [`None`] is
-    /// returned so sqlparser uses its parsing methods for all other commands.
-    fn parse_statement(&self, parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
+    /// Check if the next tokens are CREATE MODEL TABLE, if so, attempt to parse the token stream as
+    /// a CREATE MODEL TABLE DDL command. If parsing succeeds, a [`Statement`] is returned, and if
+    /// not, a [`ParserError`] is returned. If the next tokens are not CREATE MODEL TABLE, [`None`]
+    /// is returned so sqlparser uses its parsing methods for all other commands.
+    fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_model_table(parser) {
             Some(self.parse_create_model_table(parser))
         } else {
@@ -324,18 +324,18 @@ impl Dialect for ModelarDbDialect {
     }
 }
 
-/// Tokenize and parse the SQL command in `sql` and return its parsed
-/// representation in the form of [`Statements`](Statement).
-pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement, ParserError> {
+/// Tokenize and parse the SQL command in `sql` and return its parsed representation in the form of
+/// [`Statements`](Statement).
+pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql)?;
 
     // Check that the sql contained a parseable statement.
     if statements.is_empty() {
-        Err(ParserError::ParserError(
+        Err(ModelarDbCommonError::InvalidArgument(
             "An empty string cannot be tokenized and parsed.".to_owned(),
         ))
     } else if statements.len() > 1 {
-        Err(ParserError::ParserError(
+        Err(ModelarDbCommonError::InvalidArgument(
             "Multiple SQL commands are not supported.".to_owned(),
         ))
     } else {
@@ -343,9 +343,9 @@ pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement, ParserError> {
     }
 }
 
-/// A top-level statement (SELECT, INSERT, CREATE, UPDATE, etc.) that have been
-/// tokenized, parsed, and for which semantics checks have verified that it is
-/// compatible with ModelarDB. CREATE TABLE and CREATE MODEL TABLE is supported.
+/// A top-level statement (SELECT, INSERT, CREATE, UPDATE, etc.) that have been tokenized, parsed,
+/// and for which semantics checks have verified that it is compatible with ModelarDB. CREATE TABLE
+/// and CREATE MODEL TABLE is supported.
 #[derive(Debug)]
 pub enum ValidStatement {
     /// CREATE TABLE.
@@ -354,13 +354,11 @@ pub enum ValidStatement {
     CreateModelTable(Arc<ModelTableMetadata>),
 }
 
-/// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL
-/// TABLE command in `statement` was correct. A [`ParserError`] is returned if
-/// `statement` is not a [`Statement::CreateTable`] or a semantic check fails.
-/// If all semantics checks are successful a [`ValidStatement`] is returned.
-pub fn semantic_checks_for_create_table(
-    statement: Statement,
-) -> Result<ValidStatement, ParserError> {
+/// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE command in
+/// `statement` was correct. A [`ModelarDbCommonError`] is returned if `statement` is not a
+/// [`Statement::CreateTable`] or a semantic check fails. If all semantic checks are successful a
+/// [`ValidStatement`] is returned.
+pub fn semantic_checks_for_create_table(statement: Statement) -> Result<ValidStatement> {
     // Ensure it is a create table and only supported features are enabled.
     check_unsupported_features_are_disabled(&statement)?;
 
@@ -375,21 +373,21 @@ pub fn semantic_checks_for_create_table(
         // Extract the table name from the Statement::CreateTable.
         if name.0.len() > 1 {
             let message = "Multi-part table names are not supported.";
-            return Err(ParserError::ParserError(message.to_owned()));
+            return Err(ModelarDbCommonError::InvalidArgument(message.to_owned()));
         }
 
         // Check if the table name contains whitespace, e.g., spaces or tabs.
         let normalized_name = normalize_name(&name.0[0].value);
         if normalized_name.contains(char::is_whitespace) {
             let message = "Table name cannot contain whitespace.";
-            return Err(ParserError::ParserError(message.to_owned()));
+            return Err(ModelarDbCommonError::InvalidArgument(message.to_owned()));
         }
 
         // Check if the table name is a restricted keyword.
         let table_name_uppercase = normalized_name.to_uppercase();
         for keyword in ALL_KEYWORDS {
             if &table_name_uppercase == keyword {
-                return Err(ParserError::ParserError(format!(
+                return Err(ModelarDbCommonError::InvalidArgument(format!(
                     "Reserved keyword '{}' cannot be used as a table name.",
                     name
                 )));
@@ -397,10 +395,10 @@ pub fn semantic_checks_for_create_table(
         }
 
         // Check if the table name is a valid object_store path and database table name.
-        object_store::path::Path::parse(&normalized_name)
-            .map_err(|error| ParserError::ParserError(error.to_string()))?;
+        object_store::path::Path::parse(&normalized_name)?;
 
-        // Create a ValidStatement with the information for creating the table of the specified type.
+        // Create a ValidStatement with the information for creating the table of the specified
+        // type.
         let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
         if let Some(_expected_engine) = engine {
             // Create a model table for time series that only supports TIMESTAMP, FIELD, and TAG.
@@ -440,17 +438,17 @@ pub fn semantic_checks_for_create_table(
         }
     } else {
         let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
-        Err(ParserError::ParserError(message.to_owned()))
+        Err(ModelarDbCommonError::InvalidArgument(message.to_owned()))
     }
 }
 
-/// Perform additional semantic checks to ensure that the CREATE MODEL TABLE
-/// command from which `name` and `column_defs` was extracted was correct. A
-/// [`ParserError`] is returned if any of the additional semantic checks fails.
+/// Perform additional semantic checks to ensure that the CREATE MODEL TABLE command from which
+/// `name` and `column_defs` was extracted was correct. A [`ParserError`] is returned if any of the
+/// additional semantic checks fails.
 fn semantic_checks_for_create_model_table(
     name: String,
     column_defs: Vec<ColumnDef>,
-) -> Result<ModelTableMetadata, ParserError> {
+) -> StdResult<ModelTableMetadata, ParserError> {
     // Extract the error bounds for all columns. It is here to keep the parser types in the parser.
     let error_bounds = extract_error_bounds_for_all_columns(&column_defs)?;
 
@@ -474,9 +472,9 @@ fn semantic_checks_for_create_model_table(
     Ok(model_table_metadata)
 }
 
-/// Return [`ParserError`] if [`Statement`] is not a [`Statement::CreateTable`]
-/// or if an unsupported feature is set.
-fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), ParserError> {
+/// Return [`ParserError`] if [`Statement`] is not a [`Statement::CreateTable`] or if an unsupported
+/// feature is set.
+fn check_unsupported_features_are_disabled(statement: &Statement) -> StdResult<(), ParserError> {
     if let Statement::CreateTable(CreateTable {
         or_replace,
         temporary,
@@ -598,9 +596,12 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
     }
 }
 
-/// Return [`ParserError`] specifying that the functionality with the name
-/// `feature` is not supported if `enabled` is [`true`].
-fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result<(), ParserError> {
+/// Return [`ParserError`] specifying that the functionality with the name `feature` is not
+/// supported if `enabled` is [`true`].
+fn check_unsupported_feature_is_disabled(
+    enabled: bool,
+    feature: &str,
+) -> StdResult<(), ParserError> {
     if enabled {
         let message = format!("{feature} is not supported.");
         Err(ParserError::ParserError(message))
@@ -613,7 +614,7 @@ fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result
 /// [`DataFusionError`] is returned.
 fn column_defs_to_model_table_query_schema(
     column_defs: Vec<ColumnDef>,
-) -> Result<Schema, DataFusionError> {
+) -> StdResult<Schema, DataFusionError> {
     let mut fields = Vec::with_capacity(column_defs.len());
 
     // Manually convert TIMESTAMP, FIELD, and TAG columns to Apache Arrow DataFusion types.
@@ -648,9 +649,12 @@ fn column_defs_to_model_table_query_schema(
                             );
                         }
                         option => {
-                            return Err(DataFusionError::Internal(format!(
-                                "{option} is not supported in model tables."
-                            )))
+                            return Err(DataFusionError::SQL(
+                                ParserError::ParserError(format!(
+                                    "{option} is not supported in model tables."
+                                )),
+                                None,
+                            ))
                         }
                     }
                 }
@@ -659,9 +663,12 @@ fn column_defs_to_model_table_query_schema(
             }
             SQLDataType::Text => Field::new(normalized_name, DataType::Utf8, false),
             data_type => {
-                return Err(DataFusionError::Internal(format!(
-                    "{data_type} is not supported in model tables."
-                )))
+                return Err(DataFusionError::SQL(
+                    ParserError::ParserError(format!(
+                        "{data_type} is not supported in model tables."
+                    )),
+                    None,
+                ))
             }
         };
 
@@ -675,7 +682,7 @@ fn column_defs_to_model_table_query_schema(
 /// and tag columns will be zero so the error bound of each column can be accessed using its index.
 fn extract_error_bounds_for_all_columns(
     column_defs: &[ColumnDef],
-) -> Result<Vec<ErrorBound>, ParserError> {
+) -> StdResult<Vec<ErrorBound>, ParserError> {
     let mut error_bounds = Vec::with_capacity(column_defs.len());
 
     for column_def in column_defs {
@@ -706,7 +713,7 @@ fn extract_error_bounds_for_all_columns(
 /// Return the value of an error bound and a [`bool`] indicating if it is relative if it is the only
 /// token in `dialect_specific_tokens`, otherwise [`ParserError`] is returned. Assumes the tokens
 /// have been extracted from a [`ColumnOption::DialectSpecific`].
-fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> Result<(f32, bool), ParserError> {
+fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> StdResult<(f32, bool), ParserError> {
     if dialect_specific_tokens.len() != 1 {
         return Err(ParserError::ParserError(
             "Error bounds are currently the only supported dialect specific options.".to_owned(),
@@ -730,7 +737,7 @@ fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> Result<(f32, bool
 /// [`GeneratedColumn`] of each generated field column can be accessed using its column index.
 fn extract_generation_exprs_for_all_columns(
     column_defs: &[ColumnDef],
-) -> Result<Vec<Option<GeneratedColumn>>, DataFusionError> {
+) -> StdResult<Vec<Option<GeneratedColumn>>, DataFusionError> {
     let context_provider = ParserContextProvider::new();
     let sql_to_rel = SqlToRel::new(&context_provider);
     let schema = sql_to_rel.build_schema(column_defs.to_vec())?;
@@ -752,8 +759,9 @@ fn extract_generation_exprs_for_all_columns(
                 generated_keyword: _,
             } = &column_def_option.option
             {
-                // The expression is saved as a string, so it can be stored in the metadata Delta Lake,
-                // it is not stored in ModelTableMetadata as it not used for during query execution.
+                // The expression is saved as a string, so it can be stored in the metadata Delta
+                // Lake, it is not stored in ModelTableMetadata as it not used for during query
+                // execution.
                 let sql_expr = generation_expr.as_ref().unwrap();
                 let original_expr = Some(sql_expr.to_string());
 
@@ -789,9 +797,9 @@ fn extract_generation_exprs_for_all_columns(
     Ok(generated_columns)
 }
 
-/// Parse `sql_expr` into a [`DFExpr`] if it is a correctly formatted SQL arithmetic expression
-/// that only references columns in [`DFSchema`], otherwise [`ParserError`] is returned.
-pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFExpr, ParserError> {
+/// Parse `sql_expr` into a [`DFExpr`] if it is a correctly formatted SQL arithmetic expression that
+/// only references columns in [`DFSchema`], otherwise [`ModelarDbCommonError`] is returned.
+pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFExpr> {
     let context_provider = ParserContextProvider::new();
     let sql_to_rel = SqlToRel::new(&context_provider);
     let mut planner_context = PlannerContext::new();
@@ -801,7 +809,7 @@ pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFEx
     let parsed_sql_expr = parser.parse_expr()?;
     sql_to_rel
         .sql_to_expr(parsed_sql_expr, df_schema, &mut planner_context)
-        .map_err(|error| ParserError::ParserError(error.to_string()))
+        .map_err(|error| error.into())
 }
 
 /// Context used when converting [`Expr`](sqlparser::ast::Expr) to [`DFExpr`], e.g., when validating
@@ -837,7 +845,7 @@ impl ContextProvider for ParserContextProvider {
     fn get_table_source(
         &self,
         _name: TableReference,
-    ) -> Result<Arc<dyn TableSource>, DataFusionError> {
+    ) -> StdResult<Arc<dyn TableSource>, DataFusionError> {
         Err(DataFusionError::Plan(
             "The table was not found.".to_string(),
         ))
@@ -1149,9 +1157,10 @@ mod tests {
 
         assert!(error.is_err());
 
-        let expected_error =
-            ParserError::ParserError("Multiple SQL commands are not supported.".to_string());
-        assert_eq!(error.unwrap_err(), expected_error);
+        assert_eq!(
+            error.unwrap_err().to_string(),
+            "Invalid Argument Error: Multiple SQL commands are not supported."
+        );
     }
 
     #[test]
@@ -1206,11 +1215,11 @@ mod tests {
             assert!(result.is_err());
 
             assert_eq!(
-                result.unwrap_err(),
-                ParserError::ParserError(format!(
-                    "Reserved keyword '{}' cannot be used as a table name.",
+                result.unwrap_err().to_string(),
+                format!(
+                    "Invalid Argument Error: Reserved keyword '{}' cannot be used as a table name.",
                     keyword_to_table_name(keyword)
-                ))
+                )
             );
         }
     }

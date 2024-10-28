@@ -20,9 +20,8 @@ use std::sync::Arc;
 use std::{env, str};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Action;
+use arrow_flight::{Action, Result as FlightResult};
 use modelardb_common::arguments;
-use modelardb_types::errors::ModelarDbError;
 use modelardb_types::types::ServerMode;
 use tokio::sync::RwLock;
 use tonic::metadata::MetadataMap;
@@ -31,6 +30,7 @@ use tonic::Request;
 
 use crate::context::Context;
 use crate::PORT;
+use crate::error::{ModelarDbServerError, Result};
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
 #[derive(Clone, Debug)]
@@ -49,15 +49,13 @@ impl Manager {
 
     /// Register the server as a node in the cluster and retrieve the key and connection information
     /// from the manager. If the key and connection information could not be retrieved,
-    /// [`ModelarDbError`] is returned.
+    /// [`ModelarDbServerError`] is returned.
     pub(crate) async fn register_node(
         manager_url: &str,
         server_mode: ServerMode,
-    ) -> Result<(Self, Vec<u8>), ModelarDbError> {
+    ) -> Result<(Self, Vec<u8>)> {
         let flight_client = Arc::new(RwLock::new(
-            FlightServiceClient::connect(manager_url.to_owned())
-                .await
-                .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?,
+            FlightServiceClient::connect(manager_url.to_owned()).await?,
         ));
 
         let ip_address = env::var("MODELARDBD_IP_ADDRESS").unwrap_or("127.0.0.1".to_string());
@@ -77,8 +75,7 @@ impl Manager {
         let message = do_action_and_extract_result(&flight_client, action).await?;
 
         // Extract the key and the connection information for the remote object store from the response.
-        let (key, offset_data) = arguments::decode_argument(&message.body)
-            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+        let (key, offset_data) = arguments::decode_argument(&message.body)?;
 
         Ok((
             Manager::new(flight_client, key.to_owned()),
@@ -88,11 +85,8 @@ impl Manager {
 
     /// Initialize the local database schema with the tables and model tables from the managers
     /// database schema. If the tables to create could not be retrieved from the manager, or the
-    /// tables could not be created, return [`ModelarDbError`].
-    pub(crate) async fn retrieve_and_create_tables(
-        &self,
-        context: &Arc<Context>,
-    ) -> Result<(), ModelarDbError> {
+    /// tables could not be created, return [`ModelarDbServerError`].
+    pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
         let existing_tables = context.default_database_schema()?.table_names();
 
         // Add the already existing tables to the action request.
@@ -105,7 +99,7 @@ impl Manager {
 
         // Extract the SQL for the tables that need to be created from the response.
         let table_sql_queries = str::from_utf8(&message.body)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?
+            .map_err(|error| ModelarDbServerError::InvalidArgument(error.to_string()))?
             .split(';')
             .filter(|sql| !sql.is_empty());
 
@@ -117,28 +111,24 @@ impl Manager {
         Ok(())
     }
 
-    /// If `action_type` is `CreateTable` or `KillNode`, check that the request actually
-    /// came from the manager. If the request is valid, return [`Ok`], otherwise return
-    /// [`ModelarDbError`].
-    pub fn validate_action_request(
-        &self,
-        action_type: &str,
-        metadata: &MetadataMap,
-    ) -> Result<(), ModelarDbError> {
+    /// If `action_type` is `CreateTable`, `DropTable`, or `KillNode`, check that the request
+    /// actually came from the manager. If the request is valid, return [`Ok`], otherwise return
+    /// [`ModelarDbServerError`].
+    pub fn validate_action_request(&self, action_type: &str, metadata: &MetadataMap) -> Result<()> {
         // If the server is started with a manager, these actions require a manager key.
-        let restricted_actions = ["CreateTable", "KillNode", "DropTable"];
+        let restricted_actions = ["CreateTable", "DropTable", "KillNode"];
 
         if restricted_actions.iter().any(|&a| a == action_type) {
-            let request_key = metadata
-                .get("x-manager-key")
-                .ok_or(ModelarDbError::ClusterError(
-                    "Missing manager key.".to_owned(),
-                ))?;
+            let request_key =
+                metadata
+                    .get("x-manager-key")
+                    .ok_or(ModelarDbServerError::InvalidState(
+                        "Missing manager key.".to_owned(),
+                    ))?;
 
             if &self.key != request_key {
-                return Err(ModelarDbError::ClusterError(format!(
-                    "Manager key '{:?}' is invalid.",
-                    request_key
+                return Err(ModelarDbServerError::InvalidState(format!(
+                    "Manager key '{request_key:?}' is invalid.",
                 )));
             }
         }
@@ -148,28 +138,23 @@ impl Manager {
 }
 
 /// Execute `action` using `flight_client` and extract the message inside the response. If `action`
-/// could not be executed or the response is invalid or empty, return [`ModelarDbError`].
+/// could not be executed or the response is invalid or empty, return [`ModelarDbServerError`].
 async fn do_action_and_extract_result(
     flight_client: &RwLock<FlightServiceClient<Channel>>,
     action: Action,
-) -> Result<arrow_flight::Result, ModelarDbError> {
+) -> Result<FlightResult> {
     let response = flight_client
         .write()
         .await
         .do_action(Request::new(action.clone()))
-        .await
-        .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+        .await?;
 
     // Extract the message from the response.
-    let maybe_message = response
-        .into_inner()
-        .message()
-        .await
-        .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+    let maybe_message = response.into_inner().message().await?;
 
     // Handle that the response is potentially empty.
     maybe_message.ok_or_else(|| {
-        ModelarDbError::ImplementationError(format!(
+        ModelarDbServerError::InvalidArgument(format!(
             "Response for action request '{}' is empty.",
             action.r#type
         ))

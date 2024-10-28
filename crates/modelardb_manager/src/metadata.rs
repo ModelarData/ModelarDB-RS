@@ -29,6 +29,7 @@ use modelardb_types::types::ServerMode;
 use uuid::Uuid;
 
 use crate::cluster::Node;
+use crate::error::{ModelarDbManagerError, Result};
 
 /// Stores the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
@@ -43,10 +44,8 @@ pub struct MetadataManager {
 impl MetadataManager {
     /// Create a new [`MetadataManager`] that saves the metadata to a remote object store given by
     /// `connection_info` and initialize the metadata tables. If `connection_info` could not be
-    /// parsed or the metadata tables could not be created, return [`DeltaTableError`].
-    pub async fn try_from_connection_info(
-        connection_info: &[u8],
-    ) -> Result<MetadataManager, DeltaTableError> {
+    /// parsed or the metadata tables could not be created, return [`ModelarDbManagerError`].
+    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<MetadataManager> {
         let metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)?,
             table_metadata_manager: TableMetadataManager::try_from_connection_info(connection_info)
@@ -67,8 +66,9 @@ impl MetadataManager {
     ///   this table will only have a single row since there can only be a single manager.
     /// * The `nodes` table contains metadata for each node that is controlled by the manager.
     ///
-    /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
-    async fn create_manager_metadata_delta_lake_tables(&self) -> Result<(), DeltaTableError> {
+    /// If the tables exist or were created, return [`Ok`], otherwise return
+    /// [`ModelarDbManagerError`].
+    async fn create_manager_metadata_delta_lake_tables(&self) -> Result<()> {
         // Create the manager_metadata table if it does not exist.
         self.metadata_delta_lake
             .create_delta_lake_table(
@@ -93,8 +93,8 @@ impl MetadataManager {
 
     /// Retrieve the key for the manager from the `manager_metadata` table. If a key does not
     /// already exist, create one and save it to the Delta Lake. If a key could not be retrieved
-    /// or created, return [`DeltaTableError`].
-    pub async fn manager_key(&self) -> Result<Uuid, DeltaTableError> {
+    /// or created, return [`ModelarDbManagerError`].
+    pub async fn manager_key(&self) -> Result<Uuid> {
         let batch = self
             .metadata_delta_lake
             .query_table("manager_metadata", "SELECT key FROM manager_metadata")
@@ -123,8 +123,8 @@ impl MetadataManager {
     }
 
     /// Save the node to the metadata Delta Lake and return [`Ok`]. If the node could not be saved,
-    /// return [`DeltaTableError`].
-    pub async fn save_node(&self, node: Node) -> Result<(), DeltaTableError> {
+    /// return [`ModelarDbManagerError`].
+    pub async fn save_node(&self, node: Node) -> Result<()> {
         self.metadata_delta_lake
             .append_to_table(
                 "nodes",
@@ -139,8 +139,8 @@ impl MetadataManager {
     }
 
     /// Remove the row in the `nodes` table that corresponds to the node with `url` and return
-    /// [`Ok`]. If the row could not be removed, return [`DeltaTableError`].
-    pub async fn remove_node(&self, url: &str) -> Result<(), DeltaTableError> {
+    /// [`Ok`]. If the row could not be removed, return [`ModelarDbManagerError`].
+    pub async fn remove_node(&self, url: &str) -> Result<()> {
         let ops = self
             .metadata_delta_lake
             .metadata_table_delta_ops("nodes")
@@ -152,8 +152,9 @@ impl MetadataManager {
     }
 
     /// Return the nodes currently controlled by the manager that have been persisted to the
-    /// metadata Delta Lake. If the nodes could not be retrieved, [`DeltaTableError`] is returned.
-    pub async fn nodes(&self) -> Result<Vec<Node>, DeltaTableError> {
+    /// metadata Delta Lake. If the nodes could not be retrieved, [`ModelarDbManagerError`] is
+    /// returned.
+    pub async fn nodes(&self) -> Result<Vec<Node>> {
         let mut nodes: Vec<Node> = vec![];
 
         let batch = self
@@ -178,8 +179,8 @@ impl MetadataManager {
     }
 
     /// Return the SQL query used to create the table with the name `table_name`. If a table with
-    /// that name does not exist, return [`DeltaTableError`].
-    pub async fn table_sql(&self, table_name: &str) -> Result<String, DeltaTableError> {
+    /// that name does not exist, return [`ModelarDbManagerError`].
+    pub async fn table_sql(&self, table_name: &str) -> Result<String> {
         let batch = self
             .metadata_delta_lake
             .query_table(
@@ -202,7 +203,7 @@ impl MetadataManager {
 
             let model_table_sql = modelardb_types::array!(batch, 0, StringArray);
             if model_table_sql.is_empty() {
-                Err(DeltaTableError::Generic(format!(
+                Err(ModelarDbManagerError::InvalidArgument(format!(
                     "No table or model table with the name '{table_name}' exists."
                 )))
             } else {
@@ -215,11 +216,8 @@ impl MetadataManager {
 
     /// Retrieve all rows of `column` from both the table_metadata and model_table_metadata tables.
     /// If the column could not be retrieved, either because it does not exist or because it could
-    /// not be converted to a string, return [`DeltaTableError`].
-    pub async fn table_metadata_column(
-        &self,
-        column: &str,
-    ) -> Result<Vec<String>, DeltaTableError> {
+    /// not be converted to a string, return [`ModelarDbManagerError`].
+    pub async fn table_metadata_column(&self, column: &str) -> Result<Vec<String>> {
         // Retrieve the column from both tables containing table metadata.
         let table_metadata_batch = self
             .metadata_delta_lake

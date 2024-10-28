@@ -22,10 +22,10 @@ use std::collections::HashMap;
 
 use arrow::array::{Array, BinaryArray, Float32Array, UInt64Array, UInt8Array};
 use arrow::record_batch::RecordBatch;
-use modelardb_types::errors::ModelarDbError;
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray};
 
+use crate::error::{ModelarDbCompressionError, Result};
 use crate::models::{self, timestamps};
 use crate::types::CompressedSegmentBatchBuilder;
 
@@ -38,9 +38,9 @@ use crate::types::CompressedSegmentBatchBuilder;
 /// segments A, B, and C exist for a `univariate_id` and the segments A and C are in
 /// `compressed_segments` then B is also in `compressed_segments`. If only A and C are in
 /// `compressed_segments` a segment that overlaps with B will be created if A and C are merged.
-pub fn try_merge_segments(compressed_segments: RecordBatch) -> Result<RecordBatch, ModelarDbError> {
+pub fn try_merge_segments(compressed_segments: RecordBatch) -> Result<RecordBatch> {
     if compressed_segments.schema() != COMPRESSED_SCHEMA.0 {
-        return Err(ModelarDbError::CompressionError(
+        return Err(ModelarDbCompressionError::InvalidArgument(
             "The schema for the compressed segments is incorrect.".to_owned(),
         ));
     }
@@ -228,7 +228,7 @@ fn merge_segments(
     values: &BinaryArray,
     residuals: &BinaryArray,
     errors: &Float32Array,
-) -> Result<RecordBatch, ModelarDbError> {
+) -> Result<RecordBatch> {
     let mut merged_compressed_segments = CompressedSegmentBatchBuilder::new(univariate_ids.len());
 
     // merge_indices are sequences of segments to be merged in the form of Some(segment_index)

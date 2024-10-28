@@ -19,9 +19,9 @@
 use std::env;
 use std::sync::Arc;
 
-use modelardb_types::errors::ModelarDbError;
 use tokio::sync::RwLock;
 
+use crate::error::Result;
 use crate::storage::StorageEngine;
 use crate::ClusterMode;
 
@@ -118,13 +118,13 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the amount of memory for uncompressed data in the storage
-    /// engine. Returns [`ConfigurationError`](ModelarDbError::ConfigurationError) if the memory
+    /// engine. Returns [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the memory
     /// cannot be updated because a buffer cannot be spilled.
     pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: usize,
         storage_engine: Arc<RwLock<StorageEngine>>,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
         let value_change = new_uncompressed_reserved_memory_in_bytes as isize
@@ -134,10 +134,10 @@ impl ConfigurationManager {
             .write()
             .await
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
-            .await
-            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+            .await?;
 
         self.uncompressed_reserved_memory_in_bytes = new_uncompressed_reserved_memory_in_bytes;
+
         Ok(())
     }
 
@@ -147,12 +147,12 @@ impl ConfigurationManager {
 
     /// Set the new value and update the amount of memory for compressed data in the storage engine.
     /// If the value was updated, return [`Ok`], otherwise return
-    /// [`ConfigurationError`](ModelarDbError::ConfigurationError).
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(crate) async fn set_compressed_reserved_memory_in_bytes(
         &mut self,
         new_compressed_reserved_memory_in_bytes: usize,
         storage_engine: Arc<RwLock<StorageEngine>>,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
         let value_change = new_compressed_reserved_memory_in_bytes as isize
@@ -162,10 +162,10 @@ impl ConfigurationManager {
             .write()
             .await
             .adjust_compressed_remaining_memory_in_bytes(value_change)
-            .await
-            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+            .await?;
 
         self.compressed_reserved_memory_in_bytes = new_compressed_reserved_memory_in_bytes;
+
         Ok(())
     }
 
@@ -173,14 +173,14 @@ impl ConfigurationManager {
         self.transfer_batch_size_in_bytes
     }
 
-    /// Set the new value and update the transfer batch size in the storage engine. If the value
-    /// was updated, return [`Ok`], otherwise return
-    /// [`ConfigurationError`](ModelarDbError::ConfigurationError).
+    /// Set the new value and update the transfer batch size in the storage engine. If the value was
+    /// updated, return [`Ok`], otherwise return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(crate) async fn set_transfer_batch_size_in_bytes(
         &mut self,
         new_transfer_batch_size_in_bytes: Option<usize>,
         storage_engine: Arc<RwLock<StorageEngine>>,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         storage_engine
             .write()
             .await
@@ -188,6 +188,7 @@ impl ConfigurationManager {
             .await?;
 
         self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
+
         Ok(())
     }
 
@@ -195,13 +196,14 @@ impl ConfigurationManager {
         self.transfer_time_in_seconds
     }
 
-    /// Set the new value and update the transfer time in the storage engine. If the value was updated,
-    /// return [`Ok`], otherwise return [`ConfigurationError`](ModelarDbError::ConfigurationError).
+    /// Set the new value and update the transfer time in the storage engine. If the value was
+    /// updated, return [`Ok`], otherwise return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(crate) async fn set_transfer_time_in_seconds(
         &mut self,
         new_transfer_time_in_seconds: Option<usize>,
         storage_engine: Arc<RwLock<StorageEngine>>,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         storage_engine
             .write()
             .await
@@ -209,6 +211,7 @@ impl ConfigurationManager {
             .await?;
 
         self.transfer_time_in_seconds = new_transfer_time_in_seconds;
+
         Ok(())
     }
 }

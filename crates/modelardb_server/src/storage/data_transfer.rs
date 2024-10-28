@@ -17,21 +17,19 @@
 //! is managed here until it is of a sufficient size to be transferred efficiently.
 
 use std::collections::HashSet;
-use std::io::Error as IOError;
-use std::io::ErrorKind::Other;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dashmap::DashMap;
-use datafusion::parquet::errors::ParquetError;
 use deltalake::arrow::array::RecordBatch;
-use deltalake::{DeltaOps, DeltaTableError};
+use deltalake::DeltaOps;
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
 
 use crate::data_folders::DataFolder;
+use crate::error::Result;
 use crate::storage::Metric;
 
 // TODO: Handle the case where a connection can not be established when transferring data.
@@ -61,14 +59,15 @@ pub struct DataTransfer {
 impl DataTransfer {
     /// Create a new data transfer instance and initialize it with the data already in
     /// `local_data_folder_path`. If `local_data_folder_path` or a path within
-    /// `local_data_folder_path` could not be read, return [`DeltaTableError`].
+    /// `local_data_folder_path` could not be read, return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub async fn try_new(
         local_data_folder: DataFolder,
         remote_data_folder: DataFolder,
         table_names: Vec<String>,
         transfer_batch_size_in_bytes: Option<usize>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
-    ) -> Result<Self, DeltaTableError> {
+    ) -> Result<Self> {
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
         for table_name in table_names {
@@ -81,10 +80,7 @@ impl DataTransfer {
 
             let object_store = delta_table.object_store();
             for file_path in delta_table.get_files_iter()? {
-                let object_meta = object_store
-                    .head(&file_path)
-                    .await
-                    .map_err(|error| DeltaTableError::MetadataError(error.to_string()))?;
+                let object_meta = object_store.head(&file_path).await?;
                 *table_size_in_bytes += object_meta.size;
             }
         }
@@ -115,10 +111,7 @@ impl DataTransfer {
             let size_in_bytes = table_name_size_in_bytes.value();
 
             if transfer_batch_size_in_bytes.is_some_and(|batch_size| size_in_bytes >= &batch_size) {
-                data_transfer
-                    .transfer_data(table_name)
-                    .await
-                    .map_err(|err| IOError::new(Other, err.to_string()))?;
+                data_transfer.transfer_data(table_name).await?;
             }
         }
 
@@ -126,11 +119,7 @@ impl DataTransfer {
     }
 
     /// Increase the size of the table with `table_name` by `size_in_bytes`.
-    pub async fn increase_table_size(
-        &self,
-        table_name: &str,
-        size_in_bytes: usize,
-    ) -> Result<(), DeltaTableError> {
+    pub async fn increase_table_size(&self, table_name: &str, size_in_bytes: usize) -> Result<()> {
         // entry() is not used as it would require the allocation of a new String for each lookup as
         // it must be given as a K, while get_mut() accepts the key as a &K so one K can be used.
         if !self.table_size_in_bytes.contains_key(table_name) {
@@ -169,11 +158,12 @@ impl DataTransfer {
 
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
     /// for, check if the amount of data exceeds `new_value` and transfer all the data if it does.
-    /// If the value is changed successfully return [`Ok`], otherwise return [`ParquetError`].
+    /// If the value is changed successfully return [`Ok`], otherwise return
+    /// (`ModelarDbServerError`)[crate::error::ModelarDbServerError].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &mut self,
         new_value: Option<usize>,
-    ) -> Result<(), ParquetError> {
+    ) -> Result<()> {
         if let Some(new_batch_size) = new_value {
             self.transfer_larger_than_threshold(new_batch_size).await?;
         }
@@ -220,24 +210,20 @@ impl DataTransfer {
         };
     }
 
-    /// Transfer all compressed files from tables currently using more than `threshold` bytes in
-    /// the data folder to the remote object store. Return [`Ok`] if all files were transferred
-    /// successfully, otherwise [`ParquetError`]. Note that if the function fails, some of the
-    /// compressed files may still have been transferred. Since the data is transferred separately
-    /// for each table, the function can be called again if it failed.
-    pub(crate) async fn transfer_larger_than_threshold(
-        &self,
-        threshold: usize,
-    ) -> Result<(), ParquetError> {
+    /// Transfer all compressed files from tables currently using more than `threshold` bytes in the
+    /// data folder to the remote object store. Return [`Ok`] if all files were transferred
+    /// successfully, otherwise [`ModelarDbServerError`](crate::error::ModelarDbServerError). Note
+    /// that if the function fails, some of the compressed files may still have been transferred.
+    /// Since the data is transferred separately for each table, the function can be called again if
+    /// it failed.
+    pub(crate) async fn transfer_larger_than_threshold(&self, threshold: usize) -> Result<()> {
         // The clone is performed to not create a deadlock with transfer_data().
         for table_name_size_in_bytes in self.table_size_in_bytes.clone().iter() {
             let table_name = table_name_size_in_bytes.key();
             let size_in_bytes = table_name_size_in_bytes.value();
 
             if size_in_bytes > &threshold {
-                self.transfer_data(table_name)
-                    .await
-                    .map_err(|err| IOError::new(Other, err.to_string()))?;
+                self.transfer_data(table_name).await?;
             }
         }
 
@@ -246,8 +232,9 @@ impl DataTransfer {
 
     /// Transfer the data stored locally for the table with `table_name` to the remote object store.
     /// Once successfully transferred, the data is deleted from local storage. Return [`Ok`] if the
-    /// files were transferred successfully, otherwise [`DeltaTableError`].
-    async fn transfer_data(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// files were transferred successfully, otherwise
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    async fn transfer_data(&self, table_name: &str) -> Result<()> {
         // Check if the table has been dropped and should not be transferred.
         if self.dropped_tables.contains(table_name) {
             debug!("Table '{table_name}' has been dropped and data will not be transferred.");

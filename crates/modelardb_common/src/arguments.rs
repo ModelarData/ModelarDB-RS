@@ -16,11 +16,11 @@
 //! Functions for collecting and using command line arguments in both the server and manager.
 //! Functionality for validating remote data folders extracted from arguments is also provided.
 
-use std::env;
 use std::io::Write;
 use std::str;
+use std::{env, process};
 
-use tonic::Status;
+use crate::error::{ModelarDbCommonError, Result};
 
 /// Error to emit when an unknown remote data folder type is used.
 const REMOTE_DATA_FOLDER_ERROR: &str =
@@ -38,13 +38,12 @@ pub fn collect_command_line_arguments(maximum_arguments: usize) -> Vec<String> {
 }
 
 /// Create a vector of bytes that represents the connection information to the remote path in `argument`.
-pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
+pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>> {
     match argument.split_once("://") {
         Some(("s3", bucket_name)) => {
-            let endpoint = env::var("AWS_ENDPOINT").map_err(|error| error.to_string())?;
-            let access_key_id = env::var("AWS_ACCESS_KEY_ID").map_err(|error| error.to_string())?;
-            let secret_access_key =
-                env::var("AWS_SECRET_ACCESS_KEY").map_err(|error| error.to_string())?;
+            let endpoint = env::var("AWS_ENDPOINT")?;
+            let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
+            let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
 
             let credentials = [
                 "s3",
@@ -60,10 +59,8 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
                 .collect())
         }
         Some(("azureblobstorage", container_name)) => {
-            let account =
-                env::var("AZURE_STORAGE_ACCOUNT_NAME").map_err(|error| error.to_string())?;
-            let access_key =
-                env::var("AZURE_STORAGE_ACCESS_KEY").map_err(|error| error.to_string())?;
+            let account = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
+            let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
 
             let credentials = [
                 "azureblobstorage",
@@ -77,8 +74,22 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
                 .flat_map(|credential| encode_argument(credential))
                 .collect())
         }
-        _ => Err(REMOTE_DATA_FOLDER_ERROR.to_owned()),
+        _ => Err(ModelarDbCommonError::InvalidArgument(
+            REMOTE_DATA_FOLDER_ERROR.to_owned(),
+        )),
     }
+}
+
+/// Prints a usage message with `parameters` appended to the name of the binary executing this
+/// function to stderr and exits with status code one to indicate that an error has occurred.
+pub fn print_usage_and_exit_with_error(parameters: &str) -> ! {
+    // The errors are consciously ignored as the program is terminating.
+    let binary_path = std::env::current_exe().unwrap();
+    let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+
+    // Punctuation at the end does not seem to be common in the usage message of Unix tools.
+    eprintln!("Usage: {binary_name} {parameters}");
+    process::exit(1);
 }
 
 /// Convert the given `argument` into bytes that contain the length of the byte representation of
@@ -102,24 +113,23 @@ pub fn encode_argument(argument: &str) -> Vec<u8> {
 /// Return a tuple containing the first argument and `data` with the extracted argument's bytes
 /// removed. It is assumed that `data` is a slice containing one or more arguments with the
 /// following format: size of argument (2 bytes) followed by the argument (size bytes).
-pub fn decode_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
-    let size_bytes: [u8; 2] = data[..2]
-        .try_into()
-        .map_err(|_| Status::internal("Size of argument is not 2 bytes."))?;
+pub fn decode_argument(data: &[u8]) -> Result<(&str, &[u8])> {
+    let size_bytes: [u8; 2] = data[..2].try_into().map_err(|_| {
+        ModelarDbCommonError::InvalidArgument("Size of argument is not 2 bytes.".to_owned())
+    })?;
 
     let size = u16::from_be_bytes(size_bytes) as usize;
 
-    let argument = str::from_utf8(&data[2..(size + 2)])
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+    let argument = str::from_utf8(&data[2..(size + 2)])?;
     let remaining_bytes = &data[(size + 2)..];
 
     Ok((argument, remaining_bytes))
 }
 
-/// Extract the arguments in `data` and return the arguments to connect to an
-/// [`Amazon S3`](object_store::aws::AmazonS3) object store and what is remaining of `data`
-/// after parsing. If `data` is missing arguments, [`Status`] is returned.
-pub fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
+/// Extract the arguments in `data` and return the arguments to connect to an [`Amazon
+/// S3`](object_store::aws::AmazonS3) object store and what is remaining of `data` after parsing. If
+/// `data` is missing arguments, [`ModelarDbCommonError`] is returned.
+pub fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8])> {
     let (endpoint, offset_data) = decode_argument(data)?;
     let (bucket_name, offset_data) = decode_argument(offset_data)?;
     let (access_key_id, offset_data) = decode_argument(offset_data)?;
@@ -134,13 +144,10 @@ pub fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8
     ))
 }
 
-/// Extract the arguments in `data` and return the arguments to connect to an
-/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
-/// object store and what is remaining of `data` after parsing. If `data` is missing arguments,
-/// [`Status`] is returned.
-pub fn extract_azure_blob_storage_arguments(
-    data: &[u8],
-) -> Result<(&str, &str, &str, &[u8]), Status> {
+/// Extract the arguments in `data` and return the arguments to connect to an [`Azure Blob
+/// Storage`](object_store::azure::MicrosoftAzure) object store and what is remaining of `data`
+/// after parsing. If `data` is missing arguments, [`ModelarDbCommonError`] is returned.
+pub fn extract_azure_blob_storage_arguments(data: &[u8]) -> Result<(&str, &str, &str, &[u8])> {
     let (account, offset_data) = decode_argument(data)?;
     let (access_key, offset_data) = decode_argument(offset_data)?;
     let (container_name, offset_data) = decode_argument(offset_data)?;

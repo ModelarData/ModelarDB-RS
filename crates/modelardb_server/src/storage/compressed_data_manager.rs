@@ -16,18 +16,17 @@
 //! Support for managing all compressed data that is inserted into the
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
-use std::io::{Error as IOError, ErrorKind};
 use std::sync::{Arc, Mutex};
 
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
-use deltalake::DeltaTableError;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::data_folders::DataFolder;
+use crate::error::Result;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
@@ -84,7 +83,7 @@ impl CompressedDataManager {
         &self,
         table_name: &str,
         record_batch: RecordBatch,
-    ) -> Result<(), DeltaTableError> {
+    ) -> Result<()> {
         debug!(
             "Received record batch with {} rows for the table '{}'.",
             record_batch.num_rows(),
@@ -107,8 +106,7 @@ impl CompressedDataManager {
         if let Some(data_transfer) = &*self.data_transfer.read().await {
             data_transfer
                 .increase_table_size(table_name, record_batch_size_in_bytes)
-                .await
-                .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
+                .await?;
         }
 
         Ok(())
@@ -117,33 +115,21 @@ impl CompressedDataManager {
     /// Read and process messages received from the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) to either insert compressed
     /// data, flush buffers, or stop.
-    pub(super) fn process_compressed_messages(&self, runtime: Arc<Runtime>) -> Result<(), String> {
+    pub(super) fn process_compressed_messages(&self, runtime: Arc<Runtime>) -> Result<()> {
         loop {
-            let message = self
-                .channels
-                .compressed_data_receiver
-                .recv()
-                .map_err(|error| error.to_string())?;
+            let message = self.channels.compressed_data_receiver.recv()?;
 
             match message {
                 Message::Data(compressed_segment_batch) => {
-                    runtime
-                        .block_on(self.insert_compressed_segments(compressed_segment_batch))
-                        .map_err(|error| error.to_string())?;
+                    runtime.block_on(self.insert_compressed_segments(compressed_segment_batch))?;
                 }
                 Message::Flush => {
                     self.flush_and_log_errors(&runtime);
-                    self.channels
-                        .result_sender
-                        .send(Ok(()))
-                        .map_err(|error| error.to_string())?;
+                    self.channels.result_sender.send(Ok(()))?;
                 }
                 Message::Stop => {
                     self.flush_and_log_errors(&runtime);
-                    self.channels
-                        .result_sender
-                        .send(Ok(()))
-                        .map_err(|error| error.to_string())?;
+                    self.channels.result_sender.send(Ok(()))?;
                     break;
                 }
             }
@@ -154,11 +140,11 @@ impl CompressedDataManager {
 
     /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
     /// with `table_name`. If `compressed_segments` is saved successfully, return [`Ok`], otherwise
-    /// return [`IOError`].
+    /// return [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn insert_compressed_segments(
         &self,
         compressed_segment_batch: CompressedSegmentBatch,
-    ) -> Result<(), IOError> {
+    ) -> Result<()> {
         let model_table_name = compressed_segment_batch.model_table_name();
         debug!("Inserting batch into compressed data buffer for table '{model_table_name}'.");
 
@@ -210,11 +196,8 @@ impl CompressedDataManager {
 
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until at least `size_in_bytes`
     /// bytes of memory is available. If all the data is saved successfully, return [`Ok`],
-    /// otherwise return [`IOError`].
-    async fn save_compressed_data_to_free_memory(
-        &self,
-        size_in_bytes: usize,
-    ) -> Result<(), IOError> {
+    /// otherwise return [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    async fn save_compressed_data_to_free_memory(&self, size_in_bytes: usize) -> Result<()> {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.memory_pool.remaining_compressed_memory_in_bytes() < size_in_bytes as isize {
@@ -241,8 +224,8 @@ impl CompressedDataManager {
     }
 
     /// Flush the data that the [`CompressedDataManager`] is currently managing. Returns an
-    /// [`IOError`] if the data cannot be flushed.
-    async fn flush(&self) -> Result<(), IOError> {
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the data cannot be flushed.
+    async fn flush(&self) -> Result<()> {
         info!(
             "Flushing the remaining {} compressed data buffers.",
             self.compressed_queue.len()
@@ -258,8 +241,9 @@ impl CompressedDataManager {
 
     /// Save the compressed data that belongs to the table with `table_name` The size of the saved
     /// compressed data is added back to the remaining compressed memory. If the data is written
-    /// successfully to disk, return [`Ok`], otherwise return [`IOError`].
-    async fn save_compressed_data(&self, table_name: &str) -> Result<(), IOError> {
+    /// successfully to disk, return [`Ok`], otherwise return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    async fn save_compressed_data(&self, table_name: &str) -> Result<()> {
         debug!("Saving compressed segments to disk for {table_name}.");
 
         // unwrap() is safe as table_name is read from compressed_queue.
@@ -274,8 +258,7 @@ impl CompressedDataManager {
         self.local_data_folder
             .delta_lake
             .write_compressed_segments_to_model_table(table_name, compressed_segments)
-            .await
-            .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
+            .await?;
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_disk_space_metric
@@ -289,8 +272,7 @@ impl CompressedDataManager {
         if let Some(data_transfer) = &*self.data_transfer.read().await {
             data_transfer
                 .increase_table_size(table_name, compressed_data_buffer_size_in_bytes)
-                .await
-                .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
+                .await?;
         }
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
@@ -314,11 +296,12 @@ impl CompressedDataManager {
 
     /// Change the amount of memory for compressed data in bytes according to `value_change`. If
     /// less than zero bytes remain, save compressed data to free memory. If all the data is saved
-    /// successfully return [`Ok`], otherwise return [`IOError`].
+    /// successfully return [`Ok`], otherwise return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
         &self,
         value_change: isize,
-    ) -> Result<(), IOError> {
+    ) -> Result<()> {
         self.memory_pool.adjust_compressed_memory(value_change);
         self.save_compressed_data_to_free_memory(0).await?;
 
