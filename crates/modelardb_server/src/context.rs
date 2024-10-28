@@ -296,7 +296,7 @@ impl Context {
             .deregister_table(table_name)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        self.delete_table_from_storage_engine(table_name).await?;
+        self.drop_table_from_storage_engine(table_name).await?;
 
         // Drop the table metadata from the metadata Delta Lake.
         self.data_folders
@@ -329,7 +329,7 @@ impl Context {
             )));
         }
 
-        self.delete_table_from_storage_engine(table_name).await?;
+        self.drop_table_from_storage_engine(table_name).await?;
 
         // Delete the table metadata from the metadata Delta Lake.
         self.data_folders
@@ -350,11 +350,11 @@ impl Context {
         Ok(())
     }
 
-    /// Delete the table from the storage engine by flushing the data managers and clearing the
+    /// Drop the table from the storage engine by flushing the data managers and clearing the
     /// table from the data transfer component. The table is marked as dropped in the data transfer
     /// component first to avoid transferring data to the remote data folder when flushing. If the
-    /// table could not be deleted, [`ModelarDbError`] is returned.
-    async fn delete_table_from_storage_engine(
+    /// table could not be dropped, [`ModelarDbError`] is returned.
+    async fn drop_table_from_storage_engine(
         &self,
         table_name: &str,
     ) -> Result<(), ModelarDbError> {
