@@ -140,18 +140,47 @@ impl Cluster {
     /// For each node in the cluster, use the `CreateTable` action to create the table given by
     /// `sql`. If the table was successfully created for each node, return [`Ok`], otherwise return
     /// [`ModelarDbManagerError`].
-    pub async fn create_tables(
-        &self,
-        table_name: &str,
-        sql: &str,
-        key: &MetadataValue<Ascii>,
-    ) -> Result<()> {
+    pub async fn create_table(&self, sql: &str, key: &MetadataValue<Ascii>) -> Result<()> {
         let action = Action {
             r#type: "CreateTable".to_owned(),
             body: sql.to_owned().into(),
         };
 
-        let mut create_table_futures: FuturesUnordered<_> = self
+        self.execute_cluster_action(action, key).await
+    }
+
+    /// For each node in the cluster, use the `DropTable` action to drop the table given by
+    /// `table_name`. If the table was successfully dropped for each node, return [`Ok`], otherwise
+    /// return [`ModelarDbManagerError`].
+    pub async fn drop_table(&self, table_name: &str, key: &MetadataValue<Ascii>) -> Result<()> {
+        let action = Action {
+            r#type: "DropTable".to_owned(),
+            body: table_name.to_owned().into(),
+        };
+
+        self.execute_cluster_action(action, key).await
+    }
+
+    /// For each node in the cluster, use the `TruncateTable` action to truncate the table given by
+    /// `table_name`. If the table was successfully truncated for each node, return [`Ok`], otherwise
+    /// return [`ModelarDbManagerError`].
+    pub async fn truncate_table(&self, table_name: &str, key: &MetadataValue<Ascii>) -> Result<()> {
+        let action = Action {
+            r#type: "TruncateTable".to_owned(),
+            body: table_name.to_owned().into(),
+        };
+
+        self.execute_cluster_action(action, key).await
+    }
+
+    /// For each node in the cluster, execute the given `action` with the given `key`. If the action
+    /// was successfully executed for each node, return [`Ok`], otherwise return [`ModelarDbManagerError`].
+    async fn execute_cluster_action(
+        &self,
+        action: Action,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<()> {
+        let mut action_futures: FuturesUnordered<_> = self
             .nodes
             .iter()
             .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
@@ -159,37 +188,11 @@ impl Cluster {
 
         // TODO: Fix issue where we return immediately if we encounter an error. If it is a
         //       connection error, we either need to retry later or remove the node.
-        // Run the futures concurrently and log when the table has been created on each node.
-        while let Some(result) = create_table_futures.next().await {
+        // Run the futures concurrently and log when the action has been executed on each node.
+        while let Some(result) = action_futures.next().await {
             info!(
-                "Created table '{}' on node with url '{}'.",
-                table_name, result?
-            );
-        }
-
-        Ok(())
-    }
-
-    /// For each node in the cluster, use the `DropTable` action to drop the table given by
-    /// `table_name`. If the table was successfully dropped for each node, return [`Ok`], otherwise
-    /// return [`ModelarDbManagerError`].
-    pub async fn drop_tables(&self, table_name: &str, key: &MetadataValue<Ascii>) -> Result<()> {
-        let action = Action {
-            r#type: "DropTable".to_owned(),
-            body: table_name.to_owned().into(),
-        };
-
-        let mut drop_table_futures: FuturesUnordered<_> = self
-            .nodes
-            .iter()
-            .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
-            .collect();
-
-        // Run the futures concurrently and log when the table has been dropped on each node.
-        while let Some(result) = drop_table_futures.next().await {
-            info!(
-                "Dropped table '{}' on node with url '{}'.",
-                table_name, result?
+                "Executed action `{}` on node with url '{}'.",
+                action.r#type, result?
             );
         }
 

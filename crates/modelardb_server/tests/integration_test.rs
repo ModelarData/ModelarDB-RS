@@ -292,6 +292,20 @@ impl TestContext {
             .block_on(async { self.client.do_action(Request::new(action)).await })
     }
 
+    /// Truncate a table in the server through the `do_action()` method and the `TruncateTable` action.
+    fn truncate_table(
+        &mut self,
+        table_name: &str,
+    ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
+        let action = Action {
+            r#type: "TruncateTable".to_owned(),
+            body: table_name.to_owned().into(),
+        };
+
+        self.runtime
+            .block_on(async { self.client.do_action(Request::new(action)).await })
+    }
+
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
     /// depending on `generate_irregular_timestamps`, generated values with noise depending on
     /// `multiply_noise_range`, and an optional tag.
@@ -619,7 +633,7 @@ fn test_can_create_register_and_list_multiple_tables_and_model_tables() {
 }
 
 #[test]
-fn test_can_drop_table() {
+fn test_can_drop_normal_table() {
     let mut test_context = TestContext::new();
     test_context.create_table(TABLE_NAME, TableType::NormalTable);
 
@@ -658,6 +672,56 @@ fn test_cannot_drop_missing_table() {
     let mut test_context = TestContext::new();
 
     let result = test_context.drop_table(TABLE_NAME);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_can_truncate_normal_table() {
+    let mut test_context = TestContext::new();
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        &[time_series.clone()],
+        TableType::NormalTable,
+    );
+
+    test_context.truncate_table(TABLE_NAME).unwrap();
+
+    let query_result = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
+
+    // The table should be empty after truncating it.
+    assert_eq!(query_result.num_rows(), 0);
+}
+
+#[test]
+fn test_can_truncate_model_table() {
+    let mut test_context = TestContext::new();
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        &[time_series.clone()],
+        TableType::ModelTable,
+    );
+
+    test_context.truncate_table(TABLE_NAME).unwrap();
+
+    let query_result = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
+
+    // The model table should be empty after truncating it.
+    assert_eq!(query_result.num_rows(), 0);
+}
+
+#[test]
+fn test_cannot_truncate_missing_table() {
+    let mut test_context = TestContext::new();
+
+    let result = test_context.truncate_table(TABLE_NAME);
     assert!(result.is_err());
 }
 
@@ -713,6 +777,7 @@ fn test_can_list_actions() {
             "FlushNode",
             "GetConfiguration",
             "KillNode",
+            "TruncateTable",
             "UpdateConfiguration",
         ]
     );
@@ -1211,4 +1276,3 @@ fn update_configuration_and_assert_error(setting: &str, setting_value: &str, err
     assert!(response.is_err());
     assert_eq!(response.err().unwrap().message(), error);
 }
-

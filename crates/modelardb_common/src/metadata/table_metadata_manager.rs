@@ -363,18 +363,18 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Depending on the type of the table with `table_name`, delete either the normal table
+    /// Depending on the type of the table with `table_name`, drop either the normal table
     /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
-    /// exist or the metadata could not be deleted, [`ModelarDbCommonError`] is returned.
-    pub async fn delete_table_metadata(&self, table_name: &str) -> Result<()> {
+    /// exist or the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
+    pub async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
         if self.table_names().await?.contains(&table_name.to_owned()) {
-            self.delete_normal_table_metadata(table_name).await
+            self.drop_normal_table_metadata(table_name).await
         } else if self
             .model_table_names()
             .await?
             .contains(&table_name.to_owned())
         {
-            self.delete_model_table_metadata(table_name).await
+            self.drop_model_table_metadata(table_name).await
         } else {
             Err(ModelarDbCommonError::InvalidArgument(format!(
                 "Table with name '{table_name}' does not exist."
@@ -382,9 +382,9 @@ impl TableMetadataManager {
         }
     }
 
-    /// Delete the metadata for the normal table with `table_name` from the `table_metadata` table in the
-    /// metadata Delta Lake. If the metadata could not be deleted, [`ModelarDbCommonError`] is returned.
-    async fn delete_normal_table_metadata(&self, table_name: &str) -> Result<()> {
+    /// Drop the metadata for the normal table with `table_name` from the `table_metadata` table in the
+    /// metadata Delta Lake. If the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
+    async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<()> {
         let ops = self
             .metadata_delta_lake
             .metadata_table_delta_ops("table_metadata")
@@ -397,14 +397,13 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Delete the metadata for the model table with `table_name` from the metadata Delta Lake. This
-    /// includes deleting the tags table for the model table, deleting a row from the
+    /// Drop the metadata for the model table with `table_name` from the metadata Delta Lake.
+    /// This includes dropping the tags table for the model table, deleting a row from the
     /// `model_table_metadata` table, deleting a row from the `model_table_field_columns` table for
-    /// each field column, and deleting the tag metadata from the `model_table_hash_table_name`
-    /// table and the tag cache. If the metadata could not be deleted, [`ModelarDbCommonError`] is
-    /// returned.
-    async fn delete_model_table_metadata(&self, table_name: &str) -> Result<()> {
-        // Delete the model_table_name_tags table.
+    /// each field column, and deleting the tag metadata from the `model_table_hash_table_name` table
+    /// and the tag cache. If the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
+    async fn drop_model_table_metadata(&self, table_name: &str) -> Result<()> {
+        // Drop the model_table_name_tags table.
         self.metadata_delta_lake
             .drop_delta_lake_table(&format!("{table_name}_tags"))
             .await?;
@@ -425,6 +424,55 @@ impl TableMetadataManager {
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
 
+        // Delete the tag hash metadata from the metadata Delta Lake and the tag cache.
+        self.delete_tag_hash_metadata(table_name).await?;
+
+        Ok(())
+    }
+
+    /// Depending on the type of the table with `table_name`, truncate either the normal table
+    /// metadata or the model table metadata from the metadata Delta Lake. Note that if truncating
+    /// the metadata of a normal table, the metadata Delta Lake is unaffected, but it is allowed to
+    /// keep the interface consistent. If the table does not exist or the metadata could not be
+    /// truncated, [`ModelarDbCommonError`] is returned.
+    pub async fn truncate_table_metadata(&self, table_name: &str) -> Result<()> {
+        if self.table_names().await?.contains(&table_name.to_owned()) {
+            Ok(())
+        } else if self
+            .model_table_names()
+            .await?
+            .contains(&table_name.to_owned())
+        {
+            self.truncate_model_table_metadata(table_name).await
+        } else {
+            Err(ModelarDbCommonError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
+        }
+    }
+
+    /// Truncate the metadata for the model table with `table_name` from the metadata Delta Lake.
+    /// This includes truncating the tags table for the model table and deleting the tag metadata
+    /// from the `model_table_hash_table_name` table and the tag cache. If the metadata could not
+    /// be truncated, [`ModelarDbCommonError`] is returned.
+    async fn truncate_model_table_metadata(&self, table_name: &str) -> Result<()> {
+        // Truncate the model_table_name_tags table.
+        self.metadata_delta_lake
+            .metadata_table_delta_ops(&format!("{table_name}_tags"))
+            .await?
+            .delete()
+            .await?;
+
+        // Delete the tag hash metadata from the metadata Delta Lake and the tag cache.
+        self.delete_tag_hash_metadata(table_name).await?;
+
+        Ok(())
+    }
+
+    /// Delete the tag hash metadata for the model table with `table_name` from the
+    /// `model_table_hash_table_name` table and the tag cache. If the metadata could not be deleted,
+    /// [`ModelarDbCommonError`] is returned.
+    async fn delete_tag_hash_metadata(&self, table_name: &str) -> Result<()> {
         // Delete the tag metadata from the model_table_hash_table_name table.
         self.metadata_delta_lake
             .metadata_table_delta_ops("model_table_hash_table_name")
@@ -433,7 +481,8 @@ impl TableMetadataManager {
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
 
-        // Delete the tag metadata from the tag cache. The table name is always the last part of the cache key.
+        // Delete the tag metadata from the tag cache. The table name is always the last part of
+        // the cache key.
         self.tag_value_hashes
             .retain(|key, _| key.split(';').last() != Some(table_name));
 
@@ -1052,11 +1101,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_table_metadata() {
+    async fn test_drop_normal_table_metadata() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
         metadata_manager
-            .delete_table_metadata("table_2")
+            .drop_table_metadata("table_2")
             .await
             .unwrap();
 
@@ -1071,7 +1120,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_model_table_metadata() {
+    async fn test_drop_model_table_metadata() {
         let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = test::model_table_metadata();
@@ -1081,7 +1130,7 @@ mod tests {
             .unwrap();
 
         metadata_manager
-            .delete_table_metadata(test::MODEL_TABLE_NAME)
+            .drop_table_metadata(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -1134,11 +1183,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_table_metadata_for_missing_table() {
+    async fn test_drop_table_metadata_for_missing_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
         assert!(metadata_manager
-            .delete_table_metadata("missing_table")
+            .drop_table_metadata("missing_table")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_truncate_normal_table_metadata() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        metadata_manager
+            .truncate_table_metadata("table_1")
+            .await
+            .unwrap();
+
+        // Verify that the metadata Delta Lake was left unchanged.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec!["table_2", "table_1"])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_truncate_model_table_metadata() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        metadata_manager
+            .truncate_table_metadata(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // Verify that the tags table was truncated.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                &format!("{}_tags", test::MODEL_TABLE_NAME),
+                &format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the tag metadata was deleted from the model_table_hash_table_name table.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                "model_table_hash_table_name",
+                "SELECT table_name FROM model_table_hash_table_name",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the tag cache was cleared.
+        assert!(metadata_manager.tag_value_hashes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_truncate_table_metadata_for_missing_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+
+        assert!(metadata_manager
+            .truncate_table_metadata("missing_table")
             .await
             .is_err());
     }

@@ -280,27 +280,65 @@ impl Context {
         // avoid data being ingested into the table while it is being deleted.
         self.session.deregister_table(table_name)?;
 
-        // Drop the table from the storage engine by flushing the data managers. The table is
-        // marked as dropped in the data transfer component first to avoid transferring data to the
-        // remote data folder when flushing.
-        let storage_engine = self.storage_engine.write().await;
-        storage_engine.mark_table_as_dropped(table_name).await;
-        storage_engine.flush().await?;
-        storage_engine.clear_table(table_name).await;
+        self.drop_table_from_storage_engine(table_name).await?;
 
-        // Delete the table metadata from the metadata Delta Lake.
+        // Drop the table metadata from the metadata Delta Lake.
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .delete_table_metadata(table_name)
+            .drop_table_metadata(table_name)
             .await?;
 
-        // Delete the table from the Delta Lake.
+        // Drop the table from the Delta Lake.
         self.data_folders
             .local_data_folder
             .delta_lake
             .drop_delta_lake_table(table_name)
             .await?;
+
+        Ok(())
+    }
+
+    /// Delete all data from the table with `table_name` if it exists. The table data is deleted
+    /// from the storage engine, metadata Delta Lake, and data Delta Lake. If the table does not
+    /// exist or if it could not be truncated, [`ModelarDbServerError`] is returned.
+    pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
+        // Deleting the table from the storage engine does not require the table to exist, so the
+        // table is checked first.
+        if self.check_if_table_exists(table_name).await.is_ok() {
+            return Err(ModelarDbServerError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            )));
+        }
+
+        self.drop_table_from_storage_engine(table_name).await?;
+
+        // Delete the table metadata from the metadata Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .table_metadata_manager
+            .truncate_table_metadata(table_name)
+            .await?;
+
+        // Delete the table data from the data Delta Lake.
+        self.data_folders
+            .local_data_folder
+            .delta_lake
+            .truncate_delta_lake_table(table_name)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Drop the table from the storage engine by flushing the data managers and clearing the
+    /// table from the data transfer component. The table is marked as dropped in the data transfer
+    /// component first to avoid transferring data to the remote data folder when flushing. If the
+    /// table could not be dropped, [`ModelarDbServerError`] is returned.
+    async fn drop_table_from_storage_engine(&self, table_name: &str) -> Result<()> {
+        let storage_engine = self.storage_engine.write().await;
+        storage_engine.mark_table_as_dropped(table_name).await;
+        storage_engine.flush().await?;
+        storage_engine.clear_table(table_name).await;
 
         Ok(())
     }
@@ -378,7 +416,10 @@ impl Context {
 mod tests {
     use super::*;
 
+    use datafusion::arrow::record_batch::RecordBatch;
+    use datafusion::datasource::TableProvider;
     use modelardb_common::test;
+    use modelardb_types::types::{TimestampArray, ValueArray};
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
@@ -532,7 +573,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_table() {
+    async fn test_drop_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -607,6 +648,117 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         assert!(context.drop_table(test::MODEL_TABLE_NAME).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_truncate_normal_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        context
+            .parse_and_create_table(test::TABLE_SQL)
+            .await
+            .unwrap();
+
+        let local_data_folder = &context.data_folders.local_data_folder;
+        let mut delta_table = local_data_folder
+            .delta_lake
+            .delta_table("table_name")
+            .await
+            .unwrap();
+
+        // Write data to the table that should be deleted when the table is truncated.
+        let record_batch = RecordBatch::try_new(
+            TableProvider::schema(&delta_table),
+            vec![
+                Arc::new(TimestampArray::from(vec![1, 2, 3])),
+                Arc::new(ValueArray::from(vec![1.0, 2.0, 3.0])),
+                Arc::new(ValueArray::from(vec![1.0, 2.0, 3.0])),
+            ],
+        )
+        .unwrap();
+
+        local_data_folder
+            .delta_lake
+            .write_record_batch_to_table("table_name", record_batch)
+            .await
+            .unwrap();
+
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 1);
+
+        context.truncate_table("table_name").await.unwrap();
+
+        // The table should not be deleted from the metadata Delta Lake.
+        let table_names = local_data_folder
+            .table_metadata_manager
+            .table_names()
+            .await
+            .unwrap();
+
+        assert!(table_names.contains(&"table_name".to_owned()));
+
+        // The table data should be deleted from the Delta Lake.
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_truncate_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        context
+            .parse_and_create_table(test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let local_data_folder = &context.data_folders.local_data_folder;
+        let mut delta_table = local_data_folder
+            .delta_lake
+            .delta_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // Write data to the table that should be deleted when the table is truncated.
+        let record_batch = test::compressed_segments_record_batch();
+        local_data_folder
+            .delta_lake
+            .write_compressed_segments_to_model_table(test::MODEL_TABLE_NAME, vec![record_batch])
+            .await
+            .unwrap();
+
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 1);
+
+        context
+            .truncate_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // The model table should not be deleted from the metadata Delta Lake.
+        let model_table_names = local_data_folder
+            .table_metadata_manager
+            .model_table_names()
+            .await
+            .unwrap();
+
+        assert!(model_table_names.contains(&test::MODEL_TABLE_NAME.to_owned()));
+
+        // The model table data should be deleted from the Delta Lake.
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_truncate_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        assert!(context
+            .truncate_table(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
