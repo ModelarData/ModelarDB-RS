@@ -1276,4 +1276,3 @@ fn update_configuration_and_assert_error(setting: &str, setting_value: &str, err
     assert!(response.is_err());
     assert_eq!(response.err().unwrap().message(), error);
 }
-

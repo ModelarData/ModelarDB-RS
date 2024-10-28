@@ -287,28 +287,26 @@ impl Context {
             .local_data_folder
             .table_metadata_manager
             .drop_table_metadata(table_name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         // Drop the table from the Delta Lake.
         self.data_folders
             .local_data_folder
             .delta_lake
             .drop_delta_lake_table(table_name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         Ok(())
     }
 
     /// Delete all data from the table with `table_name` if it exists. The table data is deleted
     /// from the storage engine, metadata Delta Lake, and data Delta Lake. If the table does not
-    /// exist or if it could not be truncated, [`ModelarDbError`] is returned.
-    pub async fn truncate_table(&self, table_name: &str) -> Result<(), ModelarDbError> {
+    /// exist or if it could not be truncated, [`ModelarDbServerError`] is returned.
+    pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
         // Deleting the table from the storage engine does not require the table to exist, so the
         // table is checked first.
         if self.check_if_table_exists(table_name).await.is_ok() {
-            return Err(ModelarDbError::TableError(format!(
+            return Err(ModelarDbServerError::InvalidArgument(format!(
                 "Table with name '{table_name}' does not exist."
             )));
         }
@@ -320,16 +318,14 @@ impl Context {
             .local_data_folder
             .table_metadata_manager
             .truncate_table_metadata(table_name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         // Delete the table data from the data Delta Lake.
         self.data_folders
             .local_data_folder
             .delta_lake
             .truncate_delta_lake_table(table_name)
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+            .await?;
 
         Ok(())
     }
@@ -337,11 +333,8 @@ impl Context {
     /// Drop the table from the storage engine by flushing the data managers and clearing the
     /// table from the data transfer component. The table is marked as dropped in the data transfer
     /// component first to avoid transferring data to the remote data folder when flushing. If the
-    /// table could not be dropped, [`ModelarDbError`] is returned.
-    async fn drop_table_from_storage_engine(
-        &self,
-        table_name: &str,
-    ) -> Result<(), ModelarDbError> {
+    /// table could not be dropped, [`ModelarDbServerError`] is returned.
+    async fn drop_table_from_storage_engine(&self, table_name: &str) -> Result<()> {
         let storage_engine = self.storage_engine.write().await;
         storage_engine.mark_table_as_dropped(table_name).await;
         storage_engine.flush().await?;

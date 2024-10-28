@@ -140,11 +140,7 @@ impl Cluster {
     /// For each node in the cluster, use the `CreateTable` action to create the table given by
     /// `sql`. If the table was successfully created for each node, return [`Ok`], otherwise return
     /// [`ModelarDbManagerError`].
-    pub async fn create_table(
-        &self,
-        sql: &str,
-        key: &MetadataValue<Ascii>,
-    ) -> Result<()> {
+    pub async fn create_table(&self, sql: &str, key: &MetadataValue<Ascii>) -> Result<()> {
         let action = Action {
             r#type: "CreateTable".to_owned(),
             body: sql.to_owned().into(),
@@ -168,11 +164,7 @@ impl Cluster {
     /// For each node in the cluster, use the `TruncateTable` action to truncate the table given by
     /// `table_name`. If the table was successfully truncated for each node, return [`Ok`], otherwise
     /// return [`ModelarDbManagerError`].
-    pub async fn truncate_table(
-        &self,
-        table_name: &str,
-        key: &MetadataValue<Ascii>,
-    ) -> Result<()> {
+    pub async fn truncate_table(&self, table_name: &str, key: &MetadataValue<Ascii>) -> Result<()> {
         let action = Action {
             r#type: "TruncateTable".to_owned(),
             body: table_name.to_owned().into(),

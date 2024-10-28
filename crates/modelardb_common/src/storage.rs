@@ -334,8 +334,8 @@ impl DeltaLake {
     }
 
     /// Truncate the Delta Lake table with `table_name` by deleting all rows in the table. If the
-    /// rows could not be deleted, a [`DeltaTableError`] is returned.
-    pub async fn truncate_delta_lake_table(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// rows could not be deleted, a [`ModelarDbCommonError`] is returned.
+    pub async fn truncate_delta_lake_table(&self, table_name: &str) -> Result<()> {
         let delta_table_ops = self.delta_ops(table_name).await?;
         delta_table_ops.delete().await?;
 

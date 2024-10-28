@@ -36,7 +36,6 @@ use std::thread::{self, JoinHandle};
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_types::errors::ModelarDbError;
 use modelardb_types::types::TimestampArray;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;

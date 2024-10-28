@@ -30,7 +30,6 @@ use datafusion::prelude::SessionContext;
 use deltalake::DeltaTable;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_types::errors::ModelarDbError;
 
 use crate::error::Result;
 use crate::query::model_table::ModelTable;

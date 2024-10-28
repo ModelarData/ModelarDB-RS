@@ -434,8 +434,8 @@ impl TableMetadataManager {
     /// metadata or the model table metadata from the metadata Delta Lake. Note that if truncating
     /// the metadata of a normal table, the metadata Delta Lake is unaffected, but it is allowed to
     /// keep the interface consistent. If the table does not exist or the metadata could not be
-    /// truncated, [`DeltaTableError`] is returned.
-    pub async fn truncate_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// truncated, [`ModelarDbCommonError`] is returned.
+    pub async fn truncate_table_metadata(&self, table_name: &str) -> Result<()> {
         if self.table_names().await?.contains(&table_name.to_owned()) {
             Ok(())
         } else if self
@@ -445,7 +445,7 @@ impl TableMetadataManager {
         {
             self.truncate_model_table_metadata(table_name).await
         } else {
-            Err(DeltaTableError::NotATable(format!(
+            Err(ModelarDbCommonError::InvalidArgument(format!(
                 "Table with name '{table_name}' does not exist."
             )))
         }
@@ -454,8 +454,8 @@ impl TableMetadataManager {
     /// Truncate the metadata for the model table with `table_name` from the metadata Delta Lake.
     /// This includes truncating the tags table for the model table and deleting the tag metadata
     /// from the `model_table_hash_table_name` table and the tag cache. If the metadata could not
-    /// be truncated, [`DeltaTableError`] is returned.
-    async fn truncate_model_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// be truncated, [`ModelarDbCommonError`] is returned.
+    async fn truncate_model_table_metadata(&self, table_name: &str) -> Result<()> {
         // Truncate the model_table_name_tags table.
         self.metadata_delta_lake
             .metadata_table_delta_ops(&format!("{table_name}_tags"))
@@ -471,8 +471,8 @@ impl TableMetadataManager {
 
     /// Delete the tag hash metadata for the model table with `table_name` from the
     /// `model_table_hash_table_name` table and the tag cache. If the metadata could not be deleted,
-    /// [`DeltaTableError`] is returned.
-    async fn delete_tag_hash_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// [`ModelarDbCommonError`] is returned.
+    async fn delete_tag_hash_metadata(&self, table_name: &str) -> Result<()> {
         // Delete the tag metadata from the model_table_hash_table_name table.
         self.metadata_delta_lake
             .metadata_table_delta_ops("model_table_hash_table_name")
