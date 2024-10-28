@@ -1211,7 +1211,7 @@ fn test_cannot_update_transfer_batch_size_in_bytes() {
     update_configuration_and_assert_error(
         "transfer_batch_size_in_bytes",
         "1",
-        "Configuration Error: Storage engine is not configured to transfer data.",
+        "Invalid State Error: Storage engine is not configured to transfer data.",
     );
 }
 
@@ -1222,7 +1222,7 @@ fn test_cannot_update_transfer_time_in_seconds() {
     update_configuration_and_assert_error(
         "transfer_time_in_seconds",
         "1",
-        "Configuration Error: Storage engine is not configured to transfer data.",
+        "Invalid State Error: Storage engine is not configured to transfer data.",
     );
 }
 
@@ -1276,3 +1276,4 @@ fn update_configuration_and_assert_error(setting: &str, setting_value: &str, err
     assert!(response.is_err());
     assert_eq!(response.err().unwrap().message(), error);
 }
+

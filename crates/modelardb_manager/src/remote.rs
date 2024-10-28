@@ -17,9 +17,9 @@
 //! An Apache Arrow Flight server that process requests using [`FlightServiceHandler`] can be started
 //! with [`start_apache_arrow_flight_server()`].
 
-use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::result::Result as StdResult;
 use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ use arrow_flight::{
     SchemaResult, Ticket,
 };
 use futures::{stream, Stream};
-use modelardb_common::arguments::{decode_argument, encode_argument};
+use modelardb_common::arguments;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::{parser, remote};
@@ -45,6 +45,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
 use crate::cluster::Node;
+use crate::error::{ModelarDbManagerError, Result};
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
@@ -52,9 +53,13 @@ pub fn start_apache_arrow_flight_server(
     context: Arc<Context>,
     runtime: &Arc<Runtime>,
     port: u16,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
-    let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
+    let localhost_with_port: SocketAddr = localhost_with_port.parse().map_err(|error| {
+        ModelarDbManagerError::InvalidArgument(format!(
+            "Unable to parse {localhost_with_port}: {error}"
+        ))
+    })?;
     let handler = FlightServiceHandler::new(context);
     let flight_service_server = FlightServiceServer::new(handler);
 
@@ -67,7 +72,7 @@ pub fn start_apache_arrow_flight_server(
                 .serve(localhost_with_port)
                 .await
         })
-        .map_err(|e| e.into())
+        .map_err(|error| error.into())
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -87,7 +92,7 @@ impl FlightServiceHandler {
 
     /// Return [`Ok`] if a table named `table_name` does not exist already in the metadata
     /// database, otherwise return [`Status`].
-    async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
+    async fn check_if_table_exists(&self, table_name: &str) -> StdResult<(), Status> {
         let existing_tables = self
             .context
             .remote_data_folder
@@ -115,7 +120,7 @@ impl FlightServiceHandler {
         table_name: &str,
         schema: &Schema,
         sql: &str,
-    ) -> Result<(), Status> {
+    ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context
             .remote_data_folder
@@ -154,7 +159,7 @@ impl FlightServiceHandler {
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
         sql: &str,
-    ) -> Result<(), Status> {
+    ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context
             .remote_data_folder
@@ -189,7 +194,7 @@ impl FlightServiceHandler {
     /// Drop the table from the metadata Delta Lake, the data Delta Lake, and from each node
     /// controlled by the manager. If the table does not exist or the table cannot be dropped from
     /// the remote data folder and from each node, return [`Status`].
-    async fn drop_cluster_table(&self, table_name: &str) -> Result<(), Status> {
+    async fn drop_cluster_table(&self, table_name: &str) -> StdResult<(), Status> {
         // Drop the table from the remote data folder metadata Delta Lake. This will return an error
         // if the table does not exist.
         self.context
@@ -258,25 +263,26 @@ impl FlightServiceHandler {
 #[tonic::async_trait]
 impl FlightService for FlightServiceHandler {
     type HandshakeStream =
-        Pin<Box<dyn Stream<Item = Result<HandshakeResponse, Status>> + Send + Sync + 'static>>;
+        Pin<Box<dyn Stream<Item = StdResult<HandshakeResponse, Status>> + Send + Sync + 'static>>;
     type ListFlightsStream =
-        Pin<Box<dyn Stream<Item = Result<FlightInfo, Status>> + Send + Sync + 'static>>;
+        Pin<Box<dyn Stream<Item = StdResult<FlightInfo, Status>> + Send + Sync + 'static>>;
     type DoGetStream =
-        Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
+        Pin<Box<dyn Stream<Item = StdResult<FlightData, Status>> + Send + Sync + 'static>>;
     type DoPutStream =
-        Pin<Box<dyn Stream<Item = Result<PutResult, Status>> + Send + Sync + 'static>>;
+        Pin<Box<dyn Stream<Item = StdResult<PutResult, Status>> + Send + Sync + 'static>>;
     type DoExchangeStream =
-        Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
-    type DoActionStream =
-        Pin<Box<dyn Stream<Item = Result<arrow_flight::Result, Status>> + Send + Sync + 'static>>;
+        Pin<Box<dyn Stream<Item = StdResult<FlightData, Status>> + Send + Sync + 'static>>;
+    type DoActionStream = Pin<
+        Box<dyn Stream<Item = StdResult<arrow_flight::Result, Status>> + Send + Sync + 'static>,
+    >;
     type ListActionsStream =
-        Pin<Box<dyn Stream<Item = Result<ActionType, Status>> + Send + Sync + 'static>>;
+        Pin<Box<dyn Stream<Item = StdResult<ActionType, Status>> + Send + Sync + 'static>>;
 
     /// Not implemented.
     async fn handshake(
         &self,
         _request: Request<Streaming<HandshakeRequest>>,
-    ) -> Result<Response<Self::HandshakeStream>, Status> {
+    ) -> StdResult<Response<Self::HandshakeStream>, Status> {
         Err(Status::unimplemented("Not implemented."))
     }
 
@@ -284,7 +290,7 @@ impl FlightService for FlightServiceHandler {
     async fn list_flights(
         &self,
         _request: Request<Criteria>,
-    ) -> Result<Response<Self::ListFlightsStream>, Status> {
+    ) -> StdResult<Response<Self::ListFlightsStream>, Status> {
         // Retrieve the table names from the metadata Delta Lake.
         let table_names = self
             .context
@@ -307,7 +313,7 @@ impl FlightService for FlightServiceHandler {
     async fn get_flight_info(
         &self,
         request: Request<FlightDescriptor>,
-    ) -> Result<Response<FlightInfo>, Status> {
+    ) -> StdResult<Response<FlightInfo>, Status> {
         let flight_descriptor = request.into_inner();
 
         // Extract the query.
@@ -345,7 +351,7 @@ impl FlightService for FlightServiceHandler {
     async fn poll_flight_info(
         &self,
         _request: Request<FlightDescriptor>,
-    ) -> Result<Response<PollInfo>, Status> {
+    ) -> StdResult<Response<PollInfo>, Status> {
         Err(Status::unimplemented("Not implemented."))
     }
 
@@ -354,7 +360,7 @@ impl FlightService for FlightServiceHandler {
     async fn get_schema(
         &self,
         request: Request<FlightDescriptor>,
-    ) -> Result<Response<SchemaResult>, Status> {
+    ) -> StdResult<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
         let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
 
@@ -395,7 +401,7 @@ impl FlightService for FlightServiceHandler {
     async fn do_get(
         &self,
         _request: Request<Ticket>,
-    ) -> Result<Response<Self::DoGetStream>, Status> {
+    ) -> StdResult<Response<Self::DoGetStream>, Status> {
         Err(Status::unimplemented("Not implemented."))
     }
 
@@ -403,7 +409,7 @@ impl FlightService for FlightServiceHandler {
     async fn do_put(
         &self,
         _request: Request<Streaming<FlightData>>,
-    ) -> Result<Response<Self::DoPutStream>, Status> {
+    ) -> StdResult<Response<Self::DoPutStream>, Status> {
         Err(Status::unimplemented("Not implemented."))
     }
 
@@ -411,7 +417,7 @@ impl FlightService for FlightServiceHandler {
     async fn do_exchange(
         &self,
         _request: Request<Streaming<FlightData>>,
-    ) -> Result<Response<Self::DoExchangeStream>, Status> {
+    ) -> StdResult<Response<Self::DoExchangeStream>, Status> {
         Err(Status::unimplemented("Not implemented."))
     }
 
@@ -441,7 +447,7 @@ impl FlightService for FlightServiceHandler {
     async fn do_action(
         &self,
         request: Request<Action>,
-    ) -> Result<Response<Self::DoActionStream>, Status> {
+    ) -> StdResult<Response<Self::DoActionStream>, Status> {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
@@ -560,10 +566,13 @@ impl FlightService for FlightServiceHandler {
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
-            let (url, offset_data) = decode_argument(&action.body)?;
-            let (mode, _offset_data) = decode_argument(offset_data)?;
+            let (url, offset_data) = arguments::decode_argument(&action.body)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            let (mode, _offset_data) = arguments::decode_argument(offset_data)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
+            let server_mode = ServerMode::from_str(mode)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
             let node = Node::new(url.to_string(), server_mode.clone());
 
             // Use the cluster to register the node in memory. This returns an error if the node is
@@ -586,7 +595,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             // unwrap() is safe since the key cannot contain invalid characters.
-            let mut response_body = encode_argument(self.context.key.to_str().unwrap());
+            let mut response_body = arguments::encode_argument(self.context.key.to_str().unwrap());
 
             let mut connection_info = self.context.remote_data_folder.connection_info.clone();
             response_body.append(&mut connection_info);
@@ -598,7 +607,8 @@ impl FlightService for FlightServiceHandler {
                 })
             }))))
         } else if action.r#type == "RemoveNode" {
-            let (url, _offset_data) = decode_argument(&action.body)?;
+            let (url, _offset_data) = arguments::decode_argument(&action.body)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // Remove the node with the given url from the metadata Delta Lake.
             self.context
@@ -629,7 +639,7 @@ impl FlightService for FlightServiceHandler {
     async fn list_actions(
         &self,
         _request: Request<Empty>,
-    ) -> Result<Response<Self::ListActionsStream>, Status> {
+    ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
             description: "Return the SQL required to create all tables and models tables \

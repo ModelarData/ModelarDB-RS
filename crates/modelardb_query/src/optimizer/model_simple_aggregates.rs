@@ -21,7 +21,7 @@
 
 use std::any::Any;
 use std::cmp::PartialEq;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
 use datafusion::datasource::physical_plan::parquet::ParquetExec;
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::functions_aggregate::average::Avg;
 use datafusion::functions_aggregate::count::Count;
 use datafusion::functions_aggregate::min_max::{Max, Min};
@@ -64,7 +64,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
         &self,
         execution_plan: Arc<dyn ExecutionPlan>,
         _config: &ConfigOptions,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         execution_plan
             .transform_down(&rewrite_aggregates_to_use_segments)
             .map(|transformed| transformed.data)
@@ -87,7 +87,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
 /// FIELD column and no filtering is performed by [`ParquetExec`].
 fn rewrite_aggregates_to_use_segments(
     execution_plan: Arc<dyn ExecutionPlan>,
-) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
+) -> DataFusionResult<Transformed<Arc<dyn ExecutionPlan>>> {
     // The rule tries to match the subtree of execution_plan so execution_plan can be updated.
     let execution_plan_children = execution_plan.children();
 
@@ -142,7 +142,7 @@ fn rewrite_aggregates_to_use_segments(
 fn try_new_aggregate_exec(
     aggregate_exec: &AggregateExec,
     grid_execs: Vec<&Arc<dyn ExecutionPlan>>,
-) -> Result<Arc<dyn ExecutionPlan>> {
+) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
     // aggregate_exec.input_schema().fields.len() == 1 should prevent this, but SortedJoinExec can
     // be constructed with multiple inputs so the number of children is checked just to be sure.
     if grid_execs.len() > 1 {
@@ -186,7 +186,7 @@ fn try_new_aggregate_exec(
 /// returned.
 fn try_rewrite_aggregate_exprs(
     aggregate_exec: &AggregateExec,
-) -> Result<Vec<Arc<dyn AggregateExpr>>> {
+) -> DataFusionResult<Vec<Arc<dyn AggregateExpr>>> {
     let aggregate_exprs = aggregate_exec.aggr_expr();
     let mut rewritten_aggregate_exprs: Vec<Arc<dyn AggregateExpr>> =
         Vec::with_capacity(aggregate_exprs.len());
@@ -224,14 +224,14 @@ fn try_rewrite_aggregate_exprs(
                     rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Avg))
                 }
                 _ => {
-                    return Err(DataFusionError::Internal(format!(
+                    return Err(DataFusionError::NotImplemented(format!(
                         "Aggregate function expression {} is currently not supported.",
                         aggregate_function_expr_name
                     )))
                 }
             }
         } else {
-            return Err(DataFusionError::Internal(format!(
+            return Err(DataFusionError::NotImplemented(format!(
                 "Aggregate expression {} is currently not supported.",
                 aggregate_expr.name()
             )));
@@ -300,13 +300,13 @@ impl AggregateExpr for ModelAggregateExpr {
     }
 
     /// Return a [`Field`] that specifies the name and [`DataType`] of the final aggregate.
-    fn field(&self) -> Result<Field> {
+    fn field(&self) -> DataFusionResult<Field> {
         Ok(Field::new(self.name(), self.data_type.clone(), false))
     }
 
     /// Return [`Fields`](Field) that specify the names and [`DataTypes`](DataType) of the
     /// [`Accumulator's`](Accumulator) intermediate state.
-    fn state_fields(&self) -> Result<Vec<Field>> {
+    fn state_fields(&self) -> DataFusionResult<Vec<Field>> {
         Ok(match &self.aggregate_type {
             ModelAggregateType::Sum => vec![Field::new("SUM", DataType::Float64, false)],
             ModelAggregateType::Avg => vec![
@@ -333,7 +333,7 @@ impl AggregateExpr for ModelAggregateExpr {
     }
 
     /// Return the [`Accumulator`].
-    fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
+    fn create_accumulator(&self) -> DataFusionResult<Box<dyn Accumulator>> {
         Ok(match self.aggregate_type {
             ModelAggregateType::Count => Box::new(ModelCountAccumulator { count: 0 }),
             ModelAggregateType::Min => Box::new(ModelMinAccumulator { min: f32::MAX }),
@@ -354,7 +354,7 @@ impl AggregateExpr for ModelAggregateExpr {
 pub struct ModelCountPhysicalExpr {}
 
 impl Display for ModelCountPhysicalExpr {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(f, "ModelCountPhysicalExpr(Int64)")
     }
 }
@@ -373,17 +373,17 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
     }
 
     /// Return the return [`DataType`] of this [`PhysicalExpr`].
-    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> DataFusionResult<DataType> {
         Ok(DataType::Int64)
     }
 
     /// Return [`false`] as this expression cannot return `NULL`.
-    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &Schema) -> DataFusionResult<bool> {
         Ok(false)
     }
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
-    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+    fn evaluate(&self, record_batch: &RecordBatch) -> DataFusionResult<ColumnarValue> {
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
         let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
 
@@ -425,7 +425,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+    ) -> DataFusionResult<Arc<dyn PhysicalExpr>> {
         Err(DataFusionError::Plan(
             "ModelCountPhysicalExpr does not support children.".to_owned(),
         ))
@@ -448,7 +448,7 @@ struct ModelCountAccumulator {
 
 impl Accumulator for ModelCountAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
         for array in values {
             self.count += array
                 .as_any()
@@ -460,12 +460,12 @@ impl Accumulator for ModelCountAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
+    fn merge_batch(&mut self, _states: &[ArrayRef]) -> DataFusionResult<()> {
         unreachable!()
     }
 
     /// Return the current state of the [`Accumulator`].
-    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+    fn state(&mut self) -> DataFusionResult<Vec<ScalarValue>> {
         // After this, the accumulators state should be equivalent to when it was created.
         let state = vec![ScalarValue::Int64(Some(self.count))];
         self.count = 0;
@@ -473,7 +473,7 @@ impl Accumulator for ModelCountAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&mut self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> DataFusionResult<ScalarValue> {
         // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
@@ -489,7 +489,7 @@ impl Accumulator for ModelCountAccumulator {
 pub struct ModelMinPhysicalExpr {}
 
 impl Display for ModelMinPhysicalExpr {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(f, "ModelMinPhysicalExpr(Float32)")
     }
 }
@@ -508,17 +508,17 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
     }
 
     /// Return the return [`DataType`] of this [`PhysicalExpr`].
-    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> DataFusionResult<DataType> {
         Ok(DataType::Float32)
     }
 
     /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
-    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &Schema) -> DataFusionResult<bool> {
         Ok(true)
     }
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
-    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+    fn evaluate(&self, record_batch: &RecordBatch) -> DataFusionResult<ColumnarValue> {
         let mut min = Value::MAX;
         let min_value_array = modelardb_types::array!(record_batch, 5, ValueArray);
         for row_index in 0..record_batch.num_rows() {
@@ -540,7 +540,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+    ) -> DataFusionResult<Arc<dyn PhysicalExpr>> {
         Err(DataFusionError::Plan(
             "ModelMinPhysicalExpr does not support children.".to_owned(),
         ))
@@ -563,7 +563,7 @@ struct ModelMinAccumulator {
 
 impl Accumulator for ModelMinAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
         for array in values {
             self.min = f32::min(
                 self.min,
@@ -578,12 +578,12 @@ impl Accumulator for ModelMinAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
+    fn merge_batch(&mut self, _states: &[ArrayRef]) -> DataFusionResult<()> {
         unreachable!()
     }
 
     /// Return the current state of the [`Accumulator`].
-    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+    fn state(&mut self) -> DataFusionResult<Vec<ScalarValue>> {
         // After this, the accumulators state should be equivalent to when it was created.
         let state = vec![ScalarValue::Float32(Some(self.min))];
         self.min = f32::MAX;
@@ -591,7 +591,7 @@ impl Accumulator for ModelMinAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&mut self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> DataFusionResult<ScalarValue> {
         // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
@@ -607,7 +607,7 @@ impl Accumulator for ModelMinAccumulator {
 pub struct ModelMaxPhysicalExpr {}
 
 impl Display for ModelMaxPhysicalExpr {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(f, "ModelMaxPhysicalExpr(Float32)")
     }
 }
@@ -626,17 +626,17 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
     }
 
     /// Return the return [`DataType`] of this [`PhysicalExpr`].
-    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> DataFusionResult<DataType> {
         Ok(DataType::Float32)
     }
 
     /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
-    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &Schema) -> DataFusionResult<bool> {
         Ok(true)
     }
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
-    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+    fn evaluate(&self, record_batch: &RecordBatch) -> DataFusionResult<ColumnarValue> {
         let mut max = Value::MIN;
         let max_value_array = modelardb_types::array!(record_batch, 6, ValueArray);
         for row_index in 0..record_batch.num_rows() {
@@ -658,7 +658,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+    ) -> DataFusionResult<Arc<dyn PhysicalExpr>> {
         Err(DataFusionError::Plan(
             "ModelMaxPhysicalExpr does not support children.".to_owned(),
         ))
@@ -681,7 +681,7 @@ struct ModelMaxAccumulator {
 
 impl Accumulator for ModelMaxAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
         for array in values {
             self.max = f32::max(
                 self.max,
@@ -696,12 +696,12 @@ impl Accumulator for ModelMaxAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
+    fn merge_batch(&mut self, _states: &[ArrayRef]) -> DataFusionResult<()> {
         unreachable!()
     }
 
     /// Return the current state of the [`Accumulator`].
-    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+    fn state(&mut self) -> DataFusionResult<Vec<ScalarValue>> {
         // After this, the accumulators state should be equivalent to when it was created.
         let state = vec![ScalarValue::Float32(Some(self.max))];
         self.max = f32::MIN;
@@ -709,7 +709,7 @@ impl Accumulator for ModelMaxAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&mut self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> DataFusionResult<ScalarValue> {
         // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
@@ -725,7 +725,7 @@ impl Accumulator for ModelMaxAccumulator {
 pub struct ModelSumPhysicalExpr {}
 
 impl Display for ModelSumPhysicalExpr {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(f, "ModelSumPhysicalExpr(Float64)")
     }
 }
@@ -744,17 +744,17 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
     }
 
     /// Return the return [`DataType`] of this [`PhysicalExpr`].
-    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> DataFusionResult<DataType> {
         Ok(DataType::Float64)
     }
 
     /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
-    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &Schema) -> DataFusionResult<bool> {
         Ok(true)
     }
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
-    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+    fn evaluate(&self, record_batch: &RecordBatch) -> DataFusionResult<ColumnarValue> {
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
         let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
 
@@ -810,7 +810,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+    ) -> DataFusionResult<Arc<dyn PhysicalExpr>> {
         Err(DataFusionError::Plan(
             "ModelSumPhysicalExpr does not support children.".to_owned(),
         ))
@@ -833,7 +833,7 @@ struct ModelSumAccumulator {
 
 impl Accumulator for ModelSumAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
         for array in values {
             self.sum += array
                 .as_any()
@@ -845,13 +845,13 @@ impl Accumulator for ModelSumAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
+    fn merge_batch(&mut self, _states: &[ArrayRef]) -> DataFusionResult<()> {
         unreachable!()
     }
 
     /// Return the current state of the [`Accumulator`]. It must match
     /// [SumAccumulator](repository/datafusion/physical-expr/src/aggregate/sum.rs).
-    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+    fn state(&mut self) -> DataFusionResult<Vec<ScalarValue>> {
         // After this, the accumulators state should be equivalent to when it was created.
         let state = vec![ScalarValue::Float64(Some(self.sum))];
         self.sum = 0.0;
@@ -859,7 +859,7 @@ impl Accumulator for ModelSumAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&mut self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> DataFusionResult<ScalarValue> {
         // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
@@ -875,7 +875,7 @@ impl Accumulator for ModelSumAccumulator {
 pub struct ModelAvgPhysicalExpr {}
 
 impl Display for ModelAvgPhysicalExpr {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(f, "ModelAvgPhysicalExpr(Float64)")
     }
 }
@@ -894,17 +894,17 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
     }
 
     /// Return the return [`DataType`] of this [`PhysicalExpr`].
-    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+    fn data_type(&self, _input_schema: &Schema) -> DataFusionResult<DataType> {
         Ok(DataType::Float64)
     }
 
     /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
-    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+    fn nullable(&self, _input_schema: &Schema) -> DataFusionResult<bool> {
         Ok(true)
     }
 
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
-    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
+    fn evaluate(&self, record_batch: &RecordBatch) -> DataFusionResult<ColumnarValue> {
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
         let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
 
@@ -964,7 +964,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+    ) -> DataFusionResult<Arc<dyn PhysicalExpr>> {
         Err(DataFusionError::Plan(
             "ModelAvgPhysicalExpr does not support children.".to_owned(),
         ))
@@ -989,7 +989,7 @@ struct ModelAvgAccumulator {
 
 impl Accumulator for ModelAvgAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
         for array in values {
             let array = array.as_any().downcast_ref::<Float64Array>().unwrap();
             self.sum += array.value(0);
@@ -999,13 +999,13 @@ impl Accumulator for ModelAvgAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
+    fn merge_batch(&mut self, _states: &[ArrayRef]) -> DataFusionResult<()> {
         unreachable!()
     }
 
     /// Return the current state of the [`Accumulator`]. It must match
     /// [AvgAccumulator](repository/datafusion/physical-expr/src/aggregate/average.rs).
-    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+    fn state(&mut self) -> DataFusionResult<Vec<ScalarValue>> {
         // After this, the accumulators state should be equivalent to when it was created.
         let state = vec![
             ScalarValue::UInt64(Some(self.count)),
@@ -1017,7 +1017,7 @@ impl Accumulator for ModelAvgAccumulator {
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&mut self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> DataFusionResult<ScalarValue> {
         // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
@@ -1033,7 +1033,7 @@ mod tests {
     use super::*;
 
     use std::any::TypeId;
-    use std::fmt::{self, Debug};
+    use std::fmt::Debug;
 
     use datafusion::datasource::physical_plan::parquet::ParquetExec;
     use datafusion::execution::session_state::SessionStateBuilder;
@@ -1073,19 +1073,19 @@ mod tests {
             &self,
             _data: SendableRecordBatchStream,
             _context: &Arc<TaskContext>,
-        ) -> Result<u64> {
+        ) -> DataFusionResult<u64> {
             unimplemented!();
         }
     }
 
     impl Debug for NoOpDataSink {
-        fn fmt(&self, _f: &mut Formatter<'_>) -> fmt::Result {
+        fn fmt(&self, _f: &mut Formatter<'_>) -> FmtResult {
             unimplemented!();
         }
     }
 
     impl DisplayAs for NoOpDataSink {
-        fn fmt_as(&self, _t: DisplayFormatType, _f: &mut Formatter<'_>) -> fmt::Result {
+        fn fmt_as(&self, _t: DisplayFormatType, _f: &mut Formatter<'_>) -> FmtResult {
             unimplemented!();
         }
     }

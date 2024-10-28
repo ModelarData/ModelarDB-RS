@@ -28,7 +28,6 @@ use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, StringArray,
 };
 use arrow::datatypes::Schema;
-use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
@@ -36,9 +35,9 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
 use datafusion::prelude::col;
 use deltalake::kernel::{DataType, StructField};
-use deltalake::DeltaTableError;
 use modelardb_types::types::ErrorBound;
 
+use crate::error::{ModelarDbCommonError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataDeltaLake;
 use crate::parser;
@@ -61,9 +60,10 @@ pub struct TableMetadataManager {
 }
 
 impl TableMetadataManager {
-    /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and initialize
-    /// the metadata tables. If the metadata tables could not be created, return [`DeltaTableError`].
-    pub async fn try_from_path(folder_path: &StdPath) -> Result<Self, DeltaTableError> {
+    /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and
+    /// initialize the metadata tables. If the metadata tables could not be created, return
+    /// [`ModelarDbCommonError`].
+    pub async fn try_from_path(folder_path: &StdPath) -> Result<Self> {
         let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::from_path(folder_path)?,
             tag_value_hashes: DashMap::new(),
@@ -79,8 +79,8 @@ impl TableMetadataManager {
     /// Create a new [`TableMetadataManager`] that saves the metadata to a remote object store given
     /// by `connection_info` and initialize the metadata tables. If `connection_info` could not be
     /// parsed, the connection cannot be made, or the metadata tables could not be created, return
-    /// [`DeltaTableError`].
-    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self, DeltaTableError> {
+    /// [`ModelarDbCommonError`].
+    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
         let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)?,
             tag_value_hashes: DashMap::new(),
@@ -95,13 +95,13 @@ impl TableMetadataManager {
 
     /// Create a new [`TableMetadataManager`] that saves the metadata to a remote S3-compatible
     /// object store and initialize the metadata tables. If the connection cannot be made or the
-    /// metadata tables could not be created, return [`DeltaTableError`].
+    /// metadata tables could not be created, return [`ModelarDbCommonError`].
     pub async fn try_from_s3_configuration(
         endpoint: String,
         bucket_name: String,
         access_key_id: String,
         secret_access_key: String,
-    ) -> Result<Self, DeltaTableError> {
+    ) -> Result<Self> {
         let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::try_from_s3_configuration(
                 endpoint,
@@ -121,12 +121,12 @@ impl TableMetadataManager {
 
     /// Create a new [`TableMetadataManager`] that saves the metadata to a remote Azure-compatible
     /// object store and initialize the metadata tables. If the connection cannot be made or the
-    /// metadata tables could not be created, return [`DeltaTableError`].
+    /// metadata tables could not be created, return [`ModelarDbCommonError`].
     pub async fn try_from_azure_configuration(
         account_name: String,
         access_key: String,
         container_name: String,
-    ) -> Result<Self, DeltaTableError> {
+    ) -> Result<Self> {
         let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::try_from_azure_configuration(
                 account_name,
@@ -152,8 +152,9 @@ impl TableMetadataManager {
     /// * The `model_table_field_columns` table contains the name, index, error bound value, whether
     ///   error bound is relative, and generation expression of the field columns in each model table.
     ///
-    /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
-    async fn create_metadata_delta_lake_tables(&self) -> Result<(), DeltaTableError> {
+    /// If the tables exist or were created, return [`Ok`], otherwise return
+    /// [`ModelarDbCommonError`].
+    async fn create_metadata_delta_lake_tables(&self) -> Result<()> {
         // Create the table_metadata table if it does not exist.
         self.metadata_delta_lake
             .create_delta_lake_table(
@@ -211,8 +212,8 @@ impl TableMetadataManager {
 
     /// Save the created table to the metadata Delta Lake. This consists of adding a row to the
     /// `table_metadata` table with the `name` of the table and the `sql` used to create the table.
-    /// If the table metadata was saved, return [`Ok`], otherwise return [`DeltaTableError`].
-    pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<(), DeltaTableError> {
+    /// If the table metadata was saved, return [`Ok`], otherwise return [`ModelarDbCommonError`].
+    pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
         self.metadata_delta_lake
             .append_to_table(
                 "table_metadata",
@@ -227,24 +228,22 @@ impl TableMetadataManager {
     }
 
     /// Return the name of each table currently in the metadata Delta Lake. Note that this does not
-    /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
-    pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
+    /// include model tables. If the table names cannot be retrieved, [`ModelarDbCommonError`] is
+    /// returned.
+    pub async fn table_names(&self) -> Result<Vec<String>> {
         self.table_names_of_type(TableType::Table).await
     }
 
     /// Return the name of each model table currently in the metadata Delta Lake. Note that this
-    /// does not include tables. If the table names cannot be retrieved, [`DeltaTableError`] is
+    /// does not include tables. If the table names cannot be retrieved, [`ModelarDbCommonError`] is
     /// returned.
-    pub async fn model_table_names(&self) -> Result<Vec<String>, DeltaTableError> {
+    pub async fn model_table_names(&self) -> Result<Vec<String>> {
         self.table_names_of_type(TableType::ModelTable).await
     }
 
-    /// Return the name of tables of `table_type`. Returns [`DeltaTableError`] if the table names
-    /// cannot be retrieved.
-    async fn table_names_of_type(
-        &self,
-        table_type: TableType,
-    ) -> Result<Vec<String>, DeltaTableError> {
+    /// Return the name of tables of `table_type`. Returns [`ModelarDbCommonError`] if the table
+    /// names cannot be retrieved.
+    async fn table_names_of_type(&self, table_type: TableType) -> Result<Vec<String>> {
         let table_type = match table_type {
             TableType::Table => "table",
             TableType::ModelTable => "model_table",
@@ -269,7 +268,7 @@ impl TableMetadataManager {
         &self,
         model_table_metadata: &ModelTableMetadata,
         sql: &str,
-    ) -> Result<(), DeltaTableError> {
+    ) -> Result<()> {
         // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
         let mut table_name_tags_columns = vec![StructField::new("hash", DataType::LONG, false)];
 
@@ -366,8 +365,8 @@ impl TableMetadataManager {
 
     /// Depending on the type of the table with `table_name`, drop either the normal table
     /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
-    /// exist or the metadata could not be dropped, [`DeltaTableError`] is returned.
-    pub async fn drop_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// exist or the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
+    pub async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
         if self.table_names().await?.contains(&table_name.to_owned()) {
             self.drop_normal_table_metadata(table_name).await
         } else if self
@@ -377,15 +376,15 @@ impl TableMetadataManager {
         {
             self.drop_model_table_metadata(table_name).await
         } else {
-            Err(DeltaTableError::NotATable(format!(
+            Err(ModelarDbCommonError::InvalidArgument(format!(
                 "Table with name '{table_name}' does not exist."
             )))
         }
     }
 
     /// Drop the metadata for the normal table with `table_name` from the `table_metadata` table in the
-    /// metadata Delta Lake. If the metadata could not be dropped, [`DeltaTableError`] is returned.
-    async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// metadata Delta Lake. If the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
+    async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<()> {
         let ops = self
             .metadata_delta_lake
             .metadata_table_delta_ops("table_metadata")
@@ -402,8 +401,8 @@ impl TableMetadataManager {
     /// This includes dropping the tags table for the model table, deleting a row from the
     /// `model_table_metadata` table, deleting a row from the `model_table_field_columns` table for
     /// each field column, and deleting the tag metadata from the `model_table_hash_table_name` table
-    /// and the tag cache. If the metadata could not be dropped, [`DeltaTableError`] is returned.
-    async fn drop_model_table_metadata(&self, table_name: &str) -> Result<(), DeltaTableError> {
+    /// and the tag cache. If the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
+    async fn drop_model_table_metadata(&self, table_name: &str) -> Result<()> {
         // Drop the model_table_name_tags table.
         self.metadata_delta_lake
             .drop_delta_lake_table(&format!("{table_name}_tags"))
@@ -491,10 +490,8 @@ impl TableMetadataManager {
     }
 
     /// Return the [`ModelTableMetadata`] of each model table currently in the metadata Delta Lake.
-    /// If the [`ModelTableMetadata`] cannot be retrieved, [`DeltaTableError`] is returned.
-    pub async fn model_table_metadata(
-        &self,
-    ) -> Result<Vec<Arc<ModelTableMetadata>>, DeltaTableError> {
+    /// If the [`ModelTableMetadata`] cannot be retrieved, [`ModelarDbCommonError`] is returned.
+    pub async fn model_table_metadata(&self) -> Result<Vec<Arc<ModelTableMetadata>>> {
         let batch = self
             .metadata_delta_lake
             .query_table(
@@ -522,12 +519,12 @@ impl TableMetadataManager {
     }
 
     /// Return the [`ModelTableMetadata`] for the model table with `table_name` in the metadata
-    /// Delta Lake. If the [`ModelTableMetadata`] cannot be retrieved, [`DeltaTableError`] is
+    /// Delta Lake. If the [`ModelTableMetadata`] cannot be retrieved, [`ModelarDbCommonError`] is
     /// returned.
     pub async fn model_table_metadata_for_model_table(
         &self,
         table_name: &str,
-    ) -> Result<ModelTableMetadata, DeltaTableError> {
+    ) -> Result<ModelTableMetadata> {
         let batch = self
             .metadata_delta_lake
             .query_table(
@@ -537,7 +534,9 @@ impl TableMetadataManager {
             .await?;
 
         if batch.num_rows() == 0 {
-            return Err(DeltaTableError::NoMetadata);
+            return Err(ModelarDbCommonError::InvalidArgument(format!(
+                "No metadata for model table named '{table_name}'."
+            )));
         }
 
         let table_name_array = modelardb_types::array!(batch, 0, StringArray);
@@ -551,13 +550,13 @@ impl TableMetadataManager {
     }
 
     /// Convert a row from the table "model_table_metadata" to an instance of
-    /// [`ModelTableMetadata`]. Returns [`DeltaTableError`] if a model table with `table_name` does
-    /// not exist or the bytes in `query_schema_bytes` are not a valid schema.
+    /// [`ModelTableMetadata`]. Returns [`ModelarDbCommonError`] if a model table with `table_name`
+    /// does not exist or the bytes in `query_schema_bytes` are not a valid schema.
     async fn model_table_metadata_row_to_model_table_metadata(
         &self,
         table_name: &str,
         query_schema_bytes: &[u8],
-    ) -> Result<ModelTableMetadata, DeltaTableError> {
+    ) -> Result<ModelTableMetadata> {
         let query_schema = try_convert_bytes_to_schema(query_schema_bytes.into())?;
 
         let error_bounds = self
@@ -573,16 +572,15 @@ impl TableMetadataManager {
             error_bounds,
             generated_columns,
         )
-        .map_err(|error| DeltaTableError::Generic(error.to_string()))
     }
 
     /// Return the error bounds for the columns in the model table with `table_name`. If a model
-    /// table with `table_name` does not exist, [`DeltaTableError`] is returned.
+    /// table with `table_name` does not exist, [`ModelarDbCommonError`] is returned.
     async fn error_bounds(
         &self,
         table_name: &str,
         query_schema_columns: usize,
-    ) -> Result<Vec<ErrorBound>, DeltaTableError> {
+    ) -> Result<Vec<ErrorBound>> {
         let batch = self
             .metadata_delta_lake
             .query_table(
@@ -622,13 +620,13 @@ impl TableMetadataManager {
         Ok(column_to_error_bound)
     }
 
-    /// Return the generated columns for the model table with `table_name` and `df_schema`.
-    /// If a model table with `table_name` does not exist, [`DeltaTableError`] is returned.
+    /// Return the generated columns for the model table with `table_name` and `df_schema`. If a
+    /// model table with `table_name` does not exist, [`ModelarDbCommonError`] is returned.
     async fn generated_columns(
         &self,
         table_name: &str,
         df_schema: &DFSchema,
-    ) -> Result<Vec<Option<GeneratedColumn>>, DeltaTableError> {
+    ) -> Result<Vec<Option<GeneratedColumn>>> {
         let batch = self
             .metadata_delta_lake
             .query_table(
@@ -673,16 +671,16 @@ impl TableMetadataManager {
 
     /// Return the tag hash for the given list of tag values either by retrieving it from a cache
     /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
-    /// hash is not in the cache, it is saved to the cache, persisted to the `model_table_tags` table
-    /// if it does not already contain it, and persisted to the `model_table_hash_table_name` table if
-    /// it does not already contain it. If the hash was saved to the metadata Delta Lake, also return
-    /// [`true`]. If the `model_table_tags` or the `model_table_hash_table_name` table cannot
-    /// be accessed, [`DeltaTableError`] is returned.
+    /// hash is not in the cache, it is saved to the cache, persisted to the `model_table_tags`
+    /// table if it does not already contain it, and persisted to the `model_table_hash_table_name`
+    /// table if it does not already contain it. If the hash was saved to the metadata Delta Lake,
+    /// also return [`true`]. If the `model_table_tags` or the `model_table_hash_table_name` table
+    /// cannot be accessed, [`ModelarDbCommonError`] is returned.
     pub async fn lookup_or_compute_tag_hash(
         &self,
         model_table_metadata: &ModelTableMetadata,
         tag_values: &[String],
-    ) -> Result<(u64, bool), DeltaTableError> {
+    ) -> Result<(u64, bool)> {
         let cache_key = {
             let mut cache_key_list = tag_values.to_vec();
             cache_key_list.push(model_table_metadata.name.clone());
@@ -723,13 +721,13 @@ impl TableMetadataManager {
     /// contain it, and to the `model_table_hash_table_name` table if it does not already contain it.
     /// If the tables did not contain the tag hash, meaning it is a new tag combination, return
     /// [`true`]. If the metadata cannot be inserted into either `model_table_tags` or
-    /// `model_table_hash_table_name`, [`DeltaTableError`] is returned.
+    /// `model_table_hash_table_name`, [`ModelarDbCommonError`] is returned.
     pub async fn save_tag_hash_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
         tag_hash: u64,
         tag_values: &[String],
-    ) -> Result<bool, DeltaTableError> {
+    ) -> Result<bool> {
         let table_name = model_table_metadata.name.as_str();
         let tag_columns = &model_table_metadata
             .tag_column_indices
@@ -813,8 +811,9 @@ impl TableMetadataManager {
     }
 
     /// Return the name of the table that contains the time series with `tag_hash`. Returns a
-    /// [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata Delta Lake.
-    pub async fn tag_hash_to_table_name(&self, tag_hash: u64) -> Result<String, DeltaTableError> {
+    /// [`ModelarDbCommonError`] if the necessary data cannot be retrieved from the metadata Delta
+    /// Lake.
+    pub async fn tag_hash_to_table_name(&self, tag_hash: u64) -> Result<String> {
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
         let batch = self
@@ -832,7 +831,7 @@ impl TableMetadataManager {
 
         let table_names = modelardb_types::array!(batch, 0, StringArray);
         if table_names.is_empty() {
-            Err(DeltaTableError::Generic(format!(
+            Err(ModelarDbCommonError::InvalidArgument(format!(
                 "No table contains a time series with tag hash '{tag_hash}'."
             )))
         } else {
@@ -842,13 +841,13 @@ impl TableMetadataManager {
 
     /// Return a mapping from tag hashes to the tags in the columns with the names in
     /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
-    /// Returns a [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata
-    /// Delta Lake.
+    /// Returns a [`ModelarDbCommonError`] if the necessary data cannot be retrieved from the
+    /// metadata Delta Lake.
     pub async fn mapping_from_hash_to_tags(
         &self,
         model_table_name: &str,
         tag_column_names: &[&str],
-    ) -> Result<HashMap<u64, Vec<String>>, DeltaTableError> {
+    ) -> Result<HashMap<u64, Vec<String>>> {
         // Return an empty HashMap if no tag column names are passed to keep the signature simple.
         if tag_column_names.is_empty() {
             return Ok(HashMap::new());
@@ -901,27 +900,20 @@ impl Debug for TableMetadataManager {
 }
 
 /// Convert a [`Schema`] to [`Vec<u8>`].
-fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>, DeltaTableError> {
+fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
     let options = IpcWriteOptions::default();
     let schema_as_ipc = SchemaAsIpc::new(schema, &options);
 
-    let ipc_message: IpcMessage =
-        schema_as_ipc
-            .try_into()
-            .map_err(|error: ArrowError| DeltaTableError::InvalidData {
-                violations: vec![error.to_string()],
-            })?;
+    let ipc_message: IpcMessage = schema_as_ipc.try_into()?;
 
     Ok(ipc_message.0.to_vec())
 }
 
 /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-/// [`DeltaTableError`].
-fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, DeltaTableError> {
+/// [`ModelarDbCommonError`].
+fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
     let ipc_message = IpcMessage(schema_bytes.into());
-    Schema::try_from(ipc_message).map_err(|error| DeltaTableError::InvalidData {
-        violations: vec![error.to_string()],
-    })
+    Schema::try_from(ipc_message).map_err(|error| error.into())
 }
 
 /// Convert a [`&[usize]`] to a [`Vec<u8>`].
@@ -930,12 +922,12 @@ fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
 }
 
 /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
-/// [`mem::size_of::<usize>()`], otherwise [`DeltaTableError`] is returned.
-fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, DeltaTableError> {
+/// [`mem::size_of::<usize>()`], otherwise [`ModelarDbCommonError`] is returned.
+fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
     if bytes.len() % mem::size_of::<usize>() != 0 {
-        Err(DeltaTableError::InvalidData {
-            violations: vec!["Bytes is not a vector of usizes".to_owned()],
-        })
+        Err(ModelarDbCommonError::InvalidArgument(
+            "Bytes is not a vector of usizes.".to_owned(),
+        ))
     } else {
         // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
         Ok(bytes

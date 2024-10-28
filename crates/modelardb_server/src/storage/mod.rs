@@ -30,25 +30,22 @@ mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
 use std::env;
-use std::io::{Error as IOError, ErrorKind};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::errors::ParquetError;
-use deltalake::DeltaTableError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_types::errors::ModelarDbError;
 use modelardb_types::types::TimestampArray;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
-use tonic::Status;
 use tracing::error;
 
 use crate::configuration::ConfigurationManager;
 use crate::context::Context;
 use crate::data_folders::DataFolders;
+use crate::error::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
@@ -94,13 +91,14 @@ pub struct StorageEngine {
 
 impl StorageEngine {
     /// Return [`StorageEngine`] that writes ingested data to `local_data_folder` and optionally
-    /// transfers compressed data to `remote_data_folder` if it is given. Returns [`String`] if
-    /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
+    /// transfers compressed data to `remote_data_folder` if it is given. Returns
+    /// [`ModelarDbServerError`] if `remote_data_folder` is given but [`DataTransfer`] cannot not be
+    /// created.
     pub(super) async fn try_new(
         runtime: Arc<Runtime>,
         data_folders: DataFolders,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
-    ) -> Result<Self, IOError> {
+    ) -> Result<Self> {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
         let memory_pool = Arc::new(MemoryPool::new(
@@ -170,8 +168,7 @@ impl StorageEngine {
                 .local_data_folder
                 .table_metadata_manager
                 .table_names()
-                .await
-                .map_err(IOError::other)?;
+                .await?;
 
             let data_transfer = DataTransfer::try_new(
                 data_folders.local_data_folder.clone(),
@@ -180,8 +177,7 @@ impl StorageEngine {
                 configuration_manager.transfer_batch_size_in_bytes(),
                 used_disk_space_metric.clone(),
             )
-            .await
-            .map_err(IOError::other)?;
+            .await?;
 
             Some(data_transfer)
         } else {
@@ -228,8 +224,7 @@ impl StorageEngine {
         if data_transfer_is_some {
             storage_engine
                 .set_transfer_time_in_seconds(configuration_manager.transfer_time_in_seconds())
-                .await
-                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
+                .await?;
         }
 
         Ok(storage_engine)
@@ -242,15 +237,14 @@ impl StorageEngine {
         name: &str,
         function: F,
         join_handles: &mut Vec<JoinHandle<()>>,
-    ) -> Result<(), IOError>
+    ) -> Result<()>
     where
         F: FnOnce() + Send + Clone + 'static,
     {
         for thread_number in 0..num_threads {
             let join_handle = thread::Builder::new()
                 .name(format!("{} {}", name, thread_number))
-                .spawn(function.clone())
-                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
+                .spawn(function.clone())?;
 
             join_handles.push(join_handle);
         }
@@ -261,29 +255,29 @@ impl StorageEngine {
     /// Add references to the
     /// [`UncompressedDataBuffers`](uncompressed_data_buffer::UncompressedDataBuffer) currently on
     /// disk to [`UncompressedDataManager`] which immediately will start compressing them.
-    pub(super) async fn initialize(&self, context: &Context) -> Result<(), IOError> {
+    pub(super) async fn initialize(&self, context: &Context) -> Result<()> {
         self.uncompressed_data_manager.initialize(context).await
     }
 
     /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if `record_batch` was
-    /// successfully written to an Apache Parquet file, otherwise return [`Err`].
+    /// successfully written to an Apache Parquet file, otherwise return [`ModelarDbServerError`].
     pub(super) async fn insert_record_batch(
         &self,
         table_name: &str,
         record_batch: RecordBatch,
-    ) -> Result<(), DeltaTableError> {
+    ) -> Result<()> {
         self.compressed_data_manager
             .insert_record_batch(table_name, record_batch)
             .await
     }
 
     /// Pass `data_points` to [`UncompressedDataManager`]. Return [`Ok`] if all of the data points
-    /// were successfully inserted, otherwise return [`String`].
+    /// were successfully inserted, otherwise return [`ModelarDbServerError`].
     pub(super) async fn insert_data_points(
         &mut self,
         model_table_metadata: Arc<ModelTableMetadata>,
         multivariate_data_points: RecordBatch,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
         self.memory_pool
             .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size());
@@ -300,53 +294,39 @@ impl StorageEngine {
                 model_table_metadata,
                 multivariate_data_points,
             )))
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.into())
     }
 
-    /// Flush all the data the [`StorageEngine`] is currently storing in memory to disk. If all
-    /// the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
-    pub(super) async fn flush(&self) -> Result<(), String> {
-        self.channels
-            .ingested_data_sender
-            .send(Message::Flush)
-            .map_err(|error| format!("Unable to flush data in storage engine due to: {}", error))?;
+    /// Flush all the data the [`StorageEngine`] is currently storing in memory to disk. If all the
+    /// data is successfully flushed to disk, return [`Ok`], otherwise return
+    /// [`ModelarDbServerError`].
+    pub(super) async fn flush(&self) -> Result<()> {
+        self.channels.ingested_data_sender.send(Message::Flush)?;
 
         // Wait until all the data in the storage engine has been flushed.
-        self.channels
-            .result_receiver
-            .recv()
-            .map_err(|error| format!("Failed to receive result message due to: {}", error))?
-            .map_err(|error| format!("Failed to flush data in storage engine due to: {}", error))
+        self.channels.result_receiver.recv()?
     }
 
     /// Transfer all the compressed data the [`StorageEngine`] is managing to the remote object store.
-    pub(super) async fn transfer(&mut self) -> Result<(), Status> {
+    pub(super) async fn transfer(&mut self) -> Result<()> {
         if let Some(data_transfer) = &*self.compressed_data_manager.data_transfer.read().await {
-            data_transfer
-                .transfer_larger_than_threshold(0)
-                .await
-                .map_err(|error: ParquetError| Status::internal(error.to_string()))
+            data_transfer.transfer_larger_than_threshold(0).await
         } else {
-            Err(Status::internal("No remote object store available."))
+            Err(ModelarDbServerError::InvalidState(
+                "No remote object store available.".to_owned(),
+            ))
         }
     }
 
-    /// Flush all the data the [`StorageEngine`] is currently storing in memory to disk and stop
-    /// all the threads. If all the data is successfully flushed to disk and all the threads stopped,
-    /// return [`Ok`], otherwise return [`String`]. This method is purposely `&mut self` instead of
-    /// `self` so it can be called through an Arc.
-    pub(super) fn close(&mut self) -> Result<(), String> {
-        self.channels
-            .ingested_data_sender
-            .send(Message::Stop)
-            .map_err(|error| format!("Unable to stop the storage engine due to: {}", error))?;
+    /// Flush all the data the [`StorageEngine`] is currently storing in memory to disk and stop all
+    /// the threads. If all the data is successfully flushed to disk and all the threads stopped,
+    /// return [`Ok`], otherwise return [`ModelarDbServerError`]. This method is purposely `&mut
+    /// self` instead of `self` so it can be called through an Arc.
+    pub(super) fn close(&mut self) -> Result<()> {
+        self.channels.ingested_data_sender.send(Message::Stop)?;
 
         // Wait until all the data in the storage engine has been flushed.
-        self.channels
-            .result_receiver
-            .recv()
-            .map_err(|error| format!("Failed to receive result message due to: {}", error))?
-            .map_err(|error| format!("Failed to flush data in storage engine due to: {}", error))?;
+        self.channels.result_receiver.recv()??;
 
         // unwrap() is safe as join() only returns an error if the thread panicked.
         self.join_handles
@@ -411,22 +391,23 @@ impl StorageEngine {
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
-    /// Returns [`IOError`] if the memory cannot be updated because a buffer cannot be spilled.
+    /// Returns [`ModelarDbServerError`] if the memory cannot be updated because a buffer cannot be
+    /// spilled.
     pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(
         &self,
         value_change: isize,
-    ) -> Result<(), IOError> {
+    ) -> Result<()> {
         self.uncompressed_data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
             .await
     }
 
-    /// Change the amount of memory for compressed data in bytes according to `value_change`. If
-    /// the value is changed successfully return [`Ok`], otherwise return [`IOError`].
+    /// Change the amount of memory for compressed data in bytes according to `value_change`. If the
+    /// value is changed successfully return [`Ok`], otherwise return [`ModelarDbServerError`].
     pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
         &self,
         value_change: isize,
-    ) -> Result<(), IOError> {
+    ) -> Result<()> {
         self.compressed_data_manager
             .adjust_compressed_remaining_memory_in_bytes(value_change)
             .await
@@ -454,33 +435,32 @@ impl StorageEngine {
         }
     }
 
-    /// Set the transfer batch size in the data transfer component to `new_value` if it exists. If
-    /// a data transfer component does not exist, or the value could not be changed,
-    /// return [`ModelarDbError`].
+    /// Set the transfer batch size in the data transfer component to `new_value` if it exists. If a
+    /// data transfer component does not exist, or the value could not be changed, return
+    /// [`ModelarDbServerError`].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &self,
         new_value: Option<usize>,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await
         {
             data_transfer
                 .set_transfer_batch_size_in_bytes(new_value)
                 .await
-                .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))
         } else {
-            Err(ModelarDbError::ConfigurationError(
+            Err(ModelarDbServerError::InvalidState(
                 "Storage engine is not configured to transfer data.".to_owned(),
             ))
         }
     }
 
-    /// Set the transfer time in the data transfer component to `new_value` if it exists. If
-    /// a data transfer component does not exist, return [`ModelarDbError`].
+    /// Set the transfer time in the data transfer component to `new_value` if it exists. If a data
+    /// transfer component does not exist, return [`ModelarDbServerError`].
     pub(super) async fn set_transfer_time_in_seconds(
         &mut self,
         new_value: Option<usize>,
-    ) -> Result<(), ModelarDbError> {
+    ) -> Result<()> {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await
         {
@@ -491,7 +471,7 @@ impl StorageEngine {
 
             Ok(())
         } else {
-            Err(ModelarDbError::ConfigurationError(
+            Err(ModelarDbServerError::InvalidState(
                 "Storage engine is not configured to transfer data.".to_owned(),
             ))
         }

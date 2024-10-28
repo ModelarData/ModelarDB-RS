@@ -15,12 +15,13 @@
 
 //! Buffer for compressed segments from the same table.
 
-use std::io::{Error as IOError, ErrorKind};
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
+
+use crate::error::{ModelarDbServerError, Result};
 
 /// Compressed segments representing data points from a column in a model table as one
 /// [`RecordBatch`].
@@ -69,17 +70,16 @@ impl CompressedDataBuffer {
 
     /// Append `compressed_segments` to the [`CompressedDataBuffer`] and return the size of
     /// `compressed_segments` in bytes if their schema is [`COMPRESSED_SCHEMA`], otherwise
-    /// [`IOError`] is returned.
+    /// [`ModelarDbServerError`] is returned.
     pub(super) fn append_compressed_segments(
         &mut self,
         mut compressed_segments: Vec<RecordBatch>,
-    ) -> Result<usize, IOError> {
+    ) -> Result<usize> {
         if compressed_segments
             .iter()
             .any(|compressed_segments| compressed_segments.schema() != COMPRESSED_SCHEMA.0)
         {
-            return Err(IOError::new(
-                ErrorKind::InvalidInput,
+            return Err(ModelarDbServerError::InvalidArgument(
                 "Compressed segments must all use COMPRESSED_SCHEMA.".to_owned(),
             ));
         }

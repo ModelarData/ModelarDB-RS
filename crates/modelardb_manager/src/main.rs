@@ -16,13 +16,14 @@
 //! Implementation of ModelarDB manager's main function.
 
 mod cluster;
+mod error;
 mod metadata;
 mod remote;
 
 use std::env;
 use std::sync::{Arc, LazyLock};
 
-use modelardb_common::arguments::{argument_to_connection_info, collect_command_line_arguments};
+use modelardb_common::arguments;
 use modelardb_common::storage::DeltaLake;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -31,6 +32,7 @@ use tonic::metadata::{Ascii, MetadataValue};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
+use crate::error::{ModelarDbManagerError, Result};
 use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
 
@@ -63,35 +65,21 @@ impl RemoteDataFolder {
         }
     }
 
-    /// Parse the command line arguments into a [`RemoteDataFolder`]. If the necessary command line
-    /// arguments are not provided, too many arguments are provided, or if the arguments are malformed,
-    /// [`String`] is returned.
-    async fn try_from_command_line_arguments(arguments: &[&str]) -> Result<Self, String> {
-        match arguments {
-            &[remote_data_folder] => {
-                let connection_info = argument_to_connection_info(remote_data_folder)?;
+    /// Create a [`RemoteDataFolder`] from `remote_data_folder_str`. If `remote_data_folder_str`
+    /// cannot be parsed or a connection to the object store cannot be created,
+    /// [`ModelarDbManagerError`] is returned.
+    async fn try_new(remote_data_folder_str: &str) -> Result<Self> {
+        let connection_info = arguments::argument_to_connection_info(remote_data_folder_str)?;
 
-                let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info)
-                    .await
-                    .map_err(|error| error.to_string())?;
+        let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info).await?;
 
-                let metadata_manager = MetadataManager::try_from_connection_info(&connection_info)
-                    .await
-                    .map_err(|error| error.to_string())?;
+        let metadata_manager = MetadataManager::try_from_connection_info(&connection_info).await?;
 
-                Ok(Self::new(
-                    connection_info,
-                    Arc::new(delta_lake),
-                    Arc::new(metadata_manager),
-                ))
-            }
-            _ => {
-                // The errors are consciously ignored as the program is terminating.
-                let binary_path = std::env::current_exe().unwrap();
-                let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-                Err(format!("Usage: {binary_name} remote_data_folder."))
-            }
-        }
+        Ok(Self::new(
+            connection_info,
+            Arc::new(delta_lake),
+            Arc::new(metadata_manager),
+        ))
     }
 }
 
@@ -105,51 +93,48 @@ pub struct Context {
     pub key: MetadataValue<Ascii>,
 }
 
-/// Parse the command line arguments to extract the remote object store and start an Apache Arrow Flight server.
-/// Returns [`String`] if the command line arguments cannot be parsed, if the metadata cannot be read from the
-/// Delta Lake, or if the Apache Arrow Flight server cannot be started.
-fn main() -> Result<(), String> {
+/// Parse the command line arguments to extract the remote object store and start an Apache Arrow
+/// Flight server. Returns [`ModelarDbManagerError`] if the command line arguments cannot be parsed,
+/// if the metadata cannot be read from the Delta Lake, or if the Apache Arrow Flight server cannot
+/// be started.
+fn main() -> Result<()> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
 
     // Create a Tokio runtime for executing asynchronous tasks.
-    let runtime = Arc::new(
-        Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {error}"))?,
-    );
+    let runtime = Arc::new(Runtime::new()?);
 
-    let arguments = collect_command_line_arguments(3);
-    let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
+    let user_arguments = arguments::collect_command_line_arguments(3);
+    let user_arguments: Vec<&str> = user_arguments.iter().map(|arg| arg.as_str()).collect();
+    let remote_data_folder_str = match user_arguments.as_slice() {
+        &[remote_data_folder_str] => remote_data_folder_str,
+        _ => arguments::print_usage_and_exit_with_error("remote_data_folder"),
+    };
 
     let context = runtime.block_on(async {
-        let remote_data_folder =
-            RemoteDataFolder::try_from_command_line_arguments(&arguments).await?;
+        let remote_data_folder = RemoteDataFolder::try_new(remote_data_folder_str).await?;
 
-        let nodes = remote_data_folder
-            .metadata_manager
-            .nodes()
-            .await
-            .map_err(|error| error.to_string())?;
+        let nodes = remote_data_folder.metadata_manager.nodes().await?;
 
         let mut cluster = Cluster::new();
         for node in nodes {
-            cluster
-                .register_node(node)
-                .map_err(|error| error.to_string())?;
+            cluster.register_node(node)?;
         }
 
         // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
         let key = remote_data_folder
             .metadata_manager
             .manager_key()
-            .await
-            .map_err(|error| error.to_string())?
+            .await?
             .to_string()
             .parse()
-            .map_err(|error: InvalidMetadataValue| error.to_string())?;
+            .map_err(|error: InvalidMetadataValue| {
+                ModelarDbManagerError::InvalidArgument(error.to_string())
+            })?;
 
         // Create the Context.
-        Ok::<Arc<Context>, String>(Arc::new(Context {
+        Ok::<Arc<Context>, ModelarDbManagerError>(Arc::new(Context {
             remote_data_folder,
             cluster: RwLock::new(cluster),
             key,
@@ -157,7 +142,4 @@ fn main() -> Result<(), String> {
     })?;
 
     start_apache_arrow_flight_server(context, &runtime, *PORT)
-        .map_err(|error| error.to_string())?;
-
-    Ok(())
 }

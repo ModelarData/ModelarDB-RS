@@ -17,6 +17,7 @@
 //! rewritten by Apache DataFusion's optimizer to make it more efficient to execute. Additional
 //! rules are added to this optimizer to execute queries directly on the compressed segments.
 
+pub mod error;
 mod optimizer;
 mod query;
 
@@ -31,14 +32,15 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::errors::ModelarDbError;
 
+use crate::error::Result;
 use crate::query::model_table::ModelTable;
 use crate::query::table::Table;
 
-/// Create a new [`SessionContext`] for interacting with Apache DataFusion. The
-/// [`SessionContext`] is constructed with the default configuration, default resource managers,
-/// and additional optimizer rules that rewrite simple aggregate queries to be executed directly
-/// on the segments containing metadata and models instead of on reconstructed data points
-/// created from the segments for model tables.
+/// Create a new [`SessionContext`] for interacting with Apache DataFusion. The [`SessionContext`]
+/// is constructed with the default configuration, default resource managers, and additional
+/// optimizer rules that rewrite simple aggregate queries to be executed directly on the segments
+/// containing metadata and models instead of on reconstructed data points created from the segments
+/// for model tables.
 pub fn create_session_context() -> SessionContext {
     let mut session_state_builder = SessionStateBuilder::new().with_default_features();
 
@@ -54,32 +56,31 @@ pub fn create_session_context() -> SessionContext {
 
 /// Register the table stored in `delta_table` with `table_name` and `data_sink` in
 /// `session_context`. If the table could not be registered with Apache DataFusion, return
-/// [`ModelarDbError`].
+/// [`ModelarDbQueryError`](crate::error::ModelarDbQueryError).
 pub fn register_table(
     session_context: &SessionContext,
     table_name: &str,
     delta_table: DeltaTable,
     data_sink: Arc<dyn DataSink>,
-) -> Result<(), ModelarDbError> {
+) -> Result<()> {
     let table = Arc::new(Table::new(delta_table, data_sink));
 
-    session_context
-        .register_table(table_name, table)
-        .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+    session_context.register_table(table_name, table)?;
 
     Ok(())
 }
 
 /// Register the model table stored in `delta_table` with `model_table_metadata` from
 /// `table_metadata_manager` and `data_sink` in `session_context`. If the model table could not be
-/// registered with Apache DataFusion, return [`ModelarDbError`].
+/// registered with Apache DataFusion, return
+/// [`ModelarDbQueryError`](crate::error::ModelarDbQueryError).
 pub fn register_model_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,
     model_table_metadata: Arc<ModelTableMetadata>,
     table_metadata_manager: Arc<TableMetadataManager>,
     data_sink: Arc<dyn DataSink>,
-) -> Result<(), ModelarDbError> {
+) -> Result<()> {
     let model_table = ModelTable::new(
         delta_table,
         table_metadata_manager,
@@ -87,9 +88,7 @@ pub fn register_model_table(
         data_sink,
     );
 
-    session_context
-        .register_table(&model_table_metadata.name, model_table)
-        .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+    session_context.register_table(&model_table_metadata.name, model_table)?;
 
     Ok(())
 }
