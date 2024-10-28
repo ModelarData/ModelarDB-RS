@@ -58,7 +58,7 @@ use crate::context::Context;
 use crate::ClusterMode;
 use crate::error::{ModelarDbServerError, Result};
 
-/// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to the methods that
+/// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
 /// process the requests through [`FlightServiceHandler`].
 pub fn start_apache_arrow_flight_server(
     context: Arc<Context>,
