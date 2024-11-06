@@ -441,7 +441,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::TABLE_SQL)
+            .parse_and_create_table(test::NORMAL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -449,7 +449,7 @@ mod tests {
         let folder_path = temp_dir
             .path()
             .join("tables")
-            .join("table_name")
+            .join(test::NORMAL_TABLE_NAME)
             .join("_delta_log");
 
         assert!(folder_path.exists());
@@ -463,10 +463,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(table_names.contains(&"table_name".to_owned()));
+        assert!(table_names.contains(&test::NORMAL_TABLE_NAME.to_owned()));
 
         // The table should be registered in the Apache DataFusion catalog.
-        assert!(context.check_if_table_exists("table_name").await.is_err());
+        assert!(context
+            .check_if_table_exists(test::NORMAL_TABLE_NAME)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -475,12 +478,12 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         assert!(context
-            .parse_and_create_table(test::TABLE_SQL)
+            .parse_and_create_table(test::NORMAL_TABLE_SQL)
             .await
             .is_ok());
 
         assert!(context
-            .parse_and_create_table(test::TABLE_SQL)
+            .parse_and_create_table(test::NORMAL_TABLE_SQL)
             .await
             .is_err())
     }
@@ -541,7 +544,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::TABLE_SQL)
+            .parse_and_create_table(test::NORMAL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -578,16 +581,19 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::TABLE_SQL)
+            .parse_and_create_table(test::NORMAL_TABLE_SQL)
             .await
             .unwrap();
 
-        assert!(context.check_if_table_exists("table_name").await.is_err());
+        assert!(context
+            .check_if_table_exists(test::NORMAL_TABLE_NAME)
+            .await
+            .is_err());
 
-        context.drop_table("table_name").await.unwrap();
+        context.drop_table(test::NORMAL_TABLE_NAME).await.unwrap();
 
         // The table should be deregistered from the Apache DataFusion session.
-        assert!(context.check_if_table_exists("table_name").await.is_ok());
+        assert!(context.check_if_table_exists(test::NORMAL_TABLE_NAME).await.is_ok());
 
         // The table should be deleted from the metadata Delta Lake.
         let table_names = context
@@ -656,14 +662,14 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::TABLE_SQL)
+            .parse_and_create_table(test::NORMAL_TABLE_SQL)
             .await
             .unwrap();
 
         let local_data_folder = &context.data_folders.local_data_folder;
         let mut delta_table = local_data_folder
             .delta_lake
-            .delta_table("table_name")
+            .delta_table(test::NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -680,14 +686,14 @@ mod tests {
 
         local_data_folder
             .delta_lake
-            .write_record_batch_to_table("table_name", record_batch)
+            .write_record_batch_to_table(test::NORMAL_TABLE_NAME, record_batch)
             .await
             .unwrap();
 
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 1);
 
-        context.truncate_table("table_name").await.unwrap();
+        context.truncate_table(test::NORMAL_TABLE_NAME).await.unwrap();
 
         // The table should not be deleted from the metadata Delta Lake.
         let table_names = local_data_folder
@@ -696,7 +702,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(table_names.contains(&"table_name".to_owned()));
+        assert!(table_names.contains(&test::NORMAL_TABLE_NAME.to_owned()));
 
         // The table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
@@ -786,12 +792,12 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .parse_and_create_table(test::TABLE_SQL)
+            .parse_and_create_table(test::NORMAL_TABLE_SQL)
             .await
             .unwrap();
 
         assert!(context
-            .model_table_metadata_from_default_database_schema("table_name")
+            .model_table_metadata_from_default_database_schema(test::NORMAL_TABLE_NAME)
             .await
             .unwrap()
             .is_none());
