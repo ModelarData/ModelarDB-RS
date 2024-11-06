@@ -64,10 +64,21 @@ impl DataTransfer {
     pub async fn try_new(
         local_data_folder: DataFolder,
         remote_data_folder: DataFolder,
-        table_names: Vec<String>,
         transfer_batch_size_in_bytes: Option<usize>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self> {
+        let mut table_names = local_data_folder
+            .table_metadata_manager
+            .normal_table_names()
+            .await?;
+
+        table_names.append(
+            &mut local_data_folder
+                .table_metadata_manager
+                .model_table_names()
+                .await?,
+        );
+
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
         for table_name in table_names {
@@ -400,7 +411,10 @@ mod tests {
 
         data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
 
-        assert_eq!(data_transfer.clear_table(test::MODEL_TABLE_NAME), MODEL_TABLE_FILE_SIZE);
+        assert_eq!(
+            data_transfer.clear_table(test::MODEL_TABLE_NAME),
+            MODEL_TABLE_FILE_SIZE
+        );
 
         // The table should be removed from the in-memory tracking of compressed files and removed
         // from the dropped tables.
@@ -561,16 +575,9 @@ mod tests {
         let target_dir = tempfile::tempdir().unwrap();
         let remote_data_folder = DataFolder::try_from_path(target_dir.path()).await.unwrap();
 
-        let table_names = local_data_folder
-            .table_metadata_manager
-            .normal_table_names()
-            .await
-            .unwrap();
-
         let data_transfer = DataTransfer::try_new(
             local_data_folder,
             remote_data_folder,
-            table_names,
             Some(MODEL_TABLE_FILE_SIZE * 3 - 1),
             Arc::new(Mutex::new(Metric::new())),
         )

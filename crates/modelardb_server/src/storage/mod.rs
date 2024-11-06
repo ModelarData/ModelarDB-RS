@@ -163,16 +163,9 @@ impl StorageEngine {
         // Create the compressed data manager.
         let data_transfer = if let Some(remote_data_folder) = data_folders.maybe_remote_data_folder
         {
-            let table_names = data_folders
-                .local_data_folder
-                .table_metadata_manager
-                .normal_table_names()
-                .await?;
-
             let data_transfer = DataTransfer::try_new(
                 data_folders.local_data_folder.clone(),
                 remote_data_folder,
-                table_names,
                 configuration_manager.transfer_batch_size_in_bytes(),
                 used_disk_space_metric.clone(),
             )
