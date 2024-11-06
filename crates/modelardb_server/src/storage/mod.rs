@@ -166,7 +166,7 @@ impl StorageEngine {
             let table_names = data_folders
                 .local_data_folder
                 .table_metadata_manager
-                .table_names()
+                .normal_table_names()
                 .await?;
 
             let data_transfer = DataTransfer::try_new(

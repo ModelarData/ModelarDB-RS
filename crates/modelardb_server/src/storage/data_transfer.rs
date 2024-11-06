@@ -534,7 +534,7 @@ mod tests {
 
         let table_names = local_data_folder
             .table_metadata_manager
-            .table_names()
+            .normal_table_names()
             .await
             .unwrap();
 

@@ -175,7 +175,7 @@ impl Context {
             .data_folders
             .local_data_folder
             .table_metadata_manager
-            .table_names()
+            .normal_table_names()
             .await?;
 
         for table_name in table_names {
@@ -459,7 +459,7 @@ mod tests {
             .data_folders
             .local_data_folder
             .table_metadata_manager
-            .table_names()
+            .normal_table_names()
             .await
             .unwrap();
 
@@ -594,7 +594,7 @@ mod tests {
             .data_folders
             .local_data_folder
             .table_metadata_manager
-            .table_names()
+            .normal_table_names()
             .await
             .unwrap();
 
@@ -692,7 +692,7 @@ mod tests {
         // The table should not be deleted from the metadata Delta Lake.
         let table_names = local_data_folder
             .table_metadata_manager
-            .table_names()
+            .normal_table_names()
             .await
             .unwrap();
 

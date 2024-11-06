@@ -45,7 +45,7 @@ use crate::test::ERROR_BOUND_ZERO;
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
-    Table,
+    NormalTable,
     ModelTable,
 }
 
@@ -227,16 +227,16 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Return the name of each table currently in the metadata Delta Lake. Note that this does not
-    /// include model tables. If the table names cannot be retrieved, [`ModelarDbCommonError`] is
-    /// returned.
-    pub async fn table_names(&self) -> Result<Vec<String>> {
-        self.table_names_of_type(TableType::Table).await
+    /// Return the name of each normal table currently in the metadata Delta Lake. Note that this
+    /// does not include model tables. If the normal table names cannot be retrieved,
+    /// [`ModelarDbCommonError`] is returned.
+    pub async fn normal_table_names(&self) -> Result<Vec<String>> {
+        self.table_names_of_type(TableType::NormalTable).await
     }
 
     /// Return the name of each model table currently in the metadata Delta Lake. Note that this
-    /// does not include tables. If the table names cannot be retrieved, [`ModelarDbCommonError`] is
-    /// returned.
+    /// does not include normal tables. If the model table names cannot be retrieved,
+    /// [`ModelarDbCommonError`] is returned.
     pub async fn model_table_names(&self) -> Result<Vec<String>> {
         self.table_names_of_type(TableType::ModelTable).await
     }
@@ -245,7 +245,7 @@ impl TableMetadataManager {
     /// names cannot be retrieved.
     async fn table_names_of_type(&self, table_type: TableType) -> Result<Vec<String>> {
         let table_type = match table_type {
-            TableType::Table => "table",
+            TableType::NormalTable => "table",
             TableType::ModelTable => "model_table",
         };
 
@@ -367,7 +367,11 @@ impl TableMetadataManager {
     /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
     /// exist or the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
     pub async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self.table_names().await?.contains(&table_name.to_owned()) {
+        if self
+            .normal_table_names()
+            .await?
+            .contains(&table_name.to_owned())
+        {
             self.drop_normal_table_metadata(table_name).await
         } else if self
             .model_table_names()
@@ -436,7 +440,11 @@ impl TableMetadataManager {
     /// keep the interface consistent. If the table does not exist or the metadata could not be
     /// truncated, [`ModelarDbCommonError`] is returned.
     pub async fn truncate_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self.table_names().await?.contains(&table_name.to_owned()) {
+        if self
+            .normal_table_names()
+            .await?
+            .contains(&table_name.to_owned())
+        {
             Ok(())
         } else if self
             .model_table_names()
@@ -1018,7 +1026,7 @@ mod tests {
     async fn test_table_names() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
 
-        let table_names = metadata_manager.table_names().await.unwrap();
+        let table_names = metadata_manager.normal_table_names().await.unwrap();
         assert_eq!(table_names, vec!["table_2", "table_1"]);
     }
 
