@@ -292,14 +292,14 @@ mod tests {
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
-    const FILE_SIZE: usize = 2374;
+    const MODEL_TABLE_FILE_SIZE: usize = 2374;
 
     // Tests for data transfer component.
     #[tokio::test]
     async fn test_include_existing_files_on_start_up() {
         let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
-        create_delta_table_and_segments(&local_data_folder, 1).await;
+        write_batches_to_tables(&local_data_folder, 1).await;
         let (_target_dir, data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         assert_eq!(
@@ -307,7 +307,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE
+            MODEL_TABLE_FILE_SIZE
         );
 
         assert_eq!(
@@ -327,10 +327,11 @@ mod tests {
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
-        let files_size = create_delta_table_and_segments(&local_data_folder, 1).await;
+        let (_normal_table_files_size, model_table_files_size) =
+            write_batches_to_tables(&local_data_folder, 1).await;
 
         assert!(data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
+            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
             .await
             .is_ok());
 
@@ -339,7 +340,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE
+            MODEL_TABLE_FILE_SIZE
         );
     }
 
@@ -349,14 +350,15 @@ mod tests {
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
-        let files_size = create_delta_table_and_segments(&local_data_folder, 1).await;
+        let (_normal_table_files_size, model_table_files_size) =
+            write_batches_to_tables(&local_data_folder, 1).await;
 
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
+            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
             .await
             .unwrap();
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
+            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
             .await
             .unwrap();
 
@@ -365,7 +367,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE * 2
+            MODEL_TABLE_FILE_SIZE * 2
         );
     }
 
@@ -388,16 +390,17 @@ mod tests {
 
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
-        let files_size = create_delta_table_and_segments(&local_data_folder, 1).await;
+        let (_normal_table_files_size, model_table_files_size) =
+            write_batches_to_tables(&local_data_folder, 1).await;
 
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
+            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
             .await
             .unwrap();
 
         data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
 
-        assert_eq!(data_transfer.clear_table(test::MODEL_TABLE_NAME), FILE_SIZE);
+        assert_eq!(data_transfer.clear_table(test::MODEL_TABLE_NAME), MODEL_TABLE_FILE_SIZE);
 
         // The table should be removed from the in-memory tracking of compressed files and removed
         // from the dropped tables.
@@ -412,17 +415,17 @@ mod tests {
     async fn test_increase_transfer_batch_size_in_bytes() {
         let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
-        create_delta_table_and_segments(&local_data_folder, 2).await;
+        write_batches_to_tables(&local_data_folder, 2).await;
         let (_, mut data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         data_transfer
-            .set_transfer_batch_size_in_bytes(Some(FILE_SIZE * 10))
+            .set_transfer_batch_size_in_bytes(Some(MODEL_TABLE_FILE_SIZE * 10))
             .await
             .unwrap();
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(FILE_SIZE * 10)
+            Some(MODEL_TABLE_FILE_SIZE * 10)
         );
 
         // Data should not have been transferred.
@@ -431,7 +434,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE * 2
+            MODEL_TABLE_FILE_SIZE * 2
         );
     }
 
@@ -439,12 +442,12 @@ mod tests {
     async fn test_set_transfer_batch_size_in_bytes_to_none() {
         let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
-        create_delta_table_and_segments(&local_data_folder, 2).await;
+        write_batches_to_tables(&local_data_folder, 2).await;
         let (_, mut data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(FILE_SIZE * 3 - 1)
+            Some(MODEL_TABLE_FILE_SIZE * 3 - 1)
         );
 
         data_transfer
@@ -460,7 +463,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE * 2
+            MODEL_TABLE_FILE_SIZE * 2
         );
     }
 
@@ -500,39 +503,52 @@ mod tests {
         (temp_dir, local_data_folder)
     }
 
-    /// Set up a Delta table and write `batch_write_count` batches of compressed segments to it.
-    /// Returns the size of the files on disk.
-    async fn create_delta_table_and_segments(
+    /// Write `batch_write_count` batches to the normal table and the model table in the local data
+    /// folder and return the total size of the files in each table.
+    async fn write_batches_to_tables(
         local_data_folder: &DataFolder,
         batch_write_count: usize,
-    ) -> usize {
+    ) -> (usize, usize) {
         for _ in 0..batch_write_count {
-            let compressed_segments = test::compressed_segments_record_batch();
+            // Write to the normal table.
+            local_data_folder
+                .delta_lake
+                .write_record_batch_to_table(
+                    test::NORMAL_TABLE_NAME,
+                    test::normal_table_record_batch(),
+                )
+                .await
+                .unwrap();
+
+            // Write to the model table.
             local_data_folder
                 .delta_lake
                 .write_compressed_segments_to_model_table(
                     test::MODEL_TABLE_NAME,
-                    vec![compressed_segments],
+                    vec![test::compressed_segments_record_batch()],
                 )
                 .await
                 .unwrap();
         }
 
+        (
+            table_files_size(local_data_folder, test::NORMAL_TABLE_NAME).await,
+            table_files_size(local_data_folder, test::MODEL_TABLE_NAME).await,
+        )
+    }
+
+    /// Return the total size of the files in the table with `table_name` in `local_data_folder`.
+    async fn table_files_size(local_data_folder: &DataFolder, table_name: &str) -> usize {
         let mut delta_table = local_data_folder
             .delta_lake
-            .delta_table(test::MODEL_TABLE_NAME)
+            .delta_table(table_name)
             .await
             .unwrap();
-        delta_table.load().await.unwrap();
 
         let mut files_size = 0;
         for file_path in delta_table.get_files_iter().unwrap() {
-            files_size += delta_table
-                .object_store()
-                .head(&file_path)
-                .await
-                .unwrap()
-                .size;
+            let object_meta = delta_table.object_store().head(&file_path).await;
+            files_size += object_meta.unwrap().size;
         }
 
         files_size
@@ -555,7 +571,7 @@ mod tests {
             local_data_folder,
             remote_data_folder,
             table_names,
-            Some(FILE_SIZE * 3 - 1),
+            Some(MODEL_TABLE_FILE_SIZE * 3 - 1),
             Arc::new(Mutex::new(Metric::new())),
         )
         .await
