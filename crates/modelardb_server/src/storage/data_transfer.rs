@@ -310,15 +310,24 @@ mod tests {
     async fn test_include_existing_files_on_start_up() {
         let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
-        write_batches_to_tables(&local_data_folder, 1).await;
+        let (normal_table_files_size, model_table_files_size) =
+            write_batches_to_tables(&local_data_folder, 1).await;
         let (_target_dir, data_transfer) = create_data_transfer_component(local_data_folder).await;
+
+        assert_eq!(
+            *data_transfer
+                .table_size_in_bytes
+                .get(test::NORMAL_TABLE_NAME)
+                .unwrap(),
+            normal_table_files_size
+        );
 
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            MODEL_TABLE_FILE_SIZE
+            model_table_files_size
         );
 
         assert_eq!(
@@ -553,7 +562,7 @@ mod tests {
 
     /// Return the total size of the files in the table with `table_name` in `local_data_folder`.
     async fn table_files_size(local_data_folder: &DataFolder, table_name: &str) -> usize {
-        let mut delta_table = local_data_folder
+        let delta_table = local_data_folder
             .delta_lake
             .delta_table(table_name)
             .await
