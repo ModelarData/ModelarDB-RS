@@ -603,15 +603,13 @@ mod tests {
             .is_ok());
 
         // The normal table should be deleted from the metadata Delta Lake.
-        let table_names = context
+        assert!(!context
             .data_folders
             .local_data_folder
             .table_metadata_manager
-            .normal_table_names()
+            .is_normal_table(test::NORMAL_TABLE_NAME)
             .await
-            .unwrap();
-
-        assert!(table_names.is_empty());
+            .unwrap());
 
         // The normal table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
@@ -641,15 +639,13 @@ mod tests {
             .is_ok());
 
         // The model table should be deleted from the metadata Delta Lake.
-        let model_table_metadata = context
+        assert!(!context
             .data_folders
             .local_data_folder
             .table_metadata_manager
-            .model_table_metadata()
+            .is_model_table(test::MODEL_TABLE_NAME)
             .await
-            .unwrap();
-
-        assert!(model_table_metadata.is_empty());
+            .unwrap());
 
         // The model table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
