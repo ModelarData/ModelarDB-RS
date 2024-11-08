@@ -149,10 +149,8 @@ impl DataSink for ModelTableDataSink {
         let mut data_points_inserted: u64 = 0;
 
         while let Some(record_batch) = data.next().await {
-            // unwrap() is safe as ModelTable verifies the RecordBatches matches query schema.
             let record_batch = record_batch?
-                .project(&self.model_table_metadata.query_schema_to_schema)
-                .unwrap();
+                .project(&self.model_table_metadata.query_schema_to_schema)?;
 
             data_points_inserted += record_batch.num_rows() as u64;
 

@@ -663,8 +663,7 @@ impl TableMetadataManager {
 
             // If generated_column_expr is null, it is saved as an empty string in the column values.
             if !generated_column_expr.is_empty() {
-                // unwrap() is safe as the expression is checked before it is written to the database.
-                let expr = parser::parse_sql_expression(df_schema, generated_column_expr).unwrap();
+                let expr = parser::parse_sql_expression(df_schema, generated_column_expr)?;
 
                 let generated_column = GeneratedColumn {
                     expr,

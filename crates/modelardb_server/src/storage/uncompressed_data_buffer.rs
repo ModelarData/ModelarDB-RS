@@ -196,8 +196,7 @@ impl UncompressedInMemoryDataBuffer {
         &mut self,
         local_data_folder: Arc<dyn ObjectStore>,
     ) -> Result<UncompressedOnDiskDataBuffer> {
-        // unwrap() is safe since the schema is known and the columns are always the same length.
-        let data_points = self.record_batch().await.unwrap();
+        let data_points = self.record_batch().await?;
 
         UncompressedOnDiskDataBuffer::try_spill(
             self.tag_hash,

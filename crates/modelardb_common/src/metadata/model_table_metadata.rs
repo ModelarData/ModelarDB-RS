@@ -120,14 +120,12 @@ impl ModelTableMetadata {
             };
 
         // Schema containing timestamps and stored field columns for use by uncompressed buffers.
-        let uncompressed_schema = Arc::new(
-            schema_without_generated
-                .project(&compute_indices_of_columns_without_data_type(
-                    &schema_without_generated,
-                    DataType::Utf8,
-                ))
-                .unwrap(),
-        );
+        let uncompressed_schema = Arc::new(schema_without_generated.project(
+            &compute_indices_of_columns_without_data_type(
+                &schema_without_generated,
+                DataType::Utf8,
+            ),
+        )?);
 
         // A model table must only contain one stored timestamp column, one or more stored field
         // columns, zero or more generated field columns, and zero or more stored tag columns.
