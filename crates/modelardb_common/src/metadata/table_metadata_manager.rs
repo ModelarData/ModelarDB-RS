@@ -1016,6 +1016,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_normal_table_is_normal_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
+        assert!(metadata_manager
+            .is_normal_table("normal_table_1")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_model_table_is_not_normal_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        assert!(!metadata_manager
+            .is_normal_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_model_table_is_model_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        assert!(metadata_manager
+            .is_model_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_normal_table_is_not_model_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
+        assert!(!metadata_manager
+            .is_model_table("normal_table_1")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
     async fn test_normal_table_names() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
