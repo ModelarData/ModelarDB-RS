@@ -241,9 +241,9 @@ impl DeltaLake {
     }
 
     /// Create a Delta Lake table for a normal table with `table_name` and `schema` if it does not
-    /// already exist. If the table could not be created, e.g., because it already exists,
+    /// already exist. If the normal table could not be created, e.g., because it already exists,
     /// [`ModelarDbCommonError`] is returned.
-    pub async fn create_delta_lake_table(
+    pub async fn create_delta_lake_normal_table(
         &self,
         table_name: &str,
         schema: &Schema,
@@ -345,7 +345,7 @@ impl DeltaLake {
     /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`. Returns
     /// an updated [`DeltaTable`] version if the file was written successfully, otherwise returns
     /// [`ModelarDbCommonError`].
-    pub async fn write_record_batch_to_table(
+    pub async fn write_record_batch_to_normal_table(
         &self,
         table_name: &str,
         record_batch: RecordBatch,

@@ -30,7 +30,7 @@ use tracing::info;
 
 use crate::configuration::ConfigurationManager;
 use crate::error::{ModelarDbServerError, Result};
-use crate::storage::data_sinks::{ModelTableDataSink, TableDataSink};
+use crate::storage::data_sinks::{ModelTableDataSink, NormalTableDataSink};
 use crate::storage::StorageEngine;
 use crate::{ClusterMode, DataFolders};
 
@@ -84,7 +84,8 @@ impl Context {
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
-                self.register_and_save_table(&name, sql, schema).await?;
+                self.register_and_save_normal_table(&name, sql, schema)
+                    .await?;
             }
             ValidStatement::CreateModelTable(model_table_metadata) => {
                 self.check_if_table_exists(&model_table_metadata.name)
@@ -98,9 +99,9 @@ impl Context {
     }
 
     /// Create a normal table, register it with Apache DataFusion, and save it to the Delta Lake. If
-    /// the table exists, cannot be registered with Apache DataFusion, or cannot be saved to the
-    /// Delta Lake, return [`ModelarDbServerError`] error.
-    async fn register_and_save_table(
+    /// the normal table exists, cannot be registered with Apache DataFusion, or cannot be saved to
+    /// the Delta Lake, return [`ModelarDbServerError`] error.
+    async fn register_and_save_normal_table(
         &self,
         table_name: &str,
         sql: &str,
@@ -110,20 +111,20 @@ impl Context {
         self.data_folders
             .local_data_folder
             .delta_lake
-            .create_delta_lake_table(table_name, &schema)
+            .create_delta_lake_normal_table(table_name, &schema)
             .await?;
 
-        // Register the table with Apache DataFusion.
-        self.register_table(table_name).await?;
+        // Register the normal table with Apache DataFusion.
+        self.register_normal_table(table_name).await?;
 
-        // Persist the new table to the Delta Lake.
+        // Persist the new normal table to the Delta Lake.
         self.data_folders
             .local_data_folder
             .table_metadata_manager
             .save_normal_table_metadata(table_name, sql)
             .await?;
 
-        info!("Created table '{}'.", table_name);
+        info!("Created normal table '{}'.", table_name);
 
         Ok(())
     }
@@ -168,9 +169,9 @@ impl Context {
     /// For each normal table saved in the metadata Delta Lake, register the normal table in Apache
     /// DataFusion. If the normal tables could not be retrieved from the metadata Delta Lake or a
     /// normal table could not be registered, return [`ModelarDbServerError`].
-    pub async fn register_tables(&self) -> Result<()> {
-        // We register the tables in the local data folder to avoid registering tables that
-        // TableDataSink cannot write data to.
+    pub async fn register_normal_tables(&self) -> Result<()> {
+        // We register the normal tables in the local data folder to avoid registering tables that
+        // NormalTableDataSink cannot write data to.
         let table_names = self
             .data_folders
             .local_data_folder
@@ -179,7 +180,7 @@ impl Context {
             .await?;
 
         for table_name in table_names {
-            self.register_table(&table_name).await?;
+            self.register_normal_table(&table_name).await?;
         }
 
         Ok(())
@@ -188,7 +189,7 @@ impl Context {
     /// Register the normal table with `table_name` in Apache DataFusion. If the normal table does
     /// not exist or could not be registered with Apache DataFusion, return
     /// [`ModelarDbServerError`].
-    async fn register_table(&self, table_name: &str) -> Result<()> {
+    async fn register_normal_table(&self, table_name: &str) -> Result<()> {
         let delta_table = self
             .data_folders
             .query_data_folder
@@ -196,14 +197,19 @@ impl Context {
             .delta_table(table_name)
             .await?;
 
-        let table_data_sink = Arc::new(TableDataSink::new(
+        let normal_table_data_sink = Arc::new(NormalTableDataSink::new(
             table_name.to_owned(),
             self.storage_engine.clone(),
         ));
 
-        modelardb_query::register_table(&self.session, table_name, delta_table, table_data_sink)?;
+        modelardb_query::register_normal_table(
+            &self.session,
+            table_name,
+            delta_table,
+            normal_table_data_sink,
+        )?;
 
-        info!("Registered table '{table_name}'.");
+        info!("Registered normal table '{table_name}'.");
 
         Ok(())
     }
@@ -436,7 +442,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_parse_and_create_table() {
+    async fn test_parse_and_create_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -454,7 +460,7 @@ mod tests {
 
         assert!(folder_path.exists());
 
-        // The table should be saved to the metadata Delta Lake.
+        // The normal table should be saved to the metadata Delta Lake.
         let table_names = context
             .data_folders
             .local_data_folder
@@ -465,7 +471,7 @@ mod tests {
 
         assert!(table_names.contains(&test::NORMAL_TABLE_NAME.to_owned()));
 
-        // The table should be registered in the Apache DataFusion catalog.
+        // The normal table should be registered in the Apache DataFusion catalog.
         assert!(context
             .check_if_table_exists(test::NORMAL_TABLE_NAME)
             .await
@@ -473,7 +479,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_parse_and_create_existing_table() {
+    async fn test_parse_and_create_existing_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -536,10 +542,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_register_tables() {
+    async fn test_register_normal_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
-        // Save a table to the metadata Delta Lake.
+        // Save a normal table to the metadata Delta Lake.
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -552,7 +558,7 @@ mod tests {
         let context_2 = create_context(&temp_dir).await;
 
         // Register the table with Apache DataFusion.
-        context_2.register_tables().await.unwrap();
+        context_2.register_normal_tables().await.unwrap();
     }
 
     #[tokio::test]
@@ -593,7 +599,10 @@ mod tests {
         context.drop_table(test::NORMAL_TABLE_NAME).await.unwrap();
 
         // The table should be deregistered from the Apache DataFusion session.
-        assert!(context.check_if_table_exists(test::NORMAL_TABLE_NAME).await.is_ok());
+        assert!(context
+            .check_if_table_exists(test::NORMAL_TABLE_NAME)
+            .await
+            .is_ok());
 
         // The table should be deleted from the metadata Delta Lake.
         let table_names = context
@@ -686,14 +695,17 @@ mod tests {
 
         local_data_folder
             .delta_lake
-            .write_record_batch_to_table(test::NORMAL_TABLE_NAME, record_batch)
+            .write_record_batch_to_normal_table(test::NORMAL_TABLE_NAME, record_batch)
             .await
             .unwrap();
 
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 1);
 
-        context.truncate_table(test::NORMAL_TABLE_NAME).await.unwrap();
+        context
+            .truncate_table(test::NORMAL_TABLE_NAME)
+            .await
+            .unwrap();
 
         // The table should not be deleted from the metadata Delta Lake.
         let table_names = local_data_folder
@@ -787,7 +799,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_table_model_table_metadata_from_default_database_schema() {
+    async fn test_normal_table_model_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -804,7 +816,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_non_existent_model_table_metadata_from_default_database_schema() {
+    async fn test_missing_model_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -860,7 +872,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_schema_of_non_existent_table_in_default_database_schema() {
+    async fn test_schema_of_missing_table_in_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 

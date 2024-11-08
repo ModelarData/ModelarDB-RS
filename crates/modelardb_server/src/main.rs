@@ -84,9 +84,8 @@ fn main() -> Result<()> {
         cluster_mode.clone(),
     ))?);
 
-    // Register tables and model tables.
-    runtime.block_on(context.register_tables())?;
-
+    // Register normal tables and model tables.
+    runtime.block_on(context.register_normal_tables())?;
     runtime.block_on(context.register_model_tables())?;
 
     if let ClusterMode::MultiNode(manager) = &cluster_mode {

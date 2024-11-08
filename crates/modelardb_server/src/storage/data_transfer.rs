@@ -499,7 +499,7 @@ mod tests {
         // Create a normal table.
         local_data_folder
             .delta_lake
-            .create_delta_lake_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
+            .create_delta_lake_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -536,7 +536,7 @@ mod tests {
             // Write to the normal table.
             local_data_folder
                 .delta_lake
-                .write_record_batch_to_table(
+                .write_record_batch_to_normal_table(
                     test::NORMAL_TABLE_NAME,
                     test::normal_table_record_batch(),
                 )

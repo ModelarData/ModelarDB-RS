@@ -219,7 +219,7 @@ impl MetadataManager {
     /// it could not be converted to a string, return [`ModelarDbManagerError`].
     pub async fn table_metadata_column(&self, column: &str) -> Result<Vec<String>> {
         // Retrieve the column from both tables containing table metadata.
-        let table_metadata_batch = self
+        let normal_table_metadata_batch = self
             .metadata_delta_lake
             .query_table(
                 "normal_table_metadata",
@@ -235,12 +235,14 @@ impl MetadataManager {
             )
             .await?;
 
-        let table_metadata_column = modelardb_types::array!(table_metadata_batch, 0, StringArray);
+        let normal_table_metadata_column =
+            modelardb_types::array!(normal_table_metadata_batch, 0, StringArray);
         let model_table_metadata_column =
             modelardb_types::array!(model_table_metadata_batch, 0, StringArray);
 
-        // unwrap() is safe because table_metadata and model_table_metadata does not have nullable columns.
-        Ok(table_metadata_column
+        // unwrap() is safe because normal_table_metadata and model_table_metadata does not have
+        // nullable columns.
+        Ok(normal_table_metadata_column
             .iter()
             .chain(model_table_metadata_column.iter())
             .map(|column_value| column_value.unwrap().to_owned())
@@ -383,7 +385,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_table_sql_for_table() {
+    async fn test_table_sql_for_normal_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
         metadata_manager
@@ -419,10 +421,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_table_sql_for_invalid_table() {
+    async fn test_table_sql_for_missing_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
-        let result = metadata_manager.table_sql("invalid_table").await;
+        let result = metadata_manager.table_sql("missing_table").await;
         assert!(result.is_err());
     }
 

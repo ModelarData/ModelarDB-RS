@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Implementation of [`Table`] which allows normal tables to be queried through Apache DataFusion.
+//! Implementation of [`NormalTable`] which allows normal tables to be queried through Apache DataFusion.
 //! It wraps a [`DeltaTable`] and forwards most method calls to it. However, for
 //! [`TableProvider::scan()`] it updates the [`DeltaTable`] to the latest version and it implements
 //! [`TableProvider::insert_into()`] so rows can be inserted with INSERT.
@@ -30,18 +30,18 @@ use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use deltalake::{arrow::datatypes::SchemaRef, DeltaTable};
 use tonic::async_trait;
 
-/// A queryable representation of a normal table. [`Table`] wraps the [`TableProvider`]
-/// [`DeltaTable`] and passes most methods call directly to it. Thus, it can be registered with
+/// A queryable representation of a normal table. [`NormalTable`] wraps the [`TableProvider`]
+/// [`DeltaTable`] and passes most methods calls directly to it. Thus, it can be registered with
 /// Apache Arrow DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is updated to the
 /// latest snapshot when accessed and support for inserting has been added.
-pub(crate) struct Table {
+pub(crate) struct NormalTable {
     /// Access to the Delta Lake table.
     delta_table: DeltaTable,
     /// Where data should be written to.
     data_sink: Arc<dyn DataSink>,
 }
 
-impl Table {
+impl NormalTable {
     pub(crate) fn new(delta_table: DeltaTable, data_sink: Arc<dyn DataSink>) -> Self {
         Self {
             delta_table,
@@ -51,33 +51,33 @@ impl Table {
 }
 
 #[async_trait]
-impl TableProvider for Table {
+impl TableProvider for NormalTable {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self.delta_table.as_any()
     }
 
-    /// Return the query schema of the table registered with Apache DataFusion.
+    /// Return the query schema of the normal table registered with Apache DataFusion.
     fn schema(&self) -> SchemaRef {
         TableProvider::schema(&self.delta_table)
     }
 
-    /// Return the table's constraints.
+    /// Return the normal table's constraints.
     fn constraints(&self) -> Option<&Constraints> {
         self.delta_table.constraints()
     }
 
-    /// Specify that tables are base tables and not views or temporary tables.
+    /// Specify that normal tables are base tables and not views or temporary tables.
     fn table_type(&self) -> TableType {
         self.delta_table.table_type()
     }
 
-    /// Get the create statement used to create this table, if available.
+    /// Get the create statement used to create this normal table, if available.
     fn get_table_definition(&self) -> Option<&str> {
         self.delta_table.get_table_definition()
     }
 
-    /// Get the [`LogicalPlan`] of this table, if available.
+    /// Get the [`LogicalPlan`] of this normal table, if available.
     fn get_logical_plan(&self) -> Option<&LogicalPlan> {
         self.delta_table.get_logical_plan()
     }
@@ -87,8 +87,8 @@ impl TableProvider for Table {
         self.delta_table.get_column_default(column)
     }
 
-    /// Create an [`ExecutionPlan`] that will scan the table. Returns a [`DataFusionError::Plan`] if
-    /// the necessary metadata cannot be retrieved.
+    /// Create an [`ExecutionPlan`] that will scan the normal table. Returns a
+    /// [`DataFusionError::Plan`] if the necessary metadata cannot be retrieved.
     async fn scan(
         &self,
         state: &dyn Session,
@@ -109,7 +109,7 @@ impl TableProvider for Table {
         delta_table.scan(state, projection, filters, limit).await
     }
 
-    /// Specify that predicate push-down is supported by tables.
+    /// Specify that predicate push-down is supported by normal tables.
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
@@ -117,12 +117,12 @@ impl TableProvider for Table {
         self.delta_table.supports_filters_pushdown(filters)
     }
 
-    /// Get statistics for this table, if available.
+    /// Get statistics for this normal table, if available.
     fn statistics(&self) -> Option<Statistics> {
         self.delta_table.statistics()
     }
 
-    /// Create an [`ExecutionPlan`] that will insert the result of `input` into the table.
+    /// Create an [`ExecutionPlan`] that will insert the result of `input` into the normal table.
     /// Generally, [`arrow_flight::flight_service_server::FlightService::do_put()`] should be used
     /// instead of this method as it is more efficient. Returns a [`DataFusionError::Plan`] if the
     /// necessary metadata cannot be retrieved from the metadata Delta Lake.

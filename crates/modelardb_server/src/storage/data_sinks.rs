@@ -35,14 +35,14 @@ use crate::storage::StorageEngine;
 /// [`DataSink`] that writes [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) to
 /// [`StorageEngine`]. Use [`ModelTableDataSink`] for writing multivariate time series to
 /// [`StorageEngine`].
-pub struct TableDataSink {
-    /// The name of the table inserted data will be written to.
+pub struct NormalTableDataSink {
+    /// The name of the normal table inserted data will be written to.
     table_name: String,
     /// Manages all uncompressed and compressed data in the system.
     storage_engine: Arc<RwLock<StorageEngine>>,
 }
 
-impl TableDataSink {
+impl NormalTableDataSink {
     pub fn new(table_name: String, storage_engine: Arc<RwLock<StorageEngine>>) -> Self {
         Self {
             table_name,
@@ -52,7 +52,7 @@ impl TableDataSink {
 }
 
 #[async_trait]
-impl DataSink for TableDataSink {
+impl DataSink for NormalTableDataSink {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
@@ -87,21 +87,21 @@ impl DataSink for TableDataSink {
     }
 }
 
-impl Debug for TableDataSink {
+impl Debug for NormalTableDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let name = &self.table_name;
-        write!(f, "TableDataSink for {name}")
+        write!(f, "NormalTableDataSink for {name}")
     }
 }
 
-impl DisplayAs for TableDataSink {
+impl DisplayAs for NormalTableDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> FmtResult {
         let name = &self.table_name;
-        write!(f, "TableDataSink for {name}")
+        write!(f, "NormalTableDataSink for {name}")
     }
 }
 

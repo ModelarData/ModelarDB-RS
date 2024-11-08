@@ -538,7 +538,7 @@ impl Drop for TestContext {
 }
 
 #[test]
-fn test_can_create_table() {
+fn test_can_create_normal_table() {
     let mut test_context = TestContext::new();
 
     test_context.create_table(TABLE_NAME, TableType::NormalTable);
@@ -550,7 +550,7 @@ fn test_can_create_table() {
 }
 
 #[test]
-fn test_can_register_table_after_restart() {
+fn test_can_register_normal_table_after_restart() {
     let mut test_context = TestContext::new();
 
     test_context.create_table(TABLE_NAME, TableType::NormalTable);
@@ -588,7 +588,7 @@ fn test_can_register_model_table_after_restart() {
 }
 
 #[test]
-fn test_can_create_register_and_list_multiple_tables_and_model_tables() {
+fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
     let mut test_context = TestContext::new();
     let table_types = &[
         TableType::NormalTable,
