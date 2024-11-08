@@ -461,15 +461,13 @@ mod tests {
         assert!(folder_path.exists());
 
         // The normal table should be saved to the metadata Delta Lake.
-        let table_names = context
+        assert!(context
             .data_folders
             .local_data_folder
             .table_metadata_manager
-            .normal_table_names()
+            .is_normal_table(test::NORMAL_TABLE_NAME)
             .await
-            .unwrap();
-
-        assert!(table_names.contains(&test::NORMAL_TABLE_NAME.to_owned()));
+            .unwrap());
 
         // The normal table should be registered in the Apache DataFusion catalog.
         assert!(context
@@ -708,13 +706,11 @@ mod tests {
             .unwrap();
 
         // The normal table should not be deleted from the metadata Delta Lake.
-        let table_names = local_data_folder
+        assert!(local_data_folder
             .table_metadata_manager
-            .normal_table_names()
+            .is_normal_table(test::NORMAL_TABLE_NAME)
             .await
-            .unwrap();
-
-        assert!(table_names.contains(&test::NORMAL_TABLE_NAME.to_owned()));
+            .unwrap());
 
         // The normal table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
@@ -755,13 +751,11 @@ mod tests {
             .unwrap();
 
         // The model table should not be deleted from the metadata Delta Lake.
-        let model_table_names = local_data_folder
+        assert!(local_data_folder
             .table_metadata_manager
-            .model_table_names()
+            .is_model_table(test::MODEL_TABLE_NAME)
             .await
-            .unwrap();
-
-        assert!(model_table_names.contains(&test::MODEL_TABLE_NAME.to_owned()));
+            .unwrap());
 
         // The model table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();

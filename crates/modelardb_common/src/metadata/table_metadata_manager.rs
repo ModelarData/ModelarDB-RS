@@ -384,17 +384,9 @@ impl TableMetadataManager {
     /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
     /// exist or the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
     pub async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self
-            .normal_table_names()
-            .await?
-            .contains(&table_name.to_owned())
-        {
+        if self.is_normal_table(table_name).await? {
             self.drop_normal_table_metadata(table_name).await
-        } else if self
-            .model_table_names()
-            .await?
-            .contains(&table_name.to_owned())
-        {
+        } else if self.is_model_table(table_name).await? {
             self.drop_model_table_metadata(table_name).await
         } else {
             Err(ModelarDbCommonError::InvalidArgument(format!(
@@ -458,17 +450,9 @@ impl TableMetadataManager {
     /// keep the interface consistent. If the table does not exist or the metadata could not be
     /// truncated, [`ModelarDbCommonError`] is returned.
     pub async fn truncate_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self
-            .normal_table_names()
-            .await?
-            .contains(&table_name.to_owned())
-        {
+        if self.is_normal_table(table_name).await? {
             Ok(())
-        } else if self
-            .model_table_names()
-            .await?
-            .contains(&table_name.to_owned())
-        {
+        } else if self.is_model_table(table_name).await? {
             self.truncate_model_table_metadata(table_name).await
         } else {
             Err(ModelarDbCommonError::InvalidArgument(format!(
