@@ -424,8 +424,8 @@ impl FlightService for FlightServiceHandler {
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
-    /// to create the tables and model tables that are missing in the list. The list of table names
-    /// is also checked to make sure all given tables actually exist.
+    /// to create the normal tables and model tables that are missing in the list. The list of table
+    /// names is also checked to make sure all given tables actually exist.
     /// * `CreateTable`: Execute a SQL query containing a command that creates a table. These
     /// commands can be `CREATE TABLE table_name(...` which creates a normal table, and
     /// `CREATE MODEL TABLE table_name(...` which creates a model table. The table is created
@@ -523,7 +523,7 @@ impl FlightService for FlightServiceHandler {
             let valid_statement = parser::semantic_checks_for_create_table(statement)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // Create the table or model table if it does not already exist.
+            // Create the normal table or model table if it does not already exist.
             match valid_statement {
                 ValidStatement::CreateTable { name, schema } => {
                     self.check_if_table_exists(&name).await?;
@@ -642,7 +642,7 @@ impl FlightService for FlightServiceHandler {
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
-            description: "Return the SQL required to create all tables and models tables \
+            description: "Return the SQL required to create all normal tables and models tables \
             currently in the manager's database schema."
                 .to_owned(),
         };

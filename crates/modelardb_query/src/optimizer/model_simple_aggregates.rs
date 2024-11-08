@@ -1204,7 +1204,7 @@ mod tests {
         let session_state = session_state_builder.build();
         let session_context = SessionContext::new_with_state(session_state);
 
-        // Create table.
+        // Create model table.
         let model_table_metadata = test::model_table_metadata_arc();
 
         let delta_table = delta_lake

@@ -99,7 +99,7 @@ impl ModelTable {
         })
     }
 
-    /// Return the [`ModelTableMetadata`] for the table.
+    /// Return the [`ModelTableMetadata`] for the model table.
     pub(crate) fn model_table_metadata(&self) -> Arc<ModelTableMetadata> {
         self.model_table_metadata.clone()
     }
@@ -379,8 +379,8 @@ impl TableProvider for ModelTable {
         TableType::Base
     }
 
-    /// Create an [`ExecutionPlan`] that will scan the table. Returns a [`DataFusionError::Plan`] if
-    /// the necessary metadata cannot be retrieved.
+    /// Create an [`ExecutionPlan`] that will scan the model table. Returns a [`DataFusionError::Plan`]
+    /// if the necessary metadata cannot be retrieved.
     async fn scan(
         &self,
         state: &dyn Session,

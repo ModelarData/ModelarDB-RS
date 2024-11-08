@@ -44,8 +44,8 @@ pub(super) struct CompressedDataManager {
     /// the model table the compressed segments represents data points for so the Apache Parquet
     /// files can be partitioned by table.
     compressed_data_buffers: DashMap<String, CompressedDataBuffer>,
-    /// FIFO queue of table names referring to [`CompressedDataBuffers`](CompressedDataBuffer) that
-    /// can be saved to persistent storage.
+    /// FIFO queue of model table names referring to [`CompressedDataBuffers`](CompressedDataBuffer)
+    /// that can be saved to persistent storage.
     compressed_queue: SegQueue<String>,
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
@@ -138,7 +138,7 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
+    /// Insert the `compressed_segments` into the in-memory compressed data buffer for the model table
     /// with `table_name`. If `compressed_segments` is saved successfully, return [`Ok`], otherwise
     /// return [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn insert_compressed_segments(
@@ -239,9 +239,9 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Save the compressed data that belongs to the table with `table_name` The size of the saved
-    /// compressed data is added back to the remaining compressed memory. If the data is written
-    /// successfully to disk, return [`Ok`], otherwise return
+    /// Save the compressed data that belongs to the model table with `table_name` The size of the
+    /// saved compressed data is added back to the remaining compressed memory. If the data is
+    /// written successfully to disk, return [`Ok`], otherwise return
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn save_compressed_data(&self, table_name: &str) -> Result<()> {
         debug!("Saving compressed segments to disk for {table_name}.");

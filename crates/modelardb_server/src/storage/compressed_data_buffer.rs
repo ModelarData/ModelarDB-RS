@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Buffer for compressed segments from the same table.
+//! Buffer for compressed segments from the same model table.
 
 use std::sync::Arc;
 
@@ -44,7 +44,7 @@ impl CompressedSegmentBatch {
         }
     }
 
-    /// Return the name of the table the batch stores data for.
+    /// Return the name of the model table the batch stores data for.
     pub(super) fn model_table_name(&self) -> &str {
         &self.model_table_metadata.name
     }

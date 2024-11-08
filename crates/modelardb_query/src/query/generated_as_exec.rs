@@ -239,7 +239,7 @@ impl GeneratedAsStream {
                     } else if let Some(tags) = column.as_any().downcast_ref::<StringArray>() {
                         formatted_values.push(format!("{name}: {}", tags.value(row_index)));
                     } else {
-                        // The method has been called for a table with unsupported column types.
+                        // The method has been called for a normal table with unsupported column types.
                         return Err(DataFusionError::Execution("Not a model table.".to_owned()));
                     }
                 }

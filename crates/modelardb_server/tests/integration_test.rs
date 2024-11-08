@@ -620,12 +620,12 @@ fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
     // Sort the table names to simplify the comparisons.
     table_names.sort();
 
-    // Ensure the table were created without a restart.
+    // Ensure the tables were created without a restart.
     let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
     retrieved_table_names.sort();
     assert_eq!(retrieved_table_names, table_names);
 
-    // Ensure the table were registered after a restart.
+    // Ensure the tables were registered after a restart.
     test_context.restart_server();
     let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
     retrieved_table_names.sort();
@@ -645,7 +645,8 @@ fn test_can_drop_normal_table() {
     let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
     assert_eq!(retrieved_table_names.len(), 0);
 
-    // It should be possible to create a table, drop it, and then create a new table with the same name.
+    // It should be possible to create a normal table, drop it, and then create a new normal table
+    // with the same name.
     test_context.create_table(TABLE_NAME, TableType::NormalTable);
 }
 
@@ -692,7 +693,7 @@ fn test_can_truncate_normal_table() {
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
 
-    // The table should be empty after truncating it.
+    // The normal table should be empty after truncating it.
     assert_eq!(query_result.num_rows(), 0);
 }
 

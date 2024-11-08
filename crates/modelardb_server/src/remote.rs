@@ -206,7 +206,7 @@ impl FlightServiceHandler {
             )?;
             let storage_engine = self.context.storage_engine.write().await;
 
-            // Write record_batch to the table with table_name as a compressed Apache Parquet file.
+            // Write record_batch to the normal table with table_name as a compressed Apache Parquet file.
             storage_engine
                 .insert_record_batch(table_name, record_batch)
                 .await

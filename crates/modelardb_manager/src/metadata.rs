@@ -31,13 +31,13 @@ use uuid::Uuid;
 use crate::cluster::Node;
 use crate::error::{ModelarDbManagerError, Result};
 
-/// Stores the metadata required for reading from and writing to the tables and model tables and
-/// persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
+/// Stores the metadata required for reading from and writing to the normal tables and model tables
+/// and persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub struct MetadataManager {
     /// Delta Lake with functionality to read and write to and from the manager metadata tables.
     metadata_delta_lake: MetadataDeltaLake,
     /// Metadata manager used to interface with the subset of the manager metadata Delta Lake
-    /// related to tables and model tables.
+    /// related to normal tables and model tables.
     pub(crate) table_metadata_manager: TableMetadataManager,
 }
 

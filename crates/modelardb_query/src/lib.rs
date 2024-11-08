@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Execute queries against tables and model tables using Apache DataFusion. Queries may be
+//! Execute queries against normal tables and model tables using Apache DataFusion. Queries may be
 //! rewritten by Apache DataFusion's optimizer to make it more efficient to execute. Additional
 //! rules are added to this optimizer to execute queries directly on the compressed segments.
 

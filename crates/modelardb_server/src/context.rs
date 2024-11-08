@@ -80,7 +80,7 @@ impl Context {
         // Perform semantic checks to ensure the parsed SQL is supported.
         let valid_statement = parser::semantic_checks_for_create_table(statement)?;
 
-        // Create the table or model table if it does not already exist.
+        // Create the normal table or model table if it does not already exist.
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
@@ -130,8 +130,8 @@ impl Context {
     }
 
     /// Create a model table, register it in Apache DataFusion, and save it to the Delta Lake. If
-    /// the table exists, cannot be registered with Apache DataFusion, or cannot be saved to the
-    /// Delta Lake, return [`ModelarDbServerError`] error.
+    /// the model table exists, cannot be registered with Apache DataFusion, or cannot be saved to
+    /// the Delta Lake, return [`ModelarDbServerError`] error.
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
@@ -150,7 +150,7 @@ impl Context {
             .table_metadata_manager
             .clone();
 
-        // Register the table with Apache DataFusion.
+        // Register the model table with Apache DataFusion.
         self.register_model_table(model_table_metadata.clone(), table_metadata_manager)
             .await?;
 
@@ -352,9 +352,9 @@ impl Context {
     /// Lookup the [`ModelTableMetadata`] of the model table with name `table_name` if it exists.
     /// Specifically, the method returns:
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
-    /// * [`None`] if a table with the name `table_name` exists.
-    /// * [`ModelarDbServerError`] if the default catalog, the default schema, a table with the name
-    ///   `table_name`, or a model table with the name `table_name` does not exist.
+    /// * [`None`] if a normal table with the name `table_name` exists.
+    /// * [`ModelarDbServerError`] if the default catalog, the default schema, a normal table with
+    ///   the name `table_name`, or a model table with the name `table_name` does not exist.
     pub async fn model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,
@@ -504,7 +504,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The table should be saved to the metadata Delta Lake.
+        // The model table should be saved to the metadata Delta Lake.
         let model_table_metadata = context
             .data_folders
             .local_data_folder
@@ -557,7 +557,7 @@ mod tests {
         // Create a new context to clear the Apache Datafusion catalog.
         let context_2 = create_context(&temp_dir).await;
 
-        // Register the table with Apache DataFusion.
+        // Register the normal table with Apache DataFusion.
         context_2.register_normal_tables().await.unwrap();
     }
 
@@ -577,7 +577,7 @@ mod tests {
         // Create a new context to clear the Apache Datafusion catalog.
         let context_2 = create_context(&temp_dir).await;
 
-        // Register the table with Apache DataFusion.
+        // Register the model table with Apache DataFusion.
         context_2.register_model_tables().await.unwrap();
     }
 
@@ -598,13 +598,13 @@ mod tests {
 
         context.drop_table(test::NORMAL_TABLE_NAME).await.unwrap();
 
-        // The table should be deregistered from the Apache DataFusion session.
+        // The normal table should be deregistered from the Apache DataFusion session.
         assert!(context
             .check_if_table_exists(test::NORMAL_TABLE_NAME)
             .await
             .is_ok());
 
-        // The table should be deleted from the metadata Delta Lake.
+        // The normal table should be deleted from the metadata Delta Lake.
         let table_names = context
             .data_folders
             .local_data_folder
@@ -615,7 +615,7 @@ mod tests {
 
         assert!(table_names.is_empty());
 
-        // The table should be deleted from the Delta Lake.
+        // The normal table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
     }
 
@@ -682,7 +682,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Write data to the table that should be deleted when the table is truncated.
+        // Write data to the normal table that should be deleted when the table is truncated.
         let record_batch = RecordBatch::try_new(
             TableProvider::schema(&delta_table),
             vec![
@@ -707,7 +707,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The table should not be deleted from the metadata Delta Lake.
+        // The normal table should not be deleted from the metadata Delta Lake.
         let table_names = local_data_folder
             .table_metadata_manager
             .normal_table_names()
@@ -716,7 +716,7 @@ mod tests {
 
         assert!(table_names.contains(&test::NORMAL_TABLE_NAME.to_owned()));
 
-        // The table data should be deleted from the Delta Lake.
+        // The normal table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
     }
@@ -738,7 +738,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Write data to the table that should be deleted when the table is truncated.
+        // Write data to the model table that should be deleted when the table is truncated.
         let record_batch = test::compressed_segments_record_batch();
         local_data_folder
             .delta_lake
