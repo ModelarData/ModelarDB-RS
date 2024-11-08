@@ -505,7 +505,7 @@ mod tests {
 
         local_data_folder
             .table_metadata_manager
-            .save_table_metadata(test::NORMAL_TABLE_NAME, test::NORMAL_TABLE_SQL)
+            .save_normal_table_metadata(test::NORMAL_TABLE_NAME, test::NORMAL_TABLE_SQL)
             .await
             .unwrap();
 

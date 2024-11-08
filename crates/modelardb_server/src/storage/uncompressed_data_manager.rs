@@ -124,7 +124,7 @@ impl UncompressedDataManager {
             let table_name = self
                 .local_data_folder
                 .table_metadata_manager
-                .tag_hash_to_table_name(tag_hash)
+                .tag_hash_to_model_table_name(tag_hash)
                 .await
                 .unwrap();
 

@@ -184,8 +184,8 @@ impl MetadataManager {
         let batch = self
             .metadata_delta_lake
             .query_table(
-                "table_metadata",
-                &format!("SELECT sql FROM table_metadata WHERE table_name = '{table_name}'"),
+                "normal_table_metadata",
+                &format!("SELECT sql FROM normal_table_metadata WHERE table_name = '{table_name}'"),
             )
             .await?;
 
@@ -204,7 +204,7 @@ impl MetadataManager {
             let model_table_sql = modelardb_types::array!(batch, 0, StringArray);
             if model_table_sql.is_empty() {
                 Err(ModelarDbManagerError::InvalidArgument(format!(
-                    "No table or model table with the name '{table_name}' exists."
+                    "No normal table or model table with the name '{table_name}' exists."
                 )))
             } else {
                 Ok(model_table_sql.value(0).to_owned())
@@ -214,16 +214,16 @@ impl MetadataManager {
         }
     }
 
-    /// Retrieve all rows of `column` from both the table_metadata and model_table_metadata tables.
-    /// If the column could not be retrieved, either because it does not exist or because it could
-    /// not be converted to a string, return [`ModelarDbManagerError`].
+    /// Retrieve all rows of `column` from both the normal_table_metadata and model_table_metadata
+    /// tables. If the column could not be retrieved, either because it does not exist or because
+    /// it could not be converted to a string, return [`ModelarDbManagerError`].
     pub async fn table_metadata_column(&self, column: &str) -> Result<Vec<String>> {
         // Retrieve the column from both tables containing table metadata.
         let table_metadata_batch = self
             .metadata_delta_lake
             .query_table(
-                "table_metadata",
-                &format!("SELECT {column} FROM table_metadata"),
+                "normal_table_metadata",
+                &format!("SELECT {column} FROM normal_table_metadata"),
             )
             .await?;
 
@@ -388,12 +388,15 @@ mod tests {
 
         metadata_manager
             .table_metadata_manager
-            .save_table_metadata("table_1", "CREATE TABLE table_1")
+            .save_normal_table_metadata(test::NORMAL_TABLE_NAME, test::NORMAL_TABLE_SQL)
             .await
             .unwrap();
 
-        let sql = metadata_manager.table_sql("table_1").await.unwrap();
-        assert_eq!(sql, "CREATE TABLE table_1");
+        let sql = metadata_manager
+            .table_sql(test::NORMAL_TABLE_NAME)
+            .await
+            .unwrap();
+        assert_eq!(sql, test::NORMAL_TABLE_SQL);
     }
 
     #[tokio::test]
@@ -429,7 +432,7 @@ mod tests {
 
         metadata_manager
             .table_metadata_manager
-            .save_table_metadata("table_1", "CREATE TABLE table_1")
+            .save_normal_table_metadata(test::NORMAL_TABLE_NAME, test::NORMAL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -447,10 +450,13 @@ mod tests {
 
         let table_sql = metadata_manager.table_metadata_column("sql").await.unwrap();
 
-        assert_eq!(table_names, vec!["table_1", &model_table_metadata.name]);
+        assert_eq!(
+            table_names,
+            vec![test::NORMAL_TABLE_NAME, &model_table_metadata.name]
+        );
         assert_eq!(
             table_sql,
-            vec!["CREATE TABLE table_1", test::MODEL_TABLE_SQL]
+            vec![test::NORMAL_TABLE_SQL, test::MODEL_TABLE_SQL]
         );
     }
 

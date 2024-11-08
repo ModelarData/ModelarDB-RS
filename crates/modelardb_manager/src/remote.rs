@@ -134,7 +134,7 @@ impl FlightServiceHandler {
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_table_metadata(table_name, sql)
+            .save_normal_table_metadata(table_name, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 

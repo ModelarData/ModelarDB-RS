@@ -120,7 +120,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .save_table_metadata(table_name, sql)
+            .save_normal_table_metadata(table_name, sql)
             .await?;
 
         info!("Created table '{}'.", table_name);
