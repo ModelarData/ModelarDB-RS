@@ -22,6 +22,7 @@ use std::result::Result as StdResult;
 
 use crossbeam_channel::RecvError as CrossbeamRecvError;
 use crossbeam_channel::SendError as CrossbeamSendError;
+use datafusion::arrow::error::ArrowError;
 use datafusion::error::DataFusionError;
 use deltalake::errors::DeltaTableError;
 use modelardb_common::error::ModelarDbCommonError;
@@ -36,6 +37,8 @@ pub type Result<T> = StdResult<T, ModelarDbServerError>;
 /// Error type used throughout `modelardb_server`.
 #[derive(Debug)]
 pub enum ModelarDbServerError {
+    /// Error returned by Apache Arrow.
+    Arrow(ArrowError),
     /// Error returned by Crossbeam when sending data.
     CrossbeamSend(String),
     /// Error returned by Crossbeam when receiving data.
@@ -65,6 +68,7 @@ pub enum ModelarDbServerError {
 impl Display for ModelarDbServerError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
+            Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
             Self::CrossbeamSend(reason) => write!(f, "Crossbeam Send Error: {reason}"),
             Self::CrossbeamRecv(reason) => write!(f, "Crossbeam Recv Error: {reason}"),
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
@@ -85,6 +89,7 @@ impl Error for ModelarDbServerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         // Return the error that caused self to occur if one exists.
         match self {
+            Self::Arrow(reason) => Some(reason),
             Self::CrossbeamSend(_reason) => None,
             Self::CrossbeamRecv(_reason) => None,
             Self::DataFusion(reason) => Some(reason),
@@ -98,6 +103,12 @@ impl Error for ModelarDbServerError {
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
         }
+    }
+}
+
+impl From<ArrowError> for ModelarDbServerError {
+    fn from(error: ArrowError) -> Self {
+        Self::Arrow(error)
     }
 }
 
