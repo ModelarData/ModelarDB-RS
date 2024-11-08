@@ -210,6 +210,22 @@ impl TableMetadataManager {
         Ok(())
     }
 
+    /// Return `true` if the table with `table_name` is a normal table, otherwise return `false`.
+    pub async fn is_normal_table(&self, table_name: &str) -> Result<bool> {
+        Ok(self
+            .normal_table_names()
+            .await?
+            .contains(&table_name.to_owned()))
+    }
+
+    /// Return `true` if the table with `table_name` is a model table, otherwise return `false`.
+    pub async fn is_model_table(&self, table_name: &str) -> Result<bool> {
+        Ok(self
+            .model_table_names()
+            .await?
+            .contains(&table_name.to_owned()))
+    }
+
     /// Return the name of each normal table currently in the metadata Delta Lake. Note that this
     /// does not include model tables. If the normal table names cannot be retrieved,
     /// [`ModelarDbCommonError`] is returned.
@@ -1000,6 +1016,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_normal_table_names() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
+
+        let normal_table_names = metadata_manager.normal_table_names().await.unwrap();
+        assert_eq!(normal_table_names, vec!["normal_table_2", "normal_table_1"]);
+    }
+
+    #[tokio::test]
+    async fn test_model_table_names() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_names = metadata_manager.model_table_names().await.unwrap();
+        assert_eq!(model_table_names, vec![test::MODEL_TABLE_NAME]);
+    }
+
+    #[tokio::test]
     async fn test_save_normal_table_metadata() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
@@ -1024,22 +1056,6 @@ mod tests {
                 "CREATE TABLE normal_table_2"
             ])
         );
-    }
-
-    #[tokio::test]
-    async fn test_normal_table_names() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
-
-        let normal_table_names = metadata_manager.normal_table_names().await.unwrap();
-        assert_eq!(normal_table_names, vec!["normal_table_2", "normal_table_1"]);
-    }
-
-    #[tokio::test]
-    async fn test_model_table_names() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-
-        let model_table_names = metadata_manager.model_table_names().await.unwrap();
-        assert_eq!(model_table_names, vec![test::MODEL_TABLE_NAME]);
     }
 
     #[tokio::test]
