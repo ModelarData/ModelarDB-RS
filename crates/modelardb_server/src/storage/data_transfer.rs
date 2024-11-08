@@ -21,8 +21,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dashmap::DashMap;
+use datafusion::arrow::compute;
+use datafusion::datasource::TableProvider;
 use deltalake::arrow::array::RecordBatch;
-use deltalake::DeltaOps;
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
@@ -252,8 +253,8 @@ impl DataTransfer {
             return Ok(());
         }
 
-        // All compressed segments will be transferred so the current size in bytes is also the
-        // amount of data that will be transferred. unwrap() is safe as the table contains data.
+        // All data will be transferred so the current size in bytes is also the amount of data that
+        // will be transferred. unwrap() is safe as the table contains data.
         let current_size_in_bytes = *self.table_size_in_bytes.get(table_name).unwrap().value();
         let local_delta_ops = self
             .local_data_folder
@@ -263,22 +264,38 @@ impl DataTransfer {
 
         // Read the data that is currently stored for the table with table_name.
         let (table, stream) = local_delta_ops.load().await?;
-        let compressed_segments: Vec<RecordBatch> = stream.try_collect().await?;
+        let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
-        debug!(
-            "Transferring {current_size_in_bytes} bytes as {} batches of compressed segments for the table '{table_name}'.",
-            compressed_segments.len(),
-        );
+        debug!("Transferring {current_size_in_bytes} bytes for the table '{table_name}'.",);
 
-        // Write the data to the remote Delta Lake and commit it.
-        self.remote_data_folder
-            .delta_lake
-            .write_compressed_segments_to_model_table(table_name, compressed_segments)
-            .await?;
+        // Write the data to the remote Delta Lake.
+        if self
+            .local_data_folder
+            .table_metadata_manager
+            .is_model_table(table_name)
+            .await?
+        {
+            self.remote_data_folder
+                .delta_lake
+                .write_compressed_segments_to_model_table(table_name, record_batches)
+                .await?;
+        } else {
+            // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
+            // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
+            let schema = TableProvider::schema(&table);
+            let record_batch = compute::concat_batches(&schema, &record_batches)?;
+
+            self.remote_data_folder
+                .delta_lake
+                .write_record_batch_to_normal_table(table_name, record_batch)
+                .await?;
+        }
 
         // Delete the data that has been transferred to the remote Delta Lake.
-        let local_delta_ops: DeltaOps = table.into();
-        local_delta_ops.delete().await?;
+        self.local_data_folder
+            .delta_lake
+            .truncate_delta_lake_table(table_name)
+            .await?;
 
         // Remove the transferred data from the in-memory tracking of compressed files.
         *self.table_size_in_bytes.get_mut(table_name).unwrap() -= current_size_in_bytes;

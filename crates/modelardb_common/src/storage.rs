@@ -351,7 +351,7 @@ impl DeltaLake {
         record_batch: RecordBatch,
     ) -> Result<DeltaTable> {
         let writer_properties = apache_parquet_writer_properties(None);
-        self.write_record_batch_to_delta_table(
+        self.write_record_batches_to_delta_table(
             table_name,
             vec![record_batch],
             vec![],
@@ -380,7 +380,7 @@ impl DeltaLake {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
         let writer_properties = apache_parquet_writer_properties(sorting_columns);
 
-        self.write_record_batch_to_delta_table(
+        self.write_record_batches_to_delta_table(
             table_name,
             compressed_segments,
             partition_columns,
@@ -390,10 +390,10 @@ impl DeltaLake {
     }
 
     /// Write `record_batches` to a Delta Lake table with `table_name` using `writer_properties`.
-    /// `partition_columns` can optionally be provided to specify that `record_batch` should be
-    /// partitioned by these columns. Returns an updated [`DeltaTable`]` if the file was written
+    /// `partition_columns` can optionally be provided to specify that `record_batches` should be
+    /// partitioned by these columns. Returns an updated [`DeltaTable`] if the file was written
     /// successfully, otherwise returns [`ModelarDbCommonError`].
-    async fn write_record_batch_to_delta_table(
+    async fn write_record_batches_to_delta_table(
         &self,
         table_name: &str,
         record_batches: Vec<RecordBatch>,
@@ -403,7 +403,7 @@ impl DeltaLake {
         let delta_table_ops = self.delta_ops(table_name).await?;
         let write_builder = delta_table_ops.write(record_batches);
 
-        // Write the record batch to the object store.
+        // Write the record batches to the object store.
         write_builder
             .with_partition_columns(partition_columns)
             .with_writer_properties(writer_properties)
