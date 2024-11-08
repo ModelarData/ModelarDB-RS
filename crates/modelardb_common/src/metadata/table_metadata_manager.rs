@@ -210,24 +210,6 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Save the created normal table to the metadata Delta Lake. This consists of adding a row to the
-    /// `normal_table_metadata` table with the `name` of the table and the `sql` used to create the
-    /// table. If the normal table metadata was saved, return [`Ok`], otherwise
-    /// return [`ModelarDbCommonError`].
-    pub async fn save_normal_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
-        self.metadata_delta_lake
-            .append_to_table(
-                "normal_table_metadata",
-                vec![
-                    Arc::new(StringArray::from(vec![name])),
-                    Arc::new(StringArray::from(vec![sql])),
-                ],
-            )
-            .await?;
-
-        Ok(())
-    }
-
     /// Return the name of each normal table currently in the metadata Delta Lake. Note that this
     /// does not include model tables. If the normal table names cannot be retrieved,
     /// [`ModelarDbCommonError`] is returned.
@@ -260,6 +242,24 @@ impl TableMetadataManager {
 
         let table_names = modelardb_types::array!(batch, 0, StringArray);
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
+    }
+
+    /// Save the created normal table to the metadata Delta Lake. This consists of adding a row to the
+    /// `normal_table_metadata` table with the `name` of the table and the `sql` used to create the
+    /// table. If the normal table metadata was saved, return [`Ok`], otherwise
+    /// return [`ModelarDbCommonError`].
+    pub async fn save_normal_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
+        self.metadata_delta_lake
+            .append_to_table(
+                "normal_table_metadata",
+                vec![
+                    Arc::new(StringArray::from(vec![name])),
+                    Arc::new(StringArray::from(vec![sql])),
+                ],
+            )
+            .await?;
+
+        Ok(())
     }
 
     /// Save the created model table to the metadata Delta Lake. This includes creating a tags table
