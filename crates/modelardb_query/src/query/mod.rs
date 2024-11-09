@@ -26,8 +26,8 @@ use deltalake::arrow::compute::SortOptions;
 mod generated_as_exec;
 pub(crate) mod grid_exec;
 pub(crate) mod model_table;
-pub(crate) mod sorted_join_exec;
 pub(crate) mod normal_table;
+pub(crate) mod sorted_join_exec;
 
 /// The global sort order [`datafusion::datasource::physical_plan::parquet::ParquetExec`] guarantees
 /// for the segments it produces and that [`grid_exec::GridExec`] requires for the segments its
