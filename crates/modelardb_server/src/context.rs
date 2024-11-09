@@ -422,10 +422,7 @@ impl Context {
 mod tests {
     use super::*;
 
-    use datafusion::arrow::record_batch::RecordBatch;
-    use datafusion::datasource::TableProvider;
     use modelardb_common::test;
-    use modelardb_types::types::{TimestampArray, ValueArray};
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
@@ -677,19 +674,12 @@ mod tests {
             .unwrap();
 
         // Write data to the normal table that should be deleted when the table is truncated.
-        let record_batch = RecordBatch::try_new(
-            TableProvider::schema(&delta_table),
-            vec![
-                Arc::new(TimestampArray::from(vec![1, 2, 3])),
-                Arc::new(ValueArray::from(vec![1.0, 2.0, 3.0])),
-                Arc::new(ValueArray::from(vec![1.0, 2.0, 3.0])),
-            ],
-        )
-        .unwrap();
-
         local_data_folder
             .delta_lake
-            .write_record_batch_to_normal_table(test::NORMAL_TABLE_NAME, record_batch)
+            .write_record_batch_to_normal_table(
+                test::NORMAL_TABLE_NAME,
+                test::normal_table_record_batch(),
+            )
             .await
             .unwrap();
 
