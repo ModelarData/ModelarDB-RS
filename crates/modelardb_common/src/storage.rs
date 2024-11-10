@@ -342,18 +342,18 @@ impl DeltaLake {
         Ok(())
     }
 
-    /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`. Returns
+    /// Write `record_batches` to a Delta Lake table for a normal table with `table_name`. Returns
     /// an updated [`DeltaTable`] version if the file was written successfully, otherwise returns
     /// [`ModelarDbCommonError`].
-    pub async fn write_record_batch_to_normal_table(
+    pub async fn write_record_batches_to_normal_table(
         &self,
         table_name: &str,
-        record_batch: RecordBatch,
+        record_batches: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
         let writer_properties = apache_parquet_writer_properties(None);
         self.write_record_batches_to_delta_table(
             table_name,
-            vec![record_batch],
+            record_batches,
             vec![],
             writer_properties,
         )

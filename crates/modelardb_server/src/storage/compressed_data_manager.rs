@@ -97,7 +97,7 @@ impl CompressedDataManager {
 
         self.local_data_folder
             .delta_lake
-            .write_record_batch_to_normal_table(table_name, record_batch)
+            .write_record_batches_to_normal_table(table_name, vec![record_batch])
             .await?;
 
         // Inform the data transfer component about the new data if a remote data folder was

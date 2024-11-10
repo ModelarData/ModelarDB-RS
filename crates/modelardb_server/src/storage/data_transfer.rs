@@ -21,8 +21,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dashmap::DashMap;
-use datafusion::arrow::compute;
-use datafusion::datasource::TableProvider;
 use deltalake::arrow::array::RecordBatch;
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
@@ -263,7 +261,7 @@ impl DataTransfer {
             .await?;
 
         // Read the data that is currently stored for the table with table_name.
-        let (table, stream) = local_delta_ops.load().await?;
+        let (_table, stream) = local_delta_ops.load().await?;
         let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
         debug!("Transferring {current_size_in_bytes} bytes for the table '{table_name}'.",);
@@ -280,14 +278,9 @@ impl DataTransfer {
                 .write_compressed_segments_to_model_table(table_name, record_batches)
                 .await?;
         } else {
-            // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
-            // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
-            let schema = TableProvider::schema(&table);
-            let record_batch = compute::concat_batches(&schema, &record_batches)?;
-
             self.remote_data_folder
                 .delta_lake
-                .write_record_batch_to_normal_table(table_name, record_batch)
+                .write_record_batches_to_normal_table(table_name, record_batches)
                 .await?;
         }
 
@@ -320,7 +313,7 @@ mod tests {
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
-    const MODEL_TABLE_FILE_SIZE: usize = 2374;
+    const EXPECTED_MODEL_TABLE_FILE_SIZE: usize = 2374;
 
     // Tests for data transfer component.
     #[tokio::test]
@@ -377,7 +370,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            MODEL_TABLE_FILE_SIZE
+            EXPECTED_MODEL_TABLE_FILE_SIZE
         );
     }
 
@@ -404,7 +397,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            MODEL_TABLE_FILE_SIZE * 2
+            EXPECTED_MODEL_TABLE_FILE_SIZE * 2
         );
     }
 
@@ -439,7 +432,7 @@ mod tests {
 
         assert_eq!(
             data_transfer.clear_table(test::MODEL_TABLE_NAME),
-            MODEL_TABLE_FILE_SIZE
+            EXPECTED_MODEL_TABLE_FILE_SIZE
         );
 
         // The table should be removed from the in-memory tracking of compressed files and removed
@@ -459,13 +452,13 @@ mod tests {
         let (_, mut data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         data_transfer
-            .set_transfer_batch_size_in_bytes(Some(MODEL_TABLE_FILE_SIZE * 10))
+            .set_transfer_batch_size_in_bytes(Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 10))
             .await
             .unwrap();
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(MODEL_TABLE_FILE_SIZE * 10)
+            Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 10)
         );
 
         // Data should not have been transferred.
@@ -474,7 +467,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            MODEL_TABLE_FILE_SIZE * 2
+            EXPECTED_MODEL_TABLE_FILE_SIZE * 2
         );
     }
 
@@ -487,7 +480,7 @@ mod tests {
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(MODEL_TABLE_FILE_SIZE * 3 - 1)
+            Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 3 - 1)
         );
 
         data_transfer
@@ -503,7 +496,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            MODEL_TABLE_FILE_SIZE * 2
+            EXPECTED_MODEL_TABLE_FILE_SIZE * 2
         );
     }
 
@@ -553,9 +546,9 @@ mod tests {
             // Write to the normal table.
             local_data_folder
                 .delta_lake
-                .write_record_batch_to_normal_table(
+                .write_record_batches_to_normal_table(
                     test::NORMAL_TABLE_NAME,
-                    test::normal_table_record_batch(),
+                    vec![test::normal_table_record_batch()],
                 )
                 .await
                 .unwrap();
@@ -601,10 +594,11 @@ mod tests {
         let target_dir = tempfile::tempdir().unwrap();
         let remote_data_folder = DataFolder::try_from_path(target_dir.path()).await.unwrap();
 
+        // Set the transfer batch size so that data is transferred if three batches are written.
         let data_transfer = DataTransfer::try_new(
             local_data_folder,
             remote_data_folder,
-            Some(MODEL_TABLE_FILE_SIZE * 3 - 1),
+            Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 3 - 1),
             Arc::new(Mutex::new(Metric::new())),
         )
         .await

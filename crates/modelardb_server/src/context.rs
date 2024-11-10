@@ -676,9 +676,9 @@ mod tests {
         // Write data to the normal table that should be deleted when the table is truncated.
         local_data_folder
             .delta_lake
-            .write_record_batch_to_normal_table(
+            .write_record_batches_to_normal_table(
                 test::NORMAL_TABLE_NAME,
-                test::normal_table_record_batch(),
+                vec![test::normal_table_record_batch()],
             )
             .await
             .unwrap();
