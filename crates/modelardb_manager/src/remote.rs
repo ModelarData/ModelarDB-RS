@@ -642,7 +642,7 @@ impl FlightService for FlightServiceHandler {
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
-            description: "Return the SQL required to create all normal tables and models tables \
+            description: "Return the SQL required to create all normal tables and model tables \
             currently in the manager's database schema."
                 .to_owned(),
         };
