@@ -123,9 +123,8 @@ fn rewrite_aggregates_to_use_segments(
                     if let Ok(input) =
                         try_new_aggregate_exec(aggregate_exec, sorted_join_exec.children())
                     {
-                        // unwrap() is safe as the inputs are constructed from sorted_join_exec.
                         return Ok(Transformed::yes(
-                            execution_plan.with_new_children(vec![input]).unwrap(),
+                            execution_plan.with_new_children(vec![input])?,
                         ));
                     };
                 }
@@ -167,18 +166,14 @@ fn try_new_aggregate_exec(
 
     let model_based_aggregate_exprs = try_rewrite_aggregate_exprs(aggregate_exec)?;
 
-    // unwrap() is safe as the input is from the existing AggregateExec.
-    Ok(Arc::new(
-        AggregateExec::try_new(
-            *aggregate_exec.mode(),
-            aggregate_exec.group_expr().clone(),
-            model_based_aggregate_exprs,
-            aggregate_exec.filter_expr().to_vec(),
-            grid_execs[0].children()[0].clone(),
-            aggregate_exec.schema(),
-        )
-        .unwrap(),
-    ))
+    Ok(Arc::new(AggregateExec::try_new(
+        *aggregate_exec.mode(),
+        aggregate_exec.group_expr().clone(),
+        model_based_aggregate_exprs,
+        aggregate_exec.filter_expr().to_vec(),
+        grid_execs[0].children()[0].clone(),
+        aggregate_exec.schema(),
+    )?))
 }
 
 /// Return [`AggregateExprs`](AggregateExpr) that computes the same aggregates as `aggregate_exec`
@@ -1204,7 +1199,7 @@ mod tests {
         let session_state = session_state_builder.build();
         let session_context = SessionContext::new_with_state(session_state);
 
-        // Create table.
+        // Create model table.
         let model_table_metadata = test::model_table_metadata_arc();
 
         let delta_table = delta_lake

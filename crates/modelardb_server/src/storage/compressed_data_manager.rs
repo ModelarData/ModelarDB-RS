@@ -44,8 +44,8 @@ pub(super) struct CompressedDataManager {
     /// the model table the compressed segments represents data points for so the Apache Parquet
     /// files can be partitioned by table.
     compressed_data_buffers: DashMap<String, CompressedDataBuffer>,
-    /// FIFO queue of table names referring to [`CompressedDataBuffers`](CompressedDataBuffer) that
-    /// can be saved to persistent storage.
+    /// FIFO queue of model table names referring to [`CompressedDataBuffers`](CompressedDataBuffer)
+    /// that can be saved to persistent storage.
     compressed_queue: SegQueue<String>,
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
@@ -78,14 +78,14 @@ impl CompressedDataManager {
         }
     }
 
-    /// Write `record_batch` to the table with `table_name` as a compressed Apache Parquet file.
+    /// Write `record_batch` to the normal table with `table_name` as a compressed Apache Parquet file.
     pub(super) async fn insert_record_batch(
         &self,
         table_name: &str,
         record_batch: RecordBatch,
     ) -> Result<()> {
         debug!(
-            "Received record batch with {} rows for the table '{}'.",
+            "Received record batch with {} rows for the normal table '{}'.",
             record_batch.num_rows(),
             table_name
         );
@@ -97,7 +97,7 @@ impl CompressedDataManager {
 
         self.local_data_folder
             .delta_lake
-            .write_record_batch_to_table(table_name, record_batch)
+            .write_record_batches_to_normal_table(table_name, vec![record_batch])
             .await?;
 
         // Inform the data transfer component about the new data if a remote data folder was
@@ -138,7 +138,7 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
+    /// Insert the `compressed_segments` into the in-memory compressed data buffer for the model table
     /// with `table_name`. If `compressed_segments` is saved successfully, return [`Ok`], otherwise
     /// return [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn insert_compressed_segments(
@@ -239,9 +239,9 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Save the compressed data that belongs to the table with `table_name` The size of the saved
-    /// compressed data is added back to the remaining compressed memory. If the data is written
-    /// successfully to disk, return [`Ok`], otherwise return
+    /// Save the compressed data that belongs to the model table with `table_name` The size of the
+    /// saved compressed data is added back to the remaining compressed memory. If the data is
+    /// written successfully to disk, return [`Ok`], otherwise return
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn save_compressed_data(&self, table_name: &str) -> Result<()> {
         debug!("Saving compressed segments to disk for {table_name}.");
@@ -339,13 +339,13 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_delta_lake_table(test::MODEL_TABLE_NAME, &record_batch.schema())
+            .create_delta_lake_normal_table(test::NORMAL_TABLE_NAME, &record_batch.schema())
             .await
             .unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
 
         data_manager
-            .insert_record_batch(test::MODEL_TABLE_NAME, record_batch)
+            .insert_record_batch(test::NORMAL_TABLE_NAME, record_batch)
             .await
             .unwrap();
         delta_table.load().await.unwrap();

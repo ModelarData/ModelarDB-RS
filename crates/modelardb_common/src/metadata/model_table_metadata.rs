@@ -120,14 +120,12 @@ impl ModelTableMetadata {
             };
 
         // Schema containing timestamps and stored field columns for use by uncompressed buffers.
-        let uncompressed_schema = Arc::new(
-            schema_without_generated
-                .project(&compute_indices_of_columns_without_data_type(
-                    &schema_without_generated,
-                    DataType::Utf8,
-                ))
-                .unwrap(),
-        );
+        let uncompressed_schema = Arc::new(schema_without_generated.project(
+            &compute_indices_of_columns_without_data_type(
+                &schema_without_generated,
+                DataType::Utf8,
+            ),
+        )?);
 
         // A model table must only contain one stored timestamp column, one or more stored field
         // columns, zero or more generated field columns, and zero or more stored tag columns.
@@ -232,7 +230,7 @@ mod test {
         let (query_schema, error_bounds, generated_columns) =
             model_table_schema_error_bounds_and_generated_columns();
         let result = ModelTableMetadata::try_new(
-            "table_name".to_owned(),
+            test::MODEL_TABLE_NAME.to_owned(),
             query_schema,
             error_bounds,
             generated_columns,
@@ -291,7 +289,7 @@ mod test {
     /// Return metadata for a model table with one tag column and the timestamp column at index 1.
     fn create_simple_model_table_metadata(query_schema: Schema) -> Result<ModelTableMetadata> {
         ModelTableMetadata::try_new(
-            "table_name".to_owned(),
+            test::MODEL_TABLE_NAME.to_owned(),
             Arc::new(query_schema),
             vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap()],
             vec![None],
@@ -303,7 +301,7 @@ mod test {
         let (query_schema, _error_bounds, generated_columns) =
             model_table_schema_error_bounds_and_generated_columns();
         let result = ModelTableMetadata::try_new(
-            "table_name".to_owned(),
+            test::MODEL_TABLE_NAME.to_owned(),
             query_schema,
             vec![],
             generated_columns,
@@ -317,7 +315,7 @@ mod test {
         let (query_schema, error_bounds, _generated_columns) =
             model_table_schema_error_bounds_and_generated_columns();
         let result = ModelTableMetadata::try_new(
-            "table_name".to_owned(),
+            test::MODEL_TABLE_NAME.to_owned(),
             query_schema,
             error_bounds,
             vec![],
@@ -344,7 +342,7 @@ mod test {
         });
 
         let result = ModelTableMetadata::try_new(
-            "table_name".to_owned(),
+            test::MODEL_TABLE_NAME.to_owned(),
             query_schema,
             error_bounds,
             generated_columns,
@@ -393,9 +391,8 @@ mod test {
 
         let generated_columns = vec![None, None, None];
 
-        let table_name = "table_name".to_owned();
         let result = ModelTableMetadata::try_new(
-            table_name,
+            test::MODEL_TABLE_NAME.to_owned(),
             Arc::new(Schema::new(fields)),
             error_bounds,
             generated_columns,

@@ -45,11 +45,11 @@ use crate::test::ERROR_BOUND_ZERO;
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
-    Table,
+    NormalTable,
     ModelTable,
 }
 
-/// Stores the metadata required for reading from and writing to the tables and model tables.
+/// Stores the metadata required for reading from and writing to the normal tables and model tables.
 /// The data that needs to be persisted is stored in the metadata Delta Lake.
 #[derive(Clone)]
 pub struct TableMetadataManager {
@@ -143,9 +143,9 @@ impl TableMetadataManager {
         Ok(table_metadata_manager)
     }
 
-    /// If they do not already exist, create the tables in the metadata Delta Lake for table and
-    /// model table metadata.
-    /// * The `table_metadata` table contains the metadata for tables.
+    /// If they do not already exist, create the tables in the metadata Delta Lake for normal table
+    /// and model table metadata.
+    /// * The `normal_table_metadata` table contains the metadata for normal tables.
     /// * The `model_table_metadata` table contains the main metadata for model tables.
     /// * The `model_table_hash_table_name` contains a mapping from each tag hash to the name of the
     ///   model table that contains the time series with that tag hash.
@@ -155,10 +155,10 @@ impl TableMetadataManager {
     /// If the tables exist or were created, return [`Ok`], otherwise return
     /// [`ModelarDbCommonError`].
     async fn create_metadata_delta_lake_tables(&self) -> Result<()> {
-        // Create the table_metadata table if it does not exist.
+        // Create the normal_table_metadata table if it does not exist.
         self.metadata_delta_lake
             .create_delta_lake_table(
-                "table_metadata",
+                "normal_table_metadata",
                 vec![
                     StructField::new("table_name", DataType::STRING, false),
                     StructField::new("sql", DataType::STRING, false),
@@ -210,33 +210,32 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Save the created table to the metadata Delta Lake. This consists of adding a row to the
-    /// `table_metadata` table with the `name` of the table and the `sql` used to create the table.
-    /// If the table metadata was saved, return [`Ok`], otherwise return [`ModelarDbCommonError`].
-    pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
-        self.metadata_delta_lake
-            .append_to_table(
-                "table_metadata",
-                vec![
-                    Arc::new(StringArray::from(vec![name])),
-                    Arc::new(StringArray::from(vec![sql])),
-                ],
-            )
-            .await?;
-
-        Ok(())
+    /// Return `true` if the table with `table_name` is a normal table, otherwise return `false`.
+    pub async fn is_normal_table(&self, table_name: &str) -> Result<bool> {
+        Ok(self
+            .normal_table_names()
+            .await?
+            .contains(&table_name.to_owned()))
     }
 
-    /// Return the name of each table currently in the metadata Delta Lake. Note that this does not
-    /// include model tables. If the table names cannot be retrieved, [`ModelarDbCommonError`] is
-    /// returned.
-    pub async fn table_names(&self) -> Result<Vec<String>> {
-        self.table_names_of_type(TableType::Table).await
+    /// Return `true` if the table with `table_name` is a model table, otherwise return `false`.
+    pub async fn is_model_table(&self, table_name: &str) -> Result<bool> {
+        Ok(self
+            .model_table_names()
+            .await?
+            .contains(&table_name.to_owned()))
+    }
+
+    /// Return the name of each normal table currently in the metadata Delta Lake. Note that this
+    /// does not include model tables. If the normal table names cannot be retrieved,
+    /// [`ModelarDbCommonError`] is returned.
+    pub async fn normal_table_names(&self) -> Result<Vec<String>> {
+        self.table_names_of_type(TableType::NormalTable).await
     }
 
     /// Return the name of each model table currently in the metadata Delta Lake. Note that this
-    /// does not include tables. If the table names cannot be retrieved, [`ModelarDbCommonError`] is
-    /// returned.
+    /// does not include normal tables. If the model table names cannot be retrieved,
+    /// [`ModelarDbCommonError`] is returned.
     pub async fn model_table_names(&self) -> Result<Vec<String>> {
         self.table_names_of_type(TableType::ModelTable).await
     }
@@ -245,7 +244,7 @@ impl TableMetadataManager {
     /// names cannot be retrieved.
     async fn table_names_of_type(&self, table_type: TableType) -> Result<Vec<String>> {
         let table_type = match table_type {
-            TableType::Table => "table",
+            TableType::NormalTable => "normal_table",
             TableType::ModelTable => "model_table",
         };
 
@@ -259,6 +258,24 @@ impl TableMetadataManager {
 
         let table_names = modelardb_types::array!(batch, 0, StringArray);
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
+    }
+
+    /// Save the created normal table to the metadata Delta Lake. This consists of adding a row to the
+    /// `normal_table_metadata` table with the `name` of the table and the `sql` used to create the
+    /// table. If the normal table metadata was saved, return [`Ok`], otherwise
+    /// return [`ModelarDbCommonError`].
+    pub async fn save_normal_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
+        self.metadata_delta_lake
+            .append_to_table(
+                "normal_table_metadata",
+                vec![
+                    Arc::new(StringArray::from(vec![name])),
+                    Arc::new(StringArray::from(vec![sql])),
+                ],
+            )
+            .await?;
+
+        Ok(())
     }
 
     /// Save the created model table to the metadata Delta Lake. This includes creating a tags table
@@ -367,13 +384,9 @@ impl TableMetadataManager {
     /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
     /// exist or the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
     pub async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self.table_names().await?.contains(&table_name.to_owned()) {
+        if self.is_normal_table(table_name).await? {
             self.drop_normal_table_metadata(table_name).await
-        } else if self
-            .model_table_names()
-            .await?
-            .contains(&table_name.to_owned())
-        {
+        } else if self.is_model_table(table_name).await? {
             self.drop_model_table_metadata(table_name).await
         } else {
             Err(ModelarDbCommonError::InvalidArgument(format!(
@@ -382,12 +395,13 @@ impl TableMetadataManager {
         }
     }
 
-    /// Drop the metadata for the normal table with `table_name` from the `table_metadata` table in the
-    /// metadata Delta Lake. If the metadata could not be dropped, [`ModelarDbCommonError`] is returned.
+    /// Drop the metadata for the normal table with `table_name` from the `normal_table_metadata`
+    /// table in the metadata Delta Lake. If the metadata could not be dropped,
+    /// [`ModelarDbCommonError`] is returned.
     async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<()> {
         let ops = self
             .metadata_delta_lake
-            .metadata_table_delta_ops("table_metadata")
+            .metadata_table_delta_ops("normal_table_metadata")
             .await?;
 
         ops.delete()
@@ -436,13 +450,9 @@ impl TableMetadataManager {
     /// keep the interface consistent. If the table does not exist or the metadata could not be
     /// truncated, [`ModelarDbCommonError`] is returned.
     pub async fn truncate_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self.table_names().await?.contains(&table_name.to_owned()) {
+        if self.is_normal_table(table_name).await? {
             Ok(())
-        } else if self
-            .model_table_names()
-            .await?
-            .contains(&table_name.to_owned())
-        {
+        } else if self.is_model_table(table_name).await? {
             self.truncate_model_table_metadata(table_name).await
         } else {
             Err(ModelarDbCommonError::InvalidArgument(format!(
@@ -653,8 +663,7 @@ impl TableMetadataManager {
 
             // If generated_column_expr is null, it is saved as an empty string in the column values.
             if !generated_column_expr.is_empty() {
-                // unwrap() is safe as the expression is checked before it is written to the database.
-                let expr = parser::parse_sql_expression(df_schema, generated_column_expr).unwrap();
+                let expr = parser::parse_sql_expression(df_schema, generated_column_expr)?;
 
                 let generated_column = GeneratedColumn {
                     expr,
@@ -810,10 +819,10 @@ impl TableMetadataManager {
             || insert_into_hash_table_name_metrics.num_target_rows_inserted > 0)
     }
 
-    /// Return the name of the table that contains the time series with `tag_hash`. Returns a
+    /// Return the name of the model table that contains the time series with `tag_hash`. Returns a
     /// [`ModelarDbCommonError`] if the necessary data cannot be retrieved from the metadata Delta
     /// Lake.
-    pub async fn tag_hash_to_table_name(&self, tag_hash: u64) -> Result<String> {
+    pub async fn tag_hash_to_model_table_name(&self, tag_hash: u64) -> Result<String> {
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
         let batch = self
@@ -832,7 +841,7 @@ impl TableMetadataManager {
         let table_names = modelardb_types::array!(batch, 0, StringArray);
         if table_names.is_empty() {
             Err(ModelarDbCommonError::InvalidArgument(format!(
-                "No table contains a time series with tag hash '{tag_hash}'."
+                "No model table contains a time series with tag hash '{tag_hash}'."
             )))
         } else {
             Ok(table_names.value(0).to_owned())
@@ -963,7 +972,7 @@ mod tests {
         assert!(metadata_manager
             .metadata_delta_lake
             .session
-            .sql("SELECT table_name, sql FROM table_metadata")
+            .sql("SELECT table_name, sql FROM normal_table_metadata")
             .await
             .is_ok());
 
@@ -991,35 +1000,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
-
-        // Retrieve the table from the metadata Delta Lake.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "table_metadata",
-                "SELECT table_name, sql FROM table_metadata ORDER BY table_name",
-            )
+    async fn test_normal_table_is_normal_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
+        assert!(metadata_manager
+            .is_normal_table("normal_table_1")
             .await
-            .unwrap();
-
-        assert_eq!(
-            **batch.column(0),
-            StringArray::from(vec!["table_1", "table_2"])
-        );
-        assert_eq!(
-            **batch.column(1),
-            StringArray::from(vec!["CREATE TABLE table_1", "CREATE TABLE table_2"])
-        );
+            .unwrap());
     }
 
     #[tokio::test]
-    async fn test_table_names() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+    async fn test_model_table_is_not_normal_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        assert!(!metadata_manager
+            .is_normal_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap());
+    }
 
-        let table_names = metadata_manager.table_names().await.unwrap();
-        assert_eq!(table_names, vec!["table_2", "table_1"]);
+    #[tokio::test]
+    async fn test_model_table_is_model_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        assert!(metadata_manager
+            .is_model_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_normal_table_is_not_model_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
+        assert!(!metadata_manager
+            .is_model_table("normal_table_1")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_normal_table_names() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
+
+        let normal_table_names = metadata_manager.normal_table_names().await.unwrap();
+        assert_eq!(normal_table_names, vec!["normal_table_2", "normal_table_1"]);
     }
 
     #[tokio::test]
@@ -1028,6 +1049,33 @@ mod tests {
 
         let model_table_names = metadata_manager.model_table_names().await.unwrap();
         assert_eq!(model_table_names, vec![test::MODEL_TABLE_NAME]);
+    }
+
+    #[tokio::test]
+    async fn test_save_normal_table_metadata() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
+
+        // Retrieve the normal table from the metadata Delta Lake.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table(
+                "normal_table_metadata",
+                "SELECT table_name, sql FROM normal_table_metadata ORDER BY table_name",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec!["normal_table_1", "normal_table_2"])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec![
+                "CREATE TABLE normal_table_1",
+                "CREATE TABLE normal_table_2"
+            ])
+        );
     }
 
     #[tokio::test]
@@ -1102,21 +1150,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_normal_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
         metadata_manager
-            .drop_table_metadata("table_2")
+            .drop_table_metadata("normal_table_2")
             .await
             .unwrap();
 
-        // Verify that table_2 was deleted from the table_metadata table.
+        // Verify that normal_table_2 was deleted from the normal_table_metadata table.
         let batch = metadata_manager
             .metadata_delta_lake
-            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .query_table(
+                "normal_table_metadata",
+                "SELECT table_name FROM normal_table_metadata",
+            )
             .await
             .unwrap();
 
-        assert_eq!(**batch.column(0), StringArray::from(vec!["table_1"]));
+        assert_eq!(**batch.column(0), StringArray::from(vec!["normal_table_1"]));
     }
 
     #[tokio::test]
@@ -1184,7 +1235,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_table_metadata_for_missing_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
         assert!(metadata_manager
             .drop_table_metadata("missing_table")
@@ -1194,23 +1245,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_truncate_normal_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
         metadata_manager
-            .truncate_table_metadata("table_1")
+            .truncate_table_metadata("normal_table_1")
             .await
             .unwrap();
 
         // Verify that the metadata Delta Lake was left unchanged.
         let batch = metadata_manager
             .metadata_delta_lake
-            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .query_table(
+                "normal_table_metadata",
+                "SELECT table_name FROM normal_table_metadata",
+            )
             .await
             .unwrap();
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec!["table_2", "table_1"])
+            StringArray::from(vec!["normal_table_2", "normal_table_1"])
         );
     }
 
@@ -1259,7 +1313,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_truncate_table_metadata_for_missing_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_tables().await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
         assert!(metadata_manager
             .truncate_table_metadata("missing_table")
@@ -1267,19 +1321,19 @@ mod tests {
             .is_err());
     }
 
-    async fn create_metadata_manager_and_save_tables() -> (TempDir, TableMetadataManager) {
+    async fn create_metadata_manager_and_save_normal_tables() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
             .await
             .unwrap();
 
         metadata_manager
-            .save_table_metadata("table_1", "CREATE TABLE table_1")
+            .save_normal_table_metadata("normal_table_1", "CREATE TABLE normal_table_1")
             .await
             .unwrap();
 
         metadata_manager
-            .save_table_metadata("table_2", "CREATE TABLE table_2")
+            .save_normal_table_metadata("normal_table_2", "CREATE TABLE normal_table_2")
             .await
             .unwrap();
 
@@ -1315,7 +1369,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = metadata_manager
-            .model_table_metadata_for_model_table("missing_model_table_name")
+            .model_table_metadata_for_model_table("missing_table")
             .await;
 
         assert!(model_table_metadata.is_err());
@@ -1535,7 +1589,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tag_hash_to_table_name() {
+    async fn test_tag_hash_to_model_table_name() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = test::model_table_metadata();
@@ -1545,7 +1599,7 @@ mod tests {
             .unwrap();
 
         let table_name = metadata_manager
-            .tag_hash_to_table_name(tag_hash)
+            .tag_hash_to_model_table_name(tag_hash)
             .await
             .unwrap();
 
@@ -1553,13 +1607,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_tag_hash_to_table_name() {
+    async fn test_invalid_tag_hash_to_model_table_name() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
             .await
             .unwrap();
 
-        assert!(metadata_manager.tag_hash_to_table_name(0).await.is_err());
+        assert!(metadata_manager
+            .tag_hash_to_model_table_name(0)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -1598,7 +1655,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let result = metadata_manager
-            .mapping_from_hash_to_tags("missing_model_table", &["tag"])
+            .mapping_from_hash_to_tags("missing_table", &["tag"])
             .await;
 
         assert!(result.is_err());

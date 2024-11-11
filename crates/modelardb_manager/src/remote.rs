@@ -113,9 +113,9 @@ impl FlightServiceHandler {
     }
 
     /// Create a normal table, save it to the metadata Delta Lake and create it for each node
-    /// controlled by the manager. If the table cannot be saved to the metadata Delta Lake or
+    /// controlled by the manager. If the normal table cannot be saved to the metadata Delta Lake or
     /// created for each node, return [`Status`].
-    async fn save_and_create_cluster_tables(
+    async fn save_and_create_cluster_normal_table(
         &self,
         table_name: &str,
         schema: &Schema,
@@ -125,16 +125,16 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .delta_lake
-            .create_delta_lake_table(table_name, schema)
+            .create_delta_lake_normal_table(table_name, schema)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
-        // Persist the new table to the metadata Delta Lake.
+        // Persist the new normal table to the metadata Delta Lake.
         self.context
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_table_metadata(table_name, sql)
+            .save_normal_table_metadata(table_name, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -147,15 +147,15 @@ impl FlightServiceHandler {
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
-        info!("Created table '{}'.", table_name);
+        info!("Created normal table '{}'.", table_name);
 
         Ok(())
     }
 
     /// Create a model table, save it to the metadata Delta Lake and create it for each node
-    /// controlled by the manager. If the table cannot be saved to the metadata Delta Lake or
+    /// controlled by the manager. If the model table cannot be saved to the metadata Delta Lake or
     /// created for each node, return [`Status`].
-    async fn save_and_create_cluster_model_tables(
+    async fn save_and_create_cluster_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
         sql: &str,
@@ -424,8 +424,8 @@ impl FlightService for FlightServiceHandler {
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
-    /// to create the tables and model tables that are missing in the list. The list of table names
-    /// is also checked to make sure all given tables actually exist.
+    /// to create the normal tables and model tables that are missing in the list. The list of table
+    /// names is also checked to make sure all given tables actually exist.
     /// * `CreateTable`: Execute a SQL query containing a command that creates a table. These
     /// commands can be `CREATE TABLE table_name(...` which creates a normal table, and
     /// `CREATE MODEL TABLE table_name(...` which creates a model table. The table is created
@@ -523,17 +523,17 @@ impl FlightService for FlightServiceHandler {
             let valid_statement = parser::semantic_checks_for_create_table(statement)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // Create the table or model table if it does not already exist.
+            // Create the normal table or model table if it does not already exist.
             match valid_statement {
                 ValidStatement::CreateTable { name, schema } => {
                     self.check_if_table_exists(&name).await?;
-                    self.save_and_create_cluster_tables(&name, &schema, sql)
+                    self.save_and_create_cluster_normal_table(&name, &schema, sql)
                         .await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.save_and_create_cluster_model_tables(model_table_metadata, sql)
+                    self.save_and_create_cluster_model_table(model_table_metadata, sql)
                         .await?;
                 }
             };
@@ -642,7 +642,7 @@ impl FlightService for FlightServiceHandler {
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
-            description: "Return the SQL required to create all tables and models tables \
+            description: "Return the SQL required to create all normal tables and model tables \
             currently in the manager's database schema."
                 .to_owned(),
         };

@@ -99,7 +99,7 @@ impl ModelTable {
         })
     }
 
-    /// Return the [`ModelTableMetadata`] for the table.
+    /// Return the [`ModelTableMetadata`] for the model table.
     pub(crate) fn model_table_metadata(&self) -> Arc<ModelTableMetadata> {
         self.model_table_metadata.clone()
     }
@@ -379,8 +379,8 @@ impl TableProvider for ModelTable {
         TableType::Base
     }
 
-    /// Create an [`ExecutionPlan`] that will scan the table. Returns a [`DataFusionError::Plan`] if
-    /// the necessary metadata cannot be retrieved.
+    /// Create an [`ExecutionPlan`] that will scan the model table. Returns a [`DataFusionError::Plan`]
+    /// if the necessary metadata cannot be retrieved.
     async fn scan(
         &self,
         state: &dyn Session,
@@ -420,8 +420,8 @@ impl TableProvider for ModelTable {
         };
 
         // Compute the query schema for the record batches that Apache DataFusion needs to execute
-        // the query. unwrap() is safe as the projection is based on the query schema.
-        let query_schema_after_projection = Arc::new(query_schema.project(&projection).unwrap());
+        // the query.
+        let query_schema_after_projection = Arc::new(query_schema.project(&projection)?);
 
         // Ensure that the columns which are required for any generated columns in the projection
         // are present in the record batches returned by SortedJoinStream and compute its schema.
@@ -471,9 +471,9 @@ impl TableProvider for ModelTable {
                 generated_columns_in_projection
                     .push(ColumnToGenerate::new(result_index, physical_expr));
             } else {
-                // Stored field. unwrap() is safe as all stored columns are in both of the schemas.
+                // Stored field.
                 let schema_index = self.query_schema_index_to_schema_index(*query_schema_index);
-                stored_field_columns_in_projection.push(schema_index.unwrap() as u16);
+                stored_field_columns_in_projection.push(schema_index? as u16);
                 stored_columns_in_projection.push(SortedJoinColumnType::Field);
             }
         }

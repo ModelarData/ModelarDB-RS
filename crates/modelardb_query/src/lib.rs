@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Execute queries against tables and model tables using Apache DataFusion. Queries may be
+//! Execute queries against normal tables and model tables using Apache DataFusion. Queries may be
 //! rewritten by Apache DataFusion's optimizer to make it more efficient to execute. Additional
 //! rules are added to this optimizer to execute queries directly on the compressed segments.
 
@@ -33,7 +33,7 @@ use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 
 use crate::error::Result;
 use crate::query::model_table::ModelTable;
-use crate::query::table::Table;
+use crate::query::normal_table::NormalTable;
 
 /// Create a new [`SessionContext`] for interacting with Apache DataFusion. The [`SessionContext`]
 /// is constructed with the default configuration, default resource managers, and additional
@@ -53,16 +53,16 @@ pub fn create_session_context() -> SessionContext {
     SessionContext::new_with_state(session_state)
 }
 
-/// Register the table stored in `delta_table` with `table_name` and `data_sink` in
-/// `session_context`. If the table could not be registered with Apache DataFusion, return
-/// [`ModelarDbQueryError`](crate::error::ModelarDbQueryError).
-pub fn register_table(
+/// Register the normal table stored in `delta_table` with `table_name` and `data_sink` in
+/// `session_context`. If the normal table could not be registered with Apache DataFusion, return
+/// [`ModelarDbQueryError`](error::ModelarDbQueryError).
+pub fn register_normal_table(
     session_context: &SessionContext,
     table_name: &str,
     delta_table: DeltaTable,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
-    let table = Arc::new(Table::new(delta_table, data_sink));
+    let table = Arc::new(NormalTable::new(delta_table, data_sink));
 
     session_context.register_table(table_name, table)?;
 
@@ -71,8 +71,7 @@ pub fn register_table(
 
 /// Register the model table stored in `delta_table` with `model_table_metadata` from
 /// `table_metadata_manager` and `data_sink` in `session_context`. If the model table could not be
-/// registered with Apache DataFusion, return
-/// [`ModelarDbQueryError`](crate::error::ModelarDbQueryError).
+/// registered with Apache DataFusion, return [`ModelarDbQueryError`](error::ModelarDbQueryError).
 pub fn register_model_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,

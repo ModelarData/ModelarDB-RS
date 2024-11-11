@@ -190,8 +190,8 @@ impl FlightServiceHandler {
         }
     }
 
-    /// While there is still more data to receive, ingest the data into the table.
-    async fn ingest_into_table(
+    /// While there is still more data to receive, ingest the data into the normal table.
+    async fn ingest_into_normal_table(
         &self,
         table_name: &str,
         schema: &SchemaRef,
@@ -206,7 +206,7 @@ impl FlightServiceHandler {
             )?;
             let storage_engine = self.context.storage_engine.write().await;
 
-            // Write record_batch to the table with table_name as a compressed Apache Parquet file.
+            // Write record_batch to the normal table with table_name as a compressed Apache Parquet file.
             storage_engine
                 .insert_record_batch(table_name, record_batch)
                 .await
@@ -402,13 +402,13 @@ impl FlightService for FlightServiceHandler {
             self.ingest_into_model_table(model_table_metadata, &mut flight_data_stream)
                 .await?;
         } else {
-            debug!("Writing data to table '{}'.", normalized_table_name);
+            debug!("Writing data to normal table '{}'.", normalized_table_name);
             let schema = self
                 .context
                 .schema_of_table_in_default_database_schema(&normalized_table_name)
                 .await
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            self.ingest_into_table(&normalized_table_name, &schema, &mut flight_data_stream)
+            self.ingest_into_normal_table(&normalized_table_name, &schema, &mut flight_data_stream)
                 .await?;
         }
 

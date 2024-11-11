@@ -22,7 +22,6 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use deltalake::arrow::array::RecordBatch;
-use deltalake::DeltaOps;
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
@@ -64,10 +63,21 @@ impl DataTransfer {
     pub async fn try_new(
         local_data_folder: DataFolder,
         remote_data_folder: DataFolder,
-        table_names: Vec<String>,
         transfer_batch_size_in_bytes: Option<usize>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self> {
+        let mut table_names = local_data_folder
+            .table_metadata_manager
+            .normal_table_names()
+            .await?;
+
+        table_names.append(
+            &mut local_data_folder
+                .table_metadata_manager
+                .model_table_names()
+                .await?,
+        );
+
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
         for table_name in table_names {
@@ -241,8 +251,8 @@ impl DataTransfer {
             return Ok(());
         }
 
-        // All compressed segments will be transferred so the current size in bytes is also the
-        // amount of data that will be transferred. unwrap() is safe as the table contains data.
+        // All data will be transferred so the current size in bytes is also the amount of data that
+        // will be transferred. unwrap() is safe as the table contains data.
         let current_size_in_bytes = *self.table_size_in_bytes.get(table_name).unwrap().value();
         let local_delta_ops = self
             .local_data_folder
@@ -251,23 +261,34 @@ impl DataTransfer {
             .await?;
 
         // Read the data that is currently stored for the table with table_name.
-        let (table, stream) = local_delta_ops.load().await?;
-        let compressed_segments: Vec<RecordBatch> = stream.try_collect().await?;
+        let (_table, stream) = local_delta_ops.load().await?;
+        let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
-        debug!(
-            "Transferring {current_size_in_bytes} bytes as {} batches of compressed segments for the table '{table_name}'.",
-            compressed_segments.len(),
-        );
+        debug!("Transferring {current_size_in_bytes} bytes for the table '{table_name}'.",);
 
-        // Write the data to the remote Delta Lake and commit it.
-        self.remote_data_folder
-            .delta_lake
-            .write_compressed_segments_to_model_table(table_name, compressed_segments)
-            .await?;
+        // Write the data to the remote Delta Lake.
+        if self
+            .local_data_folder
+            .table_metadata_manager
+            .is_model_table(table_name)
+            .await?
+        {
+            self.remote_data_folder
+                .delta_lake
+                .write_compressed_segments_to_model_table(table_name, record_batches)
+                .await?;
+        } else {
+            self.remote_data_folder
+                .delta_lake
+                .write_record_batches_to_normal_table(table_name, record_batches)
+                .await?;
+        }
 
         // Delete the data that has been transferred to the remote Delta Lake.
-        let local_delta_ops: DeltaOps = table.into();
-        local_delta_ops.delete().await?;
+        self.local_data_folder
+            .delta_lake
+            .truncate_delta_lake_table(table_name)
+            .await?;
 
         // Remove the transferred data from the in-memory tracking of compressed files.
         *self.table_size_in_bytes.get_mut(table_name).unwrap() -= current_size_in_bytes;
@@ -292,24 +313,31 @@ mod tests {
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
-    const FILE_SIZE: usize = 2374;
+    const EXPECTED_MODEL_TABLE_FILE_SIZE: usize = 2374;
 
     // Tests for data transfer component.
     #[tokio::test]
     async fn test_include_existing_files_on_start_up() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder = create_local_data_folder(&temp_dir).await;
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
-        create_delta_table_and_segments(local_data_folder.clone(), 1).await;
-
+        let (normal_table_files_size, model_table_files_size) =
+            write_batches_to_tables(&local_data_folder, 1).await;
         let (_target_dir, data_transfer) = create_data_transfer_component(local_data_folder).await;
+
+        assert_eq!(
+            *data_transfer
+                .table_size_in_bytes
+                .get(test::NORMAL_TABLE_NAME)
+                .unwrap(),
+            normal_table_files_size
+        );
 
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE
+            model_table_files_size
         );
 
         assert_eq!(
@@ -325,15 +353,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_batch_to_new_table() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder = create_local_data_folder(&temp_dir).await;
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
-        let files_size = create_delta_table_and_segments(local_data_folder, 1).await;
+        let (_normal_table_files_size, model_table_files_size) =
+            write_batches_to_tables(&local_data_folder, 1).await;
 
         assert!(data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
+            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
             .await
             .is_ok());
 
@@ -342,25 +370,25 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE
+            EXPECTED_MODEL_TABLE_FILE_SIZE
         );
     }
 
     #[tokio::test]
     async fn test_add_batch_to_existing_table() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder = create_local_data_folder(&temp_dir).await;
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
-        let files_size = create_delta_table_and_segments(local_data_folder, 1).await;
+        let (_normal_table_files_size, model_table_files_size) =
+            write_batches_to_tables(&local_data_folder, 1).await;
 
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
+            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
             .await
             .unwrap();
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
+            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
             .await
             .unwrap();
 
@@ -369,14 +397,13 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE * 2
+            EXPECTED_MODEL_TABLE_FILE_SIZE * 2
         );
     }
 
     #[tokio::test]
     async fn test_mark_table_as_dropped() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder = create_local_data_folder(&temp_dir).await;
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
@@ -389,21 +416,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_table_size() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder = create_local_data_folder(&temp_dir).await;
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
-        let files_size = create_delta_table_and_segments(local_data_folder, 1).await;
+        let (_normal_table_files_size, model_table_files_size) =
+            write_batches_to_tables(&local_data_folder, 1).await;
 
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
+            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
             .await
             .unwrap();
 
         data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
 
-        assert_eq!(data_transfer.clear_table(test::MODEL_TABLE_NAME), FILE_SIZE);
+        assert_eq!(
+            data_transfer.clear_table(test::MODEL_TABLE_NAME),
+            EXPECTED_MODEL_TABLE_FILE_SIZE
+        );
 
         // The table should be removed from the in-memory tracking of compressed files and removed
         // from the dropped tables.
@@ -416,21 +446,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_increase_transfer_batch_size_in_bytes() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder = create_local_data_folder(&temp_dir).await;
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
-        create_delta_table_and_segments(local_data_folder.clone(), 2).await;
-
+        write_batches_to_tables(&local_data_folder, 2).await;
         let (_, mut data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         data_transfer
-            .set_transfer_batch_size_in_bytes(Some(FILE_SIZE * 10))
+            .set_transfer_batch_size_in_bytes(Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 10))
             .await
             .unwrap();
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(FILE_SIZE * 10)
+            Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 10)
         );
 
         // Data should not have been transferred.
@@ -439,22 +467,20 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE * 2
+            EXPECTED_MODEL_TABLE_FILE_SIZE * 2
         );
     }
 
     #[tokio::test]
     async fn test_set_transfer_batch_size_in_bytes_to_none() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder = create_local_data_folder(&temp_dir).await;
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
-        create_delta_table_and_segments(local_data_folder.clone(), 2).await;
-
+        write_batches_to_tables(&local_data_folder, 2).await;
         let (_, mut data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(FILE_SIZE * 3 - 1)
+            Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 3 - 1)
         );
 
         data_transfer
@@ -470,56 +496,92 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE * 2
+            EXPECTED_MODEL_TABLE_FILE_SIZE * 2
         );
     }
 
-    /// Set up a Delta table and write `batch_write_count` batches of compressed segments to it.
-    /// Returns the size of the files on disk.
-    async fn create_delta_table_and_segments(
-        local_data_folder: DataFolder,
-        batch_write_count: usize,
-    ) -> usize {
+    /// Create a [`DataFolder`] in a local [`TempDir`] and create a single normal table and a
+    /// single model table in it.
+    async fn create_local_data_folder_with_tables() -> (TempDir, DataFolder) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let local_data_folder = DataFolder::try_from_path(temp_dir.path()).await.unwrap();
+
+        // Create a normal table.
         local_data_folder
             .delta_lake
-            .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
+            .create_delta_lake_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
-        // Registered as a normal table as it does not require construction of a metadata object.
         local_data_folder
             .table_metadata_manager
-            .save_table_metadata(test::MODEL_TABLE_NAME, "")
+            .save_normal_table_metadata(test::NORMAL_TABLE_NAME, test::NORMAL_TABLE_SQL)
             .await
             .unwrap();
 
+        // Create a model table.
+        let model_table_metadata = test::model_table_metadata();
+        local_data_folder
+            .delta_lake
+            .create_delta_lake_model_table(&model_table_metadata.name)
+            .await
+            .unwrap();
+
+        local_data_folder
+            .table_metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        (temp_dir, local_data_folder)
+    }
+
+    /// Write `batch_write_count` batches to the normal table and the model table in the local data
+    /// folder and return the total size of the files in each table.
+    async fn write_batches_to_tables(
+        local_data_folder: &DataFolder,
+        batch_write_count: usize,
+    ) -> (usize, usize) {
         for _ in 0..batch_write_count {
-            let compressed_segments = test::compressed_segments_record_batch();
+            // Write to the normal table.
+            local_data_folder
+                .delta_lake
+                .write_record_batches_to_normal_table(
+                    test::NORMAL_TABLE_NAME,
+                    vec![test::normal_table_record_batch()],
+                )
+                .await
+                .unwrap();
+
+            // Write to the model table.
             local_data_folder
                 .delta_lake
                 .write_compressed_segments_to_model_table(
                     test::MODEL_TABLE_NAME,
-                    vec![compressed_segments],
+                    vec![test::compressed_segments_record_batch()],
                 )
                 .await
                 .unwrap();
         }
 
-        let mut delta_table = local_data_folder
+        (
+            table_files_size(local_data_folder, test::NORMAL_TABLE_NAME).await,
+            table_files_size(local_data_folder, test::MODEL_TABLE_NAME).await,
+        )
+    }
+
+    /// Return the total size of the files in the table with `table_name` in `local_data_folder`.
+    async fn table_files_size(local_data_folder: &DataFolder, table_name: &str) -> usize {
+        let delta_table = local_data_folder
             .delta_lake
-            .delta_table(test::MODEL_TABLE_NAME)
+            .delta_table(table_name)
             .await
             .unwrap();
-        delta_table.load().await.unwrap();
 
         let mut files_size = 0;
         for file_path in delta_table.get_files_iter().unwrap() {
-            files_size += delta_table
-                .object_store()
-                .head(&file_path)
-                .await
-                .unwrap()
-                .size;
+            let object_meta = delta_table.object_store().head(&file_path).await;
+            files_size += object_meta.unwrap().size;
         }
 
         files_size
@@ -532,36 +594,16 @@ mod tests {
         let target_dir = tempfile::tempdir().unwrap();
         let remote_data_folder = DataFolder::try_from_path(target_dir.path()).await.unwrap();
 
-        let table_names = local_data_folder
-            .table_metadata_manager
-            .table_names()
-            .await
-            .unwrap();
-
+        // Set the transfer batch size so that data is transferred if three batches are written.
         let data_transfer = DataTransfer::try_new(
             local_data_folder,
             remote_data_folder,
-            table_names,
-            Some(FILE_SIZE * 3 - 1),
+            Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 3 - 1),
             Arc::new(Mutex::new(Metric::new())),
         )
         .await
         .unwrap();
 
         (target_dir, data_transfer)
-    }
-
-    /// Create a local [`DataFolder`] and save a single model table to the metadata Delta Lake.
-    async fn create_local_data_folder(temp_dir: &TempDir) -> DataFolder {
-        let local_data_folder = DataFolder::try_from_path(temp_dir.path()).await.unwrap();
-
-        let model_table_metadata = test::model_table_metadata();
-        local_data_folder
-            .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        local_data_folder
     }
 }

@@ -66,16 +66,42 @@ pub const ERROR_BOUND_ABSOLUTE_MAX: f32 = f32::MAX;
 /// Named error bound with the value 100.0 to make tests more readable.
 pub const ERROR_BOUND_RELATIVE_MAX: f32 = 100.0;
 
-/// SQL to create a table with a timestamp column and two floating point columns.
-pub const TABLE_SQL: &str =
-    "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)";
+/// SQL to create a normal table with a timestamp column and two floating point columns.
+pub const NORMAL_TABLE_SQL: &str =
+    "CREATE TABLE normal_table(timestamp TIMESTAMP, values REAL, metadata REAL)";
+
+/// Name of the normal table used in tests.
+pub const NORMAL_TABLE_NAME: &str = "normal_table";
 
 /// SQL to create a model table with a timestamp column, two field columns, and a tag column.
 pub const MODEL_TABLE_SQL: &str =
-    "CREATE MODEL TABLE model_table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
+    "CREATE MODEL TABLE model_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
 
 /// Name of the model table used in tests.
-pub const MODEL_TABLE_NAME: &str = "model_table_name";
+pub const MODEL_TABLE_NAME: &str = "model_table";
+
+/// Return a [`Schema`] for a normal table with a timestamp column and two floating point columns.
+pub fn normal_table_schema() -> Schema {
+    Schema::new(vec![
+        Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+        Field::new("values", ArrowValue::DATA_TYPE, false),
+        Field::new("metadata", ArrowValue::DATA_TYPE, false),
+    ])
+}
+
+/// Return a [`RecordBatch`] containing five rows for a normal table with a timestamp column and
+/// two floating point columns.
+pub fn normal_table_record_batch() -> RecordBatch {
+    let timestamps = TimestampArray::from(vec![0, 1, 2, 3, 4]);
+    let values = ValueArray::from(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+    let metadata = ValueArray::from(vec![6.0, 7.0, 8.0, 9.0, 10.0]);
+
+    RecordBatch::try_new(
+        Arc::new(normal_table_schema()),
+        vec![Arc::new(timestamps), Arc::new(values), Arc::new(metadata)],
+    )
+    .unwrap()
+}
 
 /// Return [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
 /// timestamp column, and two field columns.
