@@ -20,3 +20,18 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
+arrow.workspace = true
+datafusion.workspace = true
+futures.workspace = true
+modelardb_common = { path = "../modelardb_common" }
+modelardb_types = { path = "../modelardb_types" }
+object_store = { workspace = true, features = ["aws", "azure"] }
+tokio = { workspace = true }
+tonic.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
