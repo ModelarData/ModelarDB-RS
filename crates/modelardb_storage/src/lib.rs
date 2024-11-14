@@ -129,47 +129,6 @@ where
     Ok(record_batches)
 }
 
-/// Write `compressed_segments` for the column `field_column_index` in the table with `table_name`
-/// to an Apache Parquet file with a `UUID` as the file name in `compressed_data_folder`. Return the
-/// path to the file if the file was written successfully, otherwise return
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
-pub async fn write_compressed_segments_to_apache_parquet_file(
-    compressed_data_folder: &str,
-    table_name: &str,
-    field_column_index: u16,
-    compressed_segments: &RecordBatch,
-    object_store: &dyn ObjectStore,
-) -> Result<Path> {
-    if compressed_segments.schema() == COMPRESSED_SCHEMA.0 {
-        // Use a UUID for the file name to make it very likely that the name is unique.
-        let uuid = Uuid::new_v4();
-        let output_file_path = Path::from(format!(
-            "{compressed_data_folder}/{table_name}/{field_column_index}/{uuid}.parquet"
-        ));
-
-        // Specify that the file must be sorted by univariate_id and then by start_time.
-        let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
-        ]);
-
-        write_record_batch_to_apache_parquet_file(
-            &output_file_path,
-            compressed_segments,
-            sorting_columns,
-            object_store,
-        )
-        .await?;
-
-        Ok(output_file_path)
-    } else {
-        Err(ParquetError::General(
-            "The data in the record batch is not compressed segments.".to_string(),
-        )
-        .into())
-    }
-}
-
 /// Write the rows in `record_batch` to an Apache Parquet file at the location given by `file_path`
 /// in `object_store`. `file_path` must use the extension `.parquet`. `sorting_columns` can be set
 /// to control the sorting order of the rows in the written file. Return [`Ok`] if the file was
@@ -238,7 +197,7 @@ mod tests {
     proptest! {
     #[test]
     fn test_univariate_ids_uint64_to_int64_to_uint64(univariate_id in ProptestUnivariateId::ANY) {
-        let record_batch = compressed_segments_record_batch_with_time(univariate_id, 0, 0.0);
+        let record_batch = test::compressed_segments_record_batch_with_time(univariate_id, 0, 0.0);
         let mut expected_record_batch = record_batch.clone();
         expected_record_batch.remove_column(10);
 
@@ -354,75 +313,5 @@ mod tests {
                 .await;
 
         (temp_dir, result)
-    }
-
-    // Tests for write_compressed_segments_to_apache_parquet_file().
-    #[tokio::test]
-    async fn test_write_compressed_segments_to_apache_parquet_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-        let compressed_segments = test::compressed_segments_record_batch();
-
-        let result = write_compressed_segments_to_temp_dir(&temp_dir, &compressed_segments).await;
-        assert!(result.is_ok());
-
-        // Check that the columns are sorted by univariate_id and then by start_time.
-        let file_metadata = object_store.head(&result.unwrap()).await.unwrap();
-        let reader = ParquetObjectReader::new(Arc::new(object_store), file_metadata);
-        let builder = ParquetRecordBatchStreamBuilder::new(reader).await.unwrap();
-
-        let expected_sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
-        ]);
-
-        for row_group in builder.metadata().row_groups() {
-            assert_eq!(
-                row_group.sorting_columns(),
-                expected_sorting_columns.as_ref()
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn test_write_compressed_segments_to_unique_apache_parquet_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let compressed_segments = test::compressed_segments_record_batch();
-
-        // Write the compressed segments to the same folder twice to ensure the created file name is unique.
-        let result_1 = write_compressed_segments_to_temp_dir(&temp_dir, &compressed_segments).await;
-        let result_2 = write_compressed_segments_to_temp_dir(&temp_dir, &compressed_segments).await;
-
-        assert!(result_1.is_ok());
-        assert!(result_2.is_ok());
-        assert_ne!(result_1.unwrap(), result_2.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_write_non_compressed_segments_to_apache_parquet_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let fields: Vec<Field> = vec![];
-        let schema = Schema::new(fields);
-        let record_batch = RecordBatch::new_empty(Arc::new(schema));
-
-        let result = write_compressed_segments_to_temp_dir(&temp_dir, &record_batch).await;
-        assert!(result.is_err());
-    }
-
-    async fn write_compressed_segments_to_temp_dir(
-        temp_dir: &TempDir,
-        compressed_segments: &RecordBatch,
-    ) -> Result<Path> {
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        write_compressed_segments_to_apache_parquet_file(
-            COMPRESSED_DATA_FOLDER,
-            test::MODEL_TABLE_NAME,
-            0,
-            compressed_segments,
-            &object_store,
-        )
-        .await
     }
 }
