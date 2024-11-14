@@ -2862,6 +2862,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "datafusion",
+ "deltalake",
  "futures",
  "modelardb_common",
  "modelardb_types",
@@ -2870,6 +2871,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tonic",
+ "url",
  "uuid",
 ]
 
