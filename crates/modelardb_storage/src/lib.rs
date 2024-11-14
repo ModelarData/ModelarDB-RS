@@ -16,6 +16,7 @@
 //! Utility functions to read and write Apache Parquet files to and from an object store.
 
 mod error;
+mod delta_lake;
 
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -33,17 +34,19 @@ use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties}
 use datafusion::parquet::format::SortingColumn;
 use futures::StreamExt;
 use modelardb_types::schemas::{
-    COMPRESSED_SCHEMA, DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA,
+    DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA,
 };
 use object_store::path::Path;
 use object_store::ObjectStore;
 use tonic::codegen::Bytes;
-use uuid::Uuid;
 
 use crate::error::Result;
 
 /// The folder storing compressed data in the data folders.
 const COMPRESSED_DATA_FOLDER: &str = "tables";
+
+/// The folder storing metadata in the data folders.
+const METADATA_FOLDER: &str = "metadata";
 
 /// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
 /// [`UInt64Array`] to [`Int64Array`] if the column is currently [`UInt64Array`], as the Delta Lake
