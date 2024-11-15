@@ -20,6 +20,7 @@ use std::fmt::{Display, Formatter};
 use std::result::Result as StdResult;
 
 use arrow::error::ArrowError;
+use datafusion::error::DataFusionError;
 use datafusion::parquet::errors::ParquetError;
 use deltalake::{DeltaTableError, ObjectStoreError};
 
@@ -31,6 +32,8 @@ pub type Result<T> = StdResult<T, ModelarDbStorageError>;
 pub enum ModelarDbStorageError {
     /// Error returned by Apache Arrow.
     Arrow(ArrowError),
+    /// Error returned by Apache DataFusion.
+    DataFusion(DataFusionError),
     /// Error returned by Delta Lake.
     DeltaLake(DeltaTableError),
     /// Error returned when an invalid argument was passed.
@@ -45,6 +48,7 @@ impl Display for ModelarDbStorageError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
+            Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
             Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
@@ -58,6 +62,7 @@ impl Error for ModelarDbStorageError {
         // Return the error that caused self to occur if one exists.
         match self {
             Self::Arrow(reason) => Some(reason),
+            Self::DataFusion(reason) => Some(reason),
             Self::DeltaLake(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
             Self::ObjectStore(reason) => Some(reason),
@@ -69,6 +74,12 @@ impl Error for ModelarDbStorageError {
 impl From<ArrowError> for ModelarDbStorageError {
     fn from(error: ArrowError) -> Self {
         Self::Arrow(error)
+    }
+}
+
+impl From<DataFusionError> for ModelarDbStorageError {
+    fn from(error: DataFusionError) -> Self {
+        Self::DataFusion(error)
     }
 }
 
