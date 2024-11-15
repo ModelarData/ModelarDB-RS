@@ -18,6 +18,7 @@
 
 mod delta_lake;
 pub mod error;
+mod metadata;
 mod optimizer;
 mod query;
 
