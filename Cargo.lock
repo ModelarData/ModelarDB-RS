@@ -2857,6 +2857,7 @@ dependencies = [
  "modelardb_types",
  "object_store",
  "proptest",
+ "sqlparser 0.49.0",
  "tempfile",
  "tokio",
  "tonic",

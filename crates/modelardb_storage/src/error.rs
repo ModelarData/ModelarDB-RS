@@ -23,8 +23,11 @@ use std::result::Result as StdResult;
 use arrow::error::ArrowError;
 use datafusion::error::DataFusionError;
 use datafusion::parquet::errors::ParquetError;
-use deltalake::{DeltaTableError, ObjectStoreError};
+use deltalake::errors::DeltaTableError;
 use modelardb_common::error::ModelarDbCommonError;
+use object_store::path::Error as ObjectStorePathError;
+use object_store::Error as ObjectStoreError;
+use sqlparser::parser::ParserError;
 
 /// Result type used throughout `modelardb_storage`.
 pub type Result<T> = StdResult<T, ModelarDbStorageError>;
@@ -44,10 +47,14 @@ pub enum ModelarDbStorageError {
     Io(IoError),
     /// Error returned by ObjectStore.
     ObjectStore(ObjectStoreError),
+    /// Path error returned by ObjectStore.
+    ObjectStorePath(ObjectStorePathError),
     /// Error returned by modelardb_common.
     ModelarDbCommon(ModelarDbCommonError),
     /// Error returned by Apache Parquet.
     Parquet(ParquetError),
+    /// Error returned by sqlparser.
+    Parser(ParserError),
 }
 
 impl Display for ModelarDbStorageError {
@@ -59,8 +66,10 @@ impl Display for ModelarDbStorageError {
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
+            Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
             Self::Parquet(reason) => write!(f, "Parquet Error: {reason}"),
+            Self::Parser(reason) => write!(f, "Parser Error: {reason}"),
         }
     }
 }
@@ -75,8 +84,10 @@ impl Error for ModelarDbStorageError {
             Self::InvalidArgument(_reason) => None,
             Self::Io(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
+            Self::ObjectStorePath(reason) => Some(reason),
             Self::ModelarDbCommon(reason) => Some(reason),
             Self::Parquet(reason) => Some(reason),
+            Self::Parser(reason) => Some(reason),
         }
     }
 }
@@ -111,6 +122,12 @@ impl From<ObjectStoreError> for ModelarDbStorageError {
     }
 }
 
+impl From<ObjectStorePathError> for ModelarDbStorageError {
+    fn from(error: ObjectStorePathError) -> Self {
+        Self::ObjectStorePath(error)
+    }
+}
+
 impl From<ModelarDbCommonError> for ModelarDbStorageError {
     fn from(error: ModelarDbCommonError) -> Self {
         Self::ModelarDbCommon(error)
@@ -120,5 +137,11 @@ impl From<ModelarDbCommonError> for ModelarDbStorageError {
 impl From<ParquetError> for ModelarDbStorageError {
     fn from(error: ParquetError) -> Self {
         Self::Parquet(error)
+    }
+}
+
+impl From<ParserError> for ModelarDbStorageError {
+    fn from(error: ParserError) -> Self {
+        Self::Parser(error)
     }
 }

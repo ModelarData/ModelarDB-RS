@@ -17,8 +17,6 @@
 
 pub mod data_generation;
 
-use datafusion::arrow::array::ArrowPrimitiveType;
-
 /// Expected size of the ingested data buffer produced in the tests.
 pub const INGESTED_BUFFER_SIZE: usize = 1438392;
 

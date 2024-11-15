@@ -20,6 +20,7 @@ pub mod delta_lake;
 pub mod error;
 pub mod metadata;
 mod optimizer;
+pub mod parser;
 mod query;
 pub mod test;
 
@@ -273,7 +274,7 @@ mod tests {
     use proptest::num::u64 as ProptestUnivariateId;
     use proptest::{prop_assert_eq, proptest};
     use tempfile::TempDir;
-    
+
     use crate::test;
 
     // Tests for maybe_univariate_ids_uint64_to_int64() and univariate_ids_int64_to_uint64().
