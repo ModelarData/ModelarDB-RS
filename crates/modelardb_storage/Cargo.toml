@@ -20,11 +20,13 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
+async-trait.workspace = true
 arrow.workspace = true
 datafusion.workspace = true
 deltalake.workspace = true
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
+modelardb_compression = { path = "../modelardb_compression" }
 modelardb_types = { path = "../modelardb_types" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 tokio = { workspace = true }
