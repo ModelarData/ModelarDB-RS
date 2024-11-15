@@ -99,7 +99,7 @@ pub fn model_table_metadata_arc() -> Arc<ModelTableMetadata> {
 
 /// Return a [`RecordBatch`] containing three compressed segments.
 pub fn compressed_segments_record_batch() -> RecordBatch {
-    modelardb_common::test::compressed_segments_record_batch_with_time(1, 0, 0.0)
+    compressed_segments_record_batch_with_time(1, 0, 0.0)
 }
 
 /// Return a [`RecordBatch`] containing three compressed segments from `univariate_id`. The

@@ -122,7 +122,7 @@ mod tests {
     use super::*;
 
     use deltalake::arrow::compute;
-    use modelardb_common::test;
+    use modelardb_storage::test;
 
     #[test]
     fn test_can_append_valid_compressed_segments() {

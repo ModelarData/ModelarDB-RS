@@ -309,7 +309,7 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
-    use modelardb_common::test;
+    use modelardb_storage::test;
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 

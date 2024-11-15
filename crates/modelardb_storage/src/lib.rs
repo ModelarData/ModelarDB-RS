@@ -21,7 +21,7 @@ pub mod error;
 mod metadata;
 mod optimizer;
 mod query;
-mod test;
+pub mod test;
 
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -269,11 +269,12 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::datatypes::{Field, Schema};
-    use modelardb_common::test;
     use object_store::local::LocalFileSystem;
     use proptest::num::u64 as ProptestUnivariateId;
     use proptest::{prop_assert_eq, proptest};
     use tempfile::TempDir;
+    
+    use crate::test;
 
     // Tests for maybe_univariate_ids_uint64_to_int64() and univariate_ids_int64_to_uint64().
     proptest! {
