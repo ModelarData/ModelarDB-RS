@@ -44,14 +44,14 @@ use datafusion::physical_plan::insert::DataSink;
 use datafusion::prelude::SessionContext;
 use deltalake::DeltaTable;
 use futures::StreamExt;
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::schemas::{DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use object_store::path::Path;
 use object_store::ObjectStore;
 use tonic::codegen::Bytes;
 
 use crate::error::Result;
+use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::table_metadata_manager::TableMetadataManager;
 use crate::query::model_table::ModelTable;
 use crate::query::normal_table::NormalTable;
 

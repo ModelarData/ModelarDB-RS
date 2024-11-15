@@ -40,11 +40,11 @@ use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFile;
 use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::schemas::{DISK_QUERY_COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue};
 
+use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::table_metadata_manager::TableMetadataManager;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
@@ -593,8 +593,9 @@ mod tests {
 
     use datafusion::logical_expr::lit;
     use datafusion::prelude::Expr;
-    use modelardb_common::test;
     use modelardb_types::types::Timestamp;
+    
+    use crate::test;
 
     const TIMESTAMP_PREDICATE_VALUE: Timestamp = 37;
 

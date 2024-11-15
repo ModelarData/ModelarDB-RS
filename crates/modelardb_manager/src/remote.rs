@@ -35,9 +35,10 @@ use arrow_flight::{
 };
 use futures::{stream, Stream};
 use modelardb_common::arguments;
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::parser::ValidStatement;
-use modelardb_common::{parser, remote};
+use modelardb_common::remote;
+use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::parser;
+use modelardb_storage::parser::ValidStatement;
 use modelardb_types::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;

@@ -17,6 +17,5 @@
 
 pub mod arguments;
 pub mod error;
-pub mod metadata;
 pub mod remote;
 pub mod test;

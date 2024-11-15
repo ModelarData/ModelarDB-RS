@@ -23,8 +23,8 @@ use arrow::array::{Array, StringArray};
 use deltalake::datafusion::logical_expr::{col, lit};
 use deltalake::kernel::{DataType, StructField};
 use deltalake::DeltaTableError;
-use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_common::metadata::MetadataDeltaLake;
+use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
+use modelardb_storage::metadata::MetadataDeltaLake;
 use modelardb_types::types::ServerMode;
 use uuid::Uuid;
 
@@ -254,7 +254,7 @@ impl MetadataManager {
 mod tests {
     use super::*;
 
-    use modelardb_common::test;
+    use modelardb_storage::test;
     use tempfile::TempDir;
 
     // Tests for MetadataManager.

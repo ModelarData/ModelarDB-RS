@@ -35,13 +35,13 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
 use datafusion::prelude::col;
 use deltalake::kernel::{DataType, StructField};
-use modelardb_common::parser;
 use modelardb_common::test::ERROR_BOUND_ZERO;
 use modelardb_types::types::ErrorBound;
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataDeltaLake;
+use crate::parser;
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -954,12 +954,11 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
-    use modelardb_common::test;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue};
     use proptest::{collection, num, prop_assert_eq, proptest};
     use tempfile::TempDir;
-    
-    use crate::test as storage_test;
+
+    use crate::test;
 
     // Tests for TableMetadataManager.
     #[tokio::test]
@@ -1175,7 +1174,7 @@ mod tests {
     async fn test_drop_model_table_metadata() {
         let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        let model_table_metadata = storage_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
@@ -1273,7 +1272,7 @@ mod tests {
     async fn test_truncate_model_table_metadata() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        let model_table_metadata = storage_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
@@ -1349,7 +1348,7 @@ mod tests {
 
         assert_eq!(
             model_table_metadata.first().unwrap().name,
-            storage_test::model_table_metadata().name,
+            test::model_table_metadata().name,
         );
     }
 
@@ -1362,7 +1361,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(model_table_metadata.name, storage_test::model_table_metadata().name,);
+        assert_eq!(model_table_metadata.name, test::model_table_metadata().name,);
     }
 
     #[tokio::test]
@@ -1461,7 +1460,7 @@ mod tests {
     async fn test_compute_new_tag_hash() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        let model_table_metadata = storage_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         let (tag_hash_1, tag_hash_1_is_saved) = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
@@ -1523,7 +1522,7 @@ mod tests {
     async fn test_lookup_existing_tag_hash() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        let model_table_metadata = storage_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         let (tag_hash_compute, tag_hash_compute_is_saved) = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
@@ -1548,7 +1547,7 @@ mod tests {
     async fn test_compute_tag_hash_with_invalid_tag_values() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        let model_table_metadata = storage_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         let zero_tags_result = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &[])
             .await;
@@ -1593,7 +1592,7 @@ mod tests {
     async fn test_tag_hash_to_model_table_name() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        let model_table_metadata = storage_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         let (tag_hash, _tag_hash_is_saved) = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
@@ -1624,7 +1623,7 @@ mod tests {
     async fn test_mapping_from_hash_to_tags() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        let model_table_metadata = storage_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         let (tag_hash_1, _tag_hash_is_saved) = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
@@ -1666,7 +1665,7 @@ mod tests {
     async fn test_mapping_from_hash_to_tags_with_invalid_tag_column() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        let model_table_metadata = storage_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
@@ -1686,7 +1685,7 @@ mod tests {
             .unwrap();
 
         // Save a model table to the metadata Delta Lake.
-        let model_table_metadata = storage_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await

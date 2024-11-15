@@ -41,7 +41,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::{arguments, remote};
 use modelardb_types::functions;
 use modelardb_types::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};

@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
 
 use crate::error::{ModelarDbServerError, Result};

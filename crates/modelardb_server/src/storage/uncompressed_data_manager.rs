@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use dashmap::DashMap;
 use datafusion::arrow::array::StringArray;
 use futures::StreamExt;
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::path::{Path, PathPart};
 use tokio::runtime::Runtime;
