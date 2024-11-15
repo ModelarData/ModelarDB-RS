@@ -21,6 +21,7 @@ pub mod error;
 mod metadata;
 mod optimizer;
 mod query;
+mod test;
 
 use std::result::Result as StdResult;
 use std::sync::Arc;
