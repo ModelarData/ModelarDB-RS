@@ -26,7 +26,7 @@ use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::storage;
+use modelardb_storage;
 use modelardb_types::types::{
     Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
@@ -264,7 +264,7 @@ impl UncompressedOnDiskDataBuffer {
             timestamps.value(0)
         ));
 
-        storage::write_record_batch_to_apache_parquet_file(
+        modelardb_storage::write_record_batch_to_apache_parquet_file(
             &file_path,
             &data_points,
             None,
@@ -307,7 +307,7 @@ impl UncompressedOnDiskDataBuffer {
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the Apache Parquet file
     /// cannot be read or deleted.
     pub(super) async fn record_batch(&self) -> Result<RecordBatch> {
-        let data_points = storage::read_record_batch_from_apache_parquet_file(
+        let data_points = modelardb_storage::read_record_batch_from_apache_parquet_file(
             &self.file_path,
             self.local_data_folder.clone(),
         )
@@ -395,7 +395,8 @@ mod tests {
     use super::*;
 
     use futures::StreamExt;
-    use modelardb_common::test;
+    use modelardb_common::test::UNCOMPRESSED_BUFFER_SIZE;
+    use modelardb_storage::test;
     use object_store::local::LocalFileSystem;
     use proptest::num::u64 as ProptestTimestamp;
     use proptest::{collection, proptest};
@@ -429,10 +430,7 @@ mod tests {
                 * mem::size_of::<Value>());
 
         assert_eq!(uncompressed_buffer.memory_size(), expected);
-        assert_eq!(
-            uncompressed_buffer.memory_size(),
-            test::UNCOMPRESSED_BUFFER_SIZE
-        );
+        assert_eq!(uncompressed_buffer.memory_size(), UNCOMPRESSED_BUFFER_SIZE);
     }
 
     #[test]

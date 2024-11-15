@@ -24,7 +24,7 @@ use std::env;
 use std::sync::{Arc, LazyLock};
 
 use modelardb_common::arguments;
-use modelardb_common::storage::DeltaLake;
+use modelardb_storage::delta_lake::DeltaLake;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;

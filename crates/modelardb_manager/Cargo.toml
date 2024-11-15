@@ -29,6 +29,7 @@ arrow-flight.workspace = true
 deltalake.workspace = true
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
+modelardb_storage = { path = "../modelardb_storage" }
 modelardb_types = { path = "../modelardb_types" }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tonic.workspace = true

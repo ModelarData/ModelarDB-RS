@@ -57,7 +57,7 @@ pub fn normal_table_record_batch() -> RecordBatch {
     let metadata = ValueArray::from(vec![6.0, 7.0, 8.0, 9.0, 10.0]);
 
     RecordBatch::try_new(
-        Arc::new(modelardb_common::test::normal_table_schema()),
+        Arc::new(normal_table_schema()),
         vec![Arc::new(timestamps), Arc::new(values), Arc::new(metadata)],
     )
     .unwrap()

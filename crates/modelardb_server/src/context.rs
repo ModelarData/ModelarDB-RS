@@ -422,7 +422,7 @@ impl Context {
 mod tests {
     use super::*;
 
-    use modelardb_common::test;
+    use modelardb_storage::test;
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;

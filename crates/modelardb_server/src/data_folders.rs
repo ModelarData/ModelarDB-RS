@@ -19,7 +19,7 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_common::storage::DeltaLake;
+use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_types::types::ServerMode;
 
 use crate::error::ModelarDbServerError;
