@@ -122,6 +122,7 @@ mod tests {
     use super::*;
 
     use deltalake::arrow::compute;
+    use modelardb_common::test::COMPRESSED_SEGMENTS_SIZE;
     use modelardb_storage::test;
 
     #[test]
@@ -178,7 +179,7 @@ mod tests {
 
         assert_eq!(
             CompressedDataBuffer::size_of_compressed_segments(&compressed_data_buffer),
-            test::COMPRESSED_SEGMENTS_SIZE,
+            COMPRESSED_SEGMENTS_SIZE,
         );
     }
 }

@@ -1041,11 +1041,11 @@ mod tests {
     use datafusion::physical_plan::metrics::MetricsSet;
     use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
     use datafusion::prelude::SessionContext;
-    use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
     use tempfile::TempDir;
     use tonic::async_trait;
 
     use crate::delta_lake::DeltaLake;
+    use crate::metadata::table_metadata_manager::TableMetadataManager;
     use crate::optimizer;
     use crate::query::grid_exec::GridExec;
     use crate::query::model_table::ModelTable;

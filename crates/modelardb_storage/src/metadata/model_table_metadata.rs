@@ -220,8 +220,9 @@ mod test {
     use super::*;
 
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use modelardb_common::test;
     use modelardb_common::test::ERROR_BOUND_ZERO;
+
+    use crate::test;
 
     // Tests for ModelTableMetadata.
     #[test]

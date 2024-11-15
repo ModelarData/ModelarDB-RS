@@ -315,11 +315,11 @@ mod tests {
 
     use datafusion::arrow::array::{Array, Int8Array};
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
-    use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test::{
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, COMPRESSED_SEGMENTS_SIZE,
         INGESTED_RESERVED_MEMORY_IN_BYTES, UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
+    use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_storage::test;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use ringbuf::traits::observer::Observer;

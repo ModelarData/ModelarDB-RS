@@ -766,7 +766,11 @@ mod tests {
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
-    use modelardb_common::test;
+    use modelardb_common::test::{
+        COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
+        UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+    };
+    use modelardb_storage::test;
     use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
@@ -1363,7 +1367,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_uncompressed_memory_in_bytes() as usize,
-            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
         )
     }
 
@@ -1454,9 +1458,9 @@ mod tests {
             .unwrap();
 
         let memory_pool = Arc::new(MemoryPool::new(
-            test::INGESTED_RESERVED_MEMORY_IN_BYTES,
-            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            INGESTED_RESERVED_MEMORY_IN_BYTES,
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
         let channels = Arc::new(Channels::new());
