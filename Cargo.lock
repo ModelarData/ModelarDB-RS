@@ -2809,22 +2809,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "modelardb_query"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "datafusion",
- "deltalake",
- "futures",
- "modelardb_common",
- "modelardb_compression",
- "modelardb_types",
- "tempfile",
- "tokio",
- "tonic",
-]
-
-[[package]]
 name = "modelardb_server"
 version = "0.1.0"
 dependencies = [
@@ -2840,7 +2824,7 @@ dependencies = [
  "log",
  "modelardb_common",
  "modelardb_compression",
- "modelardb_query",
+ "modelardb_storage",
  "modelardb_types",
  "object_store",
  "proptest",

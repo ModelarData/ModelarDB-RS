@@ -17,7 +17,7 @@
 //! and write Apache Parquet files to and from an object store.
 
 mod delta_lake;
-mod error;
+pub mod error;
 mod optimizer;
 mod query;
 

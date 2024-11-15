@@ -57,7 +57,7 @@ impl Context {
     ) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
-        let session = modelardb_query::create_session_context();
+        let session = modelardb_storage::create_session_context();
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(runtime, data_folders.clone(), &configuration_manager).await?,
@@ -202,7 +202,7 @@ impl Context {
             self.storage_engine.clone(),
         ));
 
-        modelardb_query::register_normal_table(
+        modelardb_storage::register_normal_table(
             &self.session,
             table_name,
             delta_table,
@@ -256,7 +256,7 @@ impl Context {
             self.storage_engine.clone(),
         ));
 
-        modelardb_query::register_model_table(
+        modelardb_storage::register_model_table(
             &self.session,
             delta_table,
             model_table_metadata.clone(),
@@ -368,7 +368,7 @@ impl Context {
         })?;
 
         let maybe_model_table_metadata =
-            modelardb_query::maybe_model_table_to_model_table_metadata(maybe_model_table);
+            modelardb_storage::maybe_model_table_to_model_table_metadata(maybe_model_table);
 
         Ok(maybe_model_table_metadata)
     }
