@@ -13,10 +13,13 @@
  * limitations under the License.
  */
 
-//! Utility functions to read and write Apache Parquet files to and from an object store.
+//! Utility functions to register normal tables and model tables with Apache DataFusion and to read
+//! and write Apache Parquet files to and from an object store.
 
-mod error;
 mod delta_lake;
+mod error;
+mod optimizer;
+mod query;
 
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -24,6 +27,8 @@ use std::sync::Arc;
 use arrow::array::{Int64Array, RecordBatch, UInt64Array};
 use arrow::compute;
 use arrow::datatypes::DataType;
+use datafusion::catalog::TableProvider;
+use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::parquet::arrow::async_reader::{
     AsyncFileReader, ParquetObjectReader, ParquetRecordBatchStream,
 };
@@ -32,21 +37,93 @@ use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use datafusion::parquet::format::SortingColumn;
+use datafusion::physical_plan::insert::DataSink;
+use datafusion::prelude::SessionContext;
+use deltalake::DeltaTable;
 use futures::StreamExt;
-use modelardb_types::schemas::{
-    DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA,
-};
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
+use modelardb_types::schemas::{DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use object_store::path::Path;
 use object_store::ObjectStore;
 use tonic::codegen::Bytes;
 
 use crate::error::Result;
+use crate::query::model_table::ModelTable;
+use crate::query::normal_table::NormalTable;
 
 /// The folder storing compressed data in the data folders.
 const COMPRESSED_DATA_FOLDER: &str = "tables";
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
+
+/// Create a new [`SessionContext`] for interacting with Apache DataFusion. The [`SessionContext`]
+/// is constructed with the default configuration, default resource managers, and additional
+/// optimizer rules that rewrite simple aggregate queries to be executed directly on the segments
+/// containing metadata and models instead of on reconstructed data points created from the segments
+/// for model tables.
+pub fn create_session_context() -> SessionContext {
+    let mut session_state_builder = SessionStateBuilder::new().with_default_features();
+
+    // Uses the rule method instead of the rules method as the rules method replaces the built-ins.
+    for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
+        session_state_builder =
+            session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
+    }
+
+    let session_state = session_state_builder.build();
+    SessionContext::new_with_state(session_state)
+}
+
+/// Register the normal table stored in `delta_table` with `table_name` and `data_sink` in
+/// `session_context`. If the normal table could not be registered with Apache DataFusion, return
+/// [`ModelarDbQueryError`](error::ModelarDbQueryError).
+pub fn register_normal_table(
+    session_context: &SessionContext,
+    table_name: &str,
+    delta_table: DeltaTable,
+    data_sink: Arc<dyn DataSink>,
+) -> Result<()> {
+    let table = Arc::new(NormalTable::new(delta_table, data_sink));
+
+    session_context.register_table(table_name, table)?;
+
+    Ok(())
+}
+
+/// Register the model table stored in `delta_table` with `model_table_metadata` from
+/// `table_metadata_manager` and `data_sink` in `session_context`. If the model table could not be
+/// registered with Apache DataFusion, return [`ModelarDbQueryError`](error::ModelarDbQueryError).
+pub fn register_model_table(
+    session_context: &SessionContext,
+    delta_table: DeltaTable,
+    model_table_metadata: Arc<ModelTableMetadata>,
+    table_metadata_manager: Arc<TableMetadataManager>,
+    data_sink: Arc<dyn DataSink>,
+) -> Result<()> {
+    let model_table = ModelTable::new(
+        delta_table,
+        table_metadata_manager,
+        model_table_metadata.clone(),
+        data_sink,
+    );
+
+    session_context.register_table(&model_table_metadata.name, model_table)?;
+
+    Ok(())
+}
+
+/// Return the [`Arc<ModelTableMetadata>`] of the table `maybe_model_table` if it is a model table,
+/// otherwise [`None`] is returned.
+pub fn maybe_model_table_to_model_table_metadata(
+    maybe_model_table: Arc<dyn TableProvider>,
+) -> Option<Arc<ModelTableMetadata>> {
+    maybe_model_table
+        .as_any()
+        .downcast_ref::<ModelTable>()
+        .map(|model_table| model_table.model_table_metadata())
+}
 
 /// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
 /// [`UInt64Array`] to [`Int64Array`] if the column is currently [`UInt64Array`], as the Delta Lake
