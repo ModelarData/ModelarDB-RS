@@ -20,8 +20,10 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-async-trait.workspace = true
+arrow-flight.workspace = true
 arrow.workspace = true
+async-trait.workspace = true
+dashmap.workspace = true
 datafusion.workspace = true
 deltalake.workspace = true
 futures.workspace = true

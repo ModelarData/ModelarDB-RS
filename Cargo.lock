@@ -2845,7 +2845,9 @@ name = "modelardb_storage"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "arrow-flight",
  "async-trait",
+ "dashmap",
  "datafusion",
  "deltalake",
  "futures",
