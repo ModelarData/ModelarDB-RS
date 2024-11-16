@@ -29,7 +29,8 @@ use std::sync::Arc;
 
 use arrow::array::{Int64Array, RecordBatch, UInt64Array};
 use arrow::compute;
-use arrow::datatypes::DataType;
+use arrow::compute::concat_batches;
+use arrow::datatypes::{DataType, Schema};
 use datafusion::catalog::TableProvider;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::parquet::arrow::async_reader::{
@@ -126,6 +127,19 @@ pub fn maybe_model_table_to_model_table_metadata(
         .as_any()
         .downcast_ref::<ModelTable>()
         .map(|model_table| model_table.model_table_metadata())
+}
+
+/// Execute the SQL query `sql` in `session_context` and return the result as a single
+/// [`RecordBatch`]. If the query could not be executed successfully, return
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
+pub async fn sql_and_combine(session_context: &SessionContext, sql: &str) -> Result<RecordBatch> {
+    let dataframe = session_context.sql(sql).await?;
+    let schema = Schema::from(dataframe.schema());
+
+    let record_batches = dataframe.collect().await?;
+    let record_batch = concat_batches(&schema.into(), &record_batches)?;
+
+    Ok(record_batch)
 }
 
 /// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
