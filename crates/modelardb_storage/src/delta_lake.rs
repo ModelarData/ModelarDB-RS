@@ -20,8 +20,9 @@ use std::fs;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use arrow::array::RecordBatch;
+use arrow::array::{ArrayRef, RecordBatch};
 use arrow::datatypes::{DataType, Field, Schema};
+use datafusion::catalog::TableProvider;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
 use deltalake::kernel::StructField;
@@ -209,6 +210,16 @@ impl DeltaLake {
         self.maybe_local_file_system.clone()
     }
 
+    /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
+    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection cannot be established or the
+    /// table does not exist.
+    pub async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
+        let table_path = self.location_of_metadata_table(table_name);
+        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone())
+            .await
+            .map_err(|error| error.into())
+    }
+
     /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
     /// [`ModelarDbStorageError`] if a connection cannot be established or the table does not exist.
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
@@ -356,6 +367,29 @@ impl DeltaLake {
         Ok(())
     }
 
+    /// Write `rows` to a metadata Delta Lake table with `table_name`. Returns an updated
+    /// [`DeltaTable`] version if the file was written successfully, otherwise returns
+    /// [`ModelarDbStorageError`].
+    pub async fn write_rows_to_metadata_delta_table(
+        &self,
+        table_name: &str,
+        rows: Vec<ArrayRef>,
+    ) -> Result<DeltaTable> {
+        let table = self.metadata_delta_table(table_name).await?;
+
+        // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
+        // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
+        let record_batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
+
+        self.write_record_batches_to_delta_table(
+            table,
+            vec![record_batch],
+            vec![],
+            WriterProperties::new(),
+        )
+        .await
+    }
+
     /// Write `record_batches` to a Delta Lake table for a normal table with `table_name`. Returns
     /// an updated [`DeltaTable`] version if the file was written successfully, otherwise returns
     /// [`ModelarDbStorageError`].
@@ -366,7 +400,7 @@ impl DeltaLake {
     ) -> Result<DeltaTable> {
         let writer_properties = apache_parquet_writer_properties(None);
         self.write_record_batches_to_delta_table(
-            table_name,
+            self.delta_table(table_name).await?,
             record_batches,
             vec![],
             writer_properties,
@@ -395,7 +429,7 @@ impl DeltaLake {
         let writer_properties = apache_parquet_writer_properties(sorting_columns);
 
         self.write_record_batches_to_delta_table(
-            table_name,
+            self.delta_table(table_name).await?,
             compressed_segments,
             partition_columns,
             writer_properties,
@@ -403,18 +437,18 @@ impl DeltaLake {
         .await
     }
 
-    /// Write `record_batches` to a Delta Lake table with `table_name` using `writer_properties`.
+    /// Write `record_batches` to the Delta Lake table `delta_table` using `writer_properties`.
     /// `partition_columns` can optionally be provided to specify that `record_batches` should be
     /// partitioned by these columns. Returns an updated [`DeltaTable`] if the file was written
     /// successfully, otherwise returns [`ModelarDbStorageError`].
     async fn write_record_batches_to_delta_table(
         &self,
-        table_name: &str,
+        delta_table: DeltaTable,
         record_batches: Vec<RecordBatch>,
         partition_columns: Vec<String>,
         writer_properties: WriterProperties,
     ) -> Result<DeltaTable> {
-        let delta_table_ops = self.delta_ops(table_name).await?;
+        let delta_table_ops: DeltaOps = delta_table.into();
         let write_builder = delta_table_ops.write(record_batches);
 
         // Write the record batches to the object store.
