@@ -229,6 +229,16 @@ impl DeltaLake {
             .map_err(|error| error.into())
     }
 
+    /// Return a [`DeltaOps`] for manipulating the metadata table with `table_name` in the Delta
+    /// Lake, or a [`ModelarDbStorageError`] if a connection cannot be established or the table does
+    /// not exist.
+    pub async fn metadata_delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
+        let table_path = self.location_of_metadata_table(table_name);
+        DeltaOps::try_from_uri_with_storage_options(&table_path, self.storage_options.clone())
+            .await
+            .map_err(|error| error.into())
+    }
+
     /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or a
     /// [`ModelarDbStorageError`] if a connection cannot be established or the table does not exist.
     pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
