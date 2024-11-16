@@ -18,11 +18,10 @@
 //! through this metadata manager, while it only supports a subset of the manager metadata Delta Lake.
 
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
 use std::hash::{DefaultHasher, Hasher};
+use std::mem;
 use std::path::Path as StdPath;
 use std::sync::Arc;
-use std::{fmt, mem};
 
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, RecordBatch,
@@ -54,7 +53,6 @@ enum TableType {
 
 /// Stores the metadata required for reading from and writing to the normal tables and model tables.
 /// The data that needs to be persisted is stored in the metadata Delta Lake.
-#[derive(Clone)]
 pub struct TableMetadataManager {
     /// Delta Lake with functionality to read and write to and from the metadata tables.
     delta_lake: DeltaLake,
@@ -462,10 +460,13 @@ impl TableMetadataManager {
     /// each field column, and deleting the tag metadata from the `model_table_hash_table_name` table
     /// and the tag cache. If the metadata could not be dropped, [`ModelarDbStorageError`] is returned.
     async fn drop_model_table_metadata(&self, table_name: &str) -> Result<()> {
-        // Drop the model_table_name_tags table.
+        // Drop and deregister the model_table_name_tags table.
         self.delta_lake
             .drop_metadata_delta_lake_table(&format!("{table_name}_tags"))
             .await?;
+
+        self.session
+            .deregister_table(&format!("{table_name}_tags"))?;
 
         // Delete the table metadata from the model_table_metadata table.
         self.delta_lake
@@ -847,7 +848,7 @@ impl TableMetadataManager {
     /// Return a [`DataFrame`] with the given `rows` for the metadata table with the given
     /// `table_name`. If the table does not exist or the [`DataFrame`] cannot be created, return
     /// [`ModelarDbStorageError`].
-    pub async fn metadata_table_data_frame(
+    async fn metadata_table_data_frame(
         &self,
         table_name: &str,
         rows: Vec<ArrayRef>,
@@ -932,14 +933,6 @@ impl TableMetadataManager {
     }
 }
 
-impl Debug for TableMetadataManager {
-    /// Write a string-based representation of the [`TableMetadataManager`] to `f`. Returns
-    /// `Err` if `std::write` cannot format the string and write it to `f`.
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.metadata_delta_lake.location)
-    }
-}
-
 /// Convert a [`Schema`] to [`Vec<u8>`].
 fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
     let options = IpcWriteOptions::default();
@@ -1002,28 +995,24 @@ mod tests {
 
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(metadata_manager
-            .metadata_delta_lake
             .session
             .sql("SELECT table_name, sql FROM normal_table_metadata")
             .await
             .is_ok());
 
         assert!(metadata_manager
-            .metadata_delta_lake
             .session
             .sql("SELECT table_name, query_schema, sql FROM model_table_metadata")
             .await
             .is_ok());
 
         assert!(metadata_manager
-            .metadata_delta_lake
             .session
             .sql("SELECT hash, table_name FROM model_table_hash_table_name")
             .await
             .is_ok());
 
         assert!(metadata_manager
-                .metadata_delta_lake
                 .session
                 .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
                  generated_column_expr, generated_column_sources FROM model_table_field_columns")
@@ -1088,12 +1077,8 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
         // Retrieve the normal table from the metadata Delta Lake.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "normal_table_metadata",
-                "SELECT table_name, sql FROM normal_table_metadata ORDER BY table_name",
-            )
+        let sql = "SELECT table_name, sql FROM normal_table_metadata ORDER BY table_name";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -1114,24 +1099,13 @@ mod tests {
     async fn test_save_model_table_metadata() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        // Verify that the tables were created, and has the expected columns.
-        assert!(metadata_manager
-            .metadata_delta_lake
-            .session
-            .sql(&format!(
-                "SELECT hash, tag FROM {}_tags",
-                test::MODEL_TABLE_NAME
-            ))
-            .await
-            .is_ok());
+        // Verify that the table was created and has the expected columns.
+        let sql = format!("SELECT hash, tag FROM {}_tags", test::MODEL_TABLE_NAME);
+        assert!(metadata_manager.session.sql(&sql).await.is_ok());
 
         // Check that a row has been added to the model_table_metadata table.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "model_table_metadata",
-                "SELECT table_name, query_schema, sql FROM model_table_metadata",
-            )
+        let sql = "SELECT table_name, query_schema, sql FROM model_table_metadata";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -1152,15 +1126,11 @@ mod tests {
         );
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
-        let batch = metadata_manager
-                .metadata_delta_lake
-                .query_table(
-                    "model_table_field_columns",
-                    "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
-                 generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name",
-                )
-                .await
-                .unwrap();
+        let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
+                 generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
+            .await
+            .unwrap();
 
         assert_eq!(
             **batch.column(0),
@@ -1190,12 +1160,8 @@ mod tests {
             .unwrap();
 
         // Verify that normal_table_2 was deleted from the normal_table_metadata table.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "normal_table_metadata",
-                "SELECT table_name FROM normal_table_metadata",
-            )
+        let sql = "SELECT table_name FROM normal_table_metadata";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -1226,36 +1192,24 @@ mod tests {
             .exists());
 
         // Verify that the model table was deleted from the model_table_metadata table.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "model_table_metadata",
-                "SELECT table_name FROM model_table_metadata",
-            )
+        let sql = "SELECT table_name FROM model_table_metadata";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
         assert_eq!(batch.num_rows(), 0);
 
         // Verify that the field columns were deleted from the model_table_field_columns table.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "model_table_field_columns",
-                "SELECT table_name FROM model_table_field_columns",
-            )
+        let sql = "SELECT table_name FROM model_table_field_columns";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
         assert_eq!(batch.num_rows(), 0);
 
         // Verify that the tag metadata was deleted from the model_table_hash_table_name table.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "model_table_hash_table_name",
-                "SELECT table_name FROM model_table_hash_table_name",
-            )
+        let sql = "SELECT table_name FROM model_table_hash_table_name";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -1285,12 +1239,8 @@ mod tests {
             .unwrap();
 
         // Verify that the metadata Delta Lake was left unchanged.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "normal_table_metadata",
-                "SELECT table_name FROM normal_table_metadata",
-            )
+        let sql = "SELECT table_name FROM normal_table_metadata";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -1316,24 +1266,16 @@ mod tests {
             .unwrap();
 
         // Verify that the tags table was truncated.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                &format!("{}_tags", test::MODEL_TABLE_NAME),
-                &format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME),
-            )
+        let sql = format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME);
+        let batch = sql_and_combine(&metadata_manager.session, &sql)
             .await
             .unwrap();
 
         assert_eq!(batch.num_rows(), 0);
 
         // Verify that the tag metadata was deleted from the model_table_hash_table_name table.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "model_table_hash_table_name",
-                "SELECT table_name FROM model_table_hash_table_name",
-            )
+        let sql = "SELECT table_name FROM model_table_hash_table_name";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -1509,12 +1451,8 @@ mod tests {
         assert_eq!(metadata_manager.tag_value_hashes.len(), 2);
 
         // The tag hashes should be saved in the model_table_tags table.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                &format!("{}_tags", test::MODEL_TABLE_NAME),
-                &format!("SELECT hash, tag FROM {}_tags", test::MODEL_TABLE_NAME),
-            )
+        let sql = format!("SELECT hash, tag FROM {}_tags", test::MODEL_TABLE_NAME);
+        let batch = sql_and_combine(&metadata_manager.session, &sql)
             .await
             .unwrap();
 
@@ -1528,12 +1466,8 @@ mod tests {
         assert_eq!(**batch.column(1), StringArray::from(vec!["tag2", "tag1"]));
 
         // The tag hashes should be saved in the model_table_hash_table_name table.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "model_table_hash_table_name",
-                "SELECT hash, table_name FROM model_table_hash_table_name",
-            )
+        let sql = "SELECT hash, table_name FROM model_table_hash_table_name";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -1597,23 +1531,15 @@ mod tests {
         // The tag hashes should not be saved in either the cache or the metadata Delta Lake.
         assert_eq!(metadata_manager.tag_value_hashes.len(), 0);
 
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                &format!("{}_tags", test::MODEL_TABLE_NAME),
-                &format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME),
-            )
+        let sql = format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME);
+        let batch = sql_and_combine(&metadata_manager.session, &sql)
             .await
             .unwrap();
 
         assert!(batch.column(0).is_empty());
 
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "model_table_hash_table_name",
-                "SELECT hash FROM model_table_hash_table_name",
-            )
+        let sql = "SELECT hash FROM model_table_hash_table_name";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 

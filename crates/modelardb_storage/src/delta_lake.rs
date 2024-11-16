@@ -45,7 +45,6 @@ use crate::{
 };
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
-#[derive(Clone)]
 pub struct DeltaLake {
     /// URL to access the root of the Delta Lake.
     location: String,
