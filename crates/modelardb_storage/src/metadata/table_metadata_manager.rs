@@ -27,20 +27,19 @@ use std::{fmt, mem};
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, StringArray,
 };
-use arrow::datatypes::Schema;
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
 use datafusion::prelude::{col, SessionContext};
-use deltalake::kernel::{DataType, StructField};
 use modelardb_common::test::ERROR_BOUND_ZERO;
 use modelardb_types::types::ErrorBound;
 
+use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::metadata::MetadataDeltaLake;
 use crate::query::metadata_table::MetadataTable;
 use crate::{parser, sql_and_combine};
 
@@ -55,7 +54,7 @@ enum TableType {
 #[derive(Clone)]
 pub struct TableMetadataManager {
     /// Delta Lake with functionality to read and write to and from the metadata tables.
-    metadata_delta_lake: MetadataDeltaLake,
+    delta_lake: DeltaLake,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
     /// Session used to query the metadata Delta Lake tables using Apache DataFusion.
@@ -68,7 +67,7 @@ impl TableMetadataManager {
     /// [`ModelarDbStorageError`].
     pub async fn try_from_path(folder_path: &StdPath) -> Result<Self> {
         let table_metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::from_path(folder_path)?,
+            delta_lake: DeltaLake::try_from_local_path(folder_path)?,
             tag_value_hashes: DashMap::new(),
             session: SessionContext::new(),
         };
@@ -86,7 +85,7 @@ impl TableMetadataManager {
     /// [`ModelarDbStorageError`].
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
         let table_metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)?,
+            delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
             tag_value_hashes: DashMap::new(),
             session: SessionContext::new(),
         };
@@ -108,7 +107,7 @@ impl TableMetadataManager {
         secret_access_key: String,
     ) -> Result<Self> {
         let table_metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::try_from_s3_configuration(
+            delta_lake: DeltaLake::try_from_s3_configuration(
                 endpoint,
                 bucket_name,
                 access_key_id,
@@ -134,7 +133,7 @@ impl TableMetadataManager {
         container_name: String,
     ) -> Result<Self> {
         let table_metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::try_from_azure_configuration(
+            delta_lake: DeltaLake::try_from_azure_configuration(
                 account_name,
                 access_key,
                 container_name,
@@ -163,61 +162,52 @@ impl TableMetadataManager {
     /// [`ModelarDbStorageError`].
     async fn create_and_register_metadata_delta_lake_tables(&self) -> Result<()> {
         // Create and register the normal_table_metadata table if it does not exist.
-        self.metadata_delta_lake
-            .create_delta_lake_table(
+        let delta_table = self
+            .delta_lake
+            .create_delta_lake_metadata_table(
                 "normal_table_metadata",
-                vec![
-                    StructField::new("table_name", DataType::STRING, false),
-                    StructField::new("sql", DataType::STRING, false),
-                ],
+                &Schema::new(vec![
+                    Field::new("table_name", DataType::Utf8, false),
+                    Field::new("sql", DataType::Utf8, false),
+                ]),
             )
             .await?;
 
-        let delta_table = self
-            .metadata_delta_lake
-            .metadata_delta_table("normal_table_metadata")
-            .await?;
         self.session.register_table(
             "normal_table_metadata",
             Arc::new(MetadataTable::new(delta_table)),
         )?;
 
         // Create and register the model_table_metadata table if it does not exist.
-        self.metadata_delta_lake
-            .create_delta_lake_table(
+        let delta_table = self
+            .delta_lake
+            .create_delta_lake_metadata_table(
                 "model_table_metadata",
-                vec![
-                    StructField::new("table_name", DataType::STRING, false),
-                    StructField::new("query_schema", DataType::BINARY, false),
-                    StructField::new("sql", DataType::STRING, false),
-                ],
+                &Schema::new(vec![
+                    Field::new("table_name", DataType::Utf8, false),
+                    Field::new("query_schema", DataType::Binary, false),
+                    Field::new("sql", DataType::Utf8, false),
+                ]),
             )
             .await?;
 
-        let delta_table = self
-            .metadata_delta_lake
-            .metadata_delta_table("model_table_metadata")
-            .await?;
         self.session.register_table(
             "model_table_metadata",
             Arc::new(MetadataTable::new(delta_table)),
         )?;
 
         // Create and register the model_table_hash_table_name table if it does not exist.
-        self.metadata_delta_lake
-            .create_delta_lake_table(
+        let delta_table = self
+            .delta_lake
+            .create_delta_lake_metadata_table(
                 "model_table_hash_table_name",
-                vec![
-                    StructField::new("hash", DataType::LONG, false),
-                    StructField::new("table_name", DataType::STRING, false),
-                ],
+                &Schema::new(vec![
+                    Field::new("hash", DataType::Int64, false),
+                    Field::new("table_name", DataType::Utf8, false),
+                ]),
             )
             .await?;
 
-        let delta_table = self
-            .metadata_delta_lake
-            .metadata_delta_table("model_table_hash_table_name")
-            .await?;
         self.session.register_table(
             "model_table_hash_table_name",
             Arc::new(MetadataTable::new(delta_table)),
@@ -226,37 +216,36 @@ impl TableMetadataManager {
         // Create and register the model_table_field_columns table if it does not exist. Note that
         // column_index will only use a maximum of 10 bits. generated_column_* is NULL if the fields
         // are stored as segments.
-        self.metadata_delta_lake
-            .create_delta_lake_table(
+        let delta_table = self
+            .delta_lake
+            .create_delta_lake_metadata_table(
                 "model_table_field_columns",
-                vec![
-                    StructField::new("table_name", DataType::STRING, false),
-                    StructField::new("column_name", DataType::STRING, false),
-                    StructField::new("column_index", DataType::SHORT, false),
-                    StructField::new("error_bound_value", DataType::FLOAT, false),
-                    StructField::new("error_bound_is_relative", DataType::BOOLEAN, false),
-                    StructField::new("generated_column_expr", DataType::STRING, true),
-                    StructField::new("generated_column_sources", DataType::BINARY, true),
-                ],
+                &Schema::new(vec![
+                    Field::new("table_name", DataType::Utf8, false),
+                    Field::new("column_name", DataType::Utf8, false),
+                    Field::new("column_index", DataType::Int16, false),
+                    Field::new("error_bound_value", DataType::Float32, false),
+                    Field::new("error_bound_is_relative", DataType::Boolean, false),
+                    Field::new("generated_column_expr", DataType::Utf8, true),
+                    Field::new("generated_column_sources", DataType::Binary, true),
+                ]),
             )
             .await?;
 
-        let delta_table = self
-            .metadata_delta_lake
-            .metadata_delta_table("model_table_field_columns")
-            .await?;
         self.session.register_table(
             "model_table_field_columns",
             Arc::new(MetadataTable::new(delta_table)),
         )?;
 
-        // Register the tag table for each model table.
+        // Register the model_table_name_tags table for each model table.
         for model_table_name in self.model_table_names().await? {
             let tag_table_name = format!("{}_tags", model_table_name);
+
             let delta_table = self
-                .metadata_delta_lake
+                .delta_lake
                 .metadata_delta_table(&tag_table_name)
                 .await?;
+
             self.session
                 .register_table(&tag_table_name, Arc::new(MetadataTable::new(delta_table)))?;
         }

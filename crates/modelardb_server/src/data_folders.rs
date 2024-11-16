@@ -54,7 +54,7 @@ impl DataFolder {
     /// not be parsed or if the metadata tables could not be created, [`ModelarDbServerError`] is
     /// returned.
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
-        let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
+        let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info)?;
 
         let remote_table_metadata_manager =
             TableMetadataManager::try_from_connection_info(connection_info).await?;

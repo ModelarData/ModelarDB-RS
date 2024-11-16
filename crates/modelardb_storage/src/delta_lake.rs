@@ -45,6 +45,7 @@ use crate::{
 };
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
+#[derive(Clone)]
 pub struct DeltaLake {
     /// URL to access the root of the Delta Lake.
     location: String,
@@ -87,7 +88,7 @@ impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages Delta tables in the remote object store given by
     /// `connection_info`. Returns [`ModelarDbStorageError`] if `connection_info` could not be parsed
     /// or a connection to the specified object store cannot be created.
-    pub async fn try_remote_from_connection_info(connection_info: &[u8]) -> Result<Self> {
+    pub fn try_remote_from_connection_info(connection_info: &[u8]) -> Result<Self> {
         let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
