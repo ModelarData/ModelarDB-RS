@@ -33,7 +33,7 @@ use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
-use datafusion::prelude::col;
+use datafusion::prelude::{col, SessionContext};
 use deltalake::kernel::{DataType, StructField};
 use modelardb_common::test::ERROR_BOUND_ZERO;
 use modelardb_types::types::ErrorBound;
@@ -41,7 +41,8 @@ use modelardb_types::types::ErrorBound;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataDeltaLake;
-use crate::parser;
+use crate::query::metadata_table::MetadataTable;
+use crate::{parser, sql_and_combine};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -57,6 +58,8 @@ pub struct TableMetadataManager {
     metadata_delta_lake: MetadataDeltaLake,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
+    /// Session used to query the metadata Delta Lake tables using Apache DataFusion.
+    session: SessionContext,
 }
 
 impl TableMetadataManager {
@@ -67,10 +70,11 @@ impl TableMetadataManager {
         let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::from_path(folder_path)?,
             tag_value_hashes: DashMap::new(),
+            session: SessionContext::new(),
         };
 
         table_metadata_manager
-            .create_metadata_delta_lake_tables()
+            .create_and_register_metadata_delta_lake_tables()
             .await?;
 
         Ok(table_metadata_manager)
@@ -84,10 +88,11 @@ impl TableMetadataManager {
         let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)?,
             tag_value_hashes: DashMap::new(),
+            session: SessionContext::new(),
         };
 
         table_metadata_manager
-            .create_metadata_delta_lake_tables()
+            .create_and_register_metadata_delta_lake_tables()
             .await?;
 
         Ok(table_metadata_manager)
@@ -110,10 +115,11 @@ impl TableMetadataManager {
                 secret_access_key,
             )?,
             tag_value_hashes: DashMap::new(),
+            session: SessionContext::new(),
         };
 
         table_metadata_manager
-            .create_metadata_delta_lake_tables()
+            .create_and_register_metadata_delta_lake_tables()
             .await?;
 
         Ok(table_metadata_manager)
@@ -134,17 +140,18 @@ impl TableMetadataManager {
                 container_name,
             )?,
             tag_value_hashes: DashMap::new(),
+            session: SessionContext::new(),
         };
 
         table_metadata_manager
-            .create_metadata_delta_lake_tables()
+            .create_and_register_metadata_delta_lake_tables()
             .await?;
 
         Ok(table_metadata_manager)
     }
 
     /// If they do not already exist, create the tables in the metadata Delta Lake for normal table
-    /// and model table metadata.
+    /// and model table metadata and register them with the Apache DataFusion session.
     /// * The `normal_table_metadata` table contains the metadata for normal tables.
     /// * The `model_table_metadata` table contains the main metadata for model tables.
     /// * The `model_table_hash_table_name` contains a mapping from each tag hash to the name of the
@@ -154,8 +161,8 @@ impl TableMetadataManager {
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return
     /// [`ModelarDbStorageError`].
-    async fn create_metadata_delta_lake_tables(&self) -> Result<()> {
-        // Create the normal_table_metadata table if it does not exist.
+    async fn create_and_register_metadata_delta_lake_tables(&self) -> Result<()> {
+        // Create and register the normal_table_metadata table if it does not exist.
         self.metadata_delta_lake
             .create_delta_lake_table(
                 "normal_table_metadata",
@@ -166,7 +173,16 @@ impl TableMetadataManager {
             )
             .await?;
 
-        // Create the model_table_metadata table if it does not exist.
+        let delta_table = self
+            .metadata_delta_lake
+            .metadata_delta_table("normal_table_metadata")
+            .await?;
+        self.session.register_table(
+            "normal_table_metadata",
+            Arc::new(MetadataTable::new(delta_table)),
+        )?;
+
+        // Create and register the model_table_metadata table if it does not exist.
         self.metadata_delta_lake
             .create_delta_lake_table(
                 "model_table_metadata",
@@ -178,7 +194,16 @@ impl TableMetadataManager {
             )
             .await?;
 
-        // Create the model_table_hash_table_name table if it does not exist.
+        let delta_table = self
+            .metadata_delta_lake
+            .metadata_delta_table("model_table_metadata")
+            .await?;
+        self.session.register_table(
+            "model_table_metadata",
+            Arc::new(MetadataTable::new(delta_table)),
+        )?;
+
+        // Create and register the model_table_hash_table_name table if it does not exist.
         self.metadata_delta_lake
             .create_delta_lake_table(
                 "model_table_hash_table_name",
@@ -189,9 +214,18 @@ impl TableMetadataManager {
             )
             .await?;
 
-        // Create the model_table_field_columns table if it does not exist. Note that column_index
-        // will only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored
-        // as segments.
+        let delta_table = self
+            .metadata_delta_lake
+            .metadata_delta_table("model_table_hash_table_name")
+            .await?;
+        self.session.register_table(
+            "model_table_hash_table_name",
+            Arc::new(MetadataTable::new(delta_table)),
+        )?;
+
+        // Create and register the model_table_field_columns table if it does not exist. Note that
+        // column_index will only use a maximum of 10 bits. generated_column_* is NULL if the fields
+        // are stored as segments.
         self.metadata_delta_lake
             .create_delta_lake_table(
                 "model_table_field_columns",
@@ -206,6 +240,26 @@ impl TableMetadataManager {
                 ],
             )
             .await?;
+
+        let delta_table = self
+            .metadata_delta_lake
+            .metadata_delta_table("model_table_field_columns")
+            .await?;
+        self.session.register_table(
+            "model_table_field_columns",
+            Arc::new(MetadataTable::new(delta_table)),
+        )?;
+
+        // Register the tag table for each model table.
+        for model_table_name in self.model_table_names().await? {
+            let tag_table_name = format!("{}_tags", model_table_name);
+            let delta_table = self
+                .metadata_delta_lake
+                .metadata_delta_table(&tag_table_name)
+                .await?;
+            self.session
+                .register_table(&tag_table_name, Arc::new(MetadataTable::new(delta_table)))?;
+        }
 
         Ok(())
     }
@@ -248,13 +302,8 @@ impl TableMetadataManager {
             TableType::ModelTable => "model_table",
         };
 
-        let batch = self
-            .metadata_delta_lake
-            .query_table(
-                &format!("{table_type}_metadata"),
-                &format!("SELECT table_name FROM {table_type}_metadata"),
-            )
-            .await?;
+        let sql = format!("SELECT table_name FROM {table_type}_metadata");
+        let batch = sql_and_combine(&self.session, &sql).await?;
 
         let table_names = modelardb_types::array!(batch, 0, StringArray);
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
@@ -286,7 +335,7 @@ impl TableMetadataManager {
         model_table_metadata: &ModelTableMetadata,
         sql: &str,
     ) -> Result<()> {
-        // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
+        // Create and register a table_name_tags table to save the 54-bit tag hashes when ingesting data.
         let mut table_name_tags_columns = vec![StructField::new("hash", DataType::LONG, false)];
 
         // Add a column definition for each tag column in the query schema.
@@ -307,6 +356,15 @@ impl TableMetadataManager {
                 table_name_tags_columns,
             )
             .await?;
+
+        let delta_table = self
+            .metadata_delta_lake
+            .metadata_delta_table(&format!("{}_tags", model_table_metadata.name))
+            .await?;
+        self.session.register_table(
+            &format!("{}_tags", model_table_metadata.name),
+            Arc::new(MetadataTable::new(delta_table)),
+        )?;
 
         // Convert the query schema to bytes, so it can be saved in the metadata Delta Lake.
         let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
@@ -502,13 +560,8 @@ impl TableMetadataManager {
     /// Return the [`ModelTableMetadata`] of each model table currently in the metadata Delta Lake.
     /// If the [`ModelTableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is returned.
     pub async fn model_table_metadata(&self) -> Result<Vec<Arc<ModelTableMetadata>>> {
-        let batch = self
-            .metadata_delta_lake
-            .query_table(
-                "model_table_metadata",
-                "SELECT table_name, query_schema FROM model_table_metadata",
-            )
-            .await?;
+        let sql = "SELECT table_name, query_schema FROM model_table_metadata";
+        let batch = sql_and_combine(&self.session, sql).await?;
 
         let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
         let table_name_array = modelardb_types::array!(batch, 0, StringArray);
@@ -535,13 +588,10 @@ impl TableMetadataManager {
         &self,
         table_name: &str,
     ) -> Result<ModelTableMetadata> {
-        let batch = self
-            .metadata_delta_lake
-            .query_table(
-                "model_table_metadata",
-                &format!("SELECT table_name, query_schema FROM model_table_metadata WHERE table_name = '{table_name}'"),
-            )
-            .await?;
+        let sql = format!(
+            "SELECT table_name, query_schema FROM model_table_metadata WHERE table_name = '{table_name}'"
+        );
+        let batch = sql_and_combine(&self.session, &sql).await?;
 
         if batch.num_rows() == 0 {
             return Err(ModelarDbStorageError::InvalidArgument(format!(
@@ -591,18 +641,13 @@ impl TableMetadataManager {
         table_name: &str,
         query_schema_columns: usize,
     ) -> Result<Vec<ErrorBound>> {
-        let batch = self
-            .metadata_delta_lake
-            .query_table(
-                "model_table_field_columns",
-                &format!(
-                    "SELECT column_index, error_bound_value, error_bound_is_relative
-                     FROM model_table_field_columns
-                     WHERE table_name = '{table_name}'
-                     ORDER BY column_index"
-                ),
-            )
-            .await?;
+        let sql = format!(
+            "SELECT column_index, error_bound_value, error_bound_is_relative
+             FROM model_table_field_columns
+             WHERE table_name = '{table_name}'
+             ORDER BY column_index"
+        );
+        let batch = sql_and_combine(&self.session, &sql).await?;
 
         let mut column_to_error_bound =
             vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(); query_schema_columns];
@@ -637,18 +682,13 @@ impl TableMetadataManager {
         table_name: &str,
         df_schema: &DFSchema,
     ) -> Result<Vec<Option<GeneratedColumn>>> {
-        let batch = self
-            .metadata_delta_lake
-            .query_table(
-                "model_table_field_columns",
-                &format!(
-                    "SELECT column_index, generated_column_expr, generated_column_sources
-                     FROM model_table_field_columns
-                     WHERE table_name = '{table_name}'
-                     ORDER BY column_index"
-                ),
-            )
-            .await?;
+        let sql = format!(
+            "SELECT column_index, generated_column_expr, generated_column_sources
+             FROM model_table_field_columns
+             WHERE table_name = '{table_name}'
+             ORDER BY column_index"
+        );
+        let batch = sql_and_combine(&self.session, &sql).await?;
 
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
@@ -825,18 +865,13 @@ impl TableMetadataManager {
     pub async fn tag_hash_to_model_table_name(&self, tag_hash: u64) -> Result<String> {
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
-        let batch = self
-            .metadata_delta_lake
-            .query_table(
-                "model_table_hash_table_name",
-                &format!(
-                    "SELECT table_name
-                     FROM model_table_hash_table_name
-                     WHERE hash = '{signed_tag_hash}'
-                     LIMIT 1"
-                ),
-            )
-            .await?;
+        let sql = format!(
+            "SELECT table_name
+             FROM model_table_hash_table_name
+             WHERE hash = {signed_tag_hash}
+             LIMIT 1"
+        );
+        let batch = sql_and_combine(&self.session, &sql).await?;
 
         let table_names = modelardb_types::array!(batch, 0, StringArray);
         if table_names.is_empty() {
@@ -862,16 +897,11 @@ impl TableMetadataManager {
             return Ok(HashMap::new());
         }
 
-        let batch = self
-            .metadata_delta_lake
-            .query_table(
-                &format!("{model_table_name}_tags"),
-                &format!(
-                    "SELECT hash, {} FROM {model_table_name}_tags",
-                    tag_column_names.join(","),
-                ),
-            )
-            .await?;
+        let sql = format!(
+            "SELECT hash, {} FROM {model_table_name}_tags",
+            tag_column_names.join(","),
+        );
+        let batch = sql_and_combine(&self.session, &sql).await?;
 
         let hash_array = modelardb_types::array!(batch, 0, Int64Array);
 
