@@ -344,21 +344,35 @@ impl DeltaLake {
             .map_err(|error| error.into())
     }
 
+    /// Drop the metadata Delta Lake table with `table_name` from the Delta Lake by deleting every
+    /// file related to the table. The table folder cannot be deleted directly since folders do not
+    /// exist in object stores and therefore cannot be operated upon. If the table was dropped
+    /// successfully, the paths to the deleted files are returned, otherwise a
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn drop_metadata_delta_lake_table(&self, table_name: &str) -> Result<Vec<Path>> {
+        let table_path = format!("{METADATA_FOLDER}/{table_name}");
+        self.delete_table_files(&table_path).await
+    }
+
     /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file
     /// related to the table. The table folder cannot be deleted directly since folders do not exist
     /// in object stores and therefore cannot be operated upon. If the table was dropped
     /// successfully, the paths to the deleted files are returned, otherwise a
     /// [`ModelarDbStorageError`] is returned.
     pub async fn drop_delta_lake_table(&self, table_name: &str) -> Result<Vec<Path>> {
-        // List all files in the Delta Lake table folder.
         let table_path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}");
+        self.delete_table_files(&table_path).await
+    }
+
+    /// Delete all files in the folder at `table_path` using bulk operations if available. If the
+    /// files were deleted successfully, the paths to the deleted files are returned.
+    async fn delete_table_files(&self, table_path: &str) -> Result<Vec<Path>> {
         let file_locations = self
             .object_store
             .list(Some(&Path::from(table_path)))
             .map_ok(|object_meta| object_meta.location)
             .boxed();
 
-        // Delete all files in the Delta Lake table folder using bulk operations if available.
         let deleted_paths = self
             .object_store
             .delete_stream(file_locations)
