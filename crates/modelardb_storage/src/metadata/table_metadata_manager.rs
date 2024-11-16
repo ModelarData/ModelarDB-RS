@@ -25,13 +25,16 @@ use std::sync::Arc;
 use std::{fmt, mem};
 
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, StringArray,
+    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, RecordBatch,
+    StringArray,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
+use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, ToDFSchema};
+use datafusion::dataframe::DataFrame;
 use datafusion::logical_expr::lit;
 use datafusion::prelude::{col, SessionContext};
 use modelardb_common::test::ERROR_BOUND_ZERO;
@@ -782,19 +785,18 @@ impl TableMetadataManager {
         );
 
         let source = self
-            .metadata_delta_lake
             .metadata_table_data_frame(&format!("{table_name}_tags"), table_name_tags_columns)
             .await?;
 
-        let ops = self
-            .metadata_delta_lake
-            .metadata_table_delta_ops(&format!("{table_name}_tags"))
+        let delta_ops = self
+            .delta_lake
+            .metadata_delta_ops(&format!("{table_name}_tags"))
             .await?;
 
         // Merge the tag hash metadata in the source DataFrame into the model_table_tags table.
         // For each hash, if the hash is not already in the target table, insert the hash and the
         // tag values from the source DataFrame.
-        let (_table, insert_into_tags_metrics) = ops
+        let (_table, insert_into_tags_metrics) = delta_ops
             .merge(source, col("target.hash").eq(col("source.hash")))
             .with_source_alias("source")
             .with_target_alias("target")
@@ -810,7 +812,6 @@ impl TableMetadataManager {
         // Save the tag hash metadata in the model_table_hash_table_name table if it does not
         // already contain it.
         let source = self
-            .metadata_delta_lake
             .metadata_table_data_frame(
                 "model_table_hash_table_name",
                 vec![
@@ -820,15 +821,15 @@ impl TableMetadataManager {
             )
             .await?;
 
-        let ops = self
-            .metadata_delta_lake
-            .metadata_table_delta_ops("model_table_hash_table_name")
+        let delta_ops = self
+            .delta_lake
+            .metadata_delta_ops("model_table_hash_table_name")
             .await?;
 
         // Merge the tag hash metadata in the source DataFrame into the model_table_hash_table_name
         // table. For each hash, if the hash is not already in the target table, insert the hash and
         // the table name from the source DataFrame.
-        let (_table, insert_into_hash_table_name_metrics) = ops
+        let (_table, insert_into_hash_table_name_metrics) = delta_ops
             .merge(source, col("target.hash").eq(col("source.hash")))
             .with_source_alias("source")
             .with_target_alias("target")
@@ -841,6 +842,23 @@ impl TableMetadataManager {
 
         Ok(insert_into_tags_metrics.num_target_rows_inserted > 0
             || insert_into_hash_table_name_metrics.num_target_rows_inserted > 0)
+    }
+
+    /// Return a [`DataFrame`] with the given `rows` for the metadata table with the given
+    /// `table_name`. If the table does not exist or the [`DataFrame`] cannot be created, return
+    /// [`ModelarDbStorageError`].
+    pub async fn metadata_table_data_frame(
+        &self,
+        table_name: &str,
+        rows: Vec<ArrayRef>,
+    ) -> Result<DataFrame> {
+        let table = self.delta_lake.metadata_delta_table(table_name).await?;
+
+        // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
+        // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
+        let batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
+
+        Ok(self.session.read_batch(batch)?)
     }
 
     /// Return the name of the model table that contains the time series with `tag_hash`. Returns a
@@ -1005,12 +1023,12 @@ mod tests {
             .is_ok());
 
         assert!(metadata_manager
-            .metadata_delta_lake
-            .session
-            .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
+                .metadata_delta_lake
+                .session
+                .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
                  generated_column_expr, generated_column_sources FROM model_table_field_columns")
-            .await
-            .is_ok());
+                .await
+                .is_ok());
     }
 
     #[tokio::test]
@@ -1135,14 +1153,14 @@ mod tests {
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
         let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table(
-                "model_table_field_columns",
-                "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
+                .metadata_delta_lake
+                .query_table(
+                    "model_table_field_columns",
+                    "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
                  generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name",
-            )
-            .await
-            .unwrap();
+                )
+                .await
+                .unwrap();
 
         assert_eq!(
             **batch.column(0),
