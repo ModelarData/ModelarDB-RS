@@ -42,8 +42,7 @@ use modelardb_types::types::ErrorBound;
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::query::metadata_table::MetadataTable;
-use crate::{parser, sql_and_combine};
+use crate::{parser, register_metadata_table, sql_and_combine};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -174,10 +173,7 @@ impl TableMetadataManager {
             )
             .await?;
 
-        self.session.register_table(
-            "normal_table_metadata",
-            Arc::new(MetadataTable::new(delta_table)),
-        )?;
+        register_metadata_table(&self.session, "normal_table_metadata", delta_table)?;
 
         // Create and register the model_table_metadata table if it does not exist.
         let delta_table = self
@@ -192,10 +188,7 @@ impl TableMetadataManager {
             )
             .await?;
 
-        self.session.register_table(
-            "model_table_metadata",
-            Arc::new(MetadataTable::new(delta_table)),
-        )?;
+        register_metadata_table(&self.session, "model_table_metadata", delta_table)?;
 
         // Create and register the model_table_hash_table_name table if it does not exist.
         let delta_table = self
@@ -209,10 +202,7 @@ impl TableMetadataManager {
             )
             .await?;
 
-        self.session.register_table(
-            "model_table_hash_table_name",
-            Arc::new(MetadataTable::new(delta_table)),
-        )?;
+        register_metadata_table(&self.session, "model_table_hash_table_name", delta_table)?;
 
         // Create and register the model_table_field_columns table if it does not exist. Note that
         // column_index will only use a maximum of 10 bits. generated_column_* is NULL if the fields
@@ -233,22 +223,18 @@ impl TableMetadataManager {
             )
             .await?;
 
-        self.session.register_table(
-            "model_table_field_columns",
-            Arc::new(MetadataTable::new(delta_table)),
-        )?;
+        register_metadata_table(&self.session, "model_table_field_columns", delta_table)?;
 
         // Register the model_table_name_tags table for each model table.
         for model_table_name in self.model_table_names().await? {
-            let tag_table_name = format!("{}_tags", model_table_name);
+            let tags_table_name = format!("{}_tags", model_table_name);
 
             let delta_table = self
                 .delta_lake
-                .metadata_delta_table(&tag_table_name)
+                .metadata_delta_table(&tags_table_name)
                 .await?;
 
-            self.session
-                .register_table(&tag_table_name, Arc::new(MetadataTable::new(delta_table)))?;
+            register_metadata_table(&self.session, &tags_table_name, delta_table)?;
         }
 
         Ok(())
@@ -337,18 +323,16 @@ impl TableMetadataManager {
                 .collect::<Vec<Field>>(),
         );
 
+        let tags_table_name = format!("{}_tags", model_table_metadata.name);
         let delta_table = self
             .delta_lake
             .create_delta_lake_metadata_table(
-                &format!("{}_tags", model_table_metadata.name),
+                &tags_table_name,
                 &Schema::new(table_name_tags_columns),
             )
             .await?;
 
-        self.session.register_table(
-            &format!("{}_tags", model_table_metadata.name),
-            Arc::new(MetadataTable::new(delta_table)),
-        )?;
+        register_metadata_table(&self.session, &tags_table_name, delta_table)?;
 
         // Convert the query schema to bytes, so it can be saved in the metadata Delta Lake.
         let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;

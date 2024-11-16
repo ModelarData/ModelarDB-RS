@@ -53,6 +53,7 @@ use tonic::codegen::Bytes;
 use crate::error::Result;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::table_metadata_manager::TableMetadataManager;
+use crate::query::metadata_table::MetadataTable;
 use crate::query::model_table::ModelTable;
 use crate::query::normal_table::NormalTable;
 
@@ -80,25 +81,38 @@ pub fn create_session_context() -> SessionContext {
     SessionContext::new_with_state(session_state)
 }
 
+/// Register the metadata table stored in `delta_table` with `table_name` in `session_context`. If
+/// the metadata table could not be registered with Apache DataFusion, return
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
+pub fn register_metadata_table(
+    session_context: &SessionContext,
+    table_name: &str,
+    delta_table: DeltaTable,
+) -> Result<()> {
+    let metadata_table = Arc::new(MetadataTable::new(delta_table));
+    session_context.register_table(table_name, metadata_table)?;
+
+    Ok(())
+}
+
 /// Register the normal table stored in `delta_table` with `table_name` and `data_sink` in
 /// `session_context`. If the normal table could not be registered with Apache DataFusion, return
-/// [`ModelarDbQueryError`](error::ModelarDbQueryError).
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub fn register_normal_table(
     session_context: &SessionContext,
     table_name: &str,
     delta_table: DeltaTable,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
-    let table = Arc::new(NormalTable::new(delta_table, data_sink));
-
-    session_context.register_table(table_name, table)?;
+    let normal_table = Arc::new(NormalTable::new(delta_table, data_sink));
+    session_context.register_table(table_name, normal_table)?;
 
     Ok(())
 }
 
 /// Register the model table stored in `delta_table` with `model_table_metadata` from
 /// `table_metadata_manager` and `data_sink` in `session_context`. If the model table could not be
-/// registered with Apache DataFusion, return [`ModelarDbQueryError`](error::ModelarDbQueryError).
+/// registered with Apache DataFusion, return [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub fn register_model_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,
