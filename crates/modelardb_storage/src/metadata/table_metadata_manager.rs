@@ -303,8 +303,8 @@ impl TableMetadataManager {
     /// table. If the normal table metadata was saved, return [`Ok`], otherwise
     /// return [`ModelarDbStorageError`].
     pub async fn save_normal_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
-        self.metadata_delta_lake
-            .append_to_table(
+        self.delta_lake
+            .write_rows_to_metadata_delta_table(
                 "normal_table_metadata",
                 vec![
                     Arc::new(StringArray::from(vec![name])),
@@ -325,31 +325,25 @@ impl TableMetadataManager {
         sql: &str,
     ) -> Result<()> {
         // Create and register a table_name_tags table to save the 54-bit tag hashes when ingesting data.
-        let mut table_name_tags_columns = vec![StructField::new("hash", DataType::LONG, false)];
+        let mut table_name_tags_columns = vec![Field::new("hash", DataType::Int64, false)];
 
         // Add a column definition for each tag column in the query schema.
         table_name_tags_columns.append(
             &mut model_table_metadata
                 .tag_column_indices
                 .iter()
-                .map(|index| {
-                    let field = model_table_metadata.query_schema.field(*index);
-                    StructField::new(field.name(), DataType::STRING, false)
-                })
-                .collect::<Vec<StructField>>(),
+                .map(|index| model_table_metadata.query_schema.field(*index).clone())
+                .collect::<Vec<Field>>(),
         );
 
-        self.metadata_delta_lake
-            .create_delta_lake_table(
-                format!("{}_tags", model_table_metadata.name).as_str(),
-                table_name_tags_columns,
+        let delta_table = self
+            .delta_lake
+            .create_delta_lake_metadata_table(
+                &format!("{}_tags", model_table_metadata.name),
+                &Schema::new(table_name_tags_columns),
             )
             .await?;
 
-        let delta_table = self
-            .metadata_delta_lake
-            .metadata_delta_table(&format!("{}_tags", model_table_metadata.name))
-            .await?;
         self.session.register_table(
             &format!("{}_tags", model_table_metadata.name),
             Arc::new(MetadataTable::new(delta_table)),
@@ -359,8 +353,8 @@ impl TableMetadataManager {
         let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
 
         // Add a new row in the model_table_metadata table to persist the model table.
-        self.metadata_delta_lake
-            .append_to_table(
+        self.delta_lake
+            .write_rows_to_metadata_delta_table(
                 "model_table_metadata",
                 vec![
                     Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
@@ -405,8 +399,8 @@ impl TableMetadataManager {
                     };
 
                 // query_schema_index is simply cast as a model table contains at most 1024 columns.
-                self.metadata_delta_lake
-                    .append_to_table(
+                self.delta_lake
+                    .write_rows_to_metadata_delta_table(
                         "model_table_field_columns",
                         vec![
                             Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
@@ -446,12 +440,13 @@ impl TableMetadataManager {
     /// table in the metadata Delta Lake. If the metadata could not be dropped,
     /// [`ModelarDbStorageError`] is returned.
     async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<()> {
-        let ops = self
-            .metadata_delta_lake
-            .metadata_table_delta_ops("normal_table_metadata")
+        let delta_ops = self
+            .delta_lake
+            .metadata_delta_ops("normal_table_metadata")
             .await?;
 
-        ops.delete()
+        delta_ops
+            .delete()
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
 
@@ -465,21 +460,21 @@ impl TableMetadataManager {
     /// and the tag cache. If the metadata could not be dropped, [`ModelarDbStorageError`] is returned.
     async fn drop_model_table_metadata(&self, table_name: &str) -> Result<()> {
         // Drop the model_table_name_tags table.
-        self.metadata_delta_lake
-            .drop_delta_lake_table(&format!("{table_name}_tags"))
+        self.delta_lake
+            .drop_metadata_delta_lake_table(&format!("{table_name}_tags"))
             .await?;
 
         // Delete the table metadata from the model_table_metadata table.
-        self.metadata_delta_lake
-            .metadata_table_delta_ops("model_table_metadata")
+        self.delta_lake
+            .metadata_delta_ops("model_table_metadata")
             .await?
             .delete()
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
 
         // Delete the column metadata from the model_table_field_columns table.
-        self.metadata_delta_lake
-            .metadata_table_delta_ops("model_table_field_columns")
+        self.delta_lake
+            .metadata_delta_ops("model_table_field_columns")
             .await?
             .delete()
             .with_predicate(col("table_name").eq(lit(table_name)))
@@ -514,8 +509,8 @@ impl TableMetadataManager {
     /// be truncated, [`ModelarDbStorageError`] is returned.
     async fn truncate_model_table_metadata(&self, table_name: &str) -> Result<()> {
         // Truncate the model_table_name_tags table.
-        self.metadata_delta_lake
-            .metadata_table_delta_ops(&format!("{table_name}_tags"))
+        self.delta_lake
+            .metadata_delta_ops(&format!("{table_name}_tags"))
             .await?
             .delete()
             .await?;
@@ -531,8 +526,8 @@ impl TableMetadataManager {
     /// [`ModelarDbStorageError`] is returned.
     async fn delete_tag_hash_metadata(&self, table_name: &str) -> Result<()> {
         // Delete the tag metadata from the model_table_hash_table_name table.
-        self.metadata_delta_lake
-            .metadata_table_delta_ops("model_table_hash_table_name")
+        self.delta_lake
+            .metadata_delta_ops("model_table_hash_table_name")
             .await?
             .delete()
             .with_predicate(col("table_name").eq(lit(table_name)))
