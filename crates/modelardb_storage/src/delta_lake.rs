@@ -26,6 +26,7 @@ use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
 use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
+use deltalake::protocol::SaveMode;
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_common::arguments;
@@ -226,6 +227,24 @@ impl DeltaLake {
             .map_err(|error| error.into())
     }
 
+    /// Create a Delta Lake table for a metadata table with `table_name` and `schema` if it does not
+    /// already exist. If the metadata table could not be created, [`ModelarDbStorageError`] is
+    /// returned. An error is not returned if the metadata table already exists.
+    pub async fn create_delta_lake_metadata_table(
+        &self,
+        table_name: &str,
+        schema: &Schema,
+    ) -> Result<DeltaTable> {
+        self.create_partitioned_delta_lake_table(
+            table_name,
+            schema,
+            &[],
+            self.location_of_metadata_table(table_name),
+            SaveMode::Ignore,
+        )
+        .await
+    }
+
     /// Create a Delta Lake table for a normal table with `table_name` and `schema` if it does not
     /// already exist. If the normal table could not be created, e.g., because it already exists,
     /// [`ModelarDbStorageError`] is returned.
@@ -234,8 +253,14 @@ impl DeltaLake {
         table_name: &str,
         schema: &Schema,
     ) -> Result<DeltaTable> {
-        self.create_partitioned_delta_lake_table(table_name, schema, &[])
-            .await
+        self.create_partitioned_delta_lake_table(
+            table_name,
+            schema,
+            &[],
+            self.location_of_compressed_table(table_name),
+            SaveMode::ErrorIfExists,
+        )
+        .await
     }
 
     /// Create a Delta Lake table for a model table with `table_name` and [`DISK_COMPRESSED_SCHEMA`]
@@ -246,6 +271,8 @@ impl DeltaLake {
             table_name,
             &DISK_COMPRESSED_SCHEMA.0,
             &[FIELD_COLUMN.to_owned()],
+            self.location_of_compressed_table(table_name),
+            SaveMode::ErrorIfExists,
         )
         .await
     }
@@ -258,6 +285,8 @@ impl DeltaLake {
         table_name: &str,
         schema: &Schema,
         partition_columns: &[String],
+        location: String,
+        save_mode: SaveMode,
     ) -> Result<DeltaTable> {
         let is_model_table = partition_columns == [FIELD_COLUMN.to_owned()];
 
@@ -283,14 +312,13 @@ impl DeltaLake {
             columns.push(struct_field);
         }
 
-        let location = self.location_of_compressed_table(table_name);
-
         CreateBuilder::new()
             .with_storage_options(self.storage_options.clone())
             .with_table_name(table_name)
             .with_location(location)
             .with_columns(columns)
             .with_partition_columns(partition_columns)
+            .with_save_mode(save_mode)
             .await
             .map_err(|error| error.into())
     }
@@ -403,7 +431,6 @@ impl DeltaLake {
     }
 
     /// Return the location of the metadata table with `table_name`.
-    #[allow(dead_code)]
     fn location_of_metadata_table(&self, table_name: &str) -> String {
         format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
     }
