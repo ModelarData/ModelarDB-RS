@@ -19,14 +19,14 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow::array::StringArray;
+use arrow::array::{Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use deltalake::datafusion::logical_expr::{col, lit};
 use deltalake::datafusion::prelude::SessionContext;
 use deltalake::DeltaTableError;
 use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_storage::register_metadata_table;
+use modelardb_storage::{register_metadata_table, sql_and_combine};
 use modelardb_types::types::ServerMode;
 use uuid::Uuid;
 
@@ -106,18 +106,16 @@ impl MetadataManager {
     /// already exist, create one and save it to the Delta Lake. If a key could not be retrieved
     /// or created, return [`ModelarDbManagerError`].
     pub async fn manager_key(&self) -> Result<Uuid> {
-        let batch = self
-            .metadata_delta_lake
-            .query_table("manager_metadata", "SELECT key FROM manager_metadata")
-            .await?;
+        let sql = "SELECT key FROM manager_metadata";
+        let batch = sql_and_combine(&self.session, sql).await?;
 
         let keys = modelardb_types::array!(batch, 0, StringArray);
         if keys.is_empty() {
             let manager_key = Uuid::new_v4();
 
             // Add a new row to the manager_metadata table to persist the key.
-            self.metadata_delta_lake
-                .append_to_table(
+            self.delta_lake
+                .write_rows_to_metadata_delta_table(
                     "manager_metadata",
                     vec![Arc::new(StringArray::from(vec![manager_key.to_string()]))],
                 )
@@ -136,8 +134,8 @@ impl MetadataManager {
     /// Save the node to the metadata Delta Lake and return [`Ok`]. If the node could not be saved,
     /// return [`ModelarDbManagerError`].
     pub async fn save_node(&self, node: Node) -> Result<()> {
-        self.metadata_delta_lake
-            .append_to_table(
+        self.delta_lake
+            .write_rows_to_metadata_delta_table(
                 "nodes",
                 vec![
                     Arc::new(StringArray::from(vec![node.url])),
@@ -152,12 +150,12 @@ impl MetadataManager {
     /// Remove the row in the `nodes` table that corresponds to the node with `url` and return
     /// [`Ok`]. If the row could not be removed, return [`ModelarDbManagerError`].
     pub async fn remove_node(&self, url: &str) -> Result<()> {
-        let ops = self
-            .metadata_delta_lake
-            .metadata_table_delta_ops("nodes")
-            .await?;
+        let delta_ops = self.delta_lake.metadata_delta_ops("nodes").await?;
 
-        ops.delete().with_predicate(col("url").eq(lit(url))).await?;
+        delta_ops
+            .delete()
+            .with_predicate(col("url").eq(lit(url)))
+            .await?;
 
         Ok(())
     }
@@ -168,10 +166,8 @@ impl MetadataManager {
     pub async fn nodes(&self) -> Result<Vec<Node>> {
         let mut nodes: Vec<Node> = vec![];
 
-        let batch = self
-            .metadata_delta_lake
-            .query_table("nodes", "SELECT url, mode FROM nodes")
-            .await?;
+        let sql = "SELECT url, mode FROM nodes";
+        let batch = sql_and_combine(&self.session, sql).await?;
 
         let url_array = modelardb_types::array!(batch, 0, StringArray);
         let mode_array = modelardb_types::array!(batch, 1, StringArray);
@@ -192,25 +188,15 @@ impl MetadataManager {
     /// Return the SQL query used to create the table with the name `table_name`. If a table with
     /// that name does not exist, return [`ModelarDbManagerError`].
     pub async fn table_sql(&self, table_name: &str) -> Result<String> {
-        let batch = self
-            .metadata_delta_lake
-            .query_table(
-                "normal_table_metadata",
-                &format!("SELECT sql FROM normal_table_metadata WHERE table_name = '{table_name}'"),
-            )
-            .await?;
+        let sql =
+            format!("SELECT sql FROM normal_table_metadata WHERE table_name = '{table_name}'");
+        let batch = sql_and_combine(&self.session, &sql).await?;
 
         let table_sql = modelardb_types::array!(batch, 0, StringArray);
         if table_sql.is_empty() {
-            let batch = self
-                .metadata_delta_lake
-                .query_table(
-                    "model_table_metadata",
-                    &format!(
-                        "SELECT sql FROM model_table_metadata WHERE table_name = '{table_name}'"
-                    ),
-                )
-                .await?;
+            let sql =
+                format!("SELECT sql FROM model_table_metadata WHERE table_name = '{table_name}'");
+            let batch = sql_and_combine(&self.session, &sql).await?;
 
             let model_table_sql = modelardb_types::array!(batch, 0, StringArray);
             if model_table_sql.is_empty() {
@@ -230,21 +216,11 @@ impl MetadataManager {
     /// it could not be converted to a string, return [`ModelarDbManagerError`].
     pub async fn table_metadata_column(&self, column: &str) -> Result<Vec<String>> {
         // Retrieve the column from both tables containing table metadata.
-        let normal_table_metadata_batch = self
-            .metadata_delta_lake
-            .query_table(
-                "normal_table_metadata",
-                &format!("SELECT {column} FROM normal_table_metadata"),
-            )
-            .await?;
+        let sql = format!("SELECT {column} FROM normal_table_metadata");
+        let normal_table_metadata_batch = sql_and_combine(&self.session, &sql).await?;
 
-        let model_table_metadata_batch = self
-            .metadata_delta_lake
-            .query_table(
-                "model_table_metadata",
-                &format!("SELECT {column} FROM model_table_metadata"),
-            )
-            .await?;
+        let sql = format!("SELECT {column} FROM model_table_metadata");
+        let model_table_metadata_batch = sql_and_combine(&self.session, &sql).await?;
 
         let normal_table_metadata_column =
             modelardb_types::array!(normal_table_metadata_batch, 0, StringArray);
