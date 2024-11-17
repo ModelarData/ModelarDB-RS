@@ -594,7 +594,7 @@ mod tests {
     use datafusion::logical_expr::lit;
     use datafusion::prelude::Expr;
     use modelardb_types::types::Timestamp;
-    
+
     use crate::test;
 
     const TIMESTAMP_PREDICATE_VALUE: Timestamp = 37;
