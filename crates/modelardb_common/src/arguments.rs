@@ -126,9 +126,9 @@ pub fn decode_argument(data: &[u8]) -> Result<(&str, &[u8])> {
     Ok((argument, remaining_bytes))
 }
 
-/// Extract the arguments in `data` and return the arguments to connect to an [`Amazon
-/// S3`](object_store::aws::AmazonS3) object store and what is remaining of `data` after parsing. If
-/// `data` is missing arguments, [`ModelarDbCommonError`] is returned.
+/// Extract the arguments in `data` and return the arguments to connect to an `Amazon S3` object 
+/// store and what is remaining of `data` after parsing. If `data` is missing arguments, 
+/// [`ModelarDbCommonError`] is returned.
 pub fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8])> {
     let (endpoint, offset_data) = decode_argument(data)?;
     let (bucket_name, offset_data) = decode_argument(offset_data)?;
@@ -144,9 +144,9 @@ pub fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8
     ))
 }
 
-/// Extract the arguments in `data` and return the arguments to connect to an [`Azure Blob
-/// Storage`](object_store::azure::MicrosoftAzure) object store and what is remaining of `data`
-/// after parsing. If `data` is missing arguments, [`ModelarDbCommonError`] is returned.
+/// Extract the arguments in `data` and return the arguments to connect to an `Azure Blob Storage` 
+/// object store and what is remaining of `data` after parsing. If `data` is missing arguments, 
+/// [`ModelarDbCommonError`] is returned.
 pub fn extract_azure_blob_storage_arguments(data: &[u8]) -> Result<(&str, &str, &str, &[u8])> {
     let (account, offset_data) = decode_argument(data)?;
     let (access_key, offset_data) = decode_argument(offset_data)?;
