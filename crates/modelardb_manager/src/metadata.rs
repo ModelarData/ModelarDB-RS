@@ -19,12 +19,14 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow::array::{Array, StringArray};
+use arrow::array::StringArray;
+use arrow::datatypes::{DataType, Field, Schema};
 use deltalake::datafusion::logical_expr::{col, lit};
-use deltalake::kernel::{DataType, StructField};
+use deltalake::datafusion::prelude::SessionContext;
 use deltalake::DeltaTableError;
+use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_storage::metadata::MetadataDeltaLake;
+use modelardb_storage::register_metadata_table;
 use modelardb_types::types::ServerMode;
 use uuid::Uuid;
 
@@ -35,10 +37,12 @@ use crate::error::{ModelarDbManagerError, Result};
 /// and persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub struct MetadataManager {
     /// Delta Lake with functionality to read and write to and from the manager metadata tables.
-    metadata_delta_lake: MetadataDeltaLake,
+    delta_lake: DeltaLake,
     /// Metadata manager used to interface with the subset of the manager metadata Delta Lake
     /// related to normal tables and model tables.
     pub(crate) table_metadata_manager: TableMetadataManager,
+    /// Session used to query the manager metadata Delta Lake tables using Apache DataFusion.
+    session: SessionContext,
 }
 
 impl MetadataManager {
@@ -47,46 +51,53 @@ impl MetadataManager {
     /// parsed or the metadata tables could not be created, return [`ModelarDbManagerError`].
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<MetadataManager> {
         let metadata_manager = Self {
-            metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)?,
+            delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
             table_metadata_manager: TableMetadataManager::try_from_connection_info(connection_info)
                 .await?,
+            session: SessionContext::new(),
         };
 
         // Create the necessary tables in the metadata Delta Lake.
         metadata_manager
-            .create_manager_metadata_delta_lake_tables()
+            .create_and_register_manager_metadata_delta_lake_tables()
             .await?;
 
         Ok(metadata_manager)
     }
 
     /// If they do not already exist, create the tables that are specific to the manager metadata
-    /// Delta Lake.
+    /// Delta Lake and register them with the Apache DataFusion session.
     /// * The `manager_metadata` table contains metadata for the manager itself. It is assumed that
     ///   this table will only have a single row since there can only be a single manager.
     /// * The `nodes` table contains metadata for each node that is controlled by the manager.
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return
     /// [`ModelarDbManagerError`].
-    async fn create_manager_metadata_delta_lake_tables(&self) -> Result<()> {
-        // Create the manager_metadata table if it does not exist.
-        self.metadata_delta_lake
-            .create_delta_lake_table(
+    async fn create_and_register_manager_metadata_delta_lake_tables(&self) -> Result<()> {
+        // Create and register the manager_metadata table if it does not exist.
+        let delta_table = self
+            .delta_lake
+            .create_delta_lake_metadata_table(
                 "manager_metadata",
-                vec![StructField::new("key", DataType::STRING, false)],
+                &Schema::new(vec![Field::new("key", DataType::Utf8, false)]),
             )
             .await?;
 
-        // Create the nodes table if it does not exist.
-        self.metadata_delta_lake
-            .create_delta_lake_table(
+        register_metadata_table(&self.session, "manager_metadata", delta_table)?;
+
+        // Create and register the nodes table if it does not exist.
+        let delta_table = self
+            .delta_lake
+            .create_delta_lake_metadata_table(
                 "nodes",
-                vec![
-                    StructField::new("url", DataType::STRING, false),
-                    StructField::new("mode", DataType::STRING, false),
-                ],
+                &Schema::new(vec![
+                    Field::new("url", DataType::Utf8, false),
+                    Field::new("mode", DataType::Utf8, false),
+                ]),
             )
             .await?;
+
+        register_metadata_table(&self.session, "nodes", delta_table)?;
 
         Ok(())
     }
@@ -486,7 +497,7 @@ mod tests {
         };
 
         metadata_manager
-            .create_manager_metadata_delta_lake_tables()
+            .create_and_register_manager_metadata_delta_lake_tables()
             .await
             .unwrap();
 
