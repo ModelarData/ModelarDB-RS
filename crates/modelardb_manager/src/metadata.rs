@@ -251,14 +251,14 @@ mod tests {
 
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(metadata_manager
-            .metadata_delta_lake
-            .query_table("manager_metadata", "SELECT key FROM manager_metadata")
+            .session
+            .sql("SELECT key FROM manager_metadata")
             .await
             .is_ok());
 
         assert!(metadata_manager
-            .metadata_delta_lake
-            .query_table("nodes", "SELECT url, mode FROM nodes")
+            .session
+            .sql("SELECT url, mode FROM nodes")
             .await
             .is_ok());
     }
@@ -270,9 +270,8 @@ mod tests {
         // Verify that the manager key is created and saved correctly.
         let manager_key = metadata_manager.manager_key().await.unwrap();
 
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table("manager_metadata", "SELECT key FROM manager_metadata")
+        let sql = "SELECT key FROM manager_metadata";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -290,9 +289,8 @@ mod tests {
         let manager_key_1 = metadata_manager.manager_key().await.unwrap();
         let manager_key_2 = metadata_manager.manager_key().await.unwrap();
 
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table("manager_metadata", "SELECT key FROM manager_metadata")
+        let sql = "SELECT key FROM manager_metadata";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -311,9 +309,8 @@ mod tests {
         metadata_manager.save_node(node_2.clone()).await.unwrap();
 
         // Verify that the nodes are saved correctly.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table("nodes", "SELECT url, mode FROM nodes")
+        let sql = "SELECT url, mode FROM nodes";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -340,9 +337,8 @@ mod tests {
         metadata_manager.remove_node(&node_1.url).await.unwrap();
 
         // Verify that node_1 is removed correctly.
-        let batch = metadata_manager
-            .metadata_delta_lake
-            .query_table("nodes", "SELECT url, mode FROM nodes")
+        let sql = "SELECT url, mode FROM nodes";
+        let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();
 
@@ -468,8 +464,9 @@ mod tests {
             .unwrap();
 
         let metadata_manager = MetadataManager {
-            metadata_delta_lake: MetadataDeltaLake::from_path(temp_dir.path()).unwrap(),
+            delta_lake: DeltaLake::try_from_local_path(temp_dir.path()).unwrap(),
             table_metadata_manager,
+            session: SessionContext::new(),
         };
 
         metadata_manager
