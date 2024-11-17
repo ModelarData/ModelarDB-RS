@@ -451,12 +451,12 @@ impl TableMetadataManager {
     /// and the tag cache. If the metadata could not be dropped, [`ModelarDbStorageError`] is returned.
     async fn drop_model_table_metadata(&self, table_name: &str) -> Result<()> {
         // Drop and deregister the model_table_name_tags table.
+        let tags_table_name = format!("{table_name}_tags");
         self.delta_lake
-            .drop_metadata_delta_lake_table(&format!("{table_name}_tags"))
+            .drop_metadata_delta_lake_table(&tags_table_name)
             .await?;
 
-        self.session
-            .deregister_table(&format!("{table_name}_tags"))?;
+        self.session.deregister_table(&tags_table_name)?;
 
         // Delete the table metadata from the model_table_metadata table.
         self.delta_lake
@@ -861,7 +861,7 @@ impl TableMetadataManager {
         let sql = format!(
             "SELECT table_name
              FROM model_table_hash_table_name
-             WHERE hash = {signed_tag_hash}
+             WHERE hash = '{signed_tag_hash}'
              LIMIT 1"
         );
         let batch = sql_and_combine(&self.session, &sql).await?;
@@ -1003,11 +1003,11 @@ mod tests {
             .is_ok());
 
         assert!(metadata_manager
-                .session
-                .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
-                 generated_column_expr, generated_column_sources FROM model_table_field_columns")
-                .await
-                .is_ok());
+            .session
+            .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
+            generated_column_expr, generated_column_sources FROM model_table_field_columns")
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -1116,8 +1116,8 @@ mod tests {
         );
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
-        let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
-                 generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name";
+        let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
+        generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name";
         let batch = sql_and_combine(&metadata_manager.session, sql)
             .await
             .unwrap();

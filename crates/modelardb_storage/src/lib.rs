@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! Utility functions to register normal tables and model tables with Apache DataFusion and to read
-//! and write Apache Parquet files to and from an object store.
+//! Utility functions to register metadata tables, normal tables, and model tables with Apache
+//! DataFusion and to read and write Apache Parquet files to and from an object store.
 
 pub mod delta_lake;
 pub mod error;
@@ -221,8 +221,8 @@ pub async fn read_record_batch_from_apache_parquet_file(
 }
 
 /// Read each batch of data from the Apache Parquet file given by `reader` and return them as a
-/// [`Vec`] of [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is
-/// returned.
+/// [`Vec`] of [`RecordBatch`]. If the file could not be read successfully,
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError) is returned.
 pub async fn read_batches_from_apache_parquet_file<R>(reader: R) -> Result<Vec<RecordBatch>>
 where
     R: AsyncFileReader + Send + Unpin + 'static,
