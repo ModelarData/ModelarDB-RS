@@ -25,7 +25,7 @@ arrow.workspace = true
 async-trait.workspace = true
 dashmap.workspace = true
 datafusion.workspace = true
-deltalake.workspace = true
+deltalake = { workspace = true, features = ["datafusion", "s3"] }
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }
@@ -35,7 +35,6 @@ sqlparser.workspace = true
 tokio = { workspace = true }
 tonic.workspace = true
 url.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
