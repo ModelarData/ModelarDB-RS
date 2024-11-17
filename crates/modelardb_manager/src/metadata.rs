@@ -42,7 +42,7 @@ pub struct MetadataManager {
     /// related to normal tables and model tables.
     pub(crate) table_metadata_manager: TableMetadataManager,
     /// Session used to query the manager metadata Delta Lake tables using Apache DataFusion.
-    session: SessionContext,
+    session: Arc<SessionContext>,
 }
 
 impl MetadataManager {
@@ -50,11 +50,16 @@ impl MetadataManager {
     /// `connection_info` and initialize the metadata tables. If `connection_info` could not be
     /// parsed or the metadata tables could not be created, return [`ModelarDbManagerError`].
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<MetadataManager> {
+        let session = Arc::new(SessionContext::new());
+
         let metadata_manager = Self {
             delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
-            table_metadata_manager: TableMetadataManager::try_from_connection_info(connection_info)
-                .await?,
-            session: SessionContext::new(),
+            table_metadata_manager: TableMetadataManager::try_from_connection_info(
+                connection_info,
+                Some(session.clone()),
+            )
+            .await?,
+            session,
         };
 
         // Create the necessary tables in the metadata Delta Lake.
@@ -459,14 +464,16 @@ mod tests {
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let table_metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
-            .await
-            .unwrap();
+        let session = Arc::new(SessionContext::new());
+        let table_metadata_manager =
+            TableMetadataManager::try_from_path(temp_dir.path(), Some(session.clone()))
+                .await
+                .unwrap();
 
         let metadata_manager = MetadataManager {
             delta_lake: DeltaLake::try_from_local_path(temp_dir.path()).unwrap(),
             table_metadata_manager,
-            session: SessionContext::new(),
+            session,
         };
 
         metadata_manager

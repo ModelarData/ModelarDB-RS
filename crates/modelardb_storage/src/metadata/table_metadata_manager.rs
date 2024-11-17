@@ -58,18 +58,21 @@ pub struct TableMetadataManager {
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
     /// Session used to query the metadata Delta Lake tables using Apache DataFusion.
-    session: SessionContext,
+    session: Arc<SessionContext>,
 }
 
 impl TableMetadataManager {
     /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and
     /// initialize the metadata tables. If the metadata tables could not be created, return
     /// [`ModelarDbStorageError`].
-    pub async fn try_from_path(folder_path: &StdPath) -> Result<Self> {
+    pub async fn try_from_path(
+        folder_path: &StdPath,
+        maybe_session: Option<Arc<SessionContext>>,
+    ) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::try_from_local_path(folder_path)?,
             tag_value_hashes: DashMap::new(),
-            session: SessionContext::new(),
+            session: maybe_session.unwrap_or_else(|| Arc::new(SessionContext::new())),
         };
 
         table_metadata_manager
@@ -83,11 +86,14 @@ impl TableMetadataManager {
     /// by `connection_info` and initialize the metadata tables. If `connection_info` could not be
     /// parsed, the connection cannot be made, or the metadata tables could not be created, return
     /// [`ModelarDbStorageError`].
-    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
+    pub async fn try_from_connection_info(
+        connection_info: &[u8],
+        maybe_session: Option<Arc<SessionContext>>,
+    ) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
             tag_value_hashes: DashMap::new(),
-            session: SessionContext::new(),
+            session: maybe_session.unwrap_or_else(|| Arc::new(SessionContext::new())),
         };
 
         table_metadata_manager
@@ -114,7 +120,7 @@ impl TableMetadataManager {
                 secret_access_key,
             )?,
             tag_value_hashes: DashMap::new(),
-            session: SessionContext::new(),
+            session: Arc::new(SessionContext::new()),
         };
 
         table_metadata_manager
@@ -139,7 +145,7 @@ impl TableMetadataManager {
                 container_name,
             )?,
             tag_value_hashes: DashMap::new(),
-            session: SessionContext::new(),
+            session: Arc::new(SessionContext::new()),
         };
 
         table_metadata_manager
@@ -973,7 +979,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_metadata_delta_lake_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
             .await
             .unwrap();
 
@@ -1281,7 +1287,7 @@ mod tests {
 
     async fn create_metadata_manager_and_save_normal_tables() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
             .await
             .unwrap();
 
@@ -1356,7 +1362,7 @@ mod tests {
     #[tokio::test]
     async fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
             .await
             .unwrap();
 
@@ -1551,7 +1557,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_tag_hash_to_model_table_name() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
             .await
             .unwrap();
 
@@ -1622,7 +1628,7 @@ mod tests {
 
     async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
             .await
             .unwrap();
 
