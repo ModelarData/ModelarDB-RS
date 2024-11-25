@@ -41,7 +41,7 @@ pub struct Context {
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Main interface for Apache DataFusion.
-    pub session: SessionContext,
+    pub session_context: SessionContext,
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
 }
@@ -57,7 +57,7 @@ impl Context {
     ) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
-        let session = modelardb_storage::create_session_context();
+        let session_context = modelardb_storage::create_session_context();
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(runtime, data_folders.clone(), &configuration_manager).await?,
@@ -66,7 +66,7 @@ impl Context {
         Ok(Context {
             data_folders,
             configuration_manager,
-            session,
+            session_context,
             storage_engine,
         })
     }
@@ -203,7 +203,7 @@ impl Context {
         ));
 
         modelardb_storage::register_normal_table(
-            &self.session,
+            &self.session_context,
             table_name,
             delta_table,
             normal_table_data_sink,
@@ -257,7 +257,7 @@ impl Context {
         ));
 
         modelardb_storage::register_model_table(
-            &self.session,
+            &self.session_context,
             delta_table,
             model_table_metadata.clone(),
             table_metadata_manager,
@@ -270,21 +270,21 @@ impl Context {
     }
 
     /// Drop the table with `table_name` if it exists. The table is deregistered from the Apache
-    /// Arrow Datafusion session and deleted from the storage engine, metadata Delta Lake, and data
-    /// Delta Lake. If the table does not exist or if it could not be dropped,
+    /// Arrow Datafusion session context and deleted from the storage engine, metadata Delta Lake,
+    /// and data Delta Lake. If the table does not exist or if it could not be dropped,
     /// [`ModelarDbServerError`] is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<()> {
-        // Deregistering the table from the Apache DataFusion session and deleting the table from
-        // the storage engine does not require the table to exist, so the table is checked first.
+        // Deregistering the table from the Apache DataFusion session context and deleting the table
+        // from the storage engine does not require the table to exist, so the table is checked first.
         if self.check_if_table_exists(table_name).await.is_ok() {
             return Err(ModelarDbServerError::InvalidArgument(format!(
                 "Table with name '{table_name}' does not exist."
             )));
         }
 
-        // Deregister the table from the Apache DataFusion session. This is done first to
+        // Deregister the table from the Apache DataFusion session context. This is done first to
         // avoid data being ingested into the table while it is being deleted.
-        self.session.deregister_table(table_name)?;
+        self.session_context.deregister_table(table_name)?;
 
         self.drop_table_from_storage_engine(table_name).await?;
 
@@ -404,9 +404,9 @@ impl Context {
     /// Return the default database schema if it exists, otherwise a [`ModelarDbServerError`]
     /// indicating at what level the lookup failed is returned.
     pub fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>> {
-        let session = self.session.clone();
+        let session_context = self.session_context.clone();
 
-        let catalog = session.catalog("datafusion").ok_or_else(|| {
+        let catalog = session_context.catalog("datafusion").ok_or_else(|| {
             ModelarDbServerError::InvalidState("Default catalog does not exist.".to_owned())
         })?;
 
@@ -593,7 +593,7 @@ mod tests {
 
         context.drop_table(test::NORMAL_TABLE_NAME).await.unwrap();
 
-        // The normal table should be deregistered from the Apache DataFusion session.
+        // The normal table should be deregistered from the Apache DataFusion session context.
         assert!(context
             .check_if_table_exists(test::NORMAL_TABLE_NAME)
             .await
@@ -629,7 +629,7 @@ mod tests {
 
         context.drop_table(test::MODEL_TABLE_NAME).await.unwrap();
 
-        // The model table should be deregistered from the Apache DataFusion session.
+        // The model table should be deregistered from the Apache DataFusion session context.
         assert!(context
             .check_if_table_exists(test::MODEL_TABLE_NAME)
             .await

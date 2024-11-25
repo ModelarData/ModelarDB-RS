@@ -337,8 +337,8 @@ impl FlightService for FlightServiceHandler {
 
         // Plan the query.
         info!("Executing the statement: {}.", query);
-        let session = self.context.session.clone();
-        let data_frame = session
+        let session_context = self.context.session_context.clone();
+        let data_frame = session_context
             .sql(&query)
             .await
             .map_err(|error| Status::invalid_argument(error.to_string()))?;

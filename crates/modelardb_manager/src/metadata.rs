@@ -26,7 +26,7 @@ use deltalake::datafusion::prelude::SessionContext;
 use deltalake::DeltaTableError;
 use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_storage::{register_metadata_table, sql_and_combine};
+use modelardb_storage::{register_metadata_table, sql_and_concat};
 use modelardb_types::types::ServerMode;
 use uuid::Uuid;
 
@@ -41,8 +41,8 @@ pub struct MetadataManager {
     /// Metadata manager used to interface with the subset of the manager metadata Delta Lake
     /// related to normal tables and model tables.
     pub(crate) table_metadata_manager: TableMetadataManager,
-    /// Session used to query the manager metadata Delta Lake tables using Apache DataFusion.
-    session: Arc<SessionContext>,
+    /// Session context used to query the manager metadata Delta Lake tables using Apache DataFusion.
+    session_context: Arc<SessionContext>,
 }
 
 impl MetadataManager {
@@ -50,16 +50,16 @@ impl MetadataManager {
     /// `connection_info` and initialize the metadata tables. If `connection_info` could not be
     /// parsed or the metadata tables could not be created, return [`ModelarDbManagerError`].
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<MetadataManager> {
-        let session = Arc::new(SessionContext::new());
+        let session_context = Arc::new(SessionContext::new());
 
         let metadata_manager = Self {
             delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
             table_metadata_manager: TableMetadataManager::try_from_connection_info(
                 connection_info,
-                Some(session.clone()),
+                Some(session_context.clone()),
             )
             .await?,
-            session,
+            session_context,
         };
 
         // Create the necessary tables in the metadata Delta Lake.
@@ -71,7 +71,7 @@ impl MetadataManager {
     }
 
     /// If they do not already exist, create the tables that are specific to the manager metadata
-    /// Delta Lake and register them with the Apache DataFusion session.
+    /// Delta Lake and register them with the Apache DataFusion session context.
     /// * The `manager_metadata` table contains metadata for the manager itself. It is assumed that
     ///   this table will only have a single row since there can only be a single manager.
     /// * The `nodes` table contains metadata for each node that is controlled by the manager.
@@ -88,7 +88,7 @@ impl MetadataManager {
             )
             .await?;
 
-        register_metadata_table(&self.session, "manager_metadata", delta_table)?;
+        register_metadata_table(&self.session_context, "manager_metadata", delta_table)?;
 
         // Create and register the nodes table if it does not exist.
         let delta_table = self
@@ -102,7 +102,7 @@ impl MetadataManager {
             )
             .await?;
 
-        register_metadata_table(&self.session, "nodes", delta_table)?;
+        register_metadata_table(&self.session_context, "nodes", delta_table)?;
 
         Ok(())
     }
@@ -112,7 +112,7 @@ impl MetadataManager {
     /// or created, return [`ModelarDbManagerError`].
     pub async fn manager_key(&self) -> Result<Uuid> {
         let sql = "SELECT key FROM manager_metadata";
-        let batch = sql_and_combine(&self.session, sql).await?;
+        let batch = sql_and_concat(&self.session_context, sql).await?;
 
         let keys = modelardb_types::array!(batch, 0, StringArray);
         if keys.is_empty() {
@@ -172,7 +172,7 @@ impl MetadataManager {
         let mut nodes: Vec<Node> = vec![];
 
         let sql = "SELECT url, mode FROM nodes";
-        let batch = sql_and_combine(&self.session, sql).await?;
+        let batch = sql_and_concat(&self.session_context, sql).await?;
 
         let url_array = modelardb_types::array!(batch, 0, StringArray);
         let mode_array = modelardb_types::array!(batch, 1, StringArray);
@@ -195,13 +195,13 @@ impl MetadataManager {
     pub async fn table_sql(&self, table_name: &str) -> Result<String> {
         let sql =
             format!("SELECT sql FROM normal_table_metadata WHERE table_name = '{table_name}'");
-        let batch = sql_and_combine(&self.session, &sql).await?;
+        let batch = sql_and_concat(&self.session_context, &sql).await?;
 
         let table_sql = modelardb_types::array!(batch, 0, StringArray);
         if table_sql.is_empty() {
             let sql =
                 format!("SELECT sql FROM model_table_metadata WHERE table_name = '{table_name}'");
-            let batch = sql_and_combine(&self.session, &sql).await?;
+            let batch = sql_and_concat(&self.session_context, &sql).await?;
 
             let model_table_sql = modelardb_types::array!(batch, 0, StringArray);
             if model_table_sql.is_empty() {
@@ -222,10 +222,10 @@ impl MetadataManager {
     pub async fn table_metadata_column(&self, column: &str) -> Result<Vec<String>> {
         // Retrieve the column from both tables containing table metadata.
         let sql = format!("SELECT {column} FROM normal_table_metadata");
-        let normal_table_metadata_batch = sql_and_combine(&self.session, &sql).await?;
+        let normal_table_metadata_batch = sql_and_concat(&self.session_context, &sql).await?;
 
         let sql = format!("SELECT {column} FROM model_table_metadata");
-        let model_table_metadata_batch = sql_and_combine(&self.session, &sql).await?;
+        let model_table_metadata_batch = sql_and_concat(&self.session_context, &sql).await?;
 
         let normal_table_metadata_column =
             modelardb_types::array!(normal_table_metadata_batch, 0, StringArray);
@@ -256,13 +256,13 @@ mod tests {
 
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(metadata_manager
-            .session
+            .session_context
             .sql("SELECT key FROM manager_metadata")
             .await
             .is_ok());
 
         assert!(metadata_manager
-            .session
+            .session_context
             .sql("SELECT url, mode FROM nodes")
             .await
             .is_ok());
@@ -276,7 +276,7 @@ mod tests {
         let manager_key = metadata_manager.manager_key().await.unwrap();
 
         let sql = "SELECT key FROM manager_metadata";
-        let batch = sql_and_combine(&metadata_manager.session, sql)
+        let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
 
@@ -295,7 +295,7 @@ mod tests {
         let manager_key_2 = metadata_manager.manager_key().await.unwrap();
 
         let sql = "SELECT key FROM manager_metadata";
-        let batch = sql_and_combine(&metadata_manager.session, sql)
+        let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
 
@@ -315,7 +315,7 @@ mod tests {
 
         // Verify that the nodes are saved correctly.
         let sql = "SELECT url, mode FROM nodes";
-        let batch = sql_and_combine(&metadata_manager.session, sql)
+        let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
 
@@ -343,7 +343,7 @@ mod tests {
 
         // Verify that node_1 is removed correctly.
         let sql = "SELECT url, mode FROM nodes";
-        let batch = sql_and_combine(&metadata_manager.session, sql)
+        let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
 
@@ -464,16 +464,16 @@ mod tests {
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let session = Arc::new(SessionContext::new());
+        let session_context = Arc::new(SessionContext::new());
         let table_metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path(), Some(session.clone()))
+            TableMetadataManager::try_from_path(temp_dir.path(), Some(session_context.clone()))
                 .await
                 .unwrap();
 
         let metadata_manager = MetadataManager {
             delta_lake: DeltaLake::try_from_local_path(temp_dir.path()).unwrap(),
             table_metadata_manager,
-            session,
+            session_context,
         };
 
         metadata_manager

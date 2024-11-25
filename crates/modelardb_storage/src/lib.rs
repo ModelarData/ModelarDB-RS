@@ -146,7 +146,7 @@ pub fn maybe_model_table_to_model_table_metadata(
 /// Execute the SQL query `sql` in `session_context` and return the result as a single
 /// [`RecordBatch`]. If the query could not be executed successfully, return
 /// [`ModelarDbStorageError`](error::ModelarDbStorageError).
-pub async fn sql_and_combine(session_context: &SessionContext, sql: &str) -> Result<RecordBatch> {
+pub async fn sql_and_concat(session_context: &SessionContext, sql: &str) -> Result<RecordBatch> {
     let dataframe = session_context.sql(sql).await?;
     let schema = Schema::from(dataframe.schema());
 
