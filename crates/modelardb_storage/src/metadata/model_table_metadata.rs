@@ -219,10 +219,8 @@ pub struct GeneratedColumn {
 mod test {
     use super::*;
 
-    use datafusion::{
-        arrow::datatypes::{DataType, Field, Schema},
-        logical_expr::expr::WildcardOptions,
-    };
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::logical_expr::expr::WildcardOptions;
     use modelardb_common::test::ERROR_BOUND_ZERO;
 
     use crate::test;

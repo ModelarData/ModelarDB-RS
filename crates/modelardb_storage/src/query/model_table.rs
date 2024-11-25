@@ -140,7 +140,7 @@ impl ModelTable {
     }
 }
 
-/// The implementation is not derived many instance variables does not implement [`fmt::Debug`].
+/// The implementation is not derived as many instance variables does not implement [`fmt::Debug`].
 impl fmt::Debug for ModelTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(

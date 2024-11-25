@@ -333,10 +333,10 @@ struct ModelCountAccumulator {
 
 impl Accumulator for ModelCountAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
-        let start_times = modelardb_types::value!(values, 2, TimestampArray);
-        let end_times = modelardb_types::value!(values, 3, TimestampArray);
-        let timestamps = modelardb_types::value!(values, 4, BinaryArray);
+    fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
+        let start_times = modelardb_types::value!(arrays, 2, TimestampArray);
+        let end_times = modelardb_types::value!(arrays, 3, TimestampArray);
+        let timestamps = modelardb_types::value!(arrays, 4, BinaryArray);
 
         for row_index in 0..start_times.len() {
             let start_time = start_times.value(row_index);
@@ -426,8 +426,8 @@ struct ModelMaxAccumulator {
 
 impl Accumulator for ModelMaxAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
-        let max_values = modelardb_types::value!(values, 6, ValueArray);
+    fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
+        let max_values = modelardb_types::value!(arrays, 6, ValueArray);
         for row_index in 0..max_values.len() {
             self.max = Value::max(self.max, max_values.value(row_index));
         }
@@ -469,17 +469,15 @@ struct ModelSumAccumulator {
 
 impl Accumulator for ModelSumAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
-        let model_type_ids = modelardb_types::value!(values, 1, UInt8Array);
-        let start_times = modelardb_types::value!(values, 2, TimestampArray);
-        let end_times = modelardb_types::value!(values, 3, TimestampArray);
-        let timestamps = modelardb_types::value!(values, 4, BinaryArray);
-        let min_values = modelardb_types::value!(values, 5, ValueArray);
-        let max_values = modelardb_types::value!(values, 6, ValueArray);
-
-        // Index order is swapped to keep naming consistent with Apache DataFusion and ModelaDB.
-        let residuals = modelardb_types::value!(values, 8, BinaryArray);
-        let values = modelardb_types::value!(values, 7, BinaryArray);
+    fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
+        let model_type_ids = modelardb_types::value!(arrays, 1, UInt8Array);
+        let start_times = modelardb_types::value!(arrays, 2, TimestampArray);
+        let end_times = modelardb_types::value!(arrays, 3, TimestampArray);
+        let timestamps = modelardb_types::value!(arrays, 4, BinaryArray);
+        let min_values = modelardb_types::value!(arrays, 5, ValueArray);
+        let max_values = modelardb_types::value!(arrays, 6, ValueArray);
+        let values = modelardb_types::value!(arrays, 7, BinaryArray);
+        let residuals = modelardb_types::value!(arrays, 8, BinaryArray);
 
         for row_index in 0..model_type_ids.len() {
             let model_type_id = model_type_ids.value(row_index);
@@ -543,17 +541,15 @@ struct ModelAvgAccumulator {
 
 impl Accumulator for ModelAvgAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
-        let model_type_ids = modelardb_types::value!(values, 1, UInt8Array);
-        let start_times = modelardb_types::value!(values, 2, TimestampArray);
-        let end_times = modelardb_types::value!(values, 3, TimestampArray);
-        let timestamps = modelardb_types::value!(values, 4, BinaryArray);
-        let min_values = modelardb_types::value!(values, 5, ValueArray);
-        let max_values = modelardb_types::value!(values, 6, ValueArray);
-
-        // Index order is swapped to keep naming consistent with Apache DataFusion and ModelaDB.
-        let residuals = modelardb_types::value!(values, 8, BinaryArray);
-        let values = modelardb_types::value!(values, 7, BinaryArray);
+    fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
+        let model_type_ids = modelardb_types::value!(arrays, 1, UInt8Array);
+        let start_times = modelardb_types::value!(arrays, 2, TimestampArray);
+        let end_times = modelardb_types::value!(arrays, 3, TimestampArray);
+        let timestamps = modelardb_types::value!(arrays, 4, BinaryArray);
+        let min_values = modelardb_types::value!(arrays, 5, ValueArray);
+        let max_values = modelardb_types::value!(arrays, 6, ValueArray);
+        let values = modelardb_types::value!(arrays, 7, BinaryArray);
+        let residuals = modelardb_types::value!(arrays, 8, BinaryArray);
 
         for row_index in 0..model_type_ids.len() {
             let model_type_id = model_type_ids.value(row_index);

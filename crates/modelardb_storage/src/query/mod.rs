@@ -31,15 +31,16 @@ pub(crate) mod model_table;
 pub(crate) mod normal_table;
 pub(crate) mod sorted_join_exec;
 
-/// The global sort order [`datafusion::datasource::physical_plan::parquet::ParquetExec`] guarantees
-/// for the segments it produces. It is guaranteed by
-/// [`datafusion::datasource::physical_plan::parquet::ParquetExec`] because the storage engine uses
-/// this sort order for each Apache Parquet file and these files are read sequentially by
-/// [`datafusion::datasource::physical_plan::parquet::ParquetExec`]. Another sort order could also
-/// be used, the current query pipeline simply requires that the
+/// The global sort order
+/// [`ParquetExec`](datafusion::datasource::physical_plan::parquet::ParquetExec) guarantees for the
+/// segments it produces. It is guaranteed by
+/// [`ParquetExec`](datafusion::datasource::physical_plan::parquet::ParquetExec) because the storage
+/// engine uses this sort order for each Apache Parquet file and these files are read sequentially
+/// by [`ParquetExec`](datafusion::datasource::physical_plan::parquet::ParquetExec). Another sort
+/// order could also be used, the current query pipeline simply requires that the
 /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
-/// [`sorted_join_exec::SortedJoinExec`] receives from its inputs all contain data points for the
-/// same time interval and that they are sorted the same.
+/// [`SortedJoinExec`](sorted_join_exec::SortedJoinExec) receives from its inputs all contain data
+/// points for the same time interval and that they are sorted the same.
 static QUERY_ORDER_SEGMENT: LazyLock<LexOrdering> = LazyLock::new(|| {
     let sort_options = SortOptions {
         descending: false,
@@ -60,11 +61,11 @@ static QUERY_ORDER_SEGMENT: LazyLock<LexOrdering> = LazyLock::new(|| {
     LexOrdering::new(physical_sort_expr)
 });
 
-/// The global sort order that [`grid_exec::GridExec`] requires for the segments its receives as its
-/// input. Another sort order could also be used, the current query pipeline simply requires that
-/// the [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
-/// [`sorted_join_exec::SortedJoinExec`] receives from its inputs all contain data points for the
-/// same time interval and that they are sorted the same.
+/// The global sort order that [`GridExec`](grid_exec::GridExec) requires for the segments it
+/// receives as its input. Another sort order could also be used, the current query pipeline simply
+/// requires that the [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
+/// [`SortedJoinExec`](sorted_join_exec::SortedJoinExec) receives from its inputs all contain data
+/// points for the same time interval and that they are sorted the same.
 static QUERY_REQUIREMENT_SEGMENT: LazyLock<LexRequirement> = LazyLock::new(|| {
     let physical_sort_requirements = QUERY_ORDER_SEGMENT
         .inner
@@ -76,14 +77,15 @@ static QUERY_REQUIREMENT_SEGMENT: LazyLock<LexRequirement> = LazyLock::new(|| {
     LexRequirement::new(physical_sort_requirements)
 });
 
-/// The global sort order [`grid_exec::GridExec`] guarantees for the data points it produces. It is
-/// guaranteed by [`grid_exec::GridExec`] because it receives segments sorted by
-/// [`QUERY_ORDER_SEGMENT`] from [`datafusion::datasource::physical_plan::parquet::ParquetExec`] and
-/// because these segments cannot contain data points for overlapping time intervals. Another sort
-/// order could also be used, the current query pipeline simply requires that the
+/// The global sort order [`GridExec`](grid_exec::GridExec) guarantees for the data points it
+/// produces. It is guaranteed by [`GridExec`](grid_exec::GridExec) because it receives segments
+/// sorted by [`QUERY_ORDER_SEGMENT`] from
+/// [`ParquetExec`](datafusion::datasource::physical_plan::parquet::ParquetExec) and because these
+/// segments cannot contain data points for overlapping time intervals. Another sort order could
+/// also be used, the current query pipeline simply requires that the
 /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
-/// [`sorted_join_exec::SortedJoinExec`] receives from its inputs all contain data points for the
-/// same time interval and that they are sorted the same.
+/// [`SortedJoinExec`](sorted_join_exec::SortedJoinExec) receives from its inputs all contain data
+/// points for the same time interval and that they are sorted the same.
 static QUERY_ORDER_DATA_POINT: LazyLock<LexOrdering> = LazyLock::new(|| {
     let sort_options = SortOptions {
         descending: false,
@@ -104,11 +106,12 @@ static QUERY_ORDER_DATA_POINT: LazyLock<LexOrdering> = LazyLock::new(|| {
     LexOrdering::new(physical_sort_expr)
 });
 
-/// The global sort order that [`sorted_join_exec::SortedJoinExec`] requires for the data points it
-/// receives as its input. Another sort order could also be used, the current query pipeline simply
-/// requires that the [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
-/// [`sorted_join_exec::SortedJoinExec`] receives from its inputs all contain data points for the
-/// same time interval and that they are sorted the same.
+/// The global sort order that [`SortedJoinExec`](sorted_join_exec::SortedJoinExec) requires for the
+/// data points it receives as its input. Another sort order could also be used, the current query
+/// pipeline simply requires that the
+/// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
+/// [`SortedJoinExec`](sorted_join_exec::SortedJoinExec) receives from its inputs all contain data
+/// points for the same time interval and that they are sorted the same.
 static QUERY_REQUIREMENT_DATA_POINT: LazyLock<LexRequirement> = LazyLock::new(|| {
     let physical_sort_requirements = QUERY_ORDER_DATA_POINT
         .inner
