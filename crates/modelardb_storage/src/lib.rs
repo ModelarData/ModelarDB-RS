@@ -57,8 +57,8 @@ use crate::query::metadata_table::MetadataTable;
 use crate::query::model_table::ModelTable;
 use crate::query::normal_table::NormalTable;
 
-/// The folder storing compressed data in the data folders.
-const COMPRESSED_DATA_FOLDER: &str = "tables";
+/// The folder storing compressed table data in the data folders.
+const TABLE_FOLDER: &str = "tables";
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
@@ -134,7 +134,7 @@ pub fn register_model_table(
 
 /// Return the [`Arc<ModelTableMetadata>`] of the table `maybe_model_table` if it is a model table,
 /// otherwise [`None`] is returned.
-pub fn maybe_model_table_to_model_table_metadata(
+pub fn maybe_table_provider_to_model_table_metadata(
     maybe_model_table: Arc<dyn TableProvider>,
 ) -> Option<Arc<ModelTableMetadata>> {
     maybe_model_table

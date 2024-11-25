@@ -1012,7 +1012,7 @@ mod tests {
         assert!(metadata_manager
             .session_context
             .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-            generated_column_expr, generated_column_sources FROM model_table_field_columns")
+                  generated_column_expr, generated_column_sources FROM model_table_field_columns")
             .await
             .is_ok());
     }
@@ -1124,7 +1124,7 @@ mod tests {
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
         let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-        generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name";
+                   generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();

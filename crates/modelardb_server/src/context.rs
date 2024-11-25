@@ -368,7 +368,7 @@ impl Context {
         })?;
 
         let maybe_model_table_metadata =
-            modelardb_storage::maybe_model_table_to_model_table_metadata(maybe_model_table);
+            modelardb_storage::maybe_table_provider_to_model_table_metadata(maybe_model_table);
 
         Ok(maybe_model_table_metadata)
     }

@@ -40,7 +40,7 @@ use url::Url;
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::{
-    apache_parquet_writer_properties, maybe_univariate_ids_uint64_to_int64, COMPRESSED_DATA_FOLDER,
+    apache_parquet_writer_properties, maybe_univariate_ids_uint64_to_int64, TABLE_FOLDER,
     METADATA_FOLDER,
 };
 
@@ -367,7 +367,7 @@ impl DeltaLake {
     /// successfully, the paths to the deleted files are returned, otherwise a
     /// [`ModelarDbStorageError`] is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<Vec<Path>> {
-        let table_path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}");
+        let table_path = format!("{TABLE_FOLDER}/{table_name}");
         self.delete_table_files(&table_path).await
     }
 
@@ -492,7 +492,7 @@ impl DeltaLake {
 
     /// Return the location of the compressed model or normal table with `table_name`.
     fn location_of_compressed_table(&self, table_name: &str) -> String {
-        format!("{}/{COMPRESSED_DATA_FOLDER}/{table_name}", self.location)
+        format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
 
     /// Return the location of the metadata table with `table_name`.
