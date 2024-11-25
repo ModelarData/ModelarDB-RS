@@ -40,8 +40,8 @@ use url::Url;
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::{
-    apache_parquet_writer_properties, maybe_univariate_ids_uint64_to_int64, TABLE_FOLDER,
-    METADATA_FOLDER,
+    apache_parquet_writer_properties, maybe_univariate_ids_uint64_to_int64, METADATA_FOLDER,
+    TABLE_FOLDER,
 };
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
