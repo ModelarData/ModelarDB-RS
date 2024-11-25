@@ -211,23 +211,24 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
-    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection cannot be established or the
-    /// table does not exist.
+    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the delta lake cannot be
+    /// established or the table does not exist.
     pub async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_metadata_table(table_name);
         self.delta_table_from_path(&table_path).await
     }
 
     /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection cannot be established or the table does not exist.
+    /// [`ModelarDbStorageError`] if a connection to the delta lake cannot be established or the
+    /// table does not exist.
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_compressed_table(table_name);
         self.delta_table_from_path(&table_path).await
     }
 
     /// Return a [`DeltaOps`] for manipulating the metadata table with `table_name` in the Delta
-    /// Lake, or a [`ModelarDbStorageError`] if a connection cannot be established or the table does
-    /// not exist.
+    /// Lake, or a [`ModelarDbStorageError`] if a connection to the delta lake cannot be established
+    /// or the table does not exist.
     pub async fn metadata_delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
         let table_path = self.location_of_metadata_table(table_name);
         self.delta_table_from_path(&table_path)
@@ -236,7 +237,8 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection cannot be established or the table does not exist.
+    /// [`ModelarDbStorageError`] if a connection to the delta lake cannot be established or the
+    /// table does not exist.
     pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
         let table_path = self.location_of_compressed_table(table_name);
         self.delta_table_from_path(&table_path)
@@ -245,7 +247,8 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection cannot be established or the table does not exist.
+    /// [`ModelarDbStorageError`] if a connection to the delta lake cannot be established or the
+    /// table does not exist.
     async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
         deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone())
             .await
@@ -255,12 +258,12 @@ impl DeltaLake {
     /// Create a Delta Lake table for a metadata table with `table_name` and `schema` if it does not
     /// already exist. If the metadata table could not be created, [`ModelarDbStorageError`] is
     /// returned. An error is not returned if the metadata table already exists.
-    pub async fn create_delta_lake_metadata_table(
+    pub async fn create_metadata_table(
         &self,
         table_name: &str,
         schema: &Schema,
     ) -> Result<DeltaTable> {
-        self.create_partitioned_delta_lake_table(
+        self.create_table(
             table_name,
             schema,
             &[],
@@ -273,12 +276,12 @@ impl DeltaLake {
     /// Create a Delta Lake table for a normal table with `table_name` and `schema` if it does not
     /// already exist. If the normal table could not be created, e.g., because it already exists,
     /// [`ModelarDbStorageError`] is returned.
-    pub async fn create_delta_lake_normal_table(
+    pub async fn create_normal_table(
         &self,
         table_name: &str,
         schema: &Schema,
     ) -> Result<DeltaTable> {
-        self.create_partitioned_delta_lake_table(
+        self.create_table(
             table_name,
             schema,
             &[],
@@ -291,8 +294,8 @@ impl DeltaLake {
     /// Create a Delta Lake table for a model table with `table_name` and [`DISK_COMPRESSED_SCHEMA`]
     /// if it does not already exist. Returns [`DeltaTable`] if the table could be created and
     /// [`ModelarDbStorageError`] if it could not.
-    pub async fn create_delta_lake_model_table(&self, table_name: &str) -> Result<DeltaTable> {
-        self.create_partitioned_delta_lake_table(
+    pub async fn create_model_table(&self, table_name: &str) -> Result<DeltaTable> {
+        self.create_table(
             table_name,
             &DISK_COMPRESSED_SCHEMA.0,
             &[FIELD_COLUMN.to_owned()],
@@ -305,7 +308,7 @@ impl DeltaLake {
     /// Create a Delta Lake table with `table_name`, `schema`, and `partition_columns` if it does
     /// not already exist. Returns [`DeltaTable`] if the table could be created and
     /// [`ModelarDbStorageError`] if it could not.
-    async fn create_partitioned_delta_lake_table(
+    async fn create_table(
         &self,
         table_name: &str,
         schema: &Schema,
@@ -353,7 +356,7 @@ impl DeltaLake {
     /// exist in object stores and therefore cannot be operated upon. If the table was dropped
     /// successfully, the paths to the deleted files are returned, otherwise a
     /// [`ModelarDbStorageError`] is returned.
-    pub async fn drop_metadata_delta_lake_table(&self, table_name: &str) -> Result<Vec<Path>> {
+    pub async fn drop_metadata_table(&self, table_name: &str) -> Result<Vec<Path>> {
         let table_path = format!("{METADATA_FOLDER}/{table_name}");
         self.delete_table_files(&table_path).await
     }
@@ -363,7 +366,7 @@ impl DeltaLake {
     /// in object stores and therefore cannot be operated upon. If the table was dropped
     /// successfully, the paths to the deleted files are returned, otherwise a
     /// [`ModelarDbStorageError`] is returned.
-    pub async fn drop_delta_lake_table(&self, table_name: &str) -> Result<Vec<Path>> {
+    pub async fn drop_table(&self, table_name: &str) -> Result<Vec<Path>> {
         let table_path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}");
         self.delete_table_files(&table_path).await
     }
@@ -388,28 +391,28 @@ impl DeltaLake {
 
     /// Truncate the Delta Lake table with `table_name` by deleting all rows in the table. If the
     /// rows could not be deleted, a [`ModelarDbStorageError`] is returned.
-    pub async fn truncate_delta_lake_table(&self, table_name: &str) -> Result<()> {
+    pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
         let delta_table_ops = self.delta_ops(table_name).await?;
         delta_table_ops.delete().await?;
 
         Ok(())
     }
 
-    /// Write `rows` to a metadata Delta Lake table with `table_name`. Returns an updated
+    /// Write `columns` to a metadata Delta Lake table with `table_name`. Returns an updated
     /// [`DeltaTable`] version if the file was written successfully, otherwise returns
     /// [`ModelarDbStorageError`].
-    pub async fn write_rows_to_metadata_delta_table(
+    pub async fn write_columns_to_metadata_table(
         &self,
         table_name: &str,
-        rows: Vec<ArrayRef>,
+        columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable> {
         let table = self.metadata_delta_table(table_name).await?;
 
         // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
         // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
-        let record_batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
+        let record_batch = RecordBatch::try_new(TableProvider::schema(&table), columns)?;
 
-        self.write_record_batches_to_delta_table(
+        self.write_record_batches_to_table(
             table,
             vec![record_batch],
             vec![],
@@ -427,7 +430,7 @@ impl DeltaLake {
         record_batches: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
         let writer_properties = apache_parquet_writer_properties(None);
-        self.write_record_batches_to_delta_table(
+        self.write_record_batches_to_table(
             self.delta_table(table_name).await?,
             record_batches,
             vec![],
@@ -456,7 +459,7 @@ impl DeltaLake {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
         let writer_properties = apache_parquet_writer_properties(sorting_columns);
 
-        self.write_record_batches_to_delta_table(
+        self.write_record_batches_to_table(
             self.delta_table(table_name).await?,
             compressed_segments,
             partition_columns,
@@ -469,7 +472,7 @@ impl DeltaLake {
     /// `partition_columns` can optionally be provided to specify that `record_batches` should be
     /// partitioned by these columns. Returns an updated [`DeltaTable`] if the file was written
     /// successfully, otherwise returns [`ModelarDbStorageError`].
-    async fn write_record_batches_to_delta_table(
+    async fn write_record_batches_to_table(
         &self,
         delta_table: DeltaTable,
         record_batches: Vec<RecordBatch>,
@@ -479,7 +482,7 @@ impl DeltaLake {
         let delta_table_ops: DeltaOps = delta_table.into();
         let write_builder = delta_table_ops.write(record_batches);
 
-        // Write the record batches to the object store.
+        // Write the record batches to the Delta table.
         write_builder
             .with_partition_columns(partition_columns)
             .with_writer_properties(writer_properties)

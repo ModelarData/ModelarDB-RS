@@ -287,7 +287,7 @@ impl DataTransfer {
         // Delete the data that has been transferred to the remote Delta Lake.
         self.local_data_folder
             .delta_lake
-            .truncate_delta_lake_table(table_name)
+            .truncate_table(table_name)
             .await?;
 
         // Remove the transferred data from the in-memory tracking of compressed files.
@@ -509,7 +509,7 @@ mod tests {
         // Create a normal table.
         local_data_folder
             .delta_lake
-            .create_delta_lake_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -523,7 +523,7 @@ mod tests {
         let model_table_metadata = test::model_table_metadata();
         local_data_folder
             .delta_lake
-            .create_delta_lake_model_table(&model_table_metadata.name)
+            .create_model_table(&model_table_metadata.name)
             .await
             .unwrap();
 

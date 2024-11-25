@@ -82,7 +82,7 @@ impl MetadataManager {
         // Create and register the manager_metadata table if it does not exist.
         let delta_table = self
             .delta_lake
-            .create_delta_lake_metadata_table(
+            .create_metadata_table(
                 "manager_metadata",
                 &Schema::new(vec![Field::new("key", DataType::Utf8, false)]),
             )
@@ -93,7 +93,7 @@ impl MetadataManager {
         // Create and register the nodes table if it does not exist.
         let delta_table = self
             .delta_lake
-            .create_delta_lake_metadata_table(
+            .create_metadata_table(
                 "nodes",
                 &Schema::new(vec![
                     Field::new("url", DataType::Utf8, false),
@@ -120,7 +120,7 @@ impl MetadataManager {
 
             // Add a new row to the manager_metadata table to persist the key.
             self.delta_lake
-                .write_rows_to_metadata_delta_table(
+                .write_columns_to_metadata_table(
                     "manager_metadata",
                     vec![Arc::new(StringArray::from(vec![manager_key.to_string()]))],
                 )
@@ -140,7 +140,7 @@ impl MetadataManager {
     /// return [`ModelarDbManagerError`].
     pub async fn save_node(&self, node: Node) -> Result<()> {
         self.delta_lake
-            .write_rows_to_metadata_delta_table(
+            .write_columns_to_metadata_table(
                 "nodes",
                 vec![
                     Arc::new(StringArray::from(vec![node.url])),

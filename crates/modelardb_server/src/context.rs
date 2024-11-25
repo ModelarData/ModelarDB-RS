@@ -111,7 +111,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .delta_lake
-            .create_delta_lake_normal_table(table_name, &schema)
+            .create_normal_table(table_name, &schema)
             .await?;
 
         // Register the normal table with Apache DataFusion.
@@ -141,7 +141,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .delta_lake
-            .create_delta_lake_model_table(&model_table_metadata.name)
+            .create_model_table(&model_table_metadata.name)
             .await?;
 
         let table_metadata_manager = self
@@ -299,7 +299,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .delta_lake
-            .drop_delta_lake_table(table_name)
+            .drop_table(table_name)
             .await?;
 
         Ok(())
@@ -330,7 +330,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .delta_lake
-            .truncate_delta_lake_table(table_name)
+            .truncate_table(table_name)
             .await?;
 
         Ok(())

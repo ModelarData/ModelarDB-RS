@@ -172,7 +172,7 @@ impl TableMetadataManager {
         // Create and register the normal_table_metadata table if it does not exist.
         let delta_table = self
             .delta_lake
-            .create_delta_lake_metadata_table(
+            .create_metadata_table(
                 "normal_table_metadata",
                 &Schema::new(vec![
                     Field::new("table_name", DataType::Utf8, false),
@@ -186,7 +186,7 @@ impl TableMetadataManager {
         // Create and register the model_table_metadata table if it does not exist.
         let delta_table = self
             .delta_lake
-            .create_delta_lake_metadata_table(
+            .create_metadata_table(
                 "model_table_metadata",
                 &Schema::new(vec![
                     Field::new("table_name", DataType::Utf8, false),
@@ -201,7 +201,7 @@ impl TableMetadataManager {
         // Create and register the model_table_hash_table_name table if it does not exist.
         let delta_table = self
             .delta_lake
-            .create_delta_lake_metadata_table(
+            .create_metadata_table(
                 "model_table_hash_table_name",
                 &Schema::new(vec![
                     Field::new("hash", DataType::Int64, false),
@@ -221,7 +221,7 @@ impl TableMetadataManager {
         // are stored as segments.
         let delta_table = self
             .delta_lake
-            .create_delta_lake_metadata_table(
+            .create_metadata_table(
                 "model_table_field_columns",
                 &Schema::new(vec![
                     Field::new("table_name", DataType::Utf8, false),
@@ -307,7 +307,7 @@ impl TableMetadataManager {
     /// return [`ModelarDbStorageError`].
     pub async fn save_normal_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
         self.delta_lake
-            .write_rows_to_metadata_delta_table(
+            .write_columns_to_metadata_table(
                 "normal_table_metadata",
                 vec![
                     Arc::new(StringArray::from(vec![name])),
@@ -342,10 +342,7 @@ impl TableMetadataManager {
         let tags_table_name = format!("{}_tags", model_table_metadata.name);
         let delta_table = self
             .delta_lake
-            .create_delta_lake_metadata_table(
-                &tags_table_name,
-                &Schema::new(table_name_tags_columns),
-            )
+            .create_metadata_table(&tags_table_name, &Schema::new(table_name_tags_columns))
             .await?;
 
         register_metadata_table(&self.session_context, &tags_table_name, delta_table)?;
@@ -355,7 +352,7 @@ impl TableMetadataManager {
 
         // Add a new row in the model_table_metadata table to persist the model table.
         self.delta_lake
-            .write_rows_to_metadata_delta_table(
+            .write_columns_to_metadata_table(
                 "model_table_metadata",
                 vec![
                     Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
@@ -401,7 +398,7 @@ impl TableMetadataManager {
 
                 // query_schema_index is simply cast as a model table contains at most 1024 columns.
                 self.delta_lake
-                    .write_rows_to_metadata_delta_table(
+                    .write_columns_to_metadata_table(
                         "model_table_field_columns",
                         vec![
                             Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
@@ -463,7 +460,7 @@ impl TableMetadataManager {
         // Drop and deregister the model_table_name_tags table.
         let tags_table_name = format!("{table_name}_tags");
         self.delta_lake
-            .drop_metadata_delta_lake_table(&tags_table_name)
+            .drop_metadata_table(&tags_table_name)
             .await?;
 
         self.session_context.deregister_table(&tags_table_name)?;
