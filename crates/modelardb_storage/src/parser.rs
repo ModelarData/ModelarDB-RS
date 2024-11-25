@@ -283,6 +283,7 @@ impl ModelarDbDialect {
             order_by: None,
             partition_by: None,
             cluster_by: None,
+            clustered_by: None,
             options: None,
             strict: false,
             copy_grants: false,
@@ -507,6 +508,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> StdResult<(
         order_by,
         partition_by,
         cluster_by,
+        clustered_by,
         options,
         strict,
         copy_grants,
@@ -560,6 +562,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> StdResult<(
         check_unsupported_feature_is_disabled(order_by.is_some(), "ORDER BY")?;
         check_unsupported_feature_is_disabled(partition_by.is_some(), "PARTITION BY")?;
         check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
+        check_unsupported_feature_is_disabled(clustered_by.is_some(), "CLUSTERED BY")?;
         check_unsupported_feature_is_disabled(options.is_some(), "NAME=VALUE")?;
         check_unsupported_feature_is_disabled(*strict, "STRICT")?;
         check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;

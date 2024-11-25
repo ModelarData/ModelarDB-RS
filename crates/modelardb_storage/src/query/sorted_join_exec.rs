@@ -32,7 +32,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{EquivalenceProperties, PhysicalSortRequirement};
+use datafusion::physical_expr::{EquivalenceProperties, LexRequirement};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, Distribution, ExecutionMode, ExecutionPlan,
@@ -42,7 +42,7 @@ use datafusion::physical_plan::{
 use futures::stream::{Stream, StreamExt};
 use modelardb_types::functions;
 
-use super::QUERY_ORDER_DATA_POINT;
+use crate::query::QUERY_REQUIREMENT_DATA_POINT;
 
 /// The different types of columns supported by [`SortedJoinExec`], used for specifying the order in
 /// which the timestamp, field, and tag columns should be returned by [`SortedJoinStream`].
@@ -183,11 +183,9 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Specify that [`SortedJoinStream`] requires that its inputs' provide data that is sorted by
-    /// [`QUERY_ORDER_DATA_POINT`].
-    fn required_input_ordering(&self) -> Vec<Option<Vec<PhysicalSortRequirement>>> {
-        let physical_sort_requirements =
-            PhysicalSortRequirement::from_sort_exprs(QUERY_ORDER_DATA_POINT.iter());
-        vec![Some(physical_sort_requirements); self.inputs.len()]
+    /// [`QUERY_REQUIREMENT_DATA_POINT`].
+    fn required_input_ordering(&self) -> Vec<Option<LexRequirement>> {
+        vec![Some(QUERY_REQUIREMENT_DATA_POINT.clone()); self.inputs.len()]
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.

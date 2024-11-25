@@ -19,6 +19,7 @@
 
 use std::any::Any;
 use std::collections::HashSet;
+use std::fmt;
 use std::result::Result as StdResult;
 use std::sync::Arc;
 
@@ -34,8 +35,9 @@ use datafusion::datasource::provider::TableProviderFilterPushDown;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
-use datafusion::physical_expr::planner;
+use datafusion::physical_expr::{planner, LexOrdering};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFile;
@@ -135,6 +137,17 @@ impl ModelTable {
         let query_schema = &self.model_table_metadata.query_schema;
         let column_name = query_schema.field(query_schema_index).name();
         Ok(self.model_table_metadata.schema.index_of(column_name)?)
+    }
+}
+
+/// The implementation is not derived many instance variables does not implement [`fmt::Debug`].
+impl fmt::Debug for ModelTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ModelTable: {}\n {:?}",
+            self.model_table_metadata.name, self.model_table_metadata
+        )
     }
 }
 
@@ -317,7 +330,7 @@ fn new_apache_parquet_exec(
         projection: None,
         limit: maybe_limit,
         table_partition_cols: vec![],
-        output_ordering: vec![QUERY_ORDER_SEGMENT.clone()],
+        output_ordering: vec![LexOrdering::new(QUERY_ORDER_SEGMENT.to_vec())],
     };
 
     let apache_parquet_exec_builder = if let Some(parquet_filters) = maybe_parquet_filters {
@@ -574,7 +587,7 @@ impl TableProvider for ModelTable {
         &self,
         _state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
-        _overwrite: bool,
+        _insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let data_sink_exec = Arc::new(DataSinkExec::new(
             input,

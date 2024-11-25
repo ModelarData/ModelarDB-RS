@@ -13,6 +13,37 @@
  * limitations under the License.
  */
 
+
+/// Extract an [`array`](arrow::array::Array) from a slice of
+/// `ArrayRef` and cast it to the specified type or panic with `msg`:
+///
+/// ```
+/// # use std::sync::Arc;
+/// #
+/// # use arrow::array::ArrayRef;
+/// # use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};
+/// #
+/// # let array_vector: Vec<ArrayRef> = vec![
+/// #         Arc::new(TimestampArray::from(Vec::<Timestamp>::new())),
+/// #         Arc::new(ValueArray::from(Vec::<Value>::new())),
+/// # ];
+/// # let array_slice = &array_vector;
+/// let array = modelardb_types::value!(array_slice, 0, TimestampArray);
+/// ```
+///
+/// # Panics
+///
+/// Panics with `message` if `index` is not in `values` or if it cannot be cast to `type`.
+#[macro_export]
+macro_rules! value {
+    ($values:ident, $index:expr, $type:ident) => {
+        $values[$index]
+            .as_any()
+            .downcast_ref::<$type>()
+            .unwrap()
+    };
+}
+
 /// Extract an [`array`](arrow::array::Array) from a
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) and cast it to the specified type:
 ///

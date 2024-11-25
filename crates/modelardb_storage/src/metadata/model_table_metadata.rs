@@ -219,7 +219,10 @@ pub struct GeneratedColumn {
 mod test {
     use super::*;
 
-    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::{
+        arrow::datatypes::{DataType, Field, Schema},
+        logical_expr::expr::WildcardOptions,
+    };
     use modelardb_common::test::ERROR_BOUND_ZERO;
 
     use crate::test;
@@ -329,14 +332,28 @@ mod test {
         let (query_schema, error_bounds, mut generated_columns) =
             model_table_schema_error_bounds_and_generated_columns();
 
+        let wild_card_options = WildcardOptions {
+            ilike: None,
+            exclude: None,
+            except: None,
+            replace: None,
+            rename: None,
+        };
+
         generated_columns[5] = Some(GeneratedColumn {
-            expr: Expr::Wildcard { qualifier: None },
+            expr: Expr::Wildcard {
+                qualifier: None,
+                options: wild_card_options.clone(),
+            },
             source_columns: vec![],
             original_expr: None,
         });
 
         generated_columns[6] = Some(GeneratedColumn {
-            expr: Expr::Wildcard { qualifier: None },
+            expr: Expr::Wildcard {
+                qualifier: None,
+                options: wild_card_options,
+            },
             source_columns: vec![5],
             original_expr: None,
         });

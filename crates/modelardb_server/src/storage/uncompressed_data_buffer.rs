@@ -665,7 +665,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
-        assert_eq!(uncompressed_on_disk_buffer.disk_size().await, 4110)
+        assert_eq!(uncompressed_on_disk_buffer.disk_size().await, 4009)
     }
 
     #[tokio::test]
