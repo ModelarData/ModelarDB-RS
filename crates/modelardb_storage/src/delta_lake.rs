@@ -215,18 +215,14 @@ impl DeltaLake {
     /// table does not exist.
     pub async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_metadata_table(table_name);
-        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone())
-            .await
-            .map_err(|error| error.into())
+        self.delta_table_from_path(&table_path).await
     }
 
     /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
     /// [`ModelarDbStorageError`] if a connection cannot be established or the table does not exist.
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_compressed_table(table_name);
-        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone())
-            .await
-            .map_err(|error| error.into())
+        self.delta_table_from_path(&table_path).await
     }
 
     /// Return a [`DeltaOps`] for manipulating the metadata table with `table_name` in the Delta
@@ -234,16 +230,24 @@ impl DeltaLake {
     /// not exist.
     pub async fn metadata_delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
         let table_path = self.location_of_metadata_table(table_name);
-        DeltaOps::try_from_uri_with_storage_options(&table_path, self.storage_options.clone())
+        self.delta_table_from_path(&table_path)
             .await
-            .map_err(|error| error.into())
+            .map(Into::into)
     }
 
     /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or a
     /// [`ModelarDbStorageError`] if a connection cannot be established or the table does not exist.
     pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
         let table_path = self.location_of_compressed_table(table_name);
-        DeltaOps::try_from_uri_with_storage_options(&table_path, self.storage_options.clone())
+        self.delta_table_from_path(&table_path)
+            .await
+            .map(Into::into)
+    }
+
+    /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
+    /// [`ModelarDbStorageError`] if a connection cannot be established or the table does not exist.
+    async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
+        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone())
             .await
             .map_err(|error| error.into())
     }
