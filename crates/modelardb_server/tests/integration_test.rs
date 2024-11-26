@@ -44,7 +44,7 @@ use futures::{stream, StreamExt};
 use modelardb_common::test;
 use modelardb_common::test::data_generation;
 use modelardb_types::types::ErrorBound;
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -184,9 +184,11 @@ impl TestContext {
     fn kill_child(child: &mut Child) {
         let mut system = System::new_all();
 
-        while let Some(_process) = system.process(Pid::from_u32(child.id())) {
-            system.refresh_all();
+        let pid = Pid::from_u32(child.id());
+        let pids = &[pid];
+        let processes_to_update = ProcessesToUpdate::Some(pids);
 
+        while let Some(_process) = system.process(pid) {
             // Microsoft Windows often fails to kill the process and then succeed afterward.
             let mut attempts = ATTEMPTS;
             while child.kill().is_err() && attempts > 0 {
@@ -195,7 +197,8 @@ impl TestContext {
             }
             child.wait().unwrap();
 
-            system.refresh_all();
+            // Ensure the process is removed if it is killed before checking the condition.
+            system.refresh_processes(processes_to_update, true);
         }
     }
 

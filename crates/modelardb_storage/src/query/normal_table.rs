@@ -18,12 +18,14 @@
 //! [`TableProvider::scan()`] it updates the [`DeltaTable`] to the latest version and it implements
 //! [`TableProvider::insert_into()`] so rows can be inserted with INSERT.
 
+use std::borrow::Cow;
 use std::{any::Any, sync::Arc};
 
 use datafusion::catalog::Session;
 use datafusion::common::Constraints;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, LogicalPlan, TableProviderFilterPushDown};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
@@ -34,6 +36,7 @@ use tonic::async_trait;
 /// [`DeltaTable`] and passes most methods calls directly to it. Thus, it can be registered with
 /// Apache Arrow DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is updated to the
 /// latest snapshot when accessed and support for inserting has been added.
+#[derive(Debug)]
 pub(crate) struct NormalTable {
     /// Access to the Delta Lake table.
     delta_table: DeltaTable,
@@ -78,7 +81,7 @@ impl TableProvider for NormalTable {
     }
 
     /// Get the [`LogicalPlan`] of this normal table, if available.
-    fn get_logical_plan(&self) -> Option<&LogicalPlan> {
+    fn get_logical_plan(&self) -> Option<Cow<LogicalPlan>> {
         self.delta_table.get_logical_plan()
     }
 
@@ -130,7 +133,7 @@ impl TableProvider for NormalTable {
         &self,
         _state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
-        _overwrite: bool,
+        _inser_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let file_sink = Arc::new(DataSinkExec::new(
             input,

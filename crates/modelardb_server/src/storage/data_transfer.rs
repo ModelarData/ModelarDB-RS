@@ -313,7 +313,7 @@ mod tests {
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
-    const EXPECTED_MODEL_TABLE_FILE_SIZE: usize = 2374;
+    const EXPECTED_MODEL_TABLE_FILE_SIZE: usize = 2080;
 
     // Tests for data transfer component.
     #[tokio::test]

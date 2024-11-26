@@ -35,7 +35,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{EquivalenceProperties, PhysicalSortRequirement};
+use datafusion::physical_expr::{EquivalenceProperties, LexRequirement};
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet,
 };
@@ -49,7 +49,7 @@ use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
 use modelardb_types::schemas::GRID_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 
-use super::{QUERY_ORDER_DATA_POINT, QUERY_ORDER_SEGMENT};
+use crate::query::{QUERY_ORDER_DATA_POINT, QUERY_REQUIREMENT_SEGMENT};
 use crate::univariate_ids_int64_to_uint64;
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
@@ -186,11 +186,9 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Specify that [`GridExec`] requires that its input provides data that is sorted by
-    /// [`QUERY_ORDER_SEGMENT`].
-    fn required_input_ordering(&self) -> Vec<Option<Vec<PhysicalSortRequirement>>> {
-        let physical_sort_requirements =
-            PhysicalSortRequirement::from_sort_exprs(QUERY_ORDER_SEGMENT.iter());
-        vec![Some(physical_sort_requirements)]
+    /// [`QUERY_REQUIREMENT_SEGMENT`].
+    fn required_input_ordering(&self) -> Vec<Option<LexRequirement>> {
+        vec![Some(QUERY_REQUIREMENT_SEGMENT.clone())]
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.

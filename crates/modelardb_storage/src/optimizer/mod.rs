@@ -21,9 +21,10 @@ mod model_simple_aggregates;
 
 use std::sync::Arc;
 
-use model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule;
+use datafusion::physical_optimizer::PhysicalOptimizerRule;
+use model_simple_aggregates::ModelSimpleAggregates;
 
 /// Return all physical optimizer rules. Currently, only simple aggregates are executed on segments.
-pub fn physical_optimizer_rules() -> Vec<Arc<ModelSimpleAggregatesPhysicalOptimizerRule>> {
-    vec![Arc::new(ModelSimpleAggregatesPhysicalOptimizerRule {})]
+pub fn physical_optimizer_rules() -> Vec<Arc<dyn PhysicalOptimizerRule + Send + Sync>> {
+    vec![Arc::new(ModelSimpleAggregates {})]
 }
