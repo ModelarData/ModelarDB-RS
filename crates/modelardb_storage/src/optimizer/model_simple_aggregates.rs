@@ -314,7 +314,7 @@ fn try_rewrite_aggregate_exprs(
             "avg" => MODEL_AGGREGATE_AVG.clone(),
             name => {
                 return Err(DataFusionError::NotImplemented(format!(
-                    "Aggregate expression {name} is currently not supported.",
+                    "Aggregate expression {name} is not supported.",
                 )));
             }
         };
