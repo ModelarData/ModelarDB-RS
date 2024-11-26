@@ -25,6 +25,7 @@ use deltalake::arrow::compute::SortOptions;
 // optimizer can access them.
 mod generated_as_exec;
 pub(crate) mod grid_exec;
+pub(crate) mod metadata_table;
 pub(crate) mod model_table;
 pub(crate) mod normal_table;
 pub(crate) mod sorted_join_exec;

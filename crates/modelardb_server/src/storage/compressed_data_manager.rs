@@ -315,8 +315,12 @@ mod tests {
 
     use datafusion::arrow::array::{Array, Int8Array};
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
-    use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-    use modelardb_common::test;
+    use modelardb_common::test::{
+        COMPRESSED_RESERVED_MEMORY_IN_BYTES, COMPRESSED_SEGMENTS_SIZE,
+        INGESTED_RESERVED_MEMORY_IN_BYTES, UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+    };
+    use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+    use modelardb_storage::test;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
@@ -339,7 +343,7 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_delta_lake_normal_table(test::NORMAL_TABLE_NAME, &record_batch.schema())
+            .create_normal_table(test::NORMAL_TABLE_NAME, &record_batch.schema())
             .await
             .unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
@@ -413,7 +417,7 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
+            .create_model_table(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -427,7 +431,7 @@ mod tests {
             .model_table_metadata
             .field_column_indices
             .len()
-            * test::COMPRESSED_SEGMENTS_SIZE;
+            * COMPRESSED_SEGMENTS_SIZE;
         let max_compressed_segments = reserved_memory / compressed_buffer_size;
         for _ in 0..max_compressed_segments + 1 {
             data_manager
@@ -482,7 +486,7 @@ mod tests {
         let segments = compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .create_delta_lake_model_table(segments.model_table_name())
+            .create_model_table(segments.model_table_name())
             .await
             .unwrap();
 
@@ -543,7 +547,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_compressed_memory_in_bytes(),
-            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize + 10000
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize + 10000
         )
     }
 
@@ -556,7 +560,7 @@ mod tests {
         let segments = compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .create_delta_lake_model_table(segments.model_table_name())
+            .create_model_table(segments.model_table_name())
             .await
             .unwrap();
         data_manager
@@ -566,7 +570,7 @@ mod tests {
 
         data_manager
             .adjust_compressed_remaining_memory_in_bytes(
-                -(test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
+                -(COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
             )
             .await
             .unwrap();
@@ -589,7 +593,7 @@ mod tests {
 
         data_manager
             .adjust_compressed_remaining_memory_in_bytes(
-                -((test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
+                -((COMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
             )
             .await
             .unwrap();
@@ -602,9 +606,9 @@ mod tests {
         let channels = Arc::new(Channels::new());
 
         let memory_pool = Arc::new(MemoryPool::new(
-            test::INGESTED_RESERVED_MEMORY_IN_BYTES,
-            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            INGESTED_RESERVED_MEMORY_IN_BYTES,
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
         // Create a local data folder and save a single model table to the metadata Delta Lake.

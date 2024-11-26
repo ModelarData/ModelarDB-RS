@@ -27,7 +27,7 @@ use datafusion::physical_plan::insert::DataSink;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, SendableRecordBatchStream};
 use futures::StreamExt;
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;

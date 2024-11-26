@@ -22,7 +22,7 @@ use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
 use datafusion::logical_expr::expr::Expr;
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 
-use crate::error::{ModelarDbCommonError, Result};
+use crate::error::{ModelarDbStorageError, Result};
 
 /// Metadata required to ingest data into a model table and query a model table.
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ pub struct ModelTableMetadata {
 
 impl ModelTableMetadata {
     /// Create a new model table with the given metadata. If any of the following conditions are
-    /// true, [`ModelarDbCommonError`] is returned:
+    /// true, [`ModelarDbStorageError`] is returned:
     /// * The number of error bounds does not match the number of columns.
     /// * The number of potentially generated columns does not match the number of columns.
     /// * A generated column includes another generated column in its expression.
@@ -67,14 +67,14 @@ impl ModelTableMetadata {
     ) -> Result<Self> {
         // If an error bound is not defined for each column, return an error.
         if query_schema.fields().len() != error_bounds.len() {
-            return Err(ModelarDbCommonError::InvalidArgument(
+            return Err(ModelarDbStorageError::InvalidArgument(
                 "An error bound must be defined for each column.".to_owned(),
             ));
         }
 
         // If a generated column or None is not defined for each column, return an error.
         if query_schema.fields().len() != generated_columns.len() {
-            return Err(ModelarDbCommonError::InvalidArgument(
+            return Err(ModelarDbStorageError::InvalidArgument(
                 "A generated column or None must be defined for each column.".to_owned(),
             ));
         }
@@ -83,7 +83,7 @@ impl ModelTableMetadata {
         for generated_column in generated_columns.iter().flatten() {
             for source_column in &generated_column.source_columns {
                 if generated_columns[*source_column].is_some() {
-                    return Err(ModelarDbCommonError::InvalidArgument(
+                    return Err(ModelarDbStorageError::InvalidArgument(
                         "A generated field column cannot depend on generated field columns."
                             .to_owned(),
                     ));
@@ -94,7 +94,7 @@ impl ModelTableMetadata {
         // If there are more than 1024 columns, return an error. This limitation is necessary since
         // 10 bits are used to identify the column index of the data in the 64-bit univariate id.
         if query_schema.fields.len() > 1024 {
-            return Err(ModelarDbCommonError::InvalidArgument(
+            return Err(ModelarDbStorageError::InvalidArgument(
                 "There cannot be more than 1024 columns in the model table.".to_owned(),
             ));
         }
@@ -135,7 +135,7 @@ impl ModelTableMetadata {
         );
 
         if timestamp_column_indices.len() != 1 {
-            return Err(ModelarDbCommonError::InvalidArgument(
+            return Err(ModelarDbStorageError::InvalidArgument(
                 "There needs to be exactly one timestamp column.".to_owned(),
             ));
         }
@@ -146,7 +146,7 @@ impl ModelTableMetadata {
         );
 
         if field_column_indices.is_empty() {
-            return Err(ModelarDbCommonError::InvalidArgument(
+            return Err(ModelarDbStorageError::InvalidArgument(
                 "There needs to be at least one field column.".to_owned(),
             ));
         }
@@ -220,9 +220,9 @@ mod test {
     use super::*;
 
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use modelardb_common::test::ERROR_BOUND_ZERO;
 
     use crate::test;
-    use crate::test::ERROR_BOUND_ZERO;
 
     // Tests for ModelTableMetadata.
     #[test]

@@ -99,11 +99,13 @@ The following terminology must be used throughout the ModelarDB project.
 - **maybe** - Used as a prefix for variables of type `Result` or `Option` to indicate it may contain a value.
 - **try** - Used as a prefix for functions and methods that return `Result` or `Option` to indicate it may return a
 value.
-- **normal table** A relational table that stores data directly in Apache Parquet files managed by Delta Lake and thus
+- **normal table** - A relational table that stores data directly in Apache Parquet files managed by Delta Lake and thus
 uses the same schema at the logical and physical layer.
-- **model table** A relational table that stores time series data as compressed segments containing metadata and models
+- **model table** - A relational table that stores time series data as compressed segments containing metadata and models
 in Apache Parquet files managed by Delta Lake and thus uses different schemas at the logical and physical layer.
-- **table** A normal table or a model table, e.g., used when a function or method accepts both types of tables.
+- **table** - A normal table or a model table, e.g., used when a function or method accepts both types of tables.
+- **metadata table** - A table that stores metadata in Apache Parquet files managed by Delta Lake, e.g., information about
+the tables and the cluster.
 
 ### Testing and Linting
 All public and private functions must be appropriately covered by unit tests. Full coverage is intended, which means all

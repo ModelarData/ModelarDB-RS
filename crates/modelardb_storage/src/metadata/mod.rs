@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Implementation of functions, macros, and types used throughout ModelarDB.
+//! Implementation of [`ModelTableMetadata`](crate::ModelTableMetadata) which contains metadata
+//! required to interact with model tables and [`TableMetadataManager`](crate::TableMetadataManager)
+//! which provides functionality to access table related metadata in the metadata Delta Lake.
 
-pub mod arguments;
-pub mod error;
-pub mod remote;
-pub mod test;
+pub mod model_table_metadata;
+pub mod table_metadata_manager;

@@ -18,8 +18,8 @@
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_common::storage::DeltaLake;
+use modelardb_storage::delta_lake::DeltaLake;
+use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::ServerMode;
 
 use crate::error::ModelarDbServerError;
@@ -42,7 +42,8 @@ impl DataFolder {
     /// could not be created, [`ModelarDbServerError`] is returned.
     pub async fn try_from_path(data_folder_path: &StdPath) -> Result<Self> {
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
-        let table_metadata_manager = TableMetadataManager::try_from_path(data_folder_path).await?;
+        let table_metadata_manager =
+            TableMetadataManager::try_from_path(data_folder_path, None).await?;
 
         Ok(Self {
             delta_lake: Arc::new(delta_lake),
@@ -54,10 +55,10 @@ impl DataFolder {
     /// not be parsed or if the metadata tables could not be created, [`ModelarDbServerError`] is
     /// returned.
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
-        let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
+        let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info)?;
 
         let remote_table_metadata_manager =
-            TableMetadataManager::try_from_connection_info(connection_info).await?;
+            TableMetadataManager::try_from_connection_info(connection_info, None).await?;
 
         Ok(Self {
             delta_lake: Arc::new(remote_delta_lake),

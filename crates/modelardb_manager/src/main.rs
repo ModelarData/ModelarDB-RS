@@ -24,7 +24,7 @@ use std::env;
 use std::sync::{Arc, LazyLock};
 
 use modelardb_common::arguments;
-use modelardb_common::storage::DeltaLake;
+use modelardb_storage::delta_lake::DeltaLake;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
@@ -71,7 +71,7 @@ impl RemoteDataFolder {
     async fn try_new(remote_data_folder_str: &str) -> Result<Self> {
         let connection_info = arguments::argument_to_connection_info(remote_data_folder_str)?;
 
-        let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info).await?;
+        let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info)?;
 
         let metadata_manager = MetadataManager::try_from_connection_info(&connection_info).await?;
 

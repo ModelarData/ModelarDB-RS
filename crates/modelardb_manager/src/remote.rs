@@ -35,9 +35,10 @@ use arrow_flight::{
 };
 use futures::{stream, Stream};
 use modelardb_common::arguments;
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::parser::ValidStatement;
-use modelardb_common::{parser, remote};
+use modelardb_common::remote;
+use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::parser;
+use modelardb_storage::parser::ValidStatement;
 use modelardb_types::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -125,7 +126,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .delta_lake
-            .create_delta_lake_normal_table(table_name, schema)
+            .create_normal_table(table_name, schema)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -164,7 +165,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .delta_lake
-            .create_delta_lake_model_table(&model_table_metadata.name)
+            .create_model_table(&model_table_metadata.name)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -209,7 +210,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .delta_lake
-            .drop_delta_lake_table(table_name)
+            .drop_table(table_name)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -243,7 +244,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .delta_lake
-            .truncate_delta_lake_table(table_name)
+            .truncate_table(table_name)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 

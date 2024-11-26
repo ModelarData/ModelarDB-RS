@@ -45,12 +45,12 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-use modelardb_common::storage;
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
 use modelardb_types::schemas::GRID_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 
 use super::{QUERY_ORDER_DATA_POINT, QUERY_ORDER_SEGMENT};
+use crate::univariate_ids_int64_to_uint64;
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
 /// metadata and models. It is `pub(crate)` so the additional rules added to Apache DataFusion's
@@ -266,7 +266,7 @@ impl GridStream {
             .timer();
 
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
-        let batch = storage::univariate_ids_int64_to_uint64(batch);
+        let batch = univariate_ids_int64_to_uint64(batch);
 
         // Retrieve the arrays from batch and cast them to their concrete type.
         modelardb_types::arrays!(

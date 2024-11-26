@@ -34,9 +34,9 @@ datafusion.workspace = true
 deltalake = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
-modelardb_types = { path = "../modelardb_types" }
 modelardb_compression = { path = "../modelardb_compression" }
-modelardb_query = { path = "../modelardb_query" }
+modelardb_types = { path = "../modelardb_types" }
+modelardb_storage = { path = "../modelardb_storage" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 ringbuf.workspace = true
 snmalloc-rs = { workspace = true, features = ["build_cc"] }

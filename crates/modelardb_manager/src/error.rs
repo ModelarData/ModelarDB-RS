@@ -22,6 +22,7 @@ use std::result::Result as StdResult;
 
 use deltalake::errors::DeltaTableError;
 use modelardb_common::error::ModelarDbCommonError;
+use modelardb_storage::error::ModelarDbStorageError;
 use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
 
@@ -41,6 +42,8 @@ pub enum ModelarDbManagerError {
     Io(IoError),
     /// Error returned by modelardb_common.
     ModelarDbCommon(ModelarDbCommonError),
+    /// Error returned by modelardb_storage.
+    ModelarDbStorage(ModelarDbStorageError),
     /// Status returned by Tonic.
     TonicStatus(TonicStatusError),
     /// Error returned by Tonic.
@@ -55,6 +58,7 @@ impl Display for ModelarDbManagerError {
             Self::InvalidState(reason) => write!(f, "Invalid State Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
+            Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
         }
@@ -70,6 +74,7 @@ impl Error for ModelarDbManagerError {
             Self::InvalidState(_reason) => None,
             Self::Io(reason) => Some(reason),
             Self::ModelarDbCommon(reason) => Some(reason),
+            Self::ModelarDbStorage(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
         }
@@ -91,6 +96,12 @@ impl From<IoError> for ModelarDbManagerError {
 impl From<ModelarDbCommonError> for ModelarDbManagerError {
     fn from(error: ModelarDbCommonError) -> Self {
         Self::ModelarDbCommon(error)
+    }
+}
+
+impl From<ModelarDbStorageError> for ModelarDbManagerError {
+    fn from(error: ModelarDbStorageError) -> Self {
+        Self::ModelarDbStorage(error)
     }
 }
 

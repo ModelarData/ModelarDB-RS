@@ -26,7 +26,7 @@ use datafusion::arrow::error::ArrowError;
 use datafusion::error::DataFusionError;
 use deltalake::errors::DeltaTableError;
 use modelardb_common::error::ModelarDbCommonError;
-use modelardb_query::error::ModelarDbQueryError;
+use modelardb_storage::error::ModelarDbStorageError;
 use object_store::Error as ObjectStoreError;
 use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
@@ -57,8 +57,8 @@ pub enum ModelarDbServerError {
     ObjectStore(ObjectStoreError),
     /// Error returned by modelardb_common.
     ModelarDbCommon(ModelarDbCommonError),
-    /// Error returned by modelardb_query.
-    ModelarDbQuery(ModelarDbQueryError),
+    /// Error returned by modelardb_storage.
+    ModelarDbStorage(ModelarDbStorageError),
     /// Status returned by Tonic.
     TonicStatus(TonicStatusError),
     /// Error returned by Tonic.
@@ -78,7 +78,7 @@ impl Display for ModelarDbServerError {
             Self::Io(reason) => write!(f, "IO Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
-            Self::ModelarDbQuery(reason) => write!(f, "ModelarDB Query Error: {reason}"),
+            Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
         }
@@ -99,7 +99,7 @@ impl Error for ModelarDbServerError {
             Self::Io(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
             Self::ModelarDbCommon(reason) => Some(reason),
-            Self::ModelarDbQuery(reason) => Some(reason),
+            Self::ModelarDbStorage(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
         }
@@ -148,9 +148,9 @@ impl From<ModelarDbCommonError> for ModelarDbServerError {
     }
 }
 
-impl From<ModelarDbQueryError> for ModelarDbServerError {
-    fn from(error: ModelarDbQueryError) -> Self {
-        Self::ModelarDbQuery(error)
+impl From<ModelarDbStorageError> for ModelarDbServerError {
+    fn from(error: ModelarDbStorageError) -> Self {
+        Self::ModelarDbStorage(error)
     }
 }
 

@@ -15,7 +15,7 @@
 
 //! Methods for tokenizing and parsing SQL commands. They are tokenized and parsed using [sqlparser]
 //! as it is already used by Apache Arrow DataFusion. Only public functions return
-//! [`ModelarDbCommonError`] to simplify use of traits from [sqlparser] and Apache Arrow DataFusion.
+//! [`ModelarDbStorageError`] to simplify use of traits from [sqlparser] and Apache Arrow DataFusion.
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
@@ -44,7 +44,7 @@ use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
 use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Token;
 
-use crate::error::{ModelarDbCommonError, Result};
+use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 
 /// Constant specifying that a model table should be created.
@@ -331,11 +331,11 @@ pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement> {
 
     // Check that the sql contained a parseable statement.
     if statements.is_empty() {
-        Err(ModelarDbCommonError::InvalidArgument(
+        Err(ModelarDbStorageError::InvalidArgument(
             "An empty string cannot be tokenized and parsed.".to_owned(),
         ))
     } else if statements.len() > 1 {
-        Err(ModelarDbCommonError::InvalidArgument(
+        Err(ModelarDbStorageError::InvalidArgument(
             "Multiple SQL commands are not supported.".to_owned(),
         ))
     } else {
@@ -355,7 +355,7 @@ pub enum ValidStatement {
 }
 
 /// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE command in
-/// `statement` was correct. A [`ModelarDbCommonError`] is returned if `statement` is not a
+/// `statement` was correct. A [`ModelarDbStorageError`] is returned if `statement` is not a
 /// [`Statement::CreateTable`] or a semantic check fails. If all semantic checks are successful a
 /// [`ValidStatement`] is returned.
 pub fn semantic_checks_for_create_table(statement: Statement) -> Result<ValidStatement> {
@@ -373,21 +373,21 @@ pub fn semantic_checks_for_create_table(statement: Statement) -> Result<ValidSta
         // Extract the table name from the Statement::CreateTable.
         if name.0.len() > 1 {
             let message = "Multi-part table names are not supported.";
-            return Err(ModelarDbCommonError::InvalidArgument(message.to_owned()));
+            return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
         }
 
         // Check if the table name contains whitespace, e.g., spaces or tabs.
         let normalized_name = normalize_name(&name.0[0].value);
         if normalized_name.contains(char::is_whitespace) {
             let message = "Table name cannot contain whitespace.";
-            return Err(ModelarDbCommonError::InvalidArgument(message.to_owned()));
+            return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
         }
 
         // Check if the table name is a restricted keyword.
         let table_name_uppercase = normalized_name.to_uppercase();
         for keyword in ALL_KEYWORDS {
             if &table_name_uppercase == keyword {
-                return Err(ModelarDbCommonError::InvalidArgument(format!(
+                return Err(ModelarDbStorageError::InvalidArgument(format!(
                     "Reserved keyword '{}' cannot be used as a table name.",
                     name
                 )));
@@ -438,7 +438,7 @@ pub fn semantic_checks_for_create_table(statement: Statement) -> Result<ValidSta
         }
     } else {
         let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
-        Err(ModelarDbCommonError::InvalidArgument(message.to_owned()))
+        Err(ModelarDbStorageError::InvalidArgument(message.to_owned()))
     }
 }
 
@@ -798,7 +798,7 @@ fn extract_generation_exprs_for_all_columns(
 }
 
 /// Parse `sql_expr` into a [`DFExpr`] if it is a correctly formatted SQL arithmetic expression that
-/// only references columns in [`DFSchema`], otherwise [`ModelarDbCommonError`] is returned.
+/// only references columns in [`DFSchema`], otherwise [`ModelarDbStorageError`] is returned.
 pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFExpr> {
     let context_provider = ParserContextProvider::new();
     let sql_to_rel = SqlToRel::new(&context_provider);

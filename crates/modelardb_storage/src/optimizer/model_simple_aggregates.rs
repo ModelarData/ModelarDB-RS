@@ -48,10 +48,10 @@ use datafusion::physical_plan::{
     Accumulator, AggregateExpr, ColumnarValue, ExecutionPlan, PhysicalExpr,
 };
 use datafusion::scalar::ScalarValue;
-use modelardb_common::storage;
 use modelardb_types::types::{ArrowValue, TimestampArray, Value, ValueArray};
 
 use crate::query::sorted_join_exec::SortedJoinExec;
+use crate::univariate_ids_int64_to_uint64;
 
 /// Rewrite aggregates that are computed from reconstructed values from a single column without
 /// filtering, so they are computed directly from segments instead of the reconstructed values.
@@ -380,7 +380,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> DataFusionResult<ColumnarValue> {
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
-        let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
+        let record_batch = univariate_ids_int64_to_uint64(record_batch);
 
         modelardb_types::arrays!(
             record_batch,
@@ -751,7 +751,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> DataFusionResult<ColumnarValue> {
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
-        let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
+        let record_batch = univariate_ids_int64_to_uint64(record_batch);
 
         modelardb_types::arrays!(
             record_batch,
@@ -901,7 +901,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
     /// Evaluate this [`PhysicalExpr`] against `record_batch`.
     fn evaluate(&self, record_batch: &RecordBatch) -> DataFusionResult<ColumnarValue> {
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
-        let record_batch = storage::univariate_ids_int64_to_uint64(record_batch);
+        let record_batch = univariate_ids_int64_to_uint64(record_batch);
 
         modelardb_types::arrays!(
             record_batch,
@@ -1041,15 +1041,15 @@ mod tests {
     use datafusion::physical_plan::metrics::MetricsSet;
     use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
     use datafusion::prelude::SessionContext;
-    use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
-    use modelardb_common::test;
-    use storage::DeltaLake;
     use tempfile::TempDir;
     use tonic::async_trait;
 
+    use crate::delta_lake::DeltaLake;
+    use crate::metadata::table_metadata_manager::TableMetadataManager;
     use crate::optimizer;
     use crate::query::grid_exec::GridExec;
     use crate::query::model_table::ModelTable;
+    use crate::test;
 
     // DataSink for testing.
     struct NoOpDataSink {}
@@ -1182,7 +1182,7 @@ mod tests {
         let data_folder_path = temp_dir.path();
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path).unwrap();
         let table_metadata_manager = Arc::new(
-            TableMetadataManager::try_from_path(data_folder_path)
+            TableMetadataManager::try_from_path(data_folder_path, None)
                 .await
                 .unwrap(),
         );
@@ -1203,7 +1203,7 @@ mod tests {
         let model_table_metadata = test::model_table_metadata_arc();
 
         let delta_table = delta_lake
-            .create_delta_lake_model_table(&model_table_metadata.name)
+            .create_model_table(&model_table_metadata.name)
             .await
             .unwrap();
 
