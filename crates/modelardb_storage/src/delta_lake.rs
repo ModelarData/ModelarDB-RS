@@ -85,8 +85,8 @@ impl DeltaLake {
     }
 
     /// Create a new [`DeltaLake`] that manages Delta tables in the remote object store given by
-    /// `connection_info`. Returns [`ModelarDbStorageError`] if `connection_info` could not be parsed
-    /// or a connection to the specified object store cannot be created.
+    /// `connection_info`. Returns [`ModelarDbStorageError`] if `connection_info` could not be
+    /// parsed or a connection to the specified object store could not be created.
     pub fn try_remote_from_connection_info(connection_info: &[u8]) -> Result<Self> {
         let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
@@ -128,7 +128,7 @@ impl DeltaLake {
 
     /// Create a new [`DeltaLake`] that manages the Delta tables in an object store with an
     /// S3-compatible API. Returns a [`ModelarDbStorageError`] if a connection to the object store
-    /// cannot be made.
+    /// could not be made.
     pub fn try_from_s3_configuration(
         endpoint: String,
         bucket_name: String,
@@ -172,8 +172,8 @@ impl DeltaLake {
     }
 
     /// Create a new [`DeltaLake`] that manages the Delta tables in an object store with an
-    /// Azure-compatible API. Returns a [`ModelarDbStorageError`] if a connection to the object store
-    /// cannot be made.
+    /// Azure-compatible API. Returns a [`ModelarDbStorageError`] if a connection to the object 
+    /// store could not be made.
     pub fn try_from_azure_configuration(
         account_name: String,
         access_key: String,
