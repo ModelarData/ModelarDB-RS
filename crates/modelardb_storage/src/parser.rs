@@ -13,9 +13,10 @@
  * limitations under the License.
  */
 
-//! Methods for tokenizing and parsing SQL commands. They are tokenized and parsed using [sqlparser]
-//! as it is already used by Apache Arrow DataFusion. Only public functions return
-//! [`ModelarDbStorageError`] to simplify use of traits from [sqlparser] and Apache Arrow DataFusion.
+//! Methods for tokenizing and parsing SQL statements. They are tokenized and parsed using
+//! [sqlparser] as it is already used by Apache Arrow DataFusion. Only public functions return
+//! [`ModelarDbStorageError`] to simplify use of traits from [sqlparser] and Apache Arrow
+//! DataFusion.
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
@@ -51,7 +52,7 @@ use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata}
 pub const CREATE_MODEL_TABLE_ENGINE: &str = "ModelTable";
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE MODEL
-/// TABLE table_name DDL commands.
+/// TABLE table_name DDL statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -87,7 +88,7 @@ impl ModelarDbDialect {
         false
     }
 
-    /// Parse CREATE MODEL TABLE table_name DDL commands to a [`Statement::CreateTable`]. A
+    /// Parse CREATE MODEL TABLE table_name DDL statements to a [`Statement::CreateTable`]. A
     /// [`ParserError`] is returned if the column names and the column types cannot be parsed.
     fn parse_create_model_table(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // CREATE MODEL TABLE.
@@ -313,9 +314,9 @@ impl Dialect for ModelarDbDialect {
     }
 
     /// Check if the next tokens are CREATE MODEL TABLE, if so, attempt to parse the token stream as
-    /// a CREATE MODEL TABLE DDL command. If parsing succeeds, a [`Statement`] is returned, and if
-    /// not, a [`ParserError`] is returned. If the next tokens are not CREATE MODEL TABLE, [`None`]
-    /// is returned so sqlparser uses its parsing methods for all other commands.
+    /// a CREATE MODEL TABLE DDL statements. If parsing succeeds, a [`Statement`] is returned, and
+    /// if not, a [`ParserError`] is returned. If the next tokens are not CREATE MODEL TABLE,
+    /// [`None`] is returned so sqlparser uses its parsing methods for all other statements.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_model_table(parser) {
             Some(self.parse_create_model_table(parser))
@@ -325,8 +326,8 @@ impl Dialect for ModelarDbDialect {
     }
 }
 
-/// Tokenize and parse the SQL command in `sql` and return its parsed representation in the form of
-/// [`Statements`](Statement).
+/// Tokenize and parse the SQL statements in `sql` and return its parsed representation in the form
+/// of [`Statements`](Statement).
 pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql)?;
 
@@ -337,7 +338,7 @@ pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement> {
         ))
     } else if statements.len() > 1 {
         Err(ModelarDbStorageError::InvalidArgument(
-            "Multiple SQL commands are not supported.".to_owned(),
+            "Multiple SQL statements are not supported.".to_owned(),
         ))
     } else {
         Ok(statements.remove(0))
@@ -355,7 +356,7 @@ pub enum ValidStatement {
     CreateModelTable(Arc<ModelTableMetadata>),
 }
 
-/// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE command in
+/// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE statement in
 /// `statement` was correct. A [`ModelarDbStorageError`] is returned if `statement` is not a
 /// [`Statement::CreateTable`] or a semantic check fails. If all semantic checks are successful a
 /// [`ValidStatement`] is returned.
@@ -443,7 +444,7 @@ pub fn semantic_checks_for_create_table(statement: Statement) -> Result<ValidSta
     }
 }
 
-/// Perform additional semantic checks to ensure that the CREATE MODEL TABLE command from which
+/// Perform additional semantic checks to ensure that the CREATE MODEL TABLE statement from which
 /// `name` and `column_defs` was extracted was correct. A [`ParserError`] is returned if any of the
 /// additional semantic checks fails.
 fn semantic_checks_for_create_model_table(
@@ -1152,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_two_create_model_table_commands() {
+    fn test_tokenize_and_parse_two_create_model_table_statements() {
         let error = tokenize_and_parse_sql(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG);
              CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
@@ -1162,7 +1163,7 @@ mod tests {
 
         assert_eq!(
             error.unwrap_err().to_string(),
-            "Invalid Argument Error: Multiple SQL commands are not supported."
+            "Invalid Argument Error: Multiple SQL statements are not supported."
         );
     }
 
