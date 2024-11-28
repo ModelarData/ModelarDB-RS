@@ -2895,6 +2895,7 @@ dependencies = [
  "proptest",
  "ringbuf",
  "snmalloc-rs",
+ "sqlparser",
  "sysinfo",
  "tempfile",
  "tokio",

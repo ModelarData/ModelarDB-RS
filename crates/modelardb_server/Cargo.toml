@@ -35,11 +35,12 @@ deltalake = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }
-modelardb_types = { path = "../modelardb_types" }
 modelardb_storage = { path = "../modelardb_storage" }
+modelardb_types = { path = "../modelardb_types" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 ringbuf.workspace = true
 snmalloc-rs = { workspace = true, features = ["build_cc"] }
+sqlparser.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-stream.workspace = true
 tonic.workspace = true

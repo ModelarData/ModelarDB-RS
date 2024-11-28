@@ -43,9 +43,11 @@ use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::{arguments, remote};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::parser;
 use modelardb_types::functions;
 use modelardb_types::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_types::types::TimestampBuilder;
+use sqlparser::ast::Statement;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -331,26 +333,33 @@ impl FlightService for FlightServiceHandler {
         let ticket = request.into_inner();
 
         // Extract the query.
-        let query = str::from_utf8(&ticket.ticket)
+        let sql = str::from_utf8(&ticket.ticket)
             .map_err(|error| Status::invalid_argument(error.to_string()))?
             .to_owned();
 
-        // Plan the query.
-        info!("Executing the statement: {}.", query);
-        let session_context = self.context.session_context.clone();
-        let data_frame = session_context
-            .sql(&query)
-            .await
+        // Parse the query.
+        let statement = parser::tokenize_and_parse_sql(&sql)
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        // Execute the query.
-        let query_result_stream = data_frame
-            .execute_stream()
-            .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+        let sendable_record_batch_stream = match statement {
+            Statement::Query(ref _boxed_query) => {
+                modelardb_storage::execute_statement(&self.context.session_context, statement).await
+            }
+            Statement::Explain { .. } => {
+                modelardb_storage::execute_statement(&self.context.session_context, statement).await
+            }
+            Statement::Insert(ref _insert) => {
+                modelardb_storage::execute_statement(&self.context.session_context, statement).await
+            }
+            _ => Err(Status::invalid_argument(
+                "Only EXPLAIN and SELECT is supported".to_owned(),
+            ))?,
+        }
+        .map_err(|error| Status::internal(error.to_string()))?;
 
-        // Send the result, a channel is needed as sync is not implemented for RecordBatchStream.
-        // A buffer size of two is used based on Apache Arrow DataFusion and Apache Arrow Ballista.
+        // Send the result using a channel, a channel is needed as sync is not implemented for
+        // SenableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
+        info!("Executing the statement: {}.", sql);
         let (sender, receiver) = mpsc::channel(2);
 
         task::spawn(async move {
@@ -358,11 +367,8 @@ impl FlightService for FlightServiceHandler {
             // error occurs it is logged using error!(). Simply calling await! on the JoinHandle
             // returned by task::spawn is also not an option as it waits until send_query_result()
             // returns and thus creates a deadlock since the results are never read from receiver.
-            if let Err(error) = send_query_result(query_result_stream, sender).await {
-                error!(
-                    "Failed to send the result for '{}' due to: {}.",
-                    query, error
-                );
+            if let Err(error) = send_query_result(sendable_record_batch_stream, sender).await {
+                error!("Failed to send the result for '{}' due to: {}.", sql, error);
             }
         });
 
