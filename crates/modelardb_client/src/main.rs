@@ -139,7 +139,7 @@ async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>> 
         .map_err(|error| error.into())
 }
 
-/// Execute the actions, commands, and queries in `query_file`.
+/// Execute the commands and queries in `query_file`.
 async fn execute_queries_from_a_file(
     mut flight_service_client: FlightServiceClient<Channel>,
     query_file: &ObjectMeta,
@@ -161,14 +161,14 @@ async fn execute_queries_from_a_file(
         // Execute the query.
         if !query.is_empty() {
             println!("{query}");
-            execute_and_print_action_command_or_query(&mut flight_service_client, &query).await
+            execute_and_print_command_or_query(&mut flight_service_client, &query).await
         }
     }
 
     Ok(())
 }
 
-/// Execute actions, commands and queries in a read-eval-print loop.
+/// Execute commands and queries in a read-eval-print loop.
 async fn execute_queries_from_a_repl(
     mut flight_service_client: FlightServiceClient<Channel>,
 ) -> Result<()> {
@@ -177,7 +177,7 @@ async fn execute_queries_from_a_repl(
     let table_names = retrieve_table_names(&mut flight_service_client).await?;
     editor.set_helper(Some(ClientHelper::new(table_names)));
 
-    // Read previously executed actions, commands, and queries from the history file.
+    // Read previously executed commands and queries from the history file.
     let history_file_name = ".modelardb_history";
     if let Some(mut home) = dirs::home_dir() {
         home.push(history_file_name);
@@ -187,13 +187,13 @@ async fn execute_queries_from_a_repl(
     // Specify where to find helpful information about the commands supported by the repl.
     println!("Type \\h for help.\n");
 
-    // Execute actions, commands, and queries and print the result.
+    // Execute commands and queries and print the result.
     while let Ok(line) = editor.readline("ModelarDB> ") {
         editor.add_history_entry(line.as_str())?;
-        execute_and_print_action_command_or_query(&mut flight_service_client, &line).await
+        execute_and_print_command_or_query(&mut flight_service_client, &line).await
     }
 
-    // Append the executed actions, commands, and queries to the history file.
+    // Append the executed commands and queries to the history file.
     if let Some(mut home) = dirs::home_dir() {
         home.push(history_file_name);
         let _ = editor.append_history(&home);
@@ -202,60 +202,25 @@ async fn execute_queries_from_a_repl(
     Ok(())
 }
 
-/// Execute an action, a command, or a query. Returns [`ModelarDbClientError`] if the action,
-/// command, or query could not be executed or their result could not be retrieved.
-async fn execute_and_print_action_command_or_query(
+/// Execute a command or a query. Returns [`ModelarDbClientError`] if the command or query could not
+/// be executed or their result could not be retrieved.
+async fn execute_and_print_command_or_query(
     flight_service_client: &mut FlightServiceClient<Channel>,
-    action_command_or_query: &str,
+    command_or_query: &str,
 ) {
     let start_time = Instant::now();
-    let action_command_or_query = action_command_or_query.trim();
-    let action_command_or_query_upper = action_command_or_query.to_uppercase();
+    let command_or_query = command_or_query.trim();
 
-    let result = if action_command_or_query.starts_with('\\') {
-        execute_command(flight_service_client, action_command_or_query).await
-    } else if action_command_or_query_upper.starts_with("INSERT")
-        || action_command_or_query_upper.starts_with("EXPLAIN")
-        || action_command_or_query_upper.starts_with("SELECT")
-    {
-        execute_query_and_print_result(flight_service_client, action_command_or_query).await
+    let result = if command_or_query.starts_with('\\') {
+        execute_command(flight_service_client, command_or_query).await
     } else {
-        execute_action(
-            flight_service_client,
-            "CreateTable",
-            action_command_or_query,
-        )
-        .await
+        execute_query_and_print_result(flight_service_client, command_or_query).await
     };
 
     if let Err(message) = result {
         eprintln!("{message}");
     }
     println!("\nTime: {:?}\n", start_time.elapsed());
-}
-
-/// Execute an action. The function returns [`ModelarDbClientError`] if the action could not be
-/// executed.
-async fn execute_action(
-    flight_service_client: &mut FlightServiceClient<Channel>,
-    action_type: &str,
-    action_body: &str,
-) -> Result<()> {
-    let action = Action {
-        r#type: action_type.to_owned(),
-        body: action_body.to_owned().into(),
-    };
-
-    let request = Request::new(action);
-
-    flight_service_client
-        .do_action(request)
-        .await?
-        .into_inner()
-        .message()
-        .await?;
-
-    Ok(())
 }
 
 /// Execute a command. Returns [`ModelarDbClientError`] if:
@@ -364,6 +329,29 @@ async fn retrieve_table_names(
     }
 
     Ok(table_names)
+}
+
+/// Execute an action. Returns [`ModelarDbClientError`] if the action could not be executed.
+async fn execute_action(
+    flight_service_client: &mut FlightServiceClient<Channel>,
+    action_type: &str,
+    action_body: &str,
+) -> Result<()> {
+    let action = Action {
+        r#type: action_type.to_owned(),
+        body: action_body.to_owned().into(),
+    };
+
+    let request = Request::new(action);
+
+    flight_service_client
+        .do_action(request)
+        .await?
+        .into_inner()
+        .message()
+        .await?;
+
+    Ok(())
 }
 
 /// Execute a query and print each batch in the result set. Returns [`ModelarDbClientError`] if the
