@@ -38,7 +38,8 @@ use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
 };
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::physical_plan::SendableRecordBatchStream;
+use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStream};
+use deltalake::arrow::datatypes::Schema;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::{arguments, remote};
@@ -249,6 +250,12 @@ impl FlightServiceHandler {
 
         Ok(())
     }
+
+    /// Return an empty stream of [`RecordBatches`](RecordBatch) that can be returned when a SQL
+    /// command has been successfully executed but did not produce any rows to return.
+    fn empty_record_batch_stream(&self) -> SendableRecordBatchStream {
+        Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
+    }
 }
 
 #[tonic::async_trait]
@@ -337,11 +344,21 @@ impl FlightService for FlightServiceHandler {
             .map_err(|error| Status::invalid_argument(error.to_string()))?
             .to_owned();
 
+        info!("Received: '{}'.", sql);
+
         // Parse the query.
         let statement = parser::tokenize_and_parse_sql(&sql)
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         let sendable_record_batch_stream = match statement {
+            Statement::CreateTable(ref _create_table) => {
+                self.context
+                    .validate_and_create_table(&sql, statement)
+                    .await
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+                Ok(self.empty_record_batch_stream())
+            }
             Statement::Query(ref _boxed_query) => {
                 modelardb_storage::execute_statement(&self.context.session_context, statement).await
             }
@@ -359,8 +376,9 @@ impl FlightService for FlightServiceHandler {
 
         // Send the result using a channel, a channel is needed as sync is not implemented for
         // SenableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
-        info!("Executing the statement: {}.", sql);
         let (sender, receiver) = mpsc::channel(2);
+
+        info!("Executing: '{}'.", sql);
 
         task::spawn(async move {
             // Errors cannot be sent to the client if there is an error with the channel, if such an
@@ -432,9 +450,6 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTable`: Execute a SQL query containing a command that creates a table.
-    /// These commands can be `CREATE TABLE table_name(...` which creates a normal table, and
-    /// `CREATE MODEL TABLE table_name(...` which creates a model table.
     /// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
     /// table that should be dropped must be provided in the body of the action. All data in the
     /// table, both in memory and on disk, is deleted.
@@ -483,20 +498,7 @@ impl FlightService for FlightServiceHandler {
         // Manually drop the read lock on the configuration manager to avoid deadlock issues.
         std::mem::drop(configuration_manager);
 
-        if action.r#type == "CreateTable" {
-            // Read the SQL from the action.
-            let sql = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!("Received request to execute '{}'.", sql);
-
-            self.context
-                .parse_and_create_table(sql)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Confirm the table was created.
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "DropTable" {
+        if action.r#type == "DropTable" {
             // Read the table name from the action body.
             let table_name = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -721,12 +723,6 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
-        let create_table_action = ActionType {
-            r#type: "CreateTable".to_owned(),
-            description: "Execute a SQL query containing a command that creates a table."
-                .to_owned(),
-        };
-
         let drop_table_action = ActionType {
             r#type: "DropTable".to_owned(),
             description: "Drop a table and all its data.".to_owned(),
@@ -783,7 +779,6 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
-            Ok(create_table_action),
             Ok(drop_table_action),
             Ok(truncate_table_action),
             Ok(flush_memory_action),

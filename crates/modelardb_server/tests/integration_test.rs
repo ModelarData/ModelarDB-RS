@@ -271,13 +271,10 @@ impl TestContext {
             }
         };
 
-        let action = Action {
-            r#type: "CreateTable".to_owned(),
-            body: cmd.into(),
-        };
+        let ticket = Ticket { ticket: cmd.into() };
 
         self.runtime.block_on(async {
-            self.client.do_action(Request::new(action)).await.unwrap();
+            self.client.do_get(ticket).await.unwrap();
         })
     }
 
@@ -782,7 +779,6 @@ fn test_can_list_actions() {
         actions,
         vec![
             "CollectMetrics",
-            "CreateTable",
             "DropTable",
             "FlushMemory",
             "FlushNode",
