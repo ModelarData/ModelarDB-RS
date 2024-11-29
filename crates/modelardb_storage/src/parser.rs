@@ -37,9 +37,9 @@ use datafusion::sql::TableReference;
 use modelardb_types::functions::normalize_name; // Fully imported to not conflict.
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType, GeneratedAs,
-    HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectType, Statement, TableEngine,
-    TimezoneInfo,
+    ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType, Expr,
+    GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectType, Statement,
+    TableEngine, TimezoneInfo, TruncateCascadeOption, TruncateIdentityOption, TruncateTableTarget,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
@@ -475,37 +475,6 @@ fn semantic_checks_for_create_model_table(
     Ok(model_table_metadata)
 }
 
-/// Perform semantic checks to ensure that the DROP statement from which the arguments was extracted
-/// was correct. A [`ParserError`] is returned if any of the additional semantic checks fails.
-pub fn semantic_checks_for_drop(
-    object_type: ObjectType,
-    if_exists: bool,
-    names: Vec<ObjectName>,
-    cascade: bool,
-    restrict: bool,
-    purge: bool,
-    temporary: bool,
-) -> StdResult<Vec<String>, ParserError> {
-    if object_type != ObjectType::Table || if_exists || cascade || restrict || purge || temporary {
-        Err(ParserError::ParserError(
-            "Only DROP TABLE is supported.".to_owned(),
-        ))
-    } else {
-        let mut table_names = Vec::with_capacity(names.len());
-
-        for parts in names {
-            let table_name = parts
-                .0
-                .iter()
-                .fold(String::new(), |name, part| name + &part.value);
-
-            table_names.push(table_name);
-        }
-
-        Ok(table_names)
-    }
-}
-
 /// Return [`ParserError`] if [`Statement`] is not a [`Statement::CreateTable`] or if an unsupported
 /// feature is set.
 fn check_unsupported_features_are_disabled(statement: &Statement) -> StdResult<(), ParserError> {
@@ -831,6 +800,69 @@ fn extract_generation_exprs_for_all_columns(
     }
 
     Ok(generated_columns)
+}
+
+/// Perform semantic checks to ensure that the DROP statement from which the arguments was extracted
+/// was correct. A [`ParserError`] is returned if any of the additional semantic checks fails.
+pub fn semantic_checks_for_drop(
+    object_type: ObjectType,
+    if_exists: bool,
+    names: Vec<ObjectName>,
+    cascade: bool,
+    restrict: bool,
+    purge: bool,
+    temporary: bool,
+) -> StdResult<Vec<String>, ParserError> {
+    if object_type != ObjectType::Table || if_exists || cascade || restrict || purge || temporary {
+        Err(ParserError::ParserError(
+            "Only DROP TABLE is supported.".to_owned(),
+        ))
+    } else {
+        let mut table_names = Vec::with_capacity(names.len());
+
+        for parts in names {
+            let table_name = parts
+                .0
+                .iter()
+                .fold(String::new(), |name, part| name + &part.value);
+
+            table_names.push(table_name);
+        }
+
+        Ok(table_names)
+    }
+}
+
+/// Perform semantic checks to ensure that the TRUNCATE statement from which the arguments was
+/// extracted was correct. A [`ParserError`] is returned if any of the additional semantic checks
+/// fails.
+pub fn semantic_checks_for_truncate(
+    names: Vec<TruncateTableTarget>,
+    partitions: Option<Vec<Expr>>,
+    table: bool,
+    only: bool,
+    identity: Option<TruncateIdentityOption>,
+    cascade: Option<TruncateCascadeOption>,
+) -> StdResult<Vec<String>, ParserError> {
+    if partitions.is_some() || !table || only || identity.is_some() || cascade.is_some() {
+        Err(ParserError::ParserError(
+            "Only TRUNCATE TABLE is supported.".to_owned(),
+        ))
+    } else {
+        let mut table_names = Vec::with_capacity(names.len());
+
+        for parts in names {
+            let table_name = parts
+                .name
+                .0
+                .iter()
+                .fold(String::new(), |name, part| name + &part.value);
+
+            table_names.push(table_name);
+        }
+
+        Ok(table_names)
+    }
 }
 
 /// Parse `sql_expr` into a [`DFExpr`] if it is a correctly formatted SQL arithmetic expression that

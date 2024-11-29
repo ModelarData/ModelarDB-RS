@@ -344,7 +344,7 @@ impl FlightService for FlightServiceHandler {
             .map_err(|error| Status::invalid_argument(error.to_string()))?
             .to_owned();
 
-        info!("Received: '{}'.", sql);
+        info!("Received SQL: '{}'.", sql);
 
         // Parse the query.
         let statement = parser::tokenize_and_parse_sql(&sql)
@@ -388,6 +388,33 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(self.empty_record_batch_stream())
             }
+            Statement::Truncate {
+                table_names,
+                partitions,
+                table,
+                only,
+                identity,
+                cascade,
+            } => {
+                let table_names = parser::semantic_checks_for_truncate(
+                    table_names,
+                    partitions,
+                    table,
+                    only,
+                    identity,
+                    cascade,
+                )
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+                for table_name in table_names {
+                    self.context
+                        .truncate_table(&table_name)
+                        .await
+                        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                }
+
+                Ok(self.empty_record_batch_stream())
+            }
             Statement::Explain { .. } => {
                 modelardb_storage::execute_statement(&self.context.session_context, statement).await
             }
@@ -398,7 +425,7 @@ impl FlightService for FlightServiceHandler {
                 modelardb_storage::execute_statement(&self.context.session_context, statement).await
             }
             _ => Err(Status::invalid_argument(
-                "Only CREATE, DROP, EXPLAIN, SELECT, and INSERT is supported".to_owned(),
+                "Only CREATE, DROP, TRUNCATE, EXPLAIN, SELECT, and INSERT is supported".to_owned(),
             ))?,
         }
         .map_err(|error| Status::internal(error.to_string()))?;
@@ -407,7 +434,7 @@ impl FlightService for FlightServiceHandler {
         // SenableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
         let (sender, receiver) = mpsc::channel(2);
 
-        info!("Executing: '{}'.", sql);
+        info!("Executing SQL: '{}'.", sql);
 
         task::spawn(async move {
             // Errors cannot be sent to the client if there is an error with the channel, if such an
@@ -479,12 +506,6 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
-    /// table that should be dropped must be provided in the body of the action. All data in the
-    /// table, both in memory and on disk, is deleted.
-    /// * `TruncateTable`: Truncate a table previously created with `CreateTable`. The name of
-    /// the table that should be truncated must be provided in the body of the action. All data in
-    /// the table, both in memory and on disk, is deleted.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -527,20 +548,7 @@ impl FlightService for FlightServiceHandler {
         // Manually drop the read lock on the configuration manager to avoid deadlock issues.
         std::mem::drop(configuration_manager);
 
-        if action.r#type == "TruncateTable" {
-            // Read the table name from the action body.
-            let table_name = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!("Received request to truncate table '{}'.", table_name);
-
-            self.context
-                .truncate_table(table_name)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Confirm the table was truncated.
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "FlushMemory" {
+        if action.r#type == "FlushMemory" {
             self.context
                 .storage_engine
                 .write()
@@ -739,11 +747,6 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
-        let truncate_table_action = ActionType {
-            r#type: "TruncateTable".to_owned(),
-            description: "Delete all data from a table.".to_owned(),
-        };
-
         let flush_memory_action = ActionType {
             r#type: "FlushMemory".to_owned(),
             description: "Flush the uncompressed data to disk by compressing and saving the data."
@@ -790,7 +793,6 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
-            Ok(truncate_table_action),
             Ok(flush_memory_action),
             Ok(flush_node_action),
             Ok(kill_node_action),
