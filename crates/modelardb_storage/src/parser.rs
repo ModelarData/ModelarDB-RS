@@ -358,90 +358,84 @@ pub enum ValidStatement {
 }
 
 /// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE statement in
-/// `statement` was correct. A [`ModelarDbStorageError`] is returned if `statement` is not a
-/// [`Statement::CreateTable`] or a semantic check fails. If all semantic checks are successful a
-/// [`ValidStatement`] is returned.
-pub fn semantic_checks_for_create_table(statement: Statement) -> Result<ValidStatement> {
+/// `create_table` was correct. A [`ModelarDbStorageError`] is returned if a semantic check fails.
+/// If all semantic checks are successful a [`ValidStatement`] is returned.
+pub fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<ValidStatement> {
     // Ensure it is a create table and only supported features are enabled.
-    check_unsupported_features_are_disabled(&statement)?;
+    check_unsupported_features_are_disabled(&create_table)?;
 
-    // An else-clause is not required as statement's type was checked above.
-    if let Statement::CreateTable(CreateTable {
+    // let is used so a compile error is raised if CreateTable is changed.
+    let CreateTable {
         name,
         columns,
         engine,
         ..
-    }) = statement
-    {
-        // Extract the table name from the Statement::CreateTable.
-        if name.0.len() > 1 {
-            let message = "Multi-part table names are not supported.";
-            return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
+    } = create_table;
+
+    // Extract the table name from the Statement::CreateTable.
+    if name.0.len() > 1 {
+        let message = "Multi-part table names are not supported.";
+        return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
+    }
+
+    // Check if the table name contains whitespace, e.g., spaces or tabs.
+    let normalized_name = normalize_name(&name.0[0].value);
+    if normalized_name.contains(char::is_whitespace) {
+        let message = "Table name cannot contain whitespace.";
+        return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
+    }
+
+    // Check if the table name is a restricted keyword.
+    let table_name_uppercase = normalized_name.to_uppercase();
+    for keyword in ALL_KEYWORDS {
+        if &table_name_uppercase == keyword {
+            return Err(ModelarDbStorageError::InvalidArgument(format!(
+                "Reserved keyword '{}' cannot be used as a table name.",
+                name
+            )));
         }
+    }
 
-        // Check if the table name contains whitespace, e.g., spaces or tabs.
-        let normalized_name = normalize_name(&name.0[0].value);
-        if normalized_name.contains(char::is_whitespace) {
-            let message = "Table name cannot contain whitespace.";
-            return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
-        }
+    // Check if the table name is a valid object_store path and database table name.
+    object_store::path::Path::parse(&normalized_name)?;
 
-        // Check if the table name is a restricted keyword.
-        let table_name_uppercase = normalized_name.to_uppercase();
-        for keyword in ALL_KEYWORDS {
-            if &table_name_uppercase == keyword {
-                return Err(ModelarDbStorageError::InvalidArgument(format!(
-                    "Reserved keyword '{}' cannot be used as a table name.",
-                    name
-                )));
-            }
-        }
+    // Create a ValidStatement with the information for creating the table of the specified
+    // type.
+    let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
+    if let Some(_expected_engine) = engine {
+        // Create a model table for time series that only supports TIMESTAMP, FIELD, and TAG.
+        let model_table_metadata =
+            semantic_checks_for_create_model_table(normalized_name, columns)?;
 
-        // Check if the table name is a valid object_store path and database table name.
-        object_store::path::Path::parse(&normalized_name)?;
-
-        // Create a ValidStatement with the information for creating the table of the specified
-        // type.
-        let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
-        if let Some(_expected_engine) = engine {
-            // Create a model table for time series that only supports TIMESTAMP, FIELD, and TAG.
-            let model_table_metadata =
-                semantic_checks_for_create_model_table(normalized_name, columns)?;
-
-            Ok(ValidStatement::CreateModelTable(Arc::new(
-                model_table_metadata,
-            )))
-        } else {
-            // Create a table that supports all columns types supported by Apache Arrow DataFusion.
-            let context_provider = ParserContextProvider::new();
-            let sql_to_rel = SqlToRel::new(&context_provider);
-            let schema = sql_to_rel
-                .build_schema(columns)
-                .map_err(|error| ParserError::ParserError(error.to_string()))?;
-
-            // SqlToRel.build() is hard coded to create Timestamp(TimeUnit::Nanosecond, TimeZone)
-            // but Delta Lake currently only supports Timestamp(TimeUnit::Microsecond, TimeZone).
-            let supported_fields = schema
-                .flattened_fields()
-                .iter()
-                .map(|field| match field.data_type() {
-                    DataType::Timestamp(_time_unit, timezone) => {
-                        let data_type =
-                            DataType::Timestamp(TimeUnit::Microsecond, timezone.clone());
-                        Field::new(field.name(), data_type, field.is_nullable())
-                    }
-                    _data_type => (*field).clone(),
-                })
-                .collect::<Vec<Field>>();
-
-            Ok(ValidStatement::CreateTable {
-                name: normalized_name,
-                schema: Schema::new(supported_fields),
-            })
-        }
+        Ok(ValidStatement::CreateModelTable(Arc::new(
+            model_table_metadata,
+        )))
     } else {
-        let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
-        Err(ModelarDbStorageError::InvalidArgument(message.to_owned()))
+        // Create a table that supports all columns types supported by Apache Arrow DataFusion.
+        let context_provider = ParserContextProvider::new();
+        let sql_to_rel = SqlToRel::new(&context_provider);
+        let schema = sql_to_rel
+            .build_schema(columns)
+            .map_err(|error| ParserError::ParserError(error.to_string()))?;
+
+        // SqlToRel.build() is hard coded to create Timestamp(TimeUnit::Nanosecond, TimeZone)
+        // but Delta Lake currently only supports Timestamp(TimeUnit::Microsecond, TimeZone).
+        let supported_fields = schema
+            .flattened_fields()
+            .iter()
+            .map(|field| match field.data_type() {
+                DataType::Timestamp(_time_unit, timezone) => {
+                    let data_type = DataType::Timestamp(TimeUnit::Microsecond, timezone.clone());
+                    Field::new(field.name(), data_type, field.is_nullable())
+                }
+                _data_type => (*field).clone(),
+            })
+            .collect::<Vec<Field>>();
+
+        Ok(ValidStatement::CreateTable {
+            name: normalized_name,
+            schema: Schema::new(supported_fields),
+        })
     }
 }
 
@@ -475,10 +469,13 @@ fn semantic_checks_for_create_model_table(
     Ok(model_table_metadata)
 }
 
-/// Return [`ParserError`] if [`Statement`] is not a [`Statement::CreateTable`] or if an unsupported
+/// Return [`ParserError`] if [`Statement`] is not a [`CreateTable`] or if an unsupported
 /// feature is set.
-fn check_unsupported_features_are_disabled(statement: &Statement) -> StdResult<(), ParserError> {
-    if let Statement::CreateTable(CreateTable {
+fn check_unsupported_features_are_disabled(
+    create_table: &CreateTable,
+) -> StdResult<(), ParserError> {
+    // let is used so a compile error is raised if CreateTable is changed.
+    let CreateTable {
         or_replace,
         temporary,
         external,
@@ -522,83 +519,79 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> StdResult<(
         with_aggregation_policy,
         with_row_access_policy,
         with_tags,
-    }) = statement
-    {
-        check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
-        check_unsupported_feature_is_disabled(*temporary, "TEMPORARY")?;
-        check_unsupported_feature_is_disabled(*external, "EXTERNAL")?;
-        check_unsupported_feature_is_disabled(global.is_some(), "GLOBAL")?;
-        check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
-        check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
-        check_unsupported_feature_is_disabled(*volatile, "VOLATILE")?;
-        check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
-        check_unsupported_feature_is_disabled(
-            hive_distribution != &HiveDistributionStyle::NONE,
-            "Hive distribution",
-        )?;
-        check_unsupported_feature_is_disabled(
-            *hive_formats
-                != Some(HiveFormat {
-                    row_format: None,
-                    serde_properties: None,
-                    storage: None,
-                    location: None,
-                }),
-            "Hive formats",
-        )?;
-        check_unsupported_feature_is_disabled(!table_properties.is_empty(), "Table properties")?;
-        check_unsupported_feature_is_disabled(!with_options.is_empty(), "OPTIONS")?;
-        check_unsupported_feature_is_disabled(file_format.is_some(), "File format")?;
-        check_unsupported_feature_is_disabled(location.is_some(), "Location")?;
-        check_unsupported_feature_is_disabled(query.is_some(), "Query")?;
-        check_unsupported_feature_is_disabled(*without_rowid, "Without ROWID")?;
-        check_unsupported_feature_is_disabled(like.is_some(), "LIKE")?;
-        check_unsupported_feature_is_disabled(clone.is_some(), "CLONE")?;
-        check_unsupported_feature_is_disabled(comment.is_some(), "Comment")?;
-        check_unsupported_feature_is_disabled(auto_increment_offset.is_some(), "AUTO INCREMENT")?;
-        check_unsupported_feature_is_disabled(default_charset.is_some(), "Charset")?;
-        check_unsupported_feature_is_disabled(collation.is_some(), "Collation")?;
-        check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
-        check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
-        check_unsupported_feature_is_disabled(primary_key.is_some(), "PRIMARY_KEY")?;
-        check_unsupported_feature_is_disabled(order_by.is_some(), "ORDER BY")?;
-        check_unsupported_feature_is_disabled(partition_by.is_some(), "PARTITION BY")?;
-        check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
-        check_unsupported_feature_is_disabled(clustered_by.is_some(), "CLUSTERED BY")?;
-        check_unsupported_feature_is_disabled(options.is_some(), "NAME=VALUE")?;
-        check_unsupported_feature_is_disabled(*strict, "STRICT")?;
-        check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;
-        check_unsupported_feature_is_disabled(
-            enable_schema_evolution.is_some(),
-            "ENABLE_SCHEMA_EVOLUTION",
-        )?;
-        check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
-        check_unsupported_feature_is_disabled(
-            data_retention_time_in_days.is_some(),
-            "DATA_RETENTION_TIME_IN_DAYS",
-        )?;
-        check_unsupported_feature_is_disabled(
-            max_data_extension_time_in_days.is_some(),
-            "MAX_DATA_EXTENSION_TIME_IN_DAYS",
-        )?;
-        check_unsupported_feature_is_disabled(
-            default_ddl_collation.is_some(),
-            "DEFAULT_DDL_COLLATION",
-        )?;
-        check_unsupported_feature_is_disabled(
-            with_aggregation_policy.is_some(),
-            "WITH_AGGREGATION_POLICY",
-        )?;
-        check_unsupported_feature_is_disabled(
-            with_row_access_policy.is_some(),
-            "WITH_ROW_ACCESS_POLICY",
-        )?;
-        check_unsupported_feature_is_disabled(with_tags.is_some(), "WITH_TAGS")?;
-        Ok(())
-    } else {
-        let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
-        Err(ParserError::ParserError(message.to_owned()))
-    }
+    } = create_table;
+
+    check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
+    check_unsupported_feature_is_disabled(*temporary, "TEMPORARY")?;
+    check_unsupported_feature_is_disabled(*external, "EXTERNAL")?;
+    check_unsupported_feature_is_disabled(global.is_some(), "GLOBAL")?;
+    check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
+    check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
+    check_unsupported_feature_is_disabled(*volatile, "VOLATILE")?;
+    check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
+    check_unsupported_feature_is_disabled(
+        hive_distribution != &HiveDistributionStyle::NONE,
+        "Hive distribution",
+    )?;
+    check_unsupported_feature_is_disabled(
+        *hive_formats
+            != Some(HiveFormat {
+                row_format: None,
+                serde_properties: None,
+                storage: None,
+                location: None,
+            }),
+        "Hive formats",
+    )?;
+    check_unsupported_feature_is_disabled(!table_properties.is_empty(), "Table properties")?;
+    check_unsupported_feature_is_disabled(!with_options.is_empty(), "OPTIONS")?;
+    check_unsupported_feature_is_disabled(file_format.is_some(), "File format")?;
+    check_unsupported_feature_is_disabled(location.is_some(), "Location")?;
+    check_unsupported_feature_is_disabled(query.is_some(), "Query")?;
+    check_unsupported_feature_is_disabled(*without_rowid, "Without ROWID")?;
+    check_unsupported_feature_is_disabled(like.is_some(), "LIKE")?;
+    check_unsupported_feature_is_disabled(clone.is_some(), "CLONE")?;
+    check_unsupported_feature_is_disabled(comment.is_some(), "Comment")?;
+    check_unsupported_feature_is_disabled(auto_increment_offset.is_some(), "AUTO INCREMENT")?;
+    check_unsupported_feature_is_disabled(default_charset.is_some(), "Charset")?;
+    check_unsupported_feature_is_disabled(collation.is_some(), "Collation")?;
+    check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
+    check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
+    check_unsupported_feature_is_disabled(primary_key.is_some(), "PRIMARY_KEY")?;
+    check_unsupported_feature_is_disabled(order_by.is_some(), "ORDER BY")?;
+    check_unsupported_feature_is_disabled(partition_by.is_some(), "PARTITION BY")?;
+    check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
+    check_unsupported_feature_is_disabled(clustered_by.is_some(), "CLUSTERED BY")?;
+    check_unsupported_feature_is_disabled(options.is_some(), "NAME=VALUE")?;
+    check_unsupported_feature_is_disabled(*strict, "STRICT")?;
+    check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;
+    check_unsupported_feature_is_disabled(
+        enable_schema_evolution.is_some(),
+        "ENABLE_SCHEMA_EVOLUTION",
+    )?;
+    check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
+    check_unsupported_feature_is_disabled(
+        data_retention_time_in_days.is_some(),
+        "DATA_RETENTION_TIME_IN_DAYS",
+    )?;
+    check_unsupported_feature_is_disabled(
+        max_data_extension_time_in_days.is_some(),
+        "MAX_DATA_EXTENSION_TIME_IN_DAYS",
+    )?;
+    check_unsupported_feature_is_disabled(
+        default_ddl_collation.is_some(),
+        "DEFAULT_DDL_COLLATION",
+    )?;
+    check_unsupported_feature_is_disabled(
+        with_aggregation_policy.is_some(),
+        "WITH_AGGREGATION_POLICY",
+    )?;
+    check_unsupported_feature_is_disabled(
+        with_row_access_policy.is_some(),
+        "WITH_ROW_ACCESS_POLICY",
+    )?;
+    check_unsupported_feature_is_disabled(with_tags.is_some(), "WITH_TAGS")?;
+    Ok(())
 }
 
 /// Return [`ParserError`] specifying that the functionality with the name `feature` is not
@@ -1005,7 +998,8 @@ mod tests {
             assert_eq!(*columns, expected_columns);
 
             // unwrap() asserts that the semantic check have all passed as it otherwise panics.
-            semantic_checks_for_create_table(statement).unwrap();
+            let create_table = statement_to_create_table(statement);
+            semantic_checks_for_create_table(create_table).unwrap();
         } else {
             panic!("CREATE TABLE DDL did not parse to a Statement::CreateTable.");
         }
@@ -1278,12 +1272,13 @@ mod tests {
                     .as_str(),
             );
 
-            let result = semantic_checks_for_create_table(statement.unwrap());
+            let create_table = statement_to_create_table(statement.unwrap());
+            let valid_statement = semantic_checks_for_create_table(create_table);
 
-            assert!(result.is_err());
+            assert!(valid_statement.is_err());
 
             assert_eq!(
-                result.unwrap_err().to_string(),
+                valid_statement.unwrap_err().to_string(),
                 format!(
                     "Invalid Argument Error: Reserved keyword '{}' cannot be used as a table name.",
                     keyword_to_table_name(keyword)
@@ -1329,7 +1324,8 @@ mod tests {
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_1 * PI() / 180)), tag TAG)",
         ).unwrap();
 
-        assert!(semantic_checks_for_create_table(statement).is_ok());
+        let create_table = statement_to_create_table(statement);
+        assert!(semantic_checks_for_create_table(create_table).is_ok());
     }
 
     #[test]
@@ -1338,6 +1334,16 @@ mod tests {
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_3 * PI() / 180)), tag TAG)",
         ).unwrap();
 
-        assert!(semantic_checks_for_create_table(statement).is_err());
+        let create_table = statement_to_create_table(statement);
+        assert!(semantic_checks_for_create_table(create_table).is_err());
+    }
+
+    /// Return [`CreateTable`] if `statement` is [`Statement::CreateTable`] and panics otherwise.
+    fn statement_to_create_table(statement: Statement) -> CreateTable {
+        if let Statement::CreateTable(create_table) = statement {
+            create_table
+        } else {
+            panic!("Expected Statement::CreateTable.");
+        }
     }
 }

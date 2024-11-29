@@ -351,9 +351,9 @@ impl FlightService for FlightServiceHandler {
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         let sendable_record_batch_stream = match statement {
-            Statement::CreateTable(ref _create_table) => {
+            Statement::CreateTable(create_table) => {
                 self.context
-                    .validate_and_create_table(&sql, statement)
+                    .validate_and_create_table(&sql, create_table)
                     .await
                     .map_err(|error| Status::invalid_argument(error.to_string()))?;
 

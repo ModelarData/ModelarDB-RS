@@ -22,6 +22,7 @@ use std::{env, str};
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
 use modelardb_common::arguments;
+use modelardb_storage::parser;
 use modelardb_types::types::ServerMode;
 use tokio::sync::RwLock;
 use tonic::metadata::MetadataMap;
@@ -98,14 +99,14 @@ impl Manager {
         let message = do_action_and_extract_result(&self.flight_client, action).await?;
 
         // Extract the SQL for the tables that need to be created from the response.
-        let table_sql_queries = str::from_utf8(&message.body)
+        let create_table_sql_commands = str::from_utf8(&message.body)
             .map_err(|error| ModelarDbServerError::InvalidArgument(error.to_string()))?
             .split(';')
             .filter(|sql| !sql.is_empty());
 
         // For each table to create, register and save the table in the metadata Delta Lake.
-        for sql in table_sql_queries {
-            context.parse_and_create_table(sql).await?;
+        for create_table_sql in create_table_sql_commands {
+            parser::tokenize_and_parse_sql(create_table_sql)?;
         }
 
         Ok(())

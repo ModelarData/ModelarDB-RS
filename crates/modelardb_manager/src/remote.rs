@@ -40,6 +40,7 @@ use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser;
 use modelardb_storage::parser::ValidStatement;
 use modelardb_types::types::ServerMode;
+use sqlparser::ast::{CreateTable, Statement};
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
@@ -110,6 +111,17 @@ impl FlightServiceHandler {
             Err(Status::already_exists(message))
         } else {
             Ok(())
+        }
+    }
+
+    /// Return [`CreateTable`] if `statement` is [`Statement::CreateTable`] and [`Status`] otherwise.
+    fn statement_to_create_table(&self, statement: Statement) -> StdResult<CreateTable, Status> {
+        if let Statement::CreateTable(create_table) = statement {
+            Ok(create_table)
+        } else {
+            Err(Status::internal(
+                "Expected Statement::CreateTable.".to_owned(),
+            ))
         }
     }
 
@@ -380,7 +392,8 @@ impl FlightService for FlightServiceHandler {
         // Parse the SQL and perform semantic checks to extract the schema from the statement.
         // unwrap() is safe since the SQL was parsed and checked when the table was created.
         let statement = parser::tokenize_and_parse_sql(table_sql.as_str()).unwrap();
-        let valid_statement = parser::semantic_checks_for_create_table(statement).unwrap();
+        let create_table = self.statement_to_create_table(statement)?;
+        let valid_statement = parser::semantic_checks_for_create_table(create_table).unwrap();
 
         let schema = match valid_statement {
             ValidStatement::CreateTable { schema, .. } => Arc::new(schema),
@@ -523,7 +536,8 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // Perform semantic checks to ensure the parsed SQL is supported.
-            let valid_statement = parser::semantic_checks_for_create_table(statement)
+            let create_table = self.statement_to_create_table(statement)?;
+            let valid_statement = parser::semantic_checks_for_create_table(create_table)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // Create the normal table or model table if it does not already exist.

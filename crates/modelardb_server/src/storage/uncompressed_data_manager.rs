@@ -770,14 +770,16 @@ mod tests {
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
         UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
-    use modelardb_storage::test;
+    use modelardb_storage::{parser, test};
     use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
+    use sqlparser::ast::Statement;
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
 
+    use crate::error::ModelarDbServerError;
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
     use crate::{ClusterMode, DataFolders};
 
@@ -801,10 +803,15 @@ mod tests {
         );
 
         // Create a model table in the context.
-        context
-            .parse_and_create_table(test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
+        let statement = parser::tokenize_and_parse_sql(test::MODEL_TABLE_SQL).unwrap();
+        if let Statement::CreateTable(create_table) = statement {
+            context.validate_and_create_table(test::MODEL_TABLE_SQL, create_table).await
+        } else {
+            Err(ModelarDbServerError::InvalidArgument(
+                "Expected Statement::CreateTable.".to_owned(),
+            ))
+        }
+        .unwrap();
 
         // Ingest a single data point and sleep to allow the ingestion thread to finish.
         let mut storage_engine = context.storage_engine.write().await;
