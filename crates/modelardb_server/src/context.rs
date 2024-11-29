@@ -24,7 +24,7 @@ use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_storage::parser::{self, ValidStatement};
-use sqlparser::ast::Statement;
+use sqlparser::ast::{Statement};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -85,11 +85,7 @@ impl Context {
     /// Create a normal table or a model table based on `statement` created from `sql`. If
     /// `statement` is not [`CreateTable`] valid or the table could not be created, return
     /// [`ModelarDbServerError`].
-    pub(crate) async fn validate_and_create_table(
-        &self,
-        sql: &str,
-        statement: Statement,
-    ) -> Result<()> {
+    pub(crate) async fn validate_and_create_table(&self, sql: &str, statement: Statement) -> Result<()> {
         // Perform semantic checks to ensure the statement is supported.
         let valid_statement = parser::semantic_checks_for_create_table(statement)?;
 

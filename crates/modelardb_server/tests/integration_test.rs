@@ -279,17 +279,10 @@ impl TestContext {
     }
 
     /// Drop a table in the server through the `do_action()` method and the `DropTable` action.
-    fn drop_table(
-        &mut self,
-        table_name: &str,
-    ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
-        let action = Action {
-            r#type: "DropTable".to_owned(),
-            body: table_name.to_owned().into(),
-        };
-
+    fn drop_table(&mut self, table_name: &str) -> Result<Response<Streaming<FlightData>>, Status> {
+        let ticket = Ticket::new(format!("DROP TABLE {table_name}"));
         self.runtime
-            .block_on(async { self.client.do_action(Request::new(action)).await })
+            .block_on(async { self.client.do_get(ticket).await })
     }
 
     /// Truncate a table in the server through the `do_action()` method and the `TruncateTable` action.
@@ -779,7 +772,6 @@ fn test_can_list_actions() {
         actions,
         vec![
             "CollectMetrics",
-            "DropTable",
             "FlushMemory",
             "FlushNode",
             "GetConfiguration",

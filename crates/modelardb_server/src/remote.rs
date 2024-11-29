@@ -359,17 +359,46 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(self.empty_record_batch_stream())
             }
-            Statement::Query(ref _boxed_query) => {
-                modelardb_storage::execute_statement(&self.context.session_context, statement).await
+            Statement::Drop {
+                object_type,
+                if_exists,
+                names,
+                cascade,
+                restrict,
+                purge,
+                temporary,
+            } => {
+                let table_names = parser::semantic_checks_for_drop(
+                    object_type,
+                    if_exists,
+                    names,
+                    cascade,
+                    restrict,
+                    purge,
+                    temporary,
+                )
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+                for table_name in table_names {
+                    self.context
+                        .drop_table(&table_name)
+                        .await
+                        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                }
+
+                Ok(self.empty_record_batch_stream())
             }
             Statement::Explain { .. } => {
+                modelardb_storage::execute_statement(&self.context.session_context, statement).await
+            }
+            Statement::Query(ref _boxed_query) => {
                 modelardb_storage::execute_statement(&self.context.session_context, statement).await
             }
             Statement::Insert(ref _insert) => {
                 modelardb_storage::execute_statement(&self.context.session_context, statement).await
             }
             _ => Err(Status::invalid_argument(
-                "Only EXPLAIN and SELECT is supported".to_owned(),
+                "Only CREATE, DROP, EXPLAIN, SELECT, and INSERT is supported".to_owned(),
             ))?,
         }
         .map_err(|error| Status::internal(error.to_string()))?;
@@ -498,20 +527,7 @@ impl FlightService for FlightServiceHandler {
         // Manually drop the read lock on the configuration manager to avoid deadlock issues.
         std::mem::drop(configuration_manager);
 
-        if action.r#type == "DropTable" {
-            // Read the table name from the action body.
-            let table_name = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!("Received request to drop table '{}'.", table_name);
-
-            self.context
-                .drop_table(table_name)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Confirm the table was dropped.
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "TruncateTable" {
+        if action.r#type == "TruncateTable" {
             // Read the table name from the action body.
             let table_name = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -723,11 +739,6 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
-        let drop_table_action = ActionType {
-            r#type: "DropTable".to_owned(),
-            description: "Drop a table and all its data.".to_owned(),
-        };
-
         let truncate_table_action = ActionType {
             r#type: "TruncateTable".to_owned(),
             description: "Delete all data from a table.".to_owned(),
@@ -779,7 +790,6 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
-            Ok(drop_table_action),
             Ok(truncate_table_action),
             Ok(flush_memory_action),
             Ok(flush_node_action),

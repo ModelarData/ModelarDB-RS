@@ -38,7 +38,8 @@ use modelardb_types::functions::normalize_name; // Fully imported to not conflic
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 use sqlparser::ast::{
     ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType, GeneratedAs,
-    HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TableEngine, TimezoneInfo,
+    HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectType, Statement, TableEngine,
+    TimezoneInfo,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
@@ -472,6 +473,37 @@ fn semantic_checks_for_create_model_table(
     .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
     Ok(model_table_metadata)
+}
+
+/// Perform semantic checks to ensure that the DROP statement from which the arguments was extracted
+/// was correct. A [`ParserError`] is returned if any of the additional semantic checks fails.
+pub fn semantic_checks_for_drop(
+    object_type: ObjectType,
+    if_exists: bool,
+    names: Vec<ObjectName>,
+    cascade: bool,
+    restrict: bool,
+    purge: bool,
+    temporary: bool,
+) -> StdResult<Vec<String>, ParserError> {
+    if object_type != ObjectType::Table || if_exists || cascade || restrict || purge || temporary {
+        Err(ParserError::ParserError(
+            "Only DROP TABLE is supported.".to_owned(),
+        ))
+    } else {
+        let mut table_names = Vec::with_capacity(names.len());
+
+        for parts in names {
+            let table_name = parts
+                .0
+                .iter()
+                .fold(String::new(), |name, part| name + &part.value);
+
+            table_names.push(table_name);
+        }
+
+        Ok(table_names)
+    }
 }
 
 /// Return [`ParserError`] if [`Statement`] is not a [`Statement::CreateTable`] or if an unsupported
