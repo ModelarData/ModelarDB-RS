@@ -23,7 +23,7 @@ use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_storage::parser::{self, ValidStatement};
+use modelardb_storage::parser::{self, ModelarDbStatement};
 use sqlparser::ast::CreateTable;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -84,12 +84,12 @@ impl Context {
 
         // Create the normal table or model table if it does not already exist.
         match valid_statement {
-            ValidStatement::CreateTable { name, schema } => {
+            ModelarDbStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
                 self.register_and_save_normal_table(&name, sql, schema)
                     .await?;
             }
-            ValidStatement::CreateModelTable(model_table_metadata) => {
+            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                 self.check_if_table_exists(&model_table_metadata.name)
                     .await?;
                 self.register_and_save_model_table(model_table_metadata, sql)

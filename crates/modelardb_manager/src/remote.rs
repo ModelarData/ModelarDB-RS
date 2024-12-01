@@ -38,7 +38,7 @@ use modelardb_common::arguments;
 use modelardb_common::remote;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser;
-use modelardb_storage::parser::ValidStatement;
+use modelardb_storage::parser::ModelarDbStatement;
 use modelardb_types::types::ServerMode;
 use sqlparser::ast::{CreateTable, Statement};
 use tokio::runtime::Runtime;
@@ -396,8 +396,8 @@ impl FlightService for FlightServiceHandler {
         let valid_statement = parser::semantic_checks_for_create_table(create_table).unwrap();
 
         let schema = match valid_statement {
-            ValidStatement::CreateTable { schema, .. } => Arc::new(schema),
-            ValidStatement::CreateModelTable(model_table_metadata) => {
+            ModelarDbStatement::CreateTable { schema, .. } => Arc::new(schema),
+            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                 model_table_metadata.schema.clone()
             }
         };
@@ -542,12 +542,12 @@ impl FlightService for FlightServiceHandler {
 
             // Create the normal table or model table if it does not already exist.
             match valid_statement {
-                ValidStatement::CreateTable { name, schema } => {
+                ModelarDbStatement::CreateTable { name, schema } => {
                     self.check_if_table_exists(&name).await?;
                     self.save_and_create_cluster_normal_table(&name, &schema, sql)
                         .await?;
                 }
-                ValidStatement::CreateModelTable(model_table_metadata) => {
+                ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
                     self.save_and_create_cluster_model_table(model_table_metadata, sql)

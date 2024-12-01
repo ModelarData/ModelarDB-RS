@@ -350,7 +350,7 @@ pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement> {
 /// and for which semantics checks have verified that it is compatible with ModelarDB. CREATE TABLE
 /// and CREATE MODEL TABLE is supported.
 #[derive(Debug)]
-pub enum ValidStatement {
+pub enum ModelarDbStatement {
     /// CREATE TABLE.
     CreateTable { name: String, schema: Schema },
     /// CREATE MODEL TABLE.
@@ -359,8 +359,8 @@ pub enum ValidStatement {
 
 /// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE statement in
 /// `create_table` was correct. A [`ModelarDbStorageError`] is returned if a semantic check fails.
-/// If all semantic checks are successful a [`ValidStatement`] is returned.
-pub fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<ValidStatement> {
+/// If all semantic checks are successful a [`ModelarDbStatement`] is returned.
+pub fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<ModelarDbStatement> {
     // Ensure it is a create table and only supported features are enabled.
     check_unsupported_features_are_disabled(&create_table)?;
 
@@ -399,7 +399,7 @@ pub fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Val
     // Check if the table name is a valid object_store path and database table name.
     object_store::path::Path::parse(&normalized_name)?;
 
-    // Create a ValidStatement with the information for creating the table of the specified
+    // Create a ModelarDbStatement with the information for creating the table of the specified
     // type.
     let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
     if let Some(_expected_engine) = engine {
@@ -407,7 +407,7 @@ pub fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Val
         let model_table_metadata =
             semantic_checks_for_create_model_table(normalized_name, columns)?;
 
-        Ok(ValidStatement::CreateModelTable(Arc::new(
+        Ok(ModelarDbStatement::CreateModelTable(Arc::new(
             model_table_metadata,
         )))
     } else {
@@ -432,7 +432,7 @@ pub fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Val
             })
             .collect::<Vec<Field>>();
 
-        Ok(ValidStatement::CreateTable {
+        Ok(ModelarDbStatement::CreateTable {
             name: normalized_name,
             schema: Schema::new(supported_fields),
         })
