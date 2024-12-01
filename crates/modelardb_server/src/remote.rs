@@ -19,13 +19,15 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::result::Result as StdResult;
 use std::str;
 use std::sync::Arc;
 
+use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
@@ -38,11 +40,14 @@ use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
 };
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::execution::RecordBatchStream;
+use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStream};
 use deltalake::arrow::datatypes::Schema;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::{arguments, remote};
+use modelardb_storage::error::ModelarDbStorageError;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser;
 use modelardb_types::functions;
@@ -418,8 +423,58 @@ impl FlightService for FlightServiceHandler {
             Statement::Explain { .. } => {
                 modelardb_storage::execute_statement(&self.context.session_context, statement).await
             }
-            Statement::Query(ref _boxed_query) => {
-                modelardb_storage::execute_statement(&self.context.session_context, statement).await
+            Statement::Query(ref boxed_query) => {
+                let maybe_address = parser::extract_include_address(boxed_query);
+
+                let local_sendable_record_batch_stream =
+                    modelardb_storage::execute_statement(&self.context.session_context, statement)
+                        .await;
+
+                // TODO: move execution of query on host into separate function.
+                // TODO: merge remote and local stream.
+                // TODO: add test to ensure that SETTINGS can never bet set.
+                // TODO: make ModelarDbStatements for all supported SQL.
+                // TODO: add support for ModelarDbStatements in modelardb_manager/remote.
+                // TODO: update user and dev documentation to match recent changes.
+                // TODO: extend PR with support for multiple include addresses if not already big.
+                if let Some(address) = maybe_address {
+                    let mut flight_client = FlightServiceClient::connect(address)
+                        .await
+                        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                    let ticket = Ticket {
+                        ticket: "SELECT * FROM table_name".to_owned().into(),
+                    };
+                    let mut stream = flight_client
+                        .do_get(ticket)
+                        .await
+                        .map_err(|error| Status::invalid_argument(error.to_string()))?
+                        .into_inner();
+                    let flight_data = stream.message().await?.unwrap(); // TODO: Schema.
+                    let schema = Arc::new(
+                        Schema::try_from(&flight_data)
+                            .map_err(|error| Status::invalid_argument(error.to_string()))?,
+                    );
+                    let dictionaries_by_id = HashMap::new();
+                    let flight_data = stream.message().await?.unwrap(); // TODO: Data.
+                    let record_batch = utils::flight_data_to_arrow_batch(
+                        &flight_data,
+                        schema.clone(),
+                        &dictionaries_by_id,
+                    )
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+                    let schema = record_batch.schema();
+                    let remote_sendable_record_batch_stream: StdResult<Pin<Box<dyn RecordBatchStream + Send>>, ModelarDbStorageError> =
+                        Ok(Box::pin(MemoryStream::try_new(vec![record_batch], schema, None).unwrap()));
+
+                   // let combined_sendable_record_batch_stream = remote_sendable_record_batch_stream
+                   //     .chain(local_sendable_record_batch_stream.unwrap());
+
+                   // RecordBatchStreamAdapter::new(schema, combined_sendable_record_batch_stream)
+                    remote_sendable_record_batch_stream
+                } else {
+                    local_sendable_record_batch_stream
+                }
             }
             Statement::Insert(ref _insert) => {
                 modelardb_storage::execute_statement(&self.context.session_context, statement).await

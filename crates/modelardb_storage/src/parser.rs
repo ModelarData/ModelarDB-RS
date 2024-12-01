@@ -38,8 +38,9 @@ use modelardb_types::functions::normalize_name; // Fully imported to not conflic
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 use sqlparser::ast::{
     ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType, Expr,
-    GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectType, Statement,
-    TableEngine, TimezoneInfo, TruncateCascadeOption, TruncateIdentityOption, TruncateTableTarget,
+    GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectType, Query, Setting,
+    Statement, TableEngine, TimezoneInfo, TruncateCascadeOption, TruncateIdentityOption,
+    TruncateTableTarget, Value,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
@@ -186,13 +187,23 @@ impl ModelarDbDialect {
         parser.expected(expected, parser.peek_token())
     }
 
+    /// Return its as a [`String`] if the next [`Token`] is a [`Token::SingleQuotedString`],
+    /// otherwise a [`ParserError`] is returned.
+    fn parse_single_quoted_string(&self, parser: &mut Parser) -> StdResult<String, ParserError> {
+        let token_with_location = parser.next_token();
+        match token_with_location.token {
+            Token::SingleQuotedString(string) => Ok(string),
+            _ => parser.expected("single quoted string", token_with_location),
+        }
+    }
+
     /// Return its value as a [`String`] if the next [`Token`] is a
     /// [`Token::Word`], otherwise a [`ParserError`] is returned.
     fn parse_word_value(&self, parser: &mut Parser) -> StdResult<String, ParserError> {
         let token_with_location = parser.next_token();
         match token_with_location.token {
             Token::Word(word) => Ok(word.value),
-            _ => parser.expected("literal string", token_with_location),
+            _ => parser.expected("word", token_with_location),
         }
     }
 
@@ -299,6 +310,43 @@ impl ModelarDbDialect {
             with_tags: None,
         })
     }
+
+    /// Return [`true`] if the token stream starts with INCLUDE, otherwise [`false`] is returned.
+    /// The method does not consume tokens.
+    fn next_token_is_include(&self, parser: &Parser) -> bool {
+        // INCLUDE.
+        if let Token::Word(word) = parser.peek_nth_token(0).token {
+            word.keyword == Keyword::INCLUDE
+        } else {
+            false
+        }
+    }
+
+    /// Parse INCLUDE address to a [`Value`] containing the address. A [`ParserError`] is returned
+    /// if INCLUDE is typed incorrectly or the address cannot be extracted.
+    fn parse_include_query(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
+        // INCLUDE.
+        parser.expect_keyword(Keyword::INCLUDE)?;
+        let address = self.parse_single_quoted_string(parser)?;
+        let value = Value::SingleQuotedString(address);
+
+        // SELECT.
+        let mut boxed_query = match parser.parse_boxed_query() {
+            Ok(boxed_query) => boxed_query,
+            Err(error) => return Err(error),
+        };
+
+        // ClickHouse's SETTINGS is not supported by ModelarDB, so it is repurposed.
+        let key = Ident {
+            value: String::new(),
+            quote_style: None,
+        };
+        let setting = Setting { key, value };
+        boxed_query.settings = Some(vec![setting]);
+
+        let statement = Statement::Query(boxed_query);
+        Ok(statement)
+    }
 }
 
 impl Dialect for ModelarDbDialect {
@@ -321,6 +369,8 @@ impl Dialect for ModelarDbDialect {
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_model_table(parser) {
             Some(self.parse_create_model_table(parser))
+        } else if self.next_token_is_include(parser) {
+            Some(self.parse_include_query(parser))
         } else {
             None
         }
@@ -793,6 +843,19 @@ fn extract_generation_exprs_for_all_columns(
     }
 
     Ok(generated_columns)
+}
+
+/// Extract the address for specified in an INCLUDE clause if one was specified in `query`,
+/// otherwise [`None`] is returned.
+pub fn extract_include_address(query: &Query) -> Option<String> {
+    if let Some(ref settings) = query.settings {
+        match &settings[0].value {
+            Value::SingleQuotedString(address) => Some(address.to_owned()),
+            _ => unreachable!("Include was not SingleQuotedString."),
+        }
+    } else {
+        None
+    }
 }
 
 /// Perform semantic checks to ensure that the DROP statement from which the arguments was extracted
