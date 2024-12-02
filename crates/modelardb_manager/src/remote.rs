@@ -445,6 +445,8 @@ impl FlightService for FlightServiceHandler {
     /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
     /// kill the process running on the node. The specific node to remove is given through the
     /// uniquely identifying URL of the node.
+    /// * `NodeType`: Get the type of the node. The type is always `manager`. The type of the node
+    /// is returned as a string.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -631,6 +633,14 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the node was removed.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "NodeType" {
+            let flight_result = FlightResult {
+                body: "manager".bytes().collect(),
+            };
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(flight_result)
+            }))))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
@@ -675,6 +685,11 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
+        let node_type_action = ActionType {
+            r#type: "NodeType".to_owned(),
+            description: "Get the type of the node.".to_owned(),
+        };
+
         let output = stream::iter(vec![
             Ok(initialize_database_action),
             Ok(create_table_action),
@@ -682,6 +697,7 @@ impl FlightService for FlightServiceHandler {
             Ok(truncate_table_action),
             Ok(register_node_action),
             Ok(remove_node_action),
+            Ok(node_type_action),
         ]);
 
         Ok(Response::new(Box::pin(output)))
