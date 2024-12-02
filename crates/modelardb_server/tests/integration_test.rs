@@ -509,6 +509,15 @@ impl TestContext {
     /// Retrieve the response of the [`Action`] with the type `action_type` and convert it into an
     /// Apache Arrow [`RecordBatch`].
     fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
+        let response_bytes = self.retrieve_action_bytes(action_type);
+
+        // Convert the bytes in the response into an Apache Arrow record batch.
+        let mut reader = StreamReader::try_new(response_bytes.reader(), None).unwrap();
+        reader.next().unwrap().unwrap()
+    }
+
+    /// Retrieve the response of the [`Action`] with the type `action_type`.
+    fn retrieve_action_bytes(&mut self, action_type: &str) -> Bytes {
         let action = Action {
             r#type: action_type.to_owned(),
             body: Bytes::new(),
@@ -527,9 +536,7 @@ impl TestContext {
                 .unwrap()
         });
 
-        // Convert the bytes in the response into an Apache Arrow record batch.
-        let mut reader = StreamReader::try_new(response.body.reader(), None).unwrap();
-        reader.next().unwrap().unwrap()
+        response.body
     }
 }
 
@@ -781,6 +788,7 @@ fn test_can_list_actions() {
             "FlushNode",
             "GetConfiguration",
             "KillNode",
+            "NodeType",
             "TruncateTable",
             "UpdateConfiguration",
         ]
@@ -1279,4 +1287,12 @@ fn update_configuration_and_assert_error(setting: &str, setting_value: &str, err
 
     assert!(response.is_err());
     assert_eq!(response.err().unwrap().message(), error);
+}
+
+#[test]
+fn test_can_get_node_type() {
+    let mut test_context = TestContext::new();
+    let response_bytes = test_context.retrieve_action_bytes("NodeType");
+
+    assert_eq!(str::from_utf8(&response_bytes).unwrap(), "server");
 }
