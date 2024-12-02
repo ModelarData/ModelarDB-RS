@@ -456,6 +456,8 @@ impl FlightService for FlightServiceHandler {
     /// body should start with the size of the argument, immediately followed by the argument value.
     /// The first argument should be the setting to update. The second argument should be the new
     /// value of the setting as an unsigned integer.
+    /// * `NodeType`: Get the type of the node. The type is always `server`. The type of the node
+    /// is returned as a string.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -695,6 +697,14 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the configuration was updated.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "NodeType" {
+            let flight_result = FlightResult {
+                body: "server".bytes().collect(),
+            };
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(flight_result)
+            }))))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
@@ -761,6 +771,11 @@ impl FlightService for FlightServiceHandler {
             description: "Update a specific setting in the server configuration.".to_owned(),
         };
 
+        let node_type_action = ActionType {
+            r#type: "NodeType".to_owned(),
+            description: "Get the type of the node.".to_owned(),
+        };
+
         let output = stream::iter(vec![
             Ok(create_table_action),
             Ok(drop_table_action),
@@ -771,6 +786,7 @@ impl FlightService for FlightServiceHandler {
             Ok(collect_metrics_action),
             Ok(get_configuration_action),
             Ok(update_configuration_action),
+            Ok(node_type_action),
         ]);
 
         Ok(Response::new(Box::pin(output)))
