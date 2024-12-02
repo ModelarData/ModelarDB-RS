@@ -172,7 +172,7 @@ impl DeltaLake {
     }
 
     /// Create a new [`DeltaLake`] that manages the Delta tables in an object store with an
-    /// Azure-compatible API. Returns a [`ModelarDbStorageError`] if a connection to the object 
+    /// Azure-compatible API. Returns a [`ModelarDbStorageError`] if a connection to the object
     /// store could not be made.
     pub fn try_from_azure_configuration(
         account_name: String,
