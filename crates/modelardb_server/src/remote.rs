@@ -513,7 +513,6 @@ impl FlightService for FlightServiceHandler {
                     .map_err(|error| error.into())
             }
             Statement::Query(ref boxed_query) => {
-                // TODO: add test to ensure that SETTINGS can never bet set.
                 // TODO: make ModelarDbStatements for all supported SQL.
                 // TODO: add support for ModelarDbStatements in modelardb_manager/remote.
                 // TODO: update user and dev documentation to match recent changes.

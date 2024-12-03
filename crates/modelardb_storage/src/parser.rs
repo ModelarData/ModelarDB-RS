@@ -1008,6 +1008,8 @@ impl ContextProvider for ParserContextProvider {
 mod tests {
     use super::*;
 
+    use sqlparser::dialect::ClickHouseDialect;
+
     // Tests for tokenize_and_parse_sql().
     #[test]
     fn test_tokenize_and_parse_empty_sql() {
@@ -1122,7 +1124,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_model() {
-        // Track if sqlparser at some point can parse fields/tags without ModelarDbDialect.
+        // Tracks if sqlparser at some point can parse fields/tags in a TABLE.
         assert!(tokenize_and_parse_sql(
             "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field_one FIELD(10.5),
                                      field_two FIELD(1%), tag TAG)",
@@ -1404,5 +1406,59 @@ mod tests {
         } else {
             panic!("Expected Statement::CreateTable.");
         }
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_settings_with_click_house_dialect() {
+        assert!(Parser::parse_sql(
+            &ClickHouseDialect {},
+            "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true"
+        )
+        .is_ok())
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_settings_with_modelardb_dialect() {
+        assert!(Parser::parse_sql(
+            &ModelarDbDialect::new(),
+            "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true"
+        )
+        .is_err())
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_include_one_address_select() {
+        assert!(tokenize_and_parse_sql(
+            "INCLUDE 'grpc://192.168.1.2:9999' SELECT * FROM table_name",
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_include_one_double_qouted_address_select() {
+        assert!(tokenize_and_parse_sql(
+            "INCLUDE \"grpc://192.168.1.2:9999\" SELECT * FROM table_name",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_one_address_select() {
+        assert!(
+            tokenize_and_parse_sql("'grpc://192.168.1.2:9999' SELECT * FROM table_name",).is_err()
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_include_zero_address() {
+        assert!(tokenize_and_parse_sql("INCLUDE SELECT * FROM table_name",).is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_include_multiple_addresses_select() {
+        assert!(tokenize_and_parse_sql(
+            "INCLUDE 'grpc://192.168.1.2:9999' 'grpc://192.168.1.3:9999' SELECT * FROM table_name",
+        )
+        .is_err());
     }
 }
