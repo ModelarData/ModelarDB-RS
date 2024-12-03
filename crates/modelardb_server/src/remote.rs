@@ -40,8 +40,8 @@ use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
 };
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
-use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStream};
 use deltalake::arrow::datatypes::Schema;
@@ -94,6 +94,62 @@ pub fn start_apache_arrow_flight_server(
                 .await
         })
         .map_err(|error| error.into())
+}
+
+/// Execute `sql` at `address`. Assumes `address` was specified using INCLUDE in `sql`.
+async fn execute_query_with_include_at_address(
+    sql: &str,
+    address: String,
+) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
+    // Remove INCLUDE address as sqlparser seems incapable of doing so.
+    let start_of_address = sql.find(&address).ok_or_else(|| {
+        ModelarDbServerError::InvalidArgument("Missing INCLUDE address.".to_owned())
+    })?;
+    let end_of_address = start_of_address + address.len() + 1;
+    let select = &sql[end_of_address..];
+
+    // Connect and execute query.
+    let mut flight_client = FlightServiceClient::connect(address)
+        .await
+        .map_err(error_to_status_invalid_argument)?;
+
+    let ticket = Ticket {
+        ticket: select.to_owned().into(),
+    };
+    let mut stream = flight_client.do_get(ticket).await?.into_inner();
+
+    // Read schema of record batches.
+    let flight_data = stream.message().await?.ok_or_else(|| {
+        ModelarDbServerError::InvalidState(
+            "Failed to retrieve schema modelardbd at INCLUDE address.".to_owned(),
+        )
+    })?;
+    let schema = Arc::new(Schema::try_from(&flight_data)?);
+
+    // Create copy of Arc so the schame can be used after the closure.
+    let schema_for_stream = schema.clone();
+
+    // Create single dictionaries_by_id that can be reused for conversion,
+    // FlightServiceHandler.dictionaries_by_id is not used to simplify lifetimes.
+    let dictionaries_by_id = HashMap::new();
+
+    // Create SenableRecordBatchStream.
+    let record_batches = stream.map(move |maybe_flight_data| {
+        let flight_data = match maybe_flight_data {
+            Ok(flight_data) => flight_data,
+            Err(error) => return Err(DataFusionError::External(Box::new(error))),
+        };
+
+        let maybe_record_batch =
+            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id);
+
+        maybe_record_batch.map_err(|error| error.into())
+    });
+
+    Ok(Box::pin(RecordBatchStreamAdapter::new(
+        schema_for_stream,
+        record_batches,
+    )))
 }
 
 /// Create a stream that returns the elements of `sendable_record_batch_stream_one` and
@@ -151,7 +207,7 @@ async fn send_query_result(
             }
         };
 
-        // unwrap() is safe as the result is produced by Apache Arrow DataFusion.
+        // unwrap() is safe as the result is produced by Apache DataFusion.
         let (encoded_dictionaries, encoded_batch) = data_generator
             .encoded_batch(&record_batch, &mut dictionary_tracker, &writer_options)
             .unwrap();
@@ -293,54 +349,6 @@ impl FlightServiceHandler {
         }
 
         Ok(())
-    }
-
-    /// Execute `sql` at `address`. Assumes `address` was specified using INCLUDE in `sql`.
-    async fn execute_query_at_address(
-        &self,
-        sql: &str,
-        address: String,
-    ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
-        // Remove INCLUDE address as sqlparser seems incapable of doing so.
-        let start_of_address = sql.find(&address).ok_or_else(|| {
-            ModelarDbServerError::InvalidArgument("Missing INCLUDE address.".to_owned())
-        })?;
-        let end_of_address = start_of_address + address.len() + 1;
-        let select = &sql[end_of_address..];
-
-        // Connect and execute query.
-        let mut flight_client = FlightServiceClient::connect(address)
-            .await
-            .map_err(error_to_status_invalid_argument)?;
-
-        let ticket = Ticket {
-            ticket: select.to_owned().into(),
-        };
-        let mut stream = flight_client.do_get(ticket).await?.into_inner();
-
-        // Read schema of record batches.
-        let flight_data = stream.message().await?.ok_or_else(|| {
-            ModelarDbServerError::InvalidState(
-                "Failed to retrieve schema modelardbd at INCLUDE address.".to_owned(),
-            )
-        })?;
-        let schema = Arc::new(Schema::try_from(&flight_data)?);
-
-        // Read record batches.
-        let mut record_batches = vec![];
-        while let Some(flight_data) = stream.message().await? {
-            let record_batch = utils::flight_data_to_arrow_batch(
-                &flight_data,
-                schema.clone(),
-                &self.dictionaries_by_id,
-            )?;
-
-            record_batches.push(record_batch);
-        }
-
-        let memory_record_batch_stream = MemoryStream::try_new(record_batches, schema, None)?;
-
-        Ok(Box::pin(memory_record_batch_stream))
     }
 }
 
@@ -505,7 +513,6 @@ impl FlightService for FlightServiceHandler {
                     .map_err(|error| error.into())
             }
             Statement::Query(ref boxed_query) => {
-                // TODO: do not buffer remote result in memory.
                 // TODO: add test to ensure that SETTINGS can never bet set.
                 // TODO: make ModelarDbStatements for all supported SQL.
                 // TODO: add support for ModelarDbStatements in modelardb_manager/remote.
@@ -525,10 +532,10 @@ impl FlightService for FlightServiceHandler {
                         maybe_local_sendable_record_batch_stream
                             .map_err(error_to_status_internal)?;
 
-                    let remote_sendable_record_batch_stream = self
-                        .execute_query_at_address(&sql, address)
-                        .await
-                        .map_err(error_to_status_internal)?;
+                    let remote_sendable_record_batch_stream =
+                        execute_query_with_include_at_address(&sql, address)
+                            .await
+                            .map_err(error_to_status_internal)?;
 
                     merge_sendable_record_batch_streams(
                         local_sendable_record_batch_stream,
