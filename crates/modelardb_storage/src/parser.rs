@@ -328,7 +328,6 @@ impl ModelarDbDialect {
         // INCLUDE.
         parser.expect_keyword(Keyword::INCLUDE)?;
         let address = self.parse_single_quoted_string(parser)?;
-        let value = Value::SingleQuotedString(address);
 
         // SELECT.
         let mut boxed_query = match parser.parse_boxed_query() {
@@ -338,9 +337,10 @@ impl ModelarDbDialect {
 
         // ClickHouse's SETTINGS is not supported by ModelarDB, so it is repurposed.
         let key = Ident {
-            value: String::new(),
+            value: address,
             quote_style: None,
         };
+        let value = Value::Null;
         let setting = Setting { key, value };
         boxed_query.settings = Some(vec![setting]);
 
@@ -848,14 +848,10 @@ fn extract_generation_exprs_for_all_columns(
 /// Extract the address for specified in an INCLUDE clause if one was specified in `query`,
 /// otherwise [`None`] is returned.
 pub fn extract_include_address(query: &Query) -> Option<String> {
-    if let Some(ref settings) = query.settings {
-        match &settings[0].value {
-            Value::SingleQuotedString(address) => Some(address.to_owned()),
-            _ => unreachable!("Include was not SingleQuotedString."),
-        }
-    } else {
-        None
-    }
+    query
+        .settings
+        .as_ref()
+        .map(|settings| settings[0].key.value.clone())
 }
 
 /// Perform semantic checks to ensure that the DROP statement from which the arguments was extracted
