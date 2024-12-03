@@ -36,13 +36,13 @@ use datafusion::arrow::array::{
     ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
 };
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
 };
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::memory::MemoryStream;
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStream};
 use deltalake::arrow::datatypes::Schema;
 use futures::stream::{self, BoxStream};
@@ -94,6 +94,33 @@ pub fn start_apache_arrow_flight_server(
                 .await
         })
         .map_err(|error| error.into())
+}
+
+/// Create a stream that returns the elements of `sendable_record_batch_stream_one` and
+/// `sendable_record_batch_stream_two`. Return a [`ModelarDbServerError`] if the schema of
+/// `sendable_record_batch_stream_one` and `sendable_record_batch_stream_two` differ.
+fn merge_sendable_record_batch_streams(
+    sendable_record_batch_stream_one: Pin<Box<dyn RecordBatchStream + std::marker::Send>>,
+    sendable_record_batch_stream_two: Pin<Box<dyn RecordBatchStream + std::marker::Send>>,
+) -> Result<Pin<Box<dyn RecordBatchStream + std::marker::Send>>> {
+    let stream_one_schema = sendable_record_batch_stream_one.schema();
+    let stream_two_schema = sendable_record_batch_stream_two.schema();
+    if stream_one_schema != stream_two_schema {
+        return Err(ModelarDbServerError::InvalidArgument("".to_owned()));
+    }
+
+    let stream_select = stream::select(
+        sendable_record_batch_stream_one,
+        sendable_record_batch_stream_two,
+    );
+
+    let combined_sendable_record_batch_stream: Pin<Box<dyn RecordBatchStream + std::marker::Send>> =
+        Box::pin(RecordBatchStreamAdapter::new(
+            stream_one_schema,
+            stream_select,
+        ));
+
+    Ok(combined_sendable_record_batch_stream)
 }
 
 /// Read [`RecordBatches`](RecordBatch) from `query_result_stream` and send them one at a time to
@@ -478,23 +505,37 @@ impl FlightService for FlightServiceHandler {
                     .map_err(|error| error.into())
             }
             Statement::Query(ref boxed_query) => {
-                let maybe_address = parser::extract_include_address(boxed_query);
-                let local_sendable_record_batch_stream =
-                    modelardb_storage::execute_statement(&self.context.session_context, statement)
-                        .await
-                        .map_err(|error| error.into());
-
-                // TODO: merge remote and local stream.
                 // TODO: do not buffer remote result in memory.
                 // TODO: add test to ensure that SETTINGS can never bet set.
                 // TODO: make ModelarDbStatements for all supported SQL.
                 // TODO: add support for ModelarDbStatements in modelardb_manager/remote.
                 // TODO: update user and dev documentation to match recent changes.
                 // TODO: extend PR with support for multiple include addresses if not already big.
+
+                let maybe_address = parser::extract_include_address(boxed_query);
+                let maybe_local_sendable_record_batch_stream: StdResult<
+                    Pin<Box<dyn RecordBatchStream + Send>>,
+                    ModelarDbServerError,
+                > = modelardb_storage::execute_statement(&self.context.session_context, statement)
+                    .await
+                    .map_err(|error| error.into());
+
                 if let Some(address) = maybe_address {
-                    self.execute_query_at_address(&sql, address).await
+                    let local_sendable_record_batch_stream =
+                        maybe_local_sendable_record_batch_stream
+                            .map_err(error_to_status_internal)?;
+
+                    let remote_sendable_record_batch_stream = self
+                        .execute_query_at_address(&sql, address)
+                        .await
+                        .map_err(error_to_status_internal)?;
+
+                    merge_sendable_record_batch_streams(
+                        local_sendable_record_batch_stream,
+                        remote_sendable_record_batch_stream,
+                    )
                 } else {
-                    local_sendable_record_batch_stream
+                    maybe_local_sendable_record_batch_stream
                 }
             }
             Statement::Insert(ref _insert) => {
