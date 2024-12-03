@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-
 /// Extract an [`array`](arrow::array::Array) from a slice of
 /// `ArrayRef` and cast it to the specified type or panic with `msg`:
 ///
@@ -37,10 +36,7 @@
 #[macro_export]
 macro_rules! value {
     ($values:ident, $index:expr, $type:ident) => {
-        $values[$index]
-            .as_any()
-            .downcast_ref::<$type>()
-            .unwrap()
+        $values[$index].as_any().downcast_ref::<$type>().unwrap()
     };
 }
 
