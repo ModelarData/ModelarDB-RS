@@ -18,6 +18,7 @@
 //! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
 use std::collections::HashMap;
+use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::result::Result as StdResult;
@@ -47,7 +48,6 @@ use deltalake::arrow::datatypes::Schema;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::{arguments, remote};
-use modelardb_storage::error::ModelarDbStorageError;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser;
 use modelardb_types::functions;
@@ -173,6 +173,11 @@ fn send_record_batch(
     }))))
 }
 
+/// Convert an `error` to [`Status::InvalidArgument`] with `error` as a [`String`].
+fn error_to_status_invalid_argument(error: impl Error) -> Status {
+    Status::invalid_argument(error.to_string())
+}
+
 /// Handler for processing Apache Arrow Flight requests.
 /// [`FlightServiceHandler`] is based on the [Apache Arrow Flight examples]
 /// published under Apache2.
@@ -256,6 +261,53 @@ impl FlightServiceHandler {
         Ok(())
     }
 
+    /// Execute `sql` at `address`. Assumes `address` was specified using INCLUDE in `sql`.
+    async fn execute_query_at_address(
+        &self,
+        sql: &str,
+        address: String,
+    ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
+        // Remove INCLUDE address as sqlparser seems incapable of doing so.
+        let start_of_address = sql.find(&address).ok_or_else(|| {
+            ModelarDbServerError::InvalidArgument("Missing INCLUDE address.".to_owned())
+        })?;
+        let end_of_address = start_of_address + address.len() + 1;
+        let select = &sql[end_of_address..];
+
+        // Connect and execute query.
+        let mut flight_client = FlightServiceClient::connect(address)
+            .await
+            .map_err(error_to_status_invalid_argument)?;
+
+        let ticket = Ticket { ticket: select.to_owned().into() };
+        let mut stream = flight_client.do_get(ticket).await?.into_inner();
+
+        // Read schema of record batches.
+        let flight_data = stream.message().await?.ok_or_else(|| {
+            ModelarDbServerError::InvalidState(
+                "Failed to retrieve schema modelardbd at INCLUDE address.".to_owned(),
+            )
+        })?;
+        let schema = Arc::new(Schema::try_from(&flight_data)?);
+
+        // Read record batches.
+        let mut record_batches = vec![];
+        let dictionaries_by_id = HashMap::new();
+        while let Some(flight_data) = stream.message().await? {
+            let record_batch = utils::flight_data_to_arrow_batch(
+                &flight_data,
+                schema.clone(),
+                &dictionaries_by_id,
+            )?;
+
+            record_batches.push(record_batch);
+        }
+
+        let memory_record_batch_stream = MemoryStream::try_new(record_batches, schema, None)?;
+
+        Ok(Box::pin(memory_record_batch_stream))
+    }
+
     /// Return an empty stream of [`RecordBatches`](RecordBatch) that can be returned when a SQL
     /// command has been successfully executed but did not produce any rows to return.
     fn empty_record_batch_stream(&self) -> SendableRecordBatchStream {
@@ -326,7 +378,7 @@ impl FlightService for FlightServiceHandler {
             .context
             .schema_of_table_in_default_database_schema(table_name)
             .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(error_to_status_invalid_argument)?;
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
@@ -346,21 +398,21 @@ impl FlightService for FlightServiceHandler {
 
         // Extract the query.
         let sql = str::from_utf8(&ticket.ticket)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .map_err(error_to_status_invalid_argument)?
             .to_owned();
 
         info!("Received SQL: '{}'.", sql);
 
         // Parse the query.
-        let statement = parser::tokenize_and_parse_sql(&sql)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+        let statement =
+            parser::tokenize_and_parse_sql(&sql).map_err(error_to_status_invalid_argument)?;
 
         let sendable_record_batch_stream = match statement {
             Statement::CreateTable(create_table) => {
                 self.context
                     .validate_and_create_table(&sql, create_table)
                     .await
-                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                    .map_err(error_to_status_invalid_argument)?;
 
                 Ok(self.empty_record_batch_stream())
             }
@@ -382,13 +434,13 @@ impl FlightService for FlightServiceHandler {
                     purge,
                     temporary,
                 )
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
 
                 for table_name in table_names {
                     self.context
                         .drop_table(&table_name)
                         .await
-                        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                        .map_err(error_to_status_invalid_argument)?;
                 }
 
                 Ok(self.empty_record_batch_stream())
@@ -409,75 +461,46 @@ impl FlightService for FlightServiceHandler {
                     identity,
                     cascade,
                 )
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
 
                 for table_name in table_names {
                     self.context
                         .truncate_table(&table_name)
                         .await
-                        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                        .map_err(error_to_status_invalid_argument)?;
                 }
 
                 Ok(self.empty_record_batch_stream())
             }
             Statement::Explain { .. } => {
-                modelardb_storage::execute_statement(&self.context.session_context, statement).await
+                modelardb_storage::execute_statement(&self.context.session_context, statement)
+                    .await
+                    .map_err(|error| error.into())
             }
             Statement::Query(ref boxed_query) => {
                 let maybe_address = parser::extract_include_address(boxed_query);
-
                 let local_sendable_record_batch_stream =
                     modelardb_storage::execute_statement(&self.context.session_context, statement)
-                        .await;
+                        .await
+                        .map_err(|error| error.into());
 
-                // TODO: move execution of query on host into separate function.
                 // TODO: merge remote and local stream.
+                // TODO: do not buffer remote result in memory.
                 // TODO: add test to ensure that SETTINGS can never bet set.
                 // TODO: make ModelarDbStatements for all supported SQL.
                 // TODO: add support for ModelarDbStatements in modelardb_manager/remote.
                 // TODO: update user and dev documentation to match recent changes.
                 // TODO: extend PR with support for multiple include addresses if not already big.
                 if let Some(address) = maybe_address {
-                    let mut flight_client = FlightServiceClient::connect(address)
-                        .await
-                        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-                    let ticket = Ticket {
-                        ticket: "SELECT * FROM table_name".to_owned().into(),
-                    };
-                    let mut stream = flight_client
-                        .do_get(ticket)
-                        .await
-                        .map_err(|error| Status::invalid_argument(error.to_string()))?
-                        .into_inner();
-                    let flight_data = stream.message().await?.unwrap(); // TODO: Schema.
-                    let schema = Arc::new(
-                        Schema::try_from(&flight_data)
-                            .map_err(|error| Status::invalid_argument(error.to_string()))?,
-                    );
-                    let dictionaries_by_id = HashMap::new();
-                    let flight_data = stream.message().await?.unwrap(); // TODO: Data.
-                    let record_batch = utils::flight_data_to_arrow_batch(
-                        &flight_data,
-                        schema.clone(),
-                        &dictionaries_by_id,
-                    )
-                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-                    let schema = record_batch.schema();
-                    let remote_sendable_record_batch_stream: StdResult<Pin<Box<dyn RecordBatchStream + Send>>, ModelarDbStorageError> =
-                        Ok(Box::pin(MemoryStream::try_new(vec![record_batch], schema, None).unwrap()));
-
-                   // let combined_sendable_record_batch_stream = remote_sendable_record_batch_stream
-                   //     .chain(local_sendable_record_batch_stream.unwrap());
-
-                   // RecordBatchStreamAdapter::new(schema, combined_sendable_record_batch_stream)
-                    remote_sendable_record_batch_stream
+                    self.execute_query_at_address(&sql, address).await
                 } else {
                     local_sendable_record_batch_stream
                 }
             }
             Statement::Insert(ref _insert) => {
-                modelardb_storage::execute_statement(&self.context.session_context, statement).await
+                modelardb_storage::execute_statement(&self.context.session_context, statement)
+                    .await
+                    .map_err(|error| error.into())
             }
             _ => Err(Status::invalid_argument(
                 "Only CREATE, DROP, TRUNCATE, EXPLAIN, SELECT, and INSERT is supported".to_owned(),
@@ -488,7 +511,6 @@ impl FlightService for FlightServiceHandler {
         // Send the result using a channel, a channel is needed as sync is not implemented for
         // SenableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
         let (sender, receiver) = mpsc::channel(2);
-
         info!("Executing SQL: '{}'.", sql);
 
         task::spawn(async move {
@@ -531,7 +553,7 @@ impl FlightService for FlightServiceHandler {
             .context
             .model_table_metadata_from_default_database_schema(&normalized_table_name)
             .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .map_err(error_to_status_invalid_argument)?
         {
             debug!("Writing data to model table '{}'.", normalized_table_name);
             self.ingest_into_model_table(model_table_metadata, &mut flight_data_stream)
@@ -542,7 +564,7 @@ impl FlightService for FlightServiceHandler {
                 .context
                 .schema_of_table_in_default_database_schema(&normalized_table_name)
                 .await
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
             self.ingest_into_normal_table(&normalized_table_name, &schema, &mut flight_data_stream)
                 .await?;
         }
