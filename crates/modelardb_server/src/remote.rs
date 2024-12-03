@@ -147,7 +147,7 @@ async fn send_flight_data(
     sender
         .send(flight_data_or_error)
         .await
-        .map_err(|error| Status::internal(error.to_string()))
+        .map_err(error_to_status_internal)
 }
 
 /// Write the schema and corresponding record batch to a stream within a gRPC response.
@@ -157,14 +157,10 @@ fn send_record_batch(
 ) -> StdResult<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
     let options = IpcWriteOptions::default();
     let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options)
-        .map_err(|error| Status::internal(error.to_string()))?;
+        .map_err(error_to_status_internal)?;
 
-    writer
-        .write(&batch)
-        .map_err(|error| Status::internal(error.to_string()))?;
-    let batch_bytes = writer
-        .into_inner()
-        .map_err(|error| Status::internal(error.to_string()))?;
+    writer.write(&batch).map_err(error_to_status_internal)?;
+    let batch_bytes = writer.into_inner().map_err(error_to_status_internal)?;
 
     Ok(Response::new(Box::pin(stream::once(async {
         Ok(FlightResult {
@@ -173,9 +169,20 @@ fn send_record_batch(
     }))))
 }
 
+/// Return an empty stream of [`RecordBatches`](RecordBatch) that can be returned when a SQL
+/// command has been successfully executed but did not produce any rows to return.
+fn empty_record_batch_stream() -> SendableRecordBatchStream {
+    Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
+}
+
 /// Convert an `error` to [`Status::InvalidArgument`] with `error` as a [`String`].
 fn error_to_status_invalid_argument(error: impl Error) -> Status {
     Status::invalid_argument(error.to_string())
+}
+
+/// Convert an `error` to [`Status::Internal`] with `error` as a [`String`].
+fn error_to_status_internal(error: impl Error) -> Status {
+    Status::internal(error.to_string())
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -279,7 +286,9 @@ impl FlightServiceHandler {
             .await
             .map_err(error_to_status_invalid_argument)?;
 
-        let ticket = Ticket { ticket: select.to_owned().into() };
+        let ticket = Ticket {
+            ticket: select.to_owned().into(),
+        };
         let mut stream = flight_client.do_get(ticket).await?.into_inner();
 
         // Read schema of record batches.
@@ -292,12 +301,11 @@ impl FlightServiceHandler {
 
         // Read record batches.
         let mut record_batches = vec![];
-        let dictionaries_by_id = HashMap::new();
         while let Some(flight_data) = stream.message().await? {
             let record_batch = utils::flight_data_to_arrow_batch(
                 &flight_data,
                 schema.clone(),
-                &dictionaries_by_id,
+                &self.dictionaries_by_id,
             )?;
 
             record_batches.push(record_batch);
@@ -306,12 +314,6 @@ impl FlightServiceHandler {
         let memory_record_batch_stream = MemoryStream::try_new(record_batches, schema, None)?;
 
         Ok(Box::pin(memory_record_batch_stream))
-    }
-
-    /// Return an empty stream of [`RecordBatches`](RecordBatch) that can be returned when a SQL
-    /// command has been successfully executed but did not produce any rows to return.
-    fn empty_record_batch_stream(&self) -> SendableRecordBatchStream {
-        Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
     }
 }
 
@@ -341,7 +343,7 @@ impl FlightService for FlightServiceHandler {
         let table_names = self
             .context
             .default_database_schema()
-            .map_err(|error| Status::internal(error.to_string()))?
+            .map_err(error_to_status_internal)?
             .table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info = FlightInfo::new().with_descriptor(flight_descriptor);
@@ -382,9 +384,7 @@ impl FlightService for FlightServiceHandler {
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let schema_result = schema_as_ipc
-            .try_into()
-            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
+        let schema_result = schema_as_ipc.try_into().map_err(error_to_status_internal)?;
         Ok(Response::new(schema_result))
     }
 
@@ -414,7 +414,7 @@ impl FlightService for FlightServiceHandler {
                     .await
                     .map_err(error_to_status_invalid_argument)?;
 
-                Ok(self.empty_record_batch_stream())
+                Ok(empty_record_batch_stream())
             }
             Statement::Drop {
                 object_type,
@@ -443,7 +443,7 @@ impl FlightService for FlightServiceHandler {
                         .map_err(error_to_status_invalid_argument)?;
                 }
 
-                Ok(self.empty_record_batch_stream())
+                Ok(empty_record_batch_stream())
             }
             Statement::Truncate {
                 table_names,
@@ -470,7 +470,7 @@ impl FlightService for FlightServiceHandler {
                         .map_err(error_to_status_invalid_argument)?;
                 }
 
-                Ok(self.empty_record_batch_stream())
+                Ok(empty_record_batch_stream())
             }
             Statement::Explain { .. } => {
                 modelardb_storage::execute_statement(&self.context.session_context, statement)
@@ -506,7 +506,7 @@ impl FlightService for FlightServiceHandler {
                 "Only CREATE, DROP, TRUNCATE, EXPLAIN, SELECT, and INSERT is supported".to_owned(),
             ))?,
         }
-        .map_err(|error| Status::internal(error.to_string()))?;
+        .map_err(error_to_status_internal)?;
 
         // Send the result using a channel, a channel is needed as sync is not implemented for
         // SenableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
@@ -632,7 +632,7 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .flush()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -641,11 +641,11 @@ impl FlightService for FlightServiceHandler {
             storage_engine
                 .flush()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
             storage_engine
                 .transfer()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -654,11 +654,11 @@ impl FlightService for FlightServiceHandler {
             storage_engine
                 .flush()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
             storage_engine
                 .transfer()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Since the process is killed, a conventional response cannot be given. If the action
             // returns a "Stream removed" message, the edge was successfully flushed and killed.
@@ -738,10 +738,10 @@ impl FlightService for FlightServiceHandler {
 
             send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateConfiguration" {
-            let (setting, offset_data) = arguments::decode_argument(&action.body)
-                .map_err(|error| Status::internal(error.to_string()))?;
-            let (new_value, _offset_data) = arguments::decode_argument(offset_data)
-                .map_err(|error| Status::internal(error.to_string()))?;
+            let (setting, offset_data) =
+                arguments::decode_argument(&action.body).map_err(error_to_status_internal)?;
+            let (new_value, _offset_data) =
+                arguments::decode_argument(offset_data).map_err(error_to_status_internal)?;
 
             // Parse the new value into None if it is empty and a usize integer if it is not empty.
             let new_value: Option<usize> = (!new_value.is_empty())
@@ -776,7 +776,7 @@ impl FlightService for FlightServiceHandler {
                     configuration_manager
                         .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
                         .await
-                        .map_err(|error| Status::internal(error.to_string()))
+                        .map_err(error_to_status_internal)
                 }
                 "compressed_reserved_memory_in_bytes" => {
                     let new_value = new_value.ok_or(invalid_empty_error)?;
@@ -784,16 +784,16 @@ impl FlightService for FlightServiceHandler {
                     configuration_manager
                         .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
                         .await
-                        .map_err(|error| Status::internal(error.to_string()))
+                        .map_err(error_to_status_internal)
                 }
                 "transfer_batch_size_in_bytes" => configuration_manager
                     .set_transfer_batch_size_in_bytes(new_value, storage_engine)
                     .await
-                    .map_err(|error| Status::internal(error.to_string())),
+                    .map_err(error_to_status_internal),
                 "transfer_time_in_seconds" => configuration_manager
                     .set_transfer_time_in_seconds(new_value, storage_engine)
                     .await
-                    .map_err(|error| Status::internal(error.to_string())),
+                    .map_err(error_to_status_internal),
                 "ingestion_threads" | "compression_threads" | "writer_threads" => {
                     Err(Status::unimplemented(format!(
                         "{setting} is not an updatable setting in the server configuration."
