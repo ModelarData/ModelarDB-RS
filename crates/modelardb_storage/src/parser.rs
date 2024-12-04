@@ -327,7 +327,21 @@ impl ModelarDbDialect {
     fn parse_include_query(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // INCLUDE.
         parser.expect_keyword(Keyword::INCLUDE)?;
-        let address = self.parse_single_quoted_string(parser)?;
+
+        let mut addresses = vec![];
+        loop {
+            match self.parse_single_quoted_string(parser) {
+                Ok(address) => {
+                    addresses.push(new_setting(address, None, Value::Null));
+                    if let Token::Comma = parser.peek_nth_token(0).token {
+                        parser.next_token();
+                    } else {
+                        break;
+                    };
+                }
+                Err(error) => return Err(error),
+            }
+        }
 
         // SELECT.
         let mut boxed_query = match parser.parse_boxed_query() {
@@ -336,17 +350,21 @@ impl ModelarDbDialect {
         };
 
         // ClickHouse's SETTINGS is not supported by ModelarDB, so it is repurposed.
-        let key = Ident {
-            value: address,
-            quote_style: None,
-        };
-        let value = Value::Null;
-        let setting = Setting { key, value };
-        boxed_query.settings = Some(vec![setting]);
-
+        boxed_query.settings = Some(addresses);
         let statement = Statement::Query(boxed_query);
+
         Ok(statement)
     }
+}
+
+/// Create a [`Setting`] with `key`, `quote_style`, and `value`.
+fn new_setting(key: String, quote_style: Option<char>, value: Value) -> Setting {
+    let key = Ident {
+        value: key,
+        quote_style,
+    };
+
+    Setting { key, value }
 }
 
 impl Dialect for ModelarDbDialect {
@@ -845,13 +863,15 @@ fn extract_generation_exprs_for_all_columns(
     Ok(generated_columns)
 }
 
-/// Extract the address for specified in an INCLUDE clause if one was specified in `query`,
+/// Extract the addresses specified in an INCLUDE clause if at least one is specified in `query`,
 /// otherwise [`None`] is returned.
-pub fn extract_include_address(query: &Query) -> Option<String> {
-    query
-        .settings
-        .as_ref()
-        .map(|settings| settings[0].key.value.clone())
+pub fn extract_include_addresses(query: &Query) -> Option<Vec<String>> {
+    query.settings.as_ref().map(|settings| {
+        settings
+            .iter()
+            .map(|setting| setting.key.value.to_owned())
+            .collect()
+    })
 }
 
 /// Perform semantic checks to ensure that the DROP statement from which the arguments was extracted
@@ -1435,6 +1455,14 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_include_multiple_addresses_select() {
+        assert!(tokenize_and_parse_sql(
+            "INCLUDE 'grpc://192.168.1.2:9999', 'grpc://192.168.1.3:9999' SELECT * FROM table_name",
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn test_tokenize_and_parse_include_one_double_qouted_address_select() {
         assert!(tokenize_and_parse_sql(
             "INCLUDE \"grpc://192.168.1.2:9999\" SELECT * FROM table_name",
@@ -1452,13 +1480,5 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_include_zero_address() {
         assert!(tokenize_and_parse_sql("INCLUDE SELECT * FROM table_name",).is_err());
-    }
-
-    #[test]
-    fn test_tokenize_and_parse_include_multiple_addresses_select() {
-        assert!(tokenize_and_parse_sql(
-            "INCLUDE 'grpc://192.168.1.2:9999' 'grpc://192.168.1.3:9999' SELECT * FROM table_name",
-        )
-        .is_err());
     }
 }

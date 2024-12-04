@@ -45,7 +45,7 @@ use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStream};
 use deltalake::arrow::datatypes::Schema;
-use futures::stream::{self, BoxStream};
+use futures::stream::{self, BoxStream, SelectAll};
 use futures::StreamExt;
 use modelardb_common::{arguments, remote};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
@@ -96,26 +96,47 @@ pub fn start_apache_arrow_flight_server(
         .map_err(|error| error.into())
 }
 
-/// Execute `sql` at `address`. Assumes `address` was specified using INCLUDE in `sql`.
-async fn execute_query_with_include_at_address(
+/// Execute `sql` at `address` and merge their result with `local_sendable_record_batch_stream`.
+async fn execute_query_at_addresses_and_merge(
     sql: &str,
+    addresses: Vec<String>,
+    local_sendable_record_batch_stream: Pin<Box<dyn RecordBatchStream + Send>>,
+) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
+    // Remove INCLUDE address+ as sqlparser seems incapable of doing so.
+    let no_addresses_error_fn = || Status::invalid_argument("Missing INCLUDE address.");
+    let last_address = addresses.last().ok_or_else(no_addresses_error_fn)?;
+    let start_of_address = sql.rfind(last_address).ok_or_else(no_addresses_error_fn)?;
+    let end_of_address = start_of_address + last_address.len() + 1;
+    let sql_select = &sql[end_of_address..];
+
+    // Execute queries at all addresses and merge all of the result streams.
+    let mut merged_sendable_record_batch_streams = SelectAll::new();
+    let schema = local_sendable_record_batch_stream.schema();
+    merged_sendable_record_batch_streams.push(local_sendable_record_batch_stream);
+
+    for address in addresses {
+        let remote_sendable_record_batch_stream =
+            execute_query_at_address(sql_select.to_owned(), address.to_owned()).await?;
+        merged_sendable_record_batch_streams.push(remote_sendable_record_batch_stream);
+    }
+
+    Ok(Box::pin(RecordBatchStreamAdapter::new(
+        schema,
+        merged_sendable_record_batch_streams,
+    )))
+}
+
+/// Execute `sql` at `address`.
+async fn execute_query_at_address(
+    sql: String,
     address: String,
 ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
-    // Remove INCLUDE address as sqlparser seems incapable of doing so.
-    let start_of_address = sql.find(&address).ok_or_else(|| {
-        ModelarDbServerError::InvalidArgument("Missing INCLUDE address.".to_owned())
-    })?;
-    let end_of_address = start_of_address + address.len() + 1;
-    let select = &sql[end_of_address..];
-
     // Connect and execute query.
     let mut flight_client = FlightServiceClient::connect(address)
         .await
         .map_err(error_to_status_invalid_argument)?;
 
-    let ticket = Ticket {
-        ticket: select.to_owned().into(),
-    };
+    let ticket = Ticket { ticket: sql.into() };
     let mut stream = flight_client.do_get(ticket).await?.into_inner();
 
     // Read schema of record batches.
@@ -126,7 +147,7 @@ async fn execute_query_with_include_at_address(
     })?;
     let schema = Arc::new(Schema::try_from(&flight_data)?);
 
-    // Create copy of Arc so the schame can be used after the closure.
+    // Create copy of Arc so the scheme can be used after the closure.
     let schema_for_stream = schema.clone();
 
     // Create single dictionaries_by_id that can be reused for conversion,
@@ -150,33 +171,6 @@ async fn execute_query_with_include_at_address(
         schema_for_stream,
         record_batches,
     )))
-}
-
-/// Create a stream that returns the elements of `sendable_record_batch_stream_one` and
-/// `sendable_record_batch_stream_two`. Return a [`ModelarDbServerError`] if the schema of
-/// `sendable_record_batch_stream_one` and `sendable_record_batch_stream_two` differ.
-fn merge_sendable_record_batch_streams(
-    sendable_record_batch_stream_one: Pin<Box<dyn RecordBatchStream + std::marker::Send>>,
-    sendable_record_batch_stream_two: Pin<Box<dyn RecordBatchStream + std::marker::Send>>,
-) -> Result<Pin<Box<dyn RecordBatchStream + std::marker::Send>>> {
-    let stream_one_schema = sendable_record_batch_stream_one.schema();
-    let stream_two_schema = sendable_record_batch_stream_two.schema();
-    if stream_one_schema != stream_two_schema {
-        return Err(ModelarDbServerError::InvalidArgument("".to_owned()));
-    }
-
-    let stream_select = stream::select(
-        sendable_record_batch_stream_one,
-        sendable_record_batch_stream_two,
-    );
-
-    let combined_sendable_record_batch_stream: Pin<Box<dyn RecordBatchStream + std::marker::Send>> =
-        Box::pin(RecordBatchStreamAdapter::new(
-            stream_one_schema,
-            stream_select,
-        ));
-
-    Ok(combined_sendable_record_batch_stream)
 }
 
 /// Read [`RecordBatches`](RecordBatch) from `query_result_stream` and send them one at a time to
@@ -516,9 +510,8 @@ impl FlightService for FlightServiceHandler {
                 // TODO: make ModelarDbStatements for all supported SQL.
                 // TODO: add support for ModelarDbStatements in modelardb_manager/remote.
                 // TODO: update user and dev documentation to match recent changes.
-                // TODO: extend PR with support for multiple include addresses if not already big.
 
-                let maybe_address = parser::extract_include_address(boxed_query);
+                let maybe_addresses = parser::extract_include_addresses(boxed_query);
                 let maybe_local_sendable_record_batch_stream: StdResult<
                     Pin<Box<dyn RecordBatchStream + Send>>,
                     ModelarDbServerError,
@@ -526,20 +519,17 @@ impl FlightService for FlightServiceHandler {
                     .await
                     .map_err(|error| error.into());
 
-                if let Some(address) = maybe_address {
+                if let Some(addresses) = maybe_addresses {
+                    // No need to execute a remote query if the local query has failed.
                     let local_sendable_record_batch_stream =
                         maybe_local_sendable_record_batch_stream
                             .map_err(error_to_status_internal)?;
 
-                    let remote_sendable_record_batch_stream =
-                        execute_query_with_include_at_address(&sql, address)
-                            .await
-                            .map_err(error_to_status_internal)?;
-
-                    merge_sendable_record_batch_streams(
+                    execute_query_at_addresses_and_merge(
+                        &sql,
+                        addresses,
                         local_sendable_record_batch_stream,
-                        remote_sendable_record_batch_stream,
-                    )
+                    ).await
                 } else {
                     maybe_local_sendable_record_batch_stream
                 }
