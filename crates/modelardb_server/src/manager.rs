@@ -106,7 +106,7 @@ impl Manager {
 
         // For each table to create, register and save the table in the metadata Delta Lake.
         for create_table_sql in create_table_sql_commands {
-            parser::tokenize_and_parse_sql(create_table_sql)?;
+            parser::tokenize_and_parse_sql_statement(create_table_sql)?;
         }
 
         Ok(())

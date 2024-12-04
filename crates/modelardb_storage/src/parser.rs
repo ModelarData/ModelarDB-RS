@@ -14,9 +14,8 @@
  */
 
 //! Methods for tokenizing and parsing SQL statements. They are tokenized and parsed using
-//! [sqlparser] as it is already used by Apache Arrow DataFusion. Only public functions return
-//! [`ModelarDbStorageError`] to simplify use of traits from [sqlparser] and Apache Arrow
-//! DataFusion.
+//! [sqlparser] as it is already used by Apache DataFusion. Only public functions return
+//! [`ModelarDbStorageError`] to simplify use of traits from [sqlparser] and Apache DataFusion.
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
@@ -50,8 +49,53 @@ use sqlparser::tokenizer::Token;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 
-/// Constant specifying that a model table should be created.
-pub const CREATE_MODEL_TABLE_ENGINE: &str = "ModelTable";
+/// A top-level statement (SELECT, INSERT, CREATE, UPDATE, etc.) that have been tokenized, parsed,
+/// and for which semantics checks have verified that it is compatible with ModelarDB. CREATE TABLE
+/// and CREATE MODEL TABLE is supported.
+#[derive(Debug)]
+pub enum ModelarDbStatement {
+    /// CREATE TABLE.
+    CreateTable { name: String, schema: Schema },
+    /// CREATE MODEL TABLE.
+    CreateModelTable(Arc<ModelTableMetadata>),
+}
+
+/// Tokenize and parse the SQL statements in `sql` and return its parsed representation in the form
+/// of [`Statements`](Statement).
+pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<Statement> {
+    let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
+
+    // Check that the sql contained a parseable statement.
+    if statements.is_empty() {
+        Err(ModelarDbStorageError::InvalidArgument(
+            "An empty string cannot be tokenized and parsed.".to_owned(),
+        ))
+    } else if statements.len() > 1 {
+        Err(ModelarDbStorageError::InvalidArgument(
+            "Multiple SQL statements are not supported.".to_owned(),
+        ))
+    } else {
+        Ok(statements.remove(0))
+    }
+}
+
+/// Parse `sql_expression` into a [`DFExpr`] if it is a correct SQL expression that only references
+/// columns in [`DFSchema`], otherwise [`ModelarDbStorageError`] is returned.
+pub fn tokenize_and_parse_sql_expression(
+    sql_expression: &str,
+    df_schema: &DFSchema,
+) -> Result<DFExpr> {
+    let context_provider = ParserContextProvider::new();
+    let sql_to_rel = SqlToRel::new(&context_provider);
+    let mut planner_context = PlannerContext::new();
+
+    let dialect = ModelarDbDialect::new();
+    let mut parser = Parser::new(&dialect).try_with_sql(sql_expression)?;
+    let parsed_sql_expr = parser.parse_expr()?;
+    sql_to_rel
+        .sql_to_expr(parsed_sql_expr, df_schema, &mut planner_context)
+        .map_err(|error| error.into())
+}
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE MODEL
 /// TABLE table_name DDL statements.
@@ -249,7 +293,7 @@ impl ModelarDbDialect {
     }
 
     /// Create a new [`Statement::CreateTable`] with the provided `table_name` and `columns`, and
-    /// with `engine` set to [`CREATE_MODEL_TABLE_ENGINE`].
+    /// with `engine` set to "ModelTable".
     fn new_create_model_table_statement(
         table_name: ObjectName,
         columns: Vec<ColumnDef>,
@@ -283,7 +327,7 @@ impl ModelarDbDialect {
             like: None,
             clone: None,
             engine: Some(TableEngine {
-                name: CREATE_MODEL_TABLE_ENGINE.to_owned(),
+                name: "ModelTable".to_owned(),
                 parameters: None,
             }),
             comment: None,
@@ -395,34 +439,76 @@ impl Dialect for ModelarDbDialect {
     }
 }
 
-/// Tokenize and parse the SQL statements in `sql` and return its parsed representation in the form
-/// of [`Statements`](Statement).
-pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement> {
-    let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql)?;
+/// Context used when converting [`Expr`](sqlparser::ast::Expr) to [`DFExpr`], e.g., when validating
+/// generation expressions. It is empty except for the functions included in Apache DataFusion. It
+/// is an extended version of the empty context provider in [rewrite_expr.rs] in the Apache
+/// DataFusion GitHub repository which was released under version 2.0 of the Apache License.
+///
+/// [rewrite_expr.rs]: https://github.com/apache/arrow-datafusion/blob/main/datafusion-examples/examples/rewrite_expr.rs
+struct ParserContextProvider {
+    /// The default options for Apache DataFusion.
+    options: ConfigOptions,
+    /// The functions included in Apache DataFusion.
+    udfs: HashMap<String, Arc<ScalarUDF>>,
+}
 
-    // Check that the sql contained a parseable statement.
-    if statements.is_empty() {
-        Err(ModelarDbStorageError::InvalidArgument(
-            "An empty string cannot be tokenized and parsed.".to_owned(),
-        ))
-    } else if statements.len() > 1 {
-        Err(ModelarDbStorageError::InvalidArgument(
-            "Multiple SQL statements are not supported.".to_owned(),
-        ))
-    } else {
-        Ok(statements.remove(0))
+impl ParserContextProvider {
+    fn new() -> Self {
+        let mut functions = functions::all_default_functions();
+
+        let udfs = functions
+            .drain(0..)
+            .map(|udf| (udf.name().to_owned(), udf))
+            .collect::<HashMap<String, Arc<ScalarUDF>>>();
+
+        ParserContextProvider {
+            options: ConfigOptions::default(),
+            udfs,
+        }
     }
 }
 
-/// A top-level statement (SELECT, INSERT, CREATE, UPDATE, etc.) that have been tokenized, parsed,
-/// and for which semantics checks have verified that it is compatible with ModelarDB. CREATE TABLE
-/// and CREATE MODEL TABLE is supported.
-#[derive(Debug)]
-pub enum ModelarDbStatement {
-    /// CREATE TABLE.
-    CreateTable { name: String, schema: Schema },
-    /// CREATE MODEL TABLE.
-    CreateModelTable(Arc<ModelTableMetadata>),
+impl ContextProvider for ParserContextProvider {
+    fn get_table_source(
+        &self,
+        _name: TableReference,
+    ) -> StdResult<Arc<dyn TableSource>, DataFusionError> {
+        Err(DataFusionError::Plan(
+            "The table was not found.".to_string(),
+        ))
+    }
+
+    fn get_function_meta(&self, name: &str) -> Option<Arc<ScalarUDF>> {
+        self.udfs.get(name).cloned()
+    }
+
+    fn get_aggregate_meta(&self, _name: &str) -> Option<Arc<AggregateUDF>> {
+        None
+    }
+
+    fn get_window_meta(&self, _name: &str) -> Option<Arc<WindowUDF>> {
+        None
+    }
+
+    fn get_variable_type(&self, _variable_names: &[String]) -> Option<DataType> {
+        None
+    }
+
+    fn options(&self) -> &ConfigOptions {
+        &self.options
+    }
+
+    fn udf_names(&self) -> Vec<String> {
+        self.udfs.keys().cloned().collect()
+    }
+
+    fn udaf_names(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn udwf_names(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE statement in
@@ -469,7 +555,6 @@ pub fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Mod
 
     // Create a ModelarDbStatement with the information for creating the table of the specified
     // type.
-    let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
     if let Some(_expected_engine) = engine {
         // Create a model table for time series that only supports TIMESTAMP, FIELD, and TAG.
         let model_table_metadata =
@@ -479,7 +564,7 @@ pub fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Mod
             model_table_metadata,
         )))
     } else {
-        // Create a table that supports all columns types supported by Apache Arrow DataFusion.
+        // Create a table that supports all columns types supported by Apache DataFusion.
         let context_provider = ParserContextProvider::new();
         let sql_to_rel = SqlToRel::new(&context_provider);
         let schema = sql_to_rel
@@ -683,7 +768,7 @@ fn column_defs_to_model_table_query_schema(
 ) -> StdResult<Schema, DataFusionError> {
     let mut fields = Vec::with_capacity(column_defs.len());
 
-    // Manually convert TIMESTAMP, FIELD, and TAG columns to Apache Arrow DataFusion types.
+    // Manually convert TIMESTAMP, FIELD, and TAG columns to Apache DataFusion types.
     for column_def in column_defs {
         let normalized_name = normalize_name(&column_def.name.value);
 
@@ -836,9 +921,9 @@ fn extract_generation_exprs_for_all_columns(
                 let expr =
                     sql_to_rel.sql_to_expr(sql_expr.clone(), &df_schema, &mut planner_context)?;
 
-                // Ensure the logical Apache Arrow DataFusion expression can be converted to a
-                // physical Apache Arrow DataFusion expression within the context of schema. This is
-                // to improve error messages if the user-defined expression has semantic errors.
+                // Ensure the logical Apache DataFusion expression can be converted to a physical
+                // Apache DataFusion expression within the context of schema. This is to improve
+                // error messages if the user-defined expression has semantic errors.
                 let _physical_expr =
                     planner::create_physical_expr(&expr, &df_schema, &execution_props)?;
 
@@ -937,103 +1022,16 @@ pub fn semantic_checks_for_truncate(
     }
 }
 
-/// Parse `sql_expr` into a [`DFExpr`] if it is a correctly formatted SQL arithmetic expression that
-/// only references columns in [`DFSchema`], otherwise [`ModelarDbStorageError`] is returned.
-pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFExpr> {
-    let context_provider = ParserContextProvider::new();
-    let sql_to_rel = SqlToRel::new(&context_provider);
-    let mut planner_context = PlannerContext::new();
-
-    let dialect = ModelarDbDialect::new();
-    let mut parser = Parser::new(&dialect).try_with_sql(sql_expr)?;
-    let parsed_sql_expr = parser.parse_expr()?;
-    sql_to_rel
-        .sql_to_expr(parsed_sql_expr, df_schema, &mut planner_context)
-        .map_err(|error| error.into())
-}
-
-/// Context used when converting [`Expr`](sqlparser::ast::Expr) to [`DFExpr`], e.g., when validating
-/// generation expressions. It is empty except for the functions included in Apache DataFusion. It
-/// is an extended version of the empty context provider in [rewrite_expr.rs] in the Apache
-/// DataFusion GitHub repository which was released under version 2.0 of the Apache License.
-///
-/// [rewrite_expr.rs]: https://github.com/apache/arrow-datafusion/blob/main/datafusion-examples/examples/rewrite_expr.rs
-struct ParserContextProvider {
-    /// The default options for Apache DataFusion.
-    options: ConfigOptions,
-    /// The functions included in Apache DataFusion.
-    udfs: HashMap<String, Arc<ScalarUDF>>,
-}
-
-impl ParserContextProvider {
-    fn new() -> Self {
-        let mut functions = functions::all_default_functions();
-
-        let udfs = functions
-            .drain(0..)
-            .map(|udf| (udf.name().to_owned(), udf))
-            .collect::<HashMap<String, Arc<ScalarUDF>>>();
-
-        ParserContextProvider {
-            options: ConfigOptions::default(),
-            udfs,
-        }
-    }
-}
-
-impl ContextProvider for ParserContextProvider {
-    fn get_table_source(
-        &self,
-        _name: TableReference,
-    ) -> StdResult<Arc<dyn TableSource>, DataFusionError> {
-        Err(DataFusionError::Plan(
-            "The table was not found.".to_string(),
-        ))
-    }
-
-    fn get_function_meta(&self, name: &str) -> Option<Arc<ScalarUDF>> {
-        self.udfs.get(name).cloned()
-    }
-
-    fn get_aggregate_meta(&self, _name: &str) -> Option<Arc<AggregateUDF>> {
-        None
-    }
-
-    fn get_window_meta(&self, _name: &str) -> Option<Arc<WindowUDF>> {
-        None
-    }
-
-    fn get_variable_type(&self, _variable_names: &[String]) -> Option<DataType> {
-        None
-    }
-
-    fn options(&self) -> &ConfigOptions {
-        &self.options
-    }
-
-    fn udf_names(&self) -> Vec<String> {
-        self.udfs.keys().cloned().collect()
-    }
-
-    fn udaf_names(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn udwf_names(&self) -> Vec<String> {
-        vec![]
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use sqlparser::dialect::ClickHouseDialect;
 
-    // Tests for tokenize_and_parse_sql().
+    // Tests tokenize_and_parse_sql_statement().
     #[test]
     fn test_tokenize_and_parse_empty_sql() {
-        assert!(tokenize_and_parse_sql("").is_err());
+        assert!(tokenize_and_parse_sql_statement("").is_err());
     }
 
     #[test]
@@ -1043,7 +1041,7 @@ mod tests {
                          field_four FIELD AS (CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)),
                          tag TAG)";
 
-        let statement = tokenize_and_parse_sql(sql).unwrap();
+        let statement = tokenize_and_parse_sql_statement(sql).unwrap();
         if let Statement::CreateTable(CreateTable { name, columns, .. }) = &statement {
             assert_eq!(*name, new_object_name("table_name"));
             let expected_columns = vec![
@@ -1128,7 +1126,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_create() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1136,7 +1134,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_create_model_space() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATEMODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1145,7 +1143,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_model() {
         // Tracks if sqlparser at some point can parse fields/tags in a TABLE.
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field_one FIELD(10.5),
                                      field_two FIELD(1%), tag TAG)",
         )
@@ -1154,7 +1152,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_model_table_space() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODELTABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1162,7 +1160,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_table_name() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1170,7 +1168,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_table_table_name_space() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1178,7 +1176,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_start_parentheses() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1186,7 +1184,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_option() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP PRIMARY KEY, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1194,7 +1192,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_sql_types() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field REAL, tag VARCHAR)",
         )
         .is_err());
@@ -1202,7 +1200,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_column_name() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1210,7 +1208,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_timestamps() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP AS (37), field FIELD, tag TAG)",
         )
         .is_err());
@@ -1218,7 +1216,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_tags() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG AS (37))",
         )
         .is_err());
@@ -1226,7 +1224,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_parentheses() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37, tag TAG)",
         )
         .is_err());
@@ -1235,7 +1233,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_start_parentheses()
     {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37), tag TAG)",
         )
         .is_err());
@@ -1243,7 +1241,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_end_parentheses() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS (37, tag TAG)",
         )
         .is_err());
@@ -1252,7 +1250,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_absolute_error_bound()
     {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0) AS (37), tag TAG)",
         )
         .is_err());
@@ -1261,7 +1259,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_relative_error_bound()
     {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0%) AS (37), tag TAG)",
         )
         .is_err());
@@ -1269,7 +1267,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_column_type() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1277,7 +1275,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_comma() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP field FIELD, tag TAG)",
         )
         .is_err());
@@ -1285,7 +1283,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_end_parentheses() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG",
         )
         .is_err());
@@ -1293,7 +1291,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_two_create_model_table_statements() {
-        let error = tokenize_and_parse_sql(
+        let error = tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG);
              CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         );
@@ -1348,7 +1346,7 @@ mod tests {
             if keyword == &"END-EXEC" {
                 continue;
             }
-            let statement = tokenize_and_parse_sql(
+            let statement = tokenize_and_parse_sql_statement(
                 sql.replace("{}", keyword_to_table_name(keyword).as_str())
                     .as_str(),
             );
@@ -1394,14 +1392,14 @@ mod tests {
             let mut parser = Parser::new(&dialect).try_with_sql(generation_expr).unwrap();
             assert_eq!(generation_expr, parser.parse_expr().unwrap().to_string());
 
-            // Assert that the expression can be parsed to an Apache Arrow DataFusion expression.
-            parse_sql_expression(&df_schema, generation_expr).unwrap();
+            // Assert that the expression can be parsed to an Apache DataFusion expression.
+            tokenize_and_parse_sql_expression(generation_expr, &df_schema).unwrap();
         }
     }
 
     #[test]
     fn test_semantic_checks_for_create_model_table_check_correct_generated_expression() {
-        let statement = tokenize_and_parse_sql(
+        let statement = tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_1 * PI() / 180)), tag TAG)",
         ).unwrap();
 
@@ -1411,7 +1409,7 @@ mod tests {
 
     #[test]
     fn test_semantic_checks_for_create_model_table_check_wrong_generated_expression() {
-        let statement = tokenize_and_parse_sql(
+        let statement = tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_3 * PI() / 180)), tag TAG)",
         ).unwrap();
 
@@ -1448,7 +1446,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_include_one_address_select() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "INCLUDE 'grpc://192.168.1.2:9999' SELECT * FROM table_name",
         )
         .is_ok());
@@ -1456,7 +1454,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_include_multiple_addresses_select() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "INCLUDE 'grpc://192.168.1.2:9999', 'grpc://192.168.1.3:9999' SELECT * FROM table_name",
         )
         .is_ok());
@@ -1464,7 +1462,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_include_one_double_qouted_address_select() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "INCLUDE \"grpc://192.168.1.2:9999\" SELECT * FROM table_name",
         )
         .is_err());
@@ -1472,13 +1470,14 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_one_address_select() {
-        assert!(
-            tokenize_and_parse_sql("'grpc://192.168.1.2:9999' SELECT * FROM table_name",).is_err()
-        );
+        assert!(tokenize_and_parse_sql_statement(
+            "'grpc://192.168.1.2:9999' SELECT * FROM table_name",
+        )
+        .is_err());
     }
 
     #[test]
     fn test_tokenize_and_parse_create_include_zero_address() {
-        assert!(tokenize_and_parse_sql("INCLUDE SELECT * FROM table_name",).is_err());
+        assert!(tokenize_and_parse_sql_statement("INCLUDE SELECT * FROM table_name",).is_err());
     }
 }

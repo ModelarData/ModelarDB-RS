@@ -840,7 +840,7 @@ mod tests {
     }
 
     async fn parse_and_create_table(context: &Context, sql: &str) -> Result<()> {
-        let statement = parser::tokenize_and_parse_sql(sql)?;
+        let statement = parser::tokenize_and_parse_sql_statement(sql)?;
         if let Statement::CreateTable(create_table) = statement {
             context.validate_and_create_table(sql, create_table).await
         } else {

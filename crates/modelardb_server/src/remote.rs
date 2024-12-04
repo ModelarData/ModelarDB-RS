@@ -434,7 +434,7 @@ impl FlightService for FlightServiceHandler {
 
         // Parse the query.
         let statement =
-            parser::tokenize_and_parse_sql(&sql).map_err(error_to_status_invalid_argument)?;
+            parser::tokenize_and_parse_sql_statement(&sql).map_err(error_to_status_invalid_argument)?;
 
         let sendable_record_batch_stream = match statement {
             Statement::CreateTable(create_table) => {

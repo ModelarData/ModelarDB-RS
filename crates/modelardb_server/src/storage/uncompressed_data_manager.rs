@@ -803,7 +803,7 @@ mod tests {
         );
 
         // Create a model table in the context.
-        let statement = parser::tokenize_and_parse_sql(test::MODEL_TABLE_SQL).unwrap();
+        let statement = parser::tokenize_and_parse_sql_statement(test::MODEL_TABLE_SQL).unwrap();
         if let Statement::CreateTable(create_table) = statement {
             context.validate_and_create_table(test::MODEL_TABLE_SQL, create_table).await
         } else {

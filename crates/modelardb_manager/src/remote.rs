@@ -391,7 +391,7 @@ impl FlightService for FlightServiceHandler {
 
         // Parse the SQL and perform semantic checks to extract the schema from the statement.
         // unwrap() is safe since the SQL was parsed and checked when the table was created.
-        let statement = parser::tokenize_and_parse_sql(table_sql.as_str()).unwrap();
+        let statement = parser::tokenize_and_parse_sql_statement(table_sql.as_str()).unwrap();
         let create_table = self.statement_to_create_table(statement)?;
         let valid_statement = parser::semantic_checks_for_create_table(create_table).unwrap();
 
@@ -532,7 +532,7 @@ impl FlightService for FlightServiceHandler {
             info!("Received request to execute '{}'.", sql);
 
             // Parse the SQL.
-            let statement = parser::tokenize_and_parse_sql(sql)
+            let statement = parser::tokenize_and_parse_sql_statement(sql)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // Perform semantic checks to ensure the parsed SQL is supported.
