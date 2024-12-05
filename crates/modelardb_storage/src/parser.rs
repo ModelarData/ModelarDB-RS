@@ -55,7 +55,7 @@ use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata}
 #[derive(Debug)]
 pub enum ModelarDbStatement {
     /// CREATE TABLE.
-    CreateTable { name: String, schema: Schema },
+    CreateNormalTable { name: String, schema: Schema },
     /// CREATE MODEL TABLE.
     CreateModelTable(Arc<ModelTableMetadata>),
     /// INSERT, EXPLAIN, SELECT.
@@ -646,7 +646,7 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
             })
             .collect::<Vec<Field>>();
 
-        Ok(ModelarDbStatement::CreateTable {
+        Ok(ModelarDbStatement::CreateNormalTable {
             name: normalized_name,
             schema: Schema::new(supported_fields),
         })
@@ -1085,6 +1085,7 @@ fn semantic_checks_for_truncate(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     use sqlparser::dialect::ClickHouseDialect;
@@ -1102,87 +1103,50 @@ mod tests {
                          field_four FIELD AS (CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)),
                          tag TAG)";
 
-        let statement = tokenize_and_parse_sql_statement(sql).unwrap();
-        if let Statement::CreateTable(CreateTable { name, columns, .. }) = &statement {
-            assert_eq!(*name, new_object_name("table_name"));
-            let expected_columns = vec![
-                ModelarDbDialect::new_column_def(
+        let modelardb_statement = tokenize_and_parse_sql_statement(sql).unwrap();
+        if let ModelarDbStatement::CreateModelTable(model_table_metadata) = &modelardb_statement {
+            assert_eq!(model_table_metadata.name, "table_name");
+            let expected_schema = Arc::new(Schema::new(vec![
+                Field::new(
                     "timestamp",
-                    SQLDataType::Timestamp(None, TimezoneInfo::None),
-                    vec![],
+                    DataType::Timestamp(TimeUnit::Microsecond, None),
+                    false,
                 ),
-                ModelarDbDialect::new_column_def("field_one", SQLDataType::Real, vec![]),
-                ModelarDbDialect::new_column_def(
-                    "field_two",
-                    SQLDataType::Real,
-                    new_column_option_def_error_bound_and_generation_expr(
-                        Some((10.5, false)),
-                        None,
-                    ),
-                ),
-                ModelarDbDialect::new_column_def(
-                    "field_three",
-                    SQLDataType::Real,
-                    new_column_option_def_error_bound_and_generation_expr(Some((1.0, true)), None),
-                ),
-                ModelarDbDialect::new_column_def(
-                    "field_four",
-                    SQLDataType::Real,
-                    new_column_option_def_error_bound_and_generation_expr(
-                        None,
-                        Some("CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)"),
-                    ),
-                ),
-                ModelarDbDialect::new_column_def("tag", SQLDataType::Text, vec![]),
-            ];
-            assert_eq!(*columns, expected_columns);
+                Field::new("field_one", DataType::Float32, false),
+                Field::new("field_two", DataType::Float32, false).with_metadata({
+                    let mut metadata = HashMap::new();
+                    metadata.insert("Error Bound".to_owned(), "10.5".to_owned());
+                    metadata
+                }),
+                Field::new("field_three", DataType::Float32, false).with_metadata({
+                    let mut metadata = HashMap::new();
+                    metadata.insert("Error Bound".to_owned(), "1%".to_owned());
+                    metadata
+                }),
+                Field::new("field_four", DataType::Float32, false).with_metadata({
+                    let mut metadata = HashMap::new();
+                    metadata.insert(
+                        "Generated As".to_owned(),
+                        "CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)".to_owned(),
+                    );
+                    metadata
+                }),
+                Field::new("tag", DataType::Utf8, false),
+            ]));
+            assert_eq!(model_table_metadata.query_schema, expected_schema);
 
-            // unwrap() asserts that the semantic check have all passed as it otherwise panics.
-            let create_table = statement_to_create_table(statement);
-            semantic_checks_for_create_table(create_table).unwrap();
+            assert_eq!(
+                model_table_metadata.error_bounds[2],
+                ErrorBound::try_new_absolute(10.5).unwrap()
+            );
+            assert_eq!(
+                model_table_metadata.error_bounds[3],
+                ErrorBound::try_new_relative(1.0).unwrap()
+            );
+            assert!(model_table_metadata.generated_columns[4].is_some())
         } else {
-            panic!("CREATE TABLE DDL did not parse to a Statement::CreateTable.");
+            panic!("CREATE TABLE DDL did not parse to a ModelarDbStatement::CreateModelTable.");
         }
-    }
-
-    fn new_object_name(name: &str) -> ObjectName {
-        ObjectName(vec![Ident::new(name)])
-    }
-
-    fn new_column_option_def_error_bound_and_generation_expr(
-        maybe_error_bound: Option<(f32, bool)>,
-        maybe_sql_expr: Option<&str>,
-    ) -> Vec<ColumnOptionDef> {
-        let mut column_option_defs = vec![];
-
-        if let Some((error_bound, is_relative)) = maybe_error_bound {
-            let dialect_specific_tokens = vec![Token::Number(error_bound.to_string(), is_relative)];
-            let error_bound = ColumnOptionDef {
-                name: None,
-                option: ColumnOption::DialectSpecific(dialect_specific_tokens),
-            };
-
-            column_option_defs.push(error_bound);
-        }
-
-        if let Some(sql_expr) = maybe_sql_expr {
-            let dialect = ModelarDbDialect::new();
-            let mut parser = Parser::new(&dialect).try_with_sql(sql_expr).unwrap();
-            let generation_expr = ColumnOptionDef {
-                name: None,
-                option: ColumnOption::Generated {
-                    generated_as: GeneratedAs::Always,
-                    sequence_options: None,
-                    generation_expr: Some(parser.parse_expr().unwrap()),
-                    generation_expr_mode: None,
-                    generated_keyword: false,
-                },
-            };
-
-            column_option_defs.push(generation_expr);
-        };
-
-        column_option_defs
     }
 
     #[test]
@@ -1407,18 +1371,15 @@ mod tests {
             if keyword == &"END-EXEC" {
                 continue;
             }
-            let statement = tokenize_and_parse_sql_statement(
+            let modelardb_statement = tokenize_and_parse_sql_statement(
                 sql.replace("{}", keyword_to_table_name(keyword).as_str())
                     .as_str(),
             );
 
-            let create_table = statement_to_create_table(statement.unwrap());
-            let valid_statement = semantic_checks_for_create_table(create_table);
-
-            assert!(valid_statement.is_err());
+            assert!(modelardb_statement.is_err());
 
             assert_eq!(
-                valid_statement.unwrap_err().to_string(),
+                modelardb_statement.unwrap_err().to_string(),
                 format!(
                     "Invalid Argument Error: Reserved keyword '{}' cannot be used as a table name.",
                     keyword_to_table_name(keyword)
@@ -1460,31 +1421,27 @@ mod tests {
 
     #[test]
     fn test_semantic_checks_for_create_model_table_check_correct_generated_expression() {
-        let statement = tokenize_and_parse_sql_statement(
+        let modelardb_statement = tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_1 * PI() / 180)), tag TAG)",
         ).unwrap();
 
-        let create_table = statement_to_create_table(statement);
-        assert!(semantic_checks_for_create_table(create_table).is_ok());
+        assert!(is_statement_create_table(modelardb_statement));
     }
 
     #[test]
     fn test_semantic_checks_for_create_model_table_check_wrong_generated_expression() {
-        let statement = tokenize_and_parse_sql_statement(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_3 * PI() / 180)), tag TAG)",
-        ).unwrap();
-
-        let create_table = statement_to_create_table(statement);
-        assert!(semantic_checks_for_create_table(create_table).is_err());
+        ).is_err());
     }
 
-    /// Return [`CreateTable`] if `statement` is [`Statement::CreateTable`] and panics otherwise.
-    fn statement_to_create_table(statement: Statement) -> CreateTable {
-        if let Statement::CreateTable(create_table) = statement {
-            create_table
-        } else {
-            panic!("Expected Statement::CreateTable.");
-        }
+    /// Return [`true`] if `modelardb_statement` is [`ModelarDbStatement::CreateNormalTable`] or
+    /// [`ModelarDbStatement::CreateModelTable`] and [`false`] otherwise.
+    fn is_statement_create_table(modelardb_statement: ModelarDbStatement) -> bool {
+        matches!(
+            modelardb_statement,
+            ModelarDbStatement::CreateNormalTable { .. } | ModelarDbStatement::CreateModelTable(..)
+        )
     }
 
     #[test]

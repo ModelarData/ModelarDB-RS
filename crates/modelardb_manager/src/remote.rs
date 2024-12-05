@@ -382,7 +382,7 @@ impl FlightService for FlightServiceHandler {
             .map_err(|error| Status::internal(error.to_string()))?;
 
         let schema = match modelardb_statement {
-            ModelarDbStatement::CreateTable { schema, .. } => Arc::new(schema),
+            ModelarDbStatement::CreateNormalTable { schema, .. } => Arc::new(schema),
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                 model_table_metadata.schema.clone()
             }
@@ -429,7 +429,7 @@ impl FlightService for FlightServiceHandler {
         info!("Executing SQL: '{}'.", sql);
 
         match modelardb_statement {
-            ModelarDbStatement::CreateTable { name, schema } => {
+            ModelarDbStatement::CreateNormalTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
                 self.save_and_create_cluster_normal_table(&name, &schema, &sql)
                     .await?;

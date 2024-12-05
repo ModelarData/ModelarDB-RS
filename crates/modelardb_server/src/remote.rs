@@ -439,7 +439,7 @@ impl FlightService for FlightServiceHandler {
         info!("Executing SQL: '{}'.", sql);
 
         let sendable_record_batch_stream = match modelardb_statement {
-            ModelarDbStatement::CreateTable { name, schema } => {
+            ModelarDbStatement::CreateNormalTable { name, schema } => {
                 self.context
                     .create_normal_table(name, schema, &sql)
                     .await

@@ -770,12 +770,12 @@ mod tests {
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
         UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
+    use modelardb_storage::parser::ModelarDbStatement;
     use modelardb_storage::{parser, test};
     use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
-    use sqlparser::ast::Statement;
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
 
@@ -803,12 +803,15 @@ mod tests {
         );
 
         // Create a model table in the context.
-        let statement = parser::tokenize_and_parse_sql_statement(test::MODEL_TABLE_SQL).unwrap();
-        if let Statement::CreateTable(create_table) = statement {
-            context.validate_and_create_table(test::MODEL_TABLE_SQL, create_table).await
+        let modelardb_statement =
+            parser::tokenize_and_parse_sql_statement(test::MODEL_TABLE_SQL).unwrap();
+        if let ModelarDbStatement::CreateModelTable(model_table_metadata) = modelardb_statement {
+            context
+                .create_model_table(model_table_metadata, test::MODEL_TABLE_SQL)
+                .await
         } else {
             Err(ModelarDbServerError::InvalidArgument(
-                "Expected Statement::CreateTable.".to_owned(),
+                "Expected ModelarDbStatement::CreateTable.".to_owned(),
             ))
         }
         .unwrap();

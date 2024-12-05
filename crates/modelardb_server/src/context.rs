@@ -425,8 +425,8 @@ mod tests {
     use super::*;
 
     use modelardb_storage::parser;
+    use modelardb_storage::parser::ModelarDbStatement;
     use modelardb_storage::test;
-    use sqlparser::ast::Statement;
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
@@ -841,13 +841,16 @@ mod tests {
     }
 
     async fn parse_and_create_table(context: &Context, sql: &str) -> Result<()> {
-        let statement = parser::tokenize_and_parse_sql_statement(sql)?;
-        if let Statement::CreateTable(create_table) = statement {
-            context.create_table(sql, create_table).await
-        } else {
-            Err(ModelarDbServerError::InvalidArgument(
-                "Expected Statement::CreateTable.".to_owned(),
-            ))
+        match parser::tokenize_and_parse_sql_statement(sql)? {
+            ModelarDbStatement::CreateNormalTable { name, schema } => {
+                context.create_normal_table(name, schema, sql).await
+            }
+            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+                context.create_model_table(model_table_metadata, sql).await
+            }
+            _ => Err(ModelarDbServerError::InvalidArgument(
+                "Expected ModelarDbStatement::CreateTable.".to_owned(),
+            )),
         }
     }
 
