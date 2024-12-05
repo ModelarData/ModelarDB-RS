@@ -400,6 +400,14 @@ impl FlightService for FlightServiceHandler {
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                 model_table_metadata.schema.clone()
             }
+            ModelarDbStatement::Insert(_)
+            | ModelarDbStatement::Query(_)
+            | ModelarDbStatement::DropTable(_)
+            | ModelarDbStatement::TruncateTable(_) => {
+                return Err(Status::invalid_argument(
+                    "Expected CreateTable or CreateModelTable",
+                ));
+            }
         };
 
         let options = IpcWriteOptions::default();
@@ -552,6 +560,14 @@ impl FlightService for FlightServiceHandler {
                         .await?;
                     self.save_and_create_cluster_model_table(model_table_metadata, sql)
                         .await?;
+                }
+                ModelarDbStatement::Insert(_)
+                | ModelarDbStatement::Query(_)
+                | ModelarDbStatement::DropTable(_)
+                | ModelarDbStatement::TruncateTable(_) => {
+                    return Err(Status::invalid_argument(
+                        "Expected CreateTable or CreateModelTable",
+                    ));
                 }
             };
 

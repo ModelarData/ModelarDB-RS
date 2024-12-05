@@ -95,6 +95,14 @@ impl Context {
                 self.register_and_save_model_table(model_table_metadata, sql)
                     .await?;
             }
+            ModelarDbStatement::Insert(_)
+            | ModelarDbStatement::Query(_)
+            | ModelarDbStatement::DropTable(_)
+            | ModelarDbStatement::TruncateTable(_) => {
+                return Err(ModelarDbServerError::InvalidArgument(
+                    "Expected CreateTable or CreateModelTable".to_owned(),
+                ));
+            }
         }
 
         Ok(())

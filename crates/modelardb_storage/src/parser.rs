@@ -58,6 +58,14 @@ pub enum ModelarDbStatement {
     CreateTable { name: String, schema: Schema },
     /// CREATE MODEL TABLE.
     CreateModelTable(Arc<ModelTableMetadata>),
+    /// INSERT.
+    Insert(Statement),
+    /// QUERY.
+    Query(Statement),
+    /// DROP TABLE.
+    DropTable(String),
+    /// TRUNCATE TABLE.
+    TruncateTable(String),
 }
 
 /// Tokenize and parse the SQL statements in `sql` and return its parsed representation in the form
