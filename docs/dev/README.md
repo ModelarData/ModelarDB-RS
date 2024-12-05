@@ -19,47 +19,33 @@ exists, e.g., the bug report if it is a bugfix, and as a new GitHub issue otherw
 The ModelarDB project consists of the following crates and major components:
 
 - [modelardb_client](/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
+  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **Helper** - Enhances the command-line client with autocompletion of keywords and names.
-- [modelardb_common](/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the
-other crates.
-  - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the tables' schema and compressed
-  data.
+- [modelardb_common](/crates/modelardb_common) - Library of shared functions for use by the other crates.
+  - **Test** - Constants and functionality for data generation for use in tests.
   - **Arguments** - Parses command-line arguments and serializes and deserializes arguments for use with Apache Arrow
   Flight.
-  - **Errors** - Error type used throughout the ModelarDB project, a single error type is used throughout the ModelarDB
-  project for simplicity.
-  - **Macros** - Macros for extracting an array from a `RecordBatch` and extracting all arrays from a `RecordBatch` with
-  compressed segments.
-  - **Parser** - Extension to Apache DataFusion's SQL parser so it can create model tables with a timestamp, one or more
-  fields, and zero or more tags.
-  - **Schemas** - Schemas used throughout the ModelarDB project, e.g., for buffers and for Apache Parquet files with
-  compressed segments.
-  - **Types** - Types used throughout the ModelarDB project, e.g., for representing timestamps and different kinds of
-  error bounds.
+  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
+  - **Remote** - Functions used by the public Apache Arrow Flight interfaces.
 - [modelardb_compression](/crates/modelardb_compression) - Library providing lossless and lossy model-based compression
 of time series.
   - **Models** - Multiple types of models used for compressing time series within different kinds of error bounds
   (possibly 0% error).
   - **Compression** - Compresses univariate time series within user-defined error bounds (possibly 0% error) and outputs
   compressed segments.
+  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **Merge** - Merges compressed segments if possible within the error bound to further decrease the amount of storage
-  and bandwidth required.
-  For example, if a time series has the same structure at the end of a batch of data points and the start of the
-  following batch of data points.
-  - **Types** - Types used throughout modelardb_compression, e.g., for creating compressed segments and accumulating
-  batches of them.
+  and bandwidth required. For example, if a time series has the same structure at the end of a batch of data points and
+  the start of the following batch of data points.
+  - **Types** - Types used throughout the create, e.g., for creating compressed segments and accumulating batches of
+  them.
 - [modelardb_manager](/crates/modelardb_manager) - ModelarDB's manager in the form of the binary `modelardbm`.
   - **Cluster** - Manages edge and cloud nodes currently controlled by the ModelarDB manager and provides functionality
   for balancing query workloads across multiple cloud nodes.
+  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the manager itself, the nodes
   controlled by the manager, and the database schema and compressed data in the cluster.
   - **Remote** - A public interface for interacting with the ModelarDB manager using Apache Arrow Flight.
-- [modelardb_query](/crates/modelardb_query) - Library providing integration with Apache DataFusion for query
-processing.
-  - **Optimizer** - Rules for rewriting Apache DataFusion's physical plans for model tables so aggregates are computed
-  from compressed segments instead of from reconstructed data points.
-  - **Query** - Types that implement traits provided by Apache DataFusion so SQL queries can be executed for ModelarDB
-  tables.
 - [modelardb_server](/crates/modelardb_server) - ModelarDB's DBMS server in the form of the binary `modelardbd`.
   - **Storage** - Manages uncompressed data, compresses uncompressed data, manages compressed data, and writes
   compressed data to Delta Lake.
@@ -69,9 +55,32 @@ processing.
   access them.
   - **Data Folders** - A type for managing data and metadata in a local data folder, an Amazon S3 bucket, or an
   Microsoft Azure Blob Storage container.
+  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **Manager** - Manages metadata related to the ModelarDB manager and provides functionality for interacting with the
   ModelarDB manager.
   - **Remote** - A public interface to interact with the ModelarDB DBMS server using Apache Arrow Flight.
+- [modelardb_storage](/crates/modelardb_storage) - Library providing functionality for reading from and writing to
+storage.
+  - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the tables' schema and compressed
+  data.
+  - **Optimizer** - Rules for rewriting Apache DataFusion's physical plans for model tables so aggregates are computed
+  from compressed segments instead of from reconstructed data points.
+  - **Query** - Types that implement traits provided by Apache DataFusion so SQL queries can be executed for ModelarDB
+  tables.
+  - **Delta Lake** - Module providing functionality for reading from and writing to a delta lake.
+  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
+  - **Parser** - Extensions to Apache DataFusion's SQL parser. The first allow it to create model tables with a
+  timestamp, one or more fields, and zero or more tags. The second enable a `INCLUDE address+` before `SELECT`.
+  - **Test** - Constants and functionality for data generation for use in tests.
+- [modelardb_types](/crates/modelardb_types) - Library of shared macros and types for use by the other crates.
+  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
+  - **Functions** - Functions for operating on the types, e.g., extracting elements from univariate ids.
+  - **Macros** - Macros for extracting an array from a `RecordBatch` and extracting all arrays from a `RecordBatch` with
+  compressed segments.
+  - **Schemas** - Schemas used throughout the ModelarDB project, e.g., for buffers and for Apache Parquet files with
+  compressed segments.
+  - **Types** - Types used throughout the ModelarDB project, e.g., for representing timestamps and different kinds of
+  error bounds.
 
 ## Development
 All code must be formatted according to the [Rust Style
