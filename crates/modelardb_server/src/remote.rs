@@ -49,7 +49,7 @@ use futures::stream::{self, BoxStream, SelectAll};
 use futures::StreamExt;
 use modelardb_common::{arguments, remote};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_storage::parser;
+use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::functions;
 use modelardb_types::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_types::types::TimestampBuilder;
@@ -433,65 +433,45 @@ impl FlightService for FlightServiceHandler {
         info!("Received SQL: '{}'.", sql);
 
         // Parse the query.
-        let statement =
-            parser::tokenize_and_parse_sql_statement(&sql).map_err(error_to_status_invalid_argument)?;
+        let modelardb_statement = parser::tokenize_and_parse_sql_statement(&sql)
+            .map_err(error_to_status_invalid_argument)?;
 
-        let sendable_record_batch_stream = match statement {
-            Statement::CreateTable(create_table) => {
+        let sendable_record_batch_stream = match modelardb_statement {
+            ModelarDbStatement::CreateTable { name, schema } => {
                 self.context
-                    .validate_and_create_table(&sql, create_table)
+                    .create_normal_table(name, schema, &sql)
                     .await
                     .map_err(error_to_status_invalid_argument)?;
 
                 Ok(empty_record_batch_stream())
             }
-            Statement::Drop {
-                object_type,
-                if_exists,
-                names,
-                cascade,
-                restrict,
-                purge,
-                temporary,
-            } => {
-                let table_names = parser::semantic_checks_for_drop(
-                    object_type,
-                    if_exists,
-                    names,
-                    cascade,
-                    restrict,
-                    purge,
-                    temporary,
-                )
-                .map_err(error_to_status_invalid_argument)?;
-
-                for table_name in table_names {
-                    self.context
-                        .drop_table(&table_name)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
-                }
+            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+                self.context
+                    .create_model_table(model_table_metadata, &sql)
+                    .await
+                    .map_err(error_to_status_invalid_argument)?;
 
                 Ok(empty_record_batch_stream())
             }
-            Statement::Truncate {
-                table_names,
-                partitions,
-                table,
-                only,
-                identity,
-                cascade,
-            } => {
-                let table_names = parser::semantic_checks_for_truncate(
-                    table_names,
-                    partitions,
-                    table,
-                    only,
-                    identity,
-                    cascade,
-                )
-                .map_err(error_to_status_invalid_argument)?;
+            ModelarDbStatement::Statement(statement) => {
+                modelardb_storage::execute_statement(&self.context.session_context, statement)
+                    .await
+                    .map_err(|error| error.into())
+            }
+            ModelarDbStatement::IncludeSelect(statement, addresses) => {
+                let local_sendable_record_batch_stream =
+                    modelardb_storage::execute_statement(&self.context.session_context, statement)
+                        .await
+                        .map_err(error_to_status_internal)?;
 
+                execute_query_at_addresses_and_merge(
+                    &sql,
+                    addresses,
+                    local_sendable_record_batch_stream,
+                )
+                .await
+            }
+            ModelarDbStatement::TruncateTable(table_names) => {
                 for table_name in table_names {
                     self.context
                         .truncate_table(&table_name)
@@ -501,47 +481,16 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(empty_record_batch_stream())
             }
-            Statement::Explain { .. } => {
-                modelardb_storage::execute_statement(&self.context.session_context, statement)
-                    .await
-                    .map_err(|error| error.into())
-            }
-            Statement::Query(ref boxed_query) => {
-                // TODO: make ModelarDbStatements for all supported SQL.
-                // TODO: add support for ModelarDbStatements in modelardb_manager/remote.
-                // TODO: update user and dev documentation to match recent changes.
-
-                let maybe_addresses = parser::extract_include_addresses(boxed_query);
-                let maybe_local_sendable_record_batch_stream: StdResult<
-                    Pin<Box<dyn RecordBatchStream + Send>>,
-                    ModelarDbServerError,
-                > = modelardb_storage::execute_statement(&self.context.session_context, statement)
-                    .await
-                    .map_err(|error| error.into());
-
-                if let Some(addresses) = maybe_addresses {
-                    // No need to execute a remote query if the local query has failed.
-                    let local_sendable_record_batch_stream =
-                        maybe_local_sendable_record_batch_stream
-                            .map_err(error_to_status_internal)?;
-
-                    execute_query_at_addresses_and_merge(
-                        &sql,
-                        addresses,
-                        local_sendable_record_batch_stream,
-                    ).await
-                } else {
-                    maybe_local_sendable_record_batch_stream
+            ModelarDbStatement::DropTable(table_names) => {
+                for table_name in table_names {
+                    self.context
+                        .drop_table(&table_name)
+                        .await
+                        .map_err(error_to_status_invalid_argument)?;
                 }
+
+                Ok(empty_record_batch_stream())
             }
-            Statement::Insert(ref _insert) => {
-                modelardb_storage::execute_statement(&self.context.session_context, statement)
-                    .await
-                    .map_err(|error| error.into())
-            }
-            _ => Err(Status::invalid_argument(
-                "Only CREATE, DROP, TRUNCATE, EXPLAIN, SELECT, and INSERT is supported".to_owned(),
-            ))?,
         }
         .map_err(error_to_status_internal)?;
 

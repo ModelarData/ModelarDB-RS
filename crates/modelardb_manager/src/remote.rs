@@ -400,8 +400,8 @@ impl FlightService for FlightServiceHandler {
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                 model_table_metadata.schema.clone()
             }
-            ModelarDbStatement::Insert(_)
-            | ModelarDbStatement::Query(_)
+            ModelarDbStatement::Statement(_)
+            | ModelarDbStatement::IncludeSelect(_)
             | ModelarDbStatement::DropTable(_)
             | ModelarDbStatement::TruncateTable(_) => {
                 return Err(Status::invalid_argument(
@@ -561,8 +561,8 @@ impl FlightService for FlightServiceHandler {
                     self.save_and_create_cluster_model_table(model_table_metadata, sql)
                         .await?;
                 }
-                ModelarDbStatement::Insert(_)
-                | ModelarDbStatement::Query(_)
+                ModelarDbStatement::Statement(_)
+                | ModelarDbStatement::IncludeSelect(_)
                 | ModelarDbStatement::DropTable(_)
                 | ModelarDbStatement::TruncateTable(_) => {
                     return Err(Status::invalid_argument(

@@ -72,38 +72,17 @@ impl Context {
         })
     }
 
-    /// Create a normal table or a model table based on `create_table` created from `sql`. Returns
+    /// Create a normal table based on `name` and `schema` created from `sql`. Returns
     /// [`ModelarDbServerError`] if the table could not be created.
-    pub(crate) async fn validate_and_create_table(
+    pub(crate) async fn create_normal_table(
         &self,
+        name: String,
+        schema: Schema,
         sql: &str,
-        create_table: CreateTable,
     ) -> Result<()> {
-        // Perform semantic checks to ensure the statement is supported.
-        let valid_statement = parser::semantic_checks_for_create_table(create_table)?;
-
-        // Create the normal table or model table if it does not already exist.
-        match valid_statement {
-            ModelarDbStatement::CreateTable { name, schema } => {
-                self.check_if_table_exists(&name).await?;
-                self.register_and_save_normal_table(&name, sql, schema)
-                    .await?;
-            }
-            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
-                self.check_if_table_exists(&model_table_metadata.name)
-                    .await?;
-                self.register_and_save_model_table(model_table_metadata, sql)
-                    .await?;
-            }
-            ModelarDbStatement::Insert(_)
-            | ModelarDbStatement::Query(_)
-            | ModelarDbStatement::DropTable(_)
-            | ModelarDbStatement::TruncateTable(_) => {
-                return Err(ModelarDbServerError::InvalidArgument(
-                    "Expected CreateTable or CreateModelTable".to_owned(),
-                ));
-            }
-        }
+        self.check_if_table_exists(&name).await?;
+        self.register_and_save_normal_table(&name, sql, schema)
+            .await?;
 
         Ok(())
     }
@@ -135,6 +114,21 @@ impl Context {
             .await?;
 
         info!("Created normal table '{}'.", table_name);
+
+        Ok(())
+    }
+
+    /// Create a model table based on `model_table_metadata` created from `sql`. Returns
+    /// [`ModelarDbServerError`] if the model table could not be created.
+    pub(crate) async fn create_model_table(
+        &self,
+        model_table_metadata: Arc<ModelTableMetadata>,
+        sql: &str,
+    ) -> Result<()> {
+        self.check_if_table_exists(&model_table_metadata.name)
+            .await?;
+        self.register_and_save_model_table(model_table_metadata, sql)
+            .await?;
 
         Ok(())
     }
@@ -850,7 +844,7 @@ mod tests {
     async fn parse_and_create_table(context: &Context, sql: &str) -> Result<()> {
         let statement = parser::tokenize_and_parse_sql_statement(sql)?;
         if let Statement::CreateTable(create_table) = statement {
-            context.validate_and_create_table(sql, create_table).await
+            context.create_table(sql, create_table).await
         } else {
             Err(ModelarDbServerError::InvalidArgument(
                 "Expected Statement::CreateTable.".to_owned(),

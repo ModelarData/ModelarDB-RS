@@ -58,19 +58,19 @@ pub enum ModelarDbStatement {
     CreateTable { name: String, schema: Schema },
     /// CREATE MODEL TABLE.
     CreateModelTable(Arc<ModelTableMetadata>),
-    /// INSERT.
-    Insert(Statement),
-    /// QUERY.
-    Query(Statement),
+    /// INSERT, EXPLAIN, SELECT.
+    Statement(Statement),
+    /// INCLUDE addresses SELECT.
+    IncludeSelect(Statement, Vec<String>),
     /// DROP TABLE.
-    DropTable(String),
+    DropTable(Vec<String>),
     /// TRUNCATE TABLE.
-    TruncateTable(String),
+    TruncateTable(Vec<String>),
 }
 
 /// Tokenize and parse the SQL statements in `sql` and return its parsed representation in the form
 /// of [`Statements`](Statement).
-pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<Statement> {
+pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
 
     // Check that the sql contained a parseable statement.
@@ -83,7 +83,60 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<Statement
             "Multiple SQL statements are not supported.".to_owned(),
         ))
     } else {
-        Ok(statements.remove(0))
+        let statement = statements.remove(0);
+        match statement {
+            Statement::CreateTable(create_table) => semantic_checks_for_create_table(create_table),
+            Statement::Drop {
+                object_type,
+                if_exists,
+                names,
+                cascade,
+                restrict,
+                purge,
+                temporary,
+            } => {
+                let table_names = semantic_checks_for_drop(
+                    object_type,
+                    if_exists,
+                    names,
+                    cascade,
+                    restrict,
+                    purge,
+                    temporary,
+                )?;
+                Ok(ModelarDbStatement::DropTable(table_names))
+            }
+            Statement::Truncate {
+                table_names,
+                partitions,
+                table,
+                only,
+                identity,
+                cascade,
+            } => {
+                let table_names = semantic_checks_for_truncate(
+                    table_names,
+                    partitions,
+                    table,
+                    only,
+                    identity,
+                    cascade,
+                )?;
+                Ok(ModelarDbStatement::TruncateTable(table_names))
+            }
+            Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
+            Statement::Query(ref boxed_query) => {
+                if let Some(addresses) = extract_include_addresses(boxed_query) {
+                    Ok(ModelarDbStatement::IncludeSelect(statement, addresses))
+                } else {
+                    Ok(ModelarDbStatement::Statement(statement))
+                }
+            }
+            Statement::Insert(ref _insert) => Ok(ModelarDbStatement::Statement(statement)),
+            _ => Err(ModelarDbStorageError::InvalidArgument(
+                "Only CREATE, DROP, TRUNCATE, EXPLAIN, SELECT, and INSERT is supported".to_owned(),
+            )),
+        }
     }
 }
 
@@ -522,7 +575,7 @@ impl ContextProvider for ParserContextProvider {
 /// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE statement in
 /// `create_table` was correct. A [`ModelarDbStorageError`] is returned if a semantic check fails.
 /// If all semantic checks are successful a [`ModelarDbStatement`] is returned.
-pub fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<ModelarDbStatement> {
+fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<ModelarDbStatement> {
     // Ensure it is a create table and only supported features are enabled.
     check_unsupported_features_are_disabled(&create_table)?;
 
@@ -969,7 +1022,7 @@ pub fn extract_include_addresses(query: &Query) -> Option<Vec<String>> {
 
 /// Perform semantic checks to ensure that the DROP statement from which the arguments was extracted
 /// was correct. A [`ParserError`] is returned if any of the additional semantic checks fails.
-pub fn semantic_checks_for_drop(
+fn semantic_checks_for_drop(
     object_type: ObjectType,
     if_exists: bool,
     names: Vec<ObjectName>,
@@ -1001,7 +1054,7 @@ pub fn semantic_checks_for_drop(
 /// Perform semantic checks to ensure that the TRUNCATE statement from which the arguments was
 /// extracted was correct. A [`ParserError`] is returned if any of the additional semantic checks
 /// fails.
-pub fn semantic_checks_for_truncate(
+fn semantic_checks_for_truncate(
     names: Vec<TruncateTableTarget>,
     partitions: Option<Vec<Expr>>,
     table: bool,
