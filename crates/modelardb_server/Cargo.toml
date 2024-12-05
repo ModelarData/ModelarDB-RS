@@ -40,7 +40,6 @@ modelardb_types = { path = "../modelardb_types" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 ringbuf.workspace = true
 snmalloc-rs = { workspace = true, features = ["build_cc"] }
-sqlparser.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-stream.workspace = true
 tonic.workspace = true
