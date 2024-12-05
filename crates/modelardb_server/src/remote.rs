@@ -53,7 +53,6 @@ use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::functions;
 use modelardb_types::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_types::types::TimestampBuilder;
-use sqlparser::ast::Statement;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -430,11 +429,14 @@ impl FlightService for FlightServiceHandler {
             .map_err(error_to_status_invalid_argument)?
             .to_owned();
 
+        // Parse the query.
         info!("Received SQL: '{}'.", sql);
 
-        // Parse the query.
         let modelardb_statement = parser::tokenize_and_parse_sql_statement(&sql)
             .map_err(error_to_status_invalid_argument)?;
+
+        // Execute the query.
+        info!("Executing SQL: '{}'.", sql);
 
         let sendable_record_batch_stream = match modelardb_statement {
             ModelarDbStatement::CreateTable { name, schema } => {
@@ -497,7 +499,6 @@ impl FlightService for FlightServiceHandler {
         // Send the result using a channel, a channel is needed as sync is not implemented for
         // SenableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
         let (sender, receiver) = mpsc::channel(2);
-        info!("Executing SQL: '{}'.", sql);
 
         task::spawn(async move {
             // Errors cannot be sent to the client if there is an error with the channel, if such an

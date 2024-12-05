@@ -23,8 +23,6 @@ use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_storage::parser::{self, ModelarDbStatement};
-use sqlparser::ast::CreateTable;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -426,6 +424,7 @@ impl Context {
 mod tests {
     use super::*;
 
+    use modelardb_storage::parser;
     use modelardb_storage::test;
     use sqlparser::ast::Statement;
     use tempfile::TempDir;

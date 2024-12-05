@@ -40,7 +40,6 @@ use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
 use modelardb_types::types::ServerMode;
-use sqlparser::ast::{CreateTable, Statement};
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
@@ -111,17 +110,6 @@ impl FlightServiceHandler {
             Err(Status::already_exists(message))
         } else {
             Ok(())
-        }
-    }
-
-    /// Return [`CreateTable`] if `statement` is [`Statement::CreateTable`] and [`Status`] otherwise.
-    fn statement_to_create_table(&self, statement: Statement) -> StdResult<CreateTable, Status> {
-        if let Statement::CreateTable(create_table) = statement {
-            Ok(create_table)
-        } else {
-            Err(Status::internal(
-                "Expected Statement::CreateTable.".to_owned(),
-            ))
         }
     }
 
@@ -390,18 +378,17 @@ impl FlightService for FlightServiceHandler {
             })?;
 
         // Parse the SQL and perform semantic checks to extract the schema from the statement.
-        // unwrap() is safe since the SQL was parsed and checked when the table was created.
-        let statement = parser::tokenize_and_parse_sql_statement(table_sql.as_str()).unwrap();
-        let create_table = self.statement_to_create_table(statement)?;
-        let valid_statement = parser::semantic_checks_for_create_table(create_table).unwrap();
+        let modelardb_statement = parser::tokenize_and_parse_sql_statement(table_sql.as_str())
+            .map_err(|error| Status::internal(error.to_string()))?;
 
-        let schema = match valid_statement {
+        let schema = match modelardb_statement {
             ModelarDbStatement::CreateTable { schema, .. } => Arc::new(schema),
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                 model_table_metadata.schema.clone()
             }
+            // .. is not used so a compile error is raised if a new ModelarDbStatement is added.
             ModelarDbStatement::Statement(_)
-            | ModelarDbStatement::IncludeSelect(_)
+            | ModelarDbStatement::IncludeSelect(..)
             | ModelarDbStatement::DropTable(_)
             | ModelarDbStatement::TruncateTable(_) => {
                 return Err(Status::invalid_argument(
@@ -419,12 +406,60 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(schema_result))
     }
 
-    /// Not implemented.
+    /// Execute a SQL query provided in UTF-8 and return the schema of the query result followed by
+    /// the query result.
     async fn do_get(
         &self,
-        _request: Request<Ticket>,
+        request: Request<Ticket>,
     ) -> StdResult<Response<Self::DoGetStream>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let ticket = request.into_inner();
+
+        // Extract the query.
+        let sql = str::from_utf8(&ticket.ticket)
+            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .to_owned();
+
+        // Parse the query.
+        info!("Received SQL: '{}'.", sql);
+
+        let modelardb_statement = parser::tokenize_and_parse_sql_statement(&sql)
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Execute the query.
+        info!("Executing SQL: '{}'.", sql);
+
+        match modelardb_statement {
+            ModelarDbStatement::CreateTable { name, schema } => {
+                self.check_if_table_exists(&name).await?;
+                self.save_and_create_cluster_normal_table(&name, &schema, &sql)
+                    .await?;
+            }
+            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+                self.check_if_table_exists(&model_table_metadata.name)
+                    .await?;
+                self.save_and_create_cluster_model_table(model_table_metadata, &sql)
+                    .await?;
+            }
+            ModelarDbStatement::TruncateTable(table_names) => {
+                for table_name in table_names {
+                    self.drop_cluster_table(&table_name).await?;
+                }
+            }
+            ModelarDbStatement::DropTable(table_names) => {
+                for table_name in table_names {
+                    self.truncate_cluster_table(&table_name).await?;
+                }
+            }
+            // .. is not used so a compile error is raised if a new ModelarDbStatement is added.
+            ModelarDbStatement::Statement(_) | ModelarDbStatement::IncludeSelect(..) => {
+                return Err(Status::invalid_argument(
+                    "Expected CreateTable or CreateModelTable",
+                ));
+            }
+        };
+
+        // Confirm the SQL statement was executed.
+        Ok(Response::new(Box::pin(stream::empty())))
     }
 
     /// Not implemented.
@@ -448,18 +483,6 @@ impl FlightService for FlightServiceHandler {
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
     /// to create the normal tables and model tables that are missing in the list. The list of table
     /// names is also checked to make sure all given tables actually exist.
-    /// * `CreateTable`: Execute a SQL query containing a command that creates a table. These
-    /// commands can be `CREATE TABLE table_name(...` which creates a normal table, and
-    /// `CREATE MODEL TABLE table_name(...` which creates a model table. The table is created
-    /// for all nodes controlled by the manager.
-    /// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
-    /// the table that should be dropped must be provided in the body of the action. The table is
-    /// dropped for all nodes controlled by the manager and all data in the table, both locally on
-    /// the nodes and in the remote object store, is deleted.
-    /// * `TruncateTable`: Truncate a table previously created with `CreateTable`. The name of
-    /// the table that should be truncated must be provided in the body of the action. The table is
-    /// truncated for all nodes controlled by the manager and all data in the table, both locally on
-    /// the nodes and in the remote object store, is deleted.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
     /// to the cluster of nodes controlled by the manager and the key and object store used in the
     /// cluster is returned.
@@ -533,70 +556,6 @@ impl FlightService for FlightServiceHandler {
                     invalid_node_tables.join(", ")
                 )))
             }
-        } else if action.r#type == "CreateTable" {
-            // Read the SQL from the action.
-            let sql = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!("Received request to execute '{}'.", sql);
-
-            // Parse the SQL.
-            let statement = parser::tokenize_and_parse_sql_statement(sql)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-            // Perform semantic checks to ensure the parsed SQL is supported.
-            let create_table = self.statement_to_create_table(statement)?;
-            let valid_statement = parser::semantic_checks_for_create_table(create_table)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-            // Create the normal table or model table if it does not already exist.
-            match valid_statement {
-                ModelarDbStatement::CreateTable { name, schema } => {
-                    self.check_if_table_exists(&name).await?;
-                    self.save_and_create_cluster_normal_table(&name, &schema, sql)
-                        .await?;
-                }
-                ModelarDbStatement::CreateModelTable(model_table_metadata) => {
-                    self.check_if_table_exists(&model_table_metadata.name)
-                        .await?;
-                    self.save_and_create_cluster_model_table(model_table_metadata, sql)
-                        .await?;
-                }
-                ModelarDbStatement::Statement(_)
-                | ModelarDbStatement::IncludeSelect(_)
-                | ModelarDbStatement::DropTable(_)
-                | ModelarDbStatement::TruncateTable(_) => {
-                    return Err(Status::invalid_argument(
-                        "Expected CreateTable or CreateModelTable",
-                    ));
-                }
-            };
-
-            // Confirm the table was created.
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "DropTable" {
-            // Extract the table name from the action body.
-            let table_name = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!("Received request to drop table '{}'.", table_name);
-
-            // Drop the table from the metadata Delta Lake, the data Delta Lake, and from each
-            // node controlled by the manager.
-            self.drop_cluster_table(table_name).await?;
-
-            // Confirm the table was dropped.
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "TruncateTable" {
-            // Extract the table name from the action body.
-            let table_name = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!("Received request to truncate table '{}'.", table_name);
-
-            // Truncate the table in the metadata Delta Lake, the data Delta Lake, and from each
-            // node controlled by the manager.
-            self.truncate_cluster_table(table_name).await?;
-
-            // Confirm the table was truncated.
-            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let (url, offset_data) = arguments::decode_argument(&action.body)
@@ -688,22 +647,6 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let create_table_action = ActionType {
-            r#type: "CreateTable".to_owned(),
-            description: "Execute a SQL query containing a command that creates a table."
-                .to_owned(),
-        };
-
-        let drop_table_action = ActionType {
-            r#type: "DropTable".to_owned(),
-            description: "Drop a table and all its data.".to_owned(),
-        };
-
-        let truncate_table_action = ActionType {
-            r#type: "TruncateTable".to_owned(),
-            description: "Delete all data from a table.".to_owned(),
-        };
-
         let register_node_action = ActionType {
             r#type: "RegisterNode".to_owned(),
             description: "Register either an edge or cloud node with the manager.".to_owned(),
@@ -722,9 +665,6 @@ impl FlightService for FlightServiceHandler {
 
         let output = stream::iter(vec![
             Ok(initialize_database_action),
-            Ok(create_table_action),
-            Ok(drop_table_action),
-            Ok(truncate_table_action),
             Ok(register_node_action),
             Ok(remove_node_action),
             Ok(node_type_action),
