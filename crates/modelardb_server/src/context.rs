@@ -836,9 +836,7 @@ mod tests {
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                 context.create_model_table(model_table_metadata, sql).await
             }
-            _ => Err(ModelarDbServerError::InvalidArgument(
-                "Expected CreateNormalTable or CreateModelTable.".to_owned(),
-            )),
+            _ => unreachable!("Expected CreateNormalTable or CreateModelTable."),
         }
     }
 

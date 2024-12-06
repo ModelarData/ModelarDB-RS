@@ -96,7 +96,7 @@ pub fn start_apache_arrow_flight_server(
 }
 
 /// Execute `sql` at `addresses` and union their result with `local_sendable_record_batch_stream`.
-/// Returns a [`ModelarDbServerError`] if `sql` does not contain a INCLUDE clause, if `sql` cannot
+/// Returns a [`ModelarDbServerError`] if `sql` does not contain an INCLUDE clause, if `sql` cannot
 /// be executed at one of the `addresses`, or if the [`Schema`] of the result cannot be retrieved.
 async fn execute_query_at_addresses_and_union(
     sql: &str,
@@ -420,9 +420,9 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(schema_result))
     }
 
-    /// Execute a SQL query provided in UTF-8 and return the schema of the query result followed by
-    /// the query result. Currently, CREATE TABLE, CREATE MODEL TABLE, EXPLAIN, INCLUDE, SELECT,
-    /// INSERT, TRUNCATE TABLE, and DROP TABLE.
+    /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
+    /// the result itself. Currently, CREATE TABLE, CREATE MODEL TABLE, EXPLAIN, INCLUDE, SELECT,
+    /// INSERT, TRUNCATE TABLE, and DROP TABLE are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -434,7 +434,7 @@ impl FlightService for FlightServiceHandler {
             .map_err(error_to_status_invalid_argument)?
             .to_owned();
 
-        // Parse the query.
+        // Parse the statement.
         info!("Received SQL: '{}'.", sql);
 
         let modelardb_statement = parser::tokenize_and_parse_sql_statement(&sql)

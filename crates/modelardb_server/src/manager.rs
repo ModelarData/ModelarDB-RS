@@ -121,7 +121,7 @@ impl Manager {
                 | ModelarDbStatement::IncludeSelect(..)
                 | ModelarDbStatement::DropTable(_)
                 | ModelarDbStatement::TruncateTable(_) => {
-                    return Err(ModelarDbServerError::InvalidArgument(
+                    return Err(ModelarDbServerError::InvalidState(
                         "Expected CreateNormalTable or CreateModelTable.".to_owned(),
                     ))
                 }

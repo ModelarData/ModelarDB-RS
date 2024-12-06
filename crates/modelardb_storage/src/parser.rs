@@ -69,8 +69,8 @@ pub enum ModelarDbStatement {
 
 /// Tokenizes and parses the SQL statement in `sql` and return its parsed representation in the form
 /// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contain
-/// multiple statements, of the statement is unsupported. Currently, CREATE TABLE, CREATE MODEL
-/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, and DROP TABLE.
+/// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE MODEL
+/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, and DROP TABLE are supported.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
 
@@ -135,7 +135,8 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
             }
             Statement::Insert(ref _insert) => Ok(ModelarDbStatement::Statement(statement)),
             _ => Err(ModelarDbStorageError::InvalidArgument(
-                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, and INSERT are supported".to_owned(),
+                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, and INSERT are supported."
+                    .to_owned(),
             )),
         }
     }
@@ -488,7 +489,7 @@ impl Dialect for ModelarDbDialect {
 
     /// Check if the next tokens are CREATE MODEL TABLE, if so, attempt to parse the token stream as
     /// a CREATE MODEL TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
-    /// attempt to parse the token stream as a INCLUDE 'address'[, 'address']+ DQL statement. If
+    /// attempt to parse the token stream as an INCLUDE 'address'[, 'address']+ DQL statement. If
     /// both checks fail, [`None`] is returned so sqlparser uses its parsing methods for all other
     /// statements. If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`]
     /// is returned.

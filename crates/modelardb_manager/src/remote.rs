@@ -406,9 +406,9 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(schema_result))
     }
 
-    /// Execute a SQL query provided in UTF-8 and return the schema of the query result followed by
-    /// the query result. Currently CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, and DROP TABLE
-    /// is supported.
+    /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
+    /// the result itself. Currently CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, and DROP
+    /// TABLE are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -426,7 +426,7 @@ impl FlightService for FlightServiceHandler {
         let modelardb_statement = parser::tokenize_and_parse_sql_statement(&sql)
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        // Execute the query.
+        // Execute the statement.
         info!("Executing SQL: '{}'.", sql);
 
         match modelardb_statement {
