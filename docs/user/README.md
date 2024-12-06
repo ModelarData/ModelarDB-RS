@@ -234,7 +234,7 @@ It should be noted that the ingested data is only transferred to the remote obje
 in edge mode with a manager or in cloud mode with a manager. When `modelardbd` is deployed in edge mode without a
 manager, the ingested data is only stored in local storage.
 
-### Execute SQL
+### Execute Queries
 ModelarDB includes a command-line client in the form of `modelardb`. To interactively execute SQL statements against a
 local instance of `modelardbd` through a REPL, simply run `modelardb`:
 
@@ -242,10 +242,17 @@ local instance of `modelardbd` through a REPL, simply run `modelardb`:
 modelardb
 ```
 
-Be aware that the REPL currently does not support splitting SQL statements over multiple lines and that the SQL
-statements do not need to end with a `;`. In addition to SQL statements, the REPL also supports listing all tables
-using `\dt`, printing the schema of a table using `\d table_name`, flushing data in memory to disk using `\f`, flushing
-data in memory and on disk to an object store using `\F`, and printing operations supported by the client using `\h`.
+Be aware that the REPL currently does not support splitting SQL statements over multiple lines, thus SQL statements do
+not need to end with a `;`. In addition to `CREATE MODEL TABLE`, ModelarDB also extends SQL with an `INCLUDE` clause
+with the format `INCLUDE address[, address]+`. When this clause is prepended to a `SELECT` statement, a `modelardbd`
+instance executes the `SELECT` statement on the data it manages and forwards the statement to `modelardbd` instances at
+the provided addresses. Afterwards, the `modelardbd` instance that initially received the query, unions the result from
+all `modelardbd` instances and returns it to the client. As an example, this can be used to execute a `SELECT` statement
+on both the data in the cloud and a specific edge node. Although, be aware that this does not make the edge node
+transfer the data it managers to the cloud, only the result of the query. In addition to SQL statements, the REPL also
+supports listing all tables using `\dt`, printing the schema of a table using `\d table_name`, flushing data in memory
+to disk using `\f`, flushing data in memory and on disk to an object store using `\F`, and printing operations supported
+by the client using `\h`.
 
 ```sql
 ModelarDB> \dt
