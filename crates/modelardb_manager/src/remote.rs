@@ -391,8 +391,8 @@ impl FlightService for FlightServiceHandler {
             | ModelarDbStatement::IncludeSelect(..)
             | ModelarDbStatement::DropTable(_)
             | ModelarDbStatement::TruncateTable(_) => {
-                return Err(Status::invalid_argument(
-                    "Expected CreateTable or CreateModelTable",
+                return Err(Status::internal(
+                    "Expected CreateNormalTable or CreateModelTable.",
                 ));
             }
         };
@@ -407,7 +407,8 @@ impl FlightService for FlightServiceHandler {
     }
 
     /// Execute a SQL query provided in UTF-8 and return the schema of the query result followed by
-    /// the query result.
+    /// the query result. Currently CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, and DROP TABLE
+    /// is supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -442,18 +443,18 @@ impl FlightService for FlightServiceHandler {
             }
             ModelarDbStatement::TruncateTable(table_names) => {
                 for table_name in table_names {
-                    self.drop_cluster_table(&table_name).await?;
+                    self.truncate_cluster_table(&table_name).await?;
                 }
             }
             ModelarDbStatement::DropTable(table_names) => {
                 for table_name in table_names {
-                    self.truncate_cluster_table(&table_name).await?;
+                    self.drop_cluster_table(&table_name).await?;
                 }
             }
             // .. is not used so a compile error is raised if a new ModelarDbStatement is added.
             ModelarDbStatement::Statement(_) | ModelarDbStatement::IncludeSelect(..) => {
                 return Err(Status::invalid_argument(
-                    "Expected CreateTable or CreateModelTable",
+                    "Expected CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, or DROP TABLE.",
                 ));
             }
         };

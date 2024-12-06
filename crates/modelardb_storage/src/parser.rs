@@ -49,9 +49,8 @@ use sqlparser::tokenizer::Token;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 
-/// A top-level statement (SELECT, INSERT, CREATE, UPDATE, etc.) that have been tokenized, parsed,
-/// and for which semantics checks have verified that it is compatible with ModelarDB. CREATE TABLE
-/// and CREATE MODEL TABLE are supported.
+/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, etc.) that have been tokenized,
+/// parsed, and for which semantic checks have verified that it is compatible with ModelarDB.
 #[derive(Debug)]
 pub enum ModelarDbStatement {
     /// CREATE TABLE.
@@ -68,8 +67,10 @@ pub enum ModelarDbStatement {
     TruncateTable(Vec<String>),
 }
 
-/// Tokenize and parse the SQL statements in `sql` and return its parsed representation in the form
-/// of [`Statements`](Statement).
+/// Tokenizes and parses the SQL statement in `sql` and return its parsed representation in the form
+/// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contain
+/// multiple statements, of the statement is unsupported. Currently, CREATE TABLE, CREATE MODEL
+/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, and DROP TABLE.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
 
@@ -134,7 +135,7 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
             }
             Statement::Insert(ref _insert) => Ok(ModelarDbStatement::Statement(statement)),
             _ => Err(ModelarDbStorageError::InvalidArgument(
-                "Only CREATE, DROP, TRUNCATE, EXPLAIN, SELECT, and INSERT are supported".to_owned(),
+                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, and INSERT are supported".to_owned(),
             )),
         }
     }
@@ -159,7 +160,7 @@ pub fn tokenize_and_parse_sql_expression(
 }
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE MODEL
-/// TABLE table_name DDL statements.
+/// TABLE table_name DDL statements and INCLUDE 'address'[, 'address']+ DQL statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -292,7 +293,7 @@ impl ModelarDbDialect {
         parser.expected(expected, parser.peek_token())
     }
 
-    /// Return its as a [`String`] if the next [`Token`] is a [`Token::SingleQuotedString`],
+    /// Return its value as a [`String`] if the next [`Token`] is a [`Token::SingleQuotedString`],
     /// otherwise a [`ParserError`] is returned.
     fn parse_single_quoted_string(&self, parser: &mut Parser) -> StdResult<String, ParserError> {
         let token_with_location = parser.next_token();
@@ -486,9 +487,11 @@ impl Dialect for ModelarDbDialect {
     }
 
     /// Check if the next tokens are CREATE MODEL TABLE, if so, attempt to parse the token stream as
-    /// a CREATE MODEL TABLE DDL statements. If parsing succeeds, a [`Statement`] is returned, and
-    /// if not, a [`ParserError`] is returned. If the next tokens are not CREATE MODEL TABLE,
-    /// [`None`] is returned so sqlparser uses its parsing methods for all other statements.
+    /// a CREATE MODEL TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
+    /// attempt to parse the token stream as a INCLUDE 'address'[, 'address']+ DQL statement. If
+    /// both checks fail, [`None`] is returned so sqlparser uses its parsing methods for all other
+    /// statements. If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`]
+    /// is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_model_table(parser) {
             Some(self.parse_create_model_table(parser))
@@ -1085,12 +1088,11 @@ fn semantic_checks_for_truncate(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     use sqlparser::dialect::ClickHouseDialect;
 
-    // Tests tokenize_and_parse_sql_statement().
+    // Tests for tokenize_and_parse_sql_statement().
     #[test]
     fn test_tokenize_and_parse_empty_sql() {
         assert!(tokenize_and_parse_sql_statement("").is_err());
@@ -1495,7 +1497,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_include_zero_address() {
+    fn test_tokenize_and_parse_include_zero_addresses_select() {
         assert!(tokenize_and_parse_sql_statement("INCLUDE SELECT * FROM table_name",).is_err());
     }
 }

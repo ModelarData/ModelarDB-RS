@@ -432,18 +432,6 @@ mod tests {
     use crate::data_folders::DataFolder;
 
     #[tokio::test]
-    async fn test_parse_and_create_table_with_invalid_sql() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(&temp_dir).await;
-
-        assert!(
-            parse_and_create_table(&context, "TABLE CREATE table_name(timestamp TIMESTAMP)")
-                .await
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
     async fn test_parse_and_create_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
@@ -849,7 +837,7 @@ mod tests {
                 context.create_model_table(model_table_metadata, sql).await
             }
             _ => Err(ModelarDbServerError::InvalidArgument(
-                "Expected ModelarDbStatement::CreateNormalTable or ModelarDbStatement::CreateModelTable.".to_owned(),
+                "Expected CreateNormalTable or CreateModelTable.".to_owned(),
             )),
         }
     }

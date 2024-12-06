@@ -95,14 +95,17 @@ pub fn start_apache_arrow_flight_server(
         .map_err(|error| error.into())
 }
 
-/// Execute `sql` at `address` and union their result with `local_sendable_record_batch_stream`.
+/// Execute `sql` at `addresses` and union their result with `local_sendable_record_batch_stream`.
+/// Returns a [`ModelarDbServerError`] if `sql` does not contain a INCLUDE clause, if `sql` cannot
+/// be executed at one of the `addresses`, or if the [`Schema`] of the result cannot be retrieved.
 async fn execute_query_at_addresses_and_union(
     sql: &str,
     addresses: Vec<String>,
     local_sendable_record_batch_stream: Pin<Box<dyn RecordBatchStream + Send>>,
 ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
     // Remove INCLUDE address+ as sqlparser seems incapable of doing so.
-    let no_addresses_error_fn = || Status::invalid_argument("Missing INCLUDE address.");
+    let no_addresses_error_fn =
+        || ModelarDbServerError::InvalidArgument("Missing INCLUDE address.".to_owned());
     let last_address = addresses.last().ok_or_else(no_addresses_error_fn)?;
     let start_of_address = sql.rfind(last_address).ok_or_else(no_addresses_error_fn)?;
     let end_of_address = start_of_address + last_address.len() + 1;
@@ -125,13 +128,14 @@ async fn execute_query_at_addresses_and_union(
     )))
 }
 
-/// Execute `sql` at `address`.
+/// Execute `sql` at `address`. Returns a [`ModelarDbServerError`] if `sql` cannot be executed at
+/// `address` or if the [`Schema`] of the result cannot be retrieved.
 async fn execute_query_at_address(
     sql: String,
     address: String,
 ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
     // Connect and execute query.
-    let mut flight_client = FlightServiceClient::connect(address)
+    let mut flight_client = FlightServiceClient::connect(address.clone())
         .await
         .map_err(error_to_status_invalid_argument)?;
 
@@ -140,9 +144,7 @@ async fn execute_query_at_address(
 
     // Read schema of record batches.
     let flight_data = stream.message().await?.ok_or_else(|| {
-        ModelarDbServerError::InvalidState(
-            "Failed to retrieve schema from modelardbd at INCLUDE address.".to_owned(),
-        )
+        ModelarDbServerError::InvalidState(format!("Failed to retrieve schema from {address}."))
     })?;
     let schema = Arc::new(Schema::try_from(&flight_data)?);
 
@@ -154,7 +156,7 @@ async fn execute_query_at_address(
     let dictionaries_by_id = HashMap::new();
 
     // Create SenableRecordBatchStream.
-    let record_batches = stream.map(move |maybe_flight_data| {
+    let record_batch_stream = stream.map(move |maybe_flight_data| {
         let flight_data = match maybe_flight_data {
             Ok(flight_data) => flight_data,
             Err(error) => return Err(DataFusionError::External(Box::new(error))),
@@ -168,7 +170,7 @@ async fn execute_query_at_address(
 
     Ok(Box::pin(RecordBatchStreamAdapter::new(
         schema_for_stream,
-        record_batches,
+        record_batch_stream,
     )))
 }
 
@@ -419,7 +421,8 @@ impl FlightService for FlightServiceHandler {
     }
 
     /// Execute a SQL query provided in UTF-8 and return the schema of the query result followed by
-    /// the query result.
+    /// the query result. Currently, CREATE TABLE, CREATE MODEL TABLE, EXPLAIN, INCLUDE, SELECT,
+    /// INSERT, TRUNCATE TABLE, and DROP TABLE.
     async fn do_get(
         &self,
         request: Request<Ticket>,

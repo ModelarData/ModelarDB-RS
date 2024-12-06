@@ -22,7 +22,7 @@ use std::{env, str};
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
 use modelardb_common::arguments;
-use modelardb_storage::parser;
+use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::types::ServerMode;
 use tokio::sync::RwLock;
 use tonic::metadata::MetadataMap;
@@ -106,7 +106,26 @@ impl Manager {
 
         // For each table to create, register and save the table in the metadata Delta Lake.
         for create_table_sql in create_table_sql_commands {
-            parser::tokenize_and_parse_sql_statement(create_table_sql)?;
+            match parser::tokenize_and_parse_sql_statement(create_table_sql)? {
+                ModelarDbStatement::CreateNormalTable { name, schema } => {
+                    context
+                        .create_normal_table(name, schema, create_table_sql)
+                        .await?;
+                }
+                ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+                    context
+                        .create_model_table(model_table_metadata, create_table_sql)
+                        .await?;
+                }
+                ModelarDbStatement::Statement(_)
+                | ModelarDbStatement::IncludeSelect(..)
+                | ModelarDbStatement::DropTable(_)
+                | ModelarDbStatement::TruncateTable(_) => {
+                    return Err(ModelarDbServerError::InvalidArgument(
+                        "Expected CreateNormalTable or CreateModelTable.".to_owned(),
+                    ))
+                }
+            }
         }
 
         Ok(())

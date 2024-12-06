@@ -285,7 +285,7 @@ impl TestContext {
             .block_on(async { self.client.do_get(ticket).await })
     }
 
-    /// Truncate a table in the server through the `do_get()` method and.
+    /// Truncate a table in the server through the `do_get()` method.
     fn truncate_table(
         &mut self,
         table_name: &str,
@@ -1035,23 +1035,32 @@ fn test_cannot_ingest_invalid_time_series() {
 }
 
 #[test]
-fn test_do_get_can_execute_include_select_query() {
+fn test_do_get_can_execute_include_address_select_query() {
+    execute_and_assert_include_select(1);
+}
+
+#[test]
+fn test_do_get_can_execute_include_address_address_select_query() {
+    execute_and_assert_include_select(2);
+}
+
+fn execute_and_assert_include_select(address_count: usize) {
     let mut test_context = TestContext::new();
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
-    let expected_time_series =
-        compute::concat_batches(&time_series.schema(), vec![&time_series, &time_series]).unwrap();
 
-    ingest_time_series_and_flush_data(
-        &mut test_context,
-        &[time_series.clone()],
-        TableType::ModelTable,
-    );
+    let expected_record_batches: Vec<_> = (0..address_count + 1).map(|_| &time_series).collect();
+    let expected_time_series =
+        compute::concat_batches(&time_series.schema(), expected_record_batches).unwrap();
+
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
 
     let port = test_context.port;
-    let address = format!("grpc://{HOST}:{port}");
+    let address = format!("'grpc://{HOST}:{port}'");
+    let addresses_separate: Vec<_> = (0..address_count).map(|_| address.clone()).collect();
+    let address = addresses_separate.join(", ");
 
     let query_result = test_context
-        .execute_query(format!("INCLUDE '{address}' SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("INCLUDE {address} SELECT * FROM {TABLE_NAME}"))
         .unwrap();
 
     assert_eq!(expected_time_series, query_result);

@@ -37,7 +37,7 @@ of time series.
   - **Merge** - Merges compressed segments if possible within the error bound to further decrease the amount of storage
   and bandwidth required. For example, if a time series has the same structure at the end of a batch of data points and
   the start of the following batch of data points.
-  - **Types** - Types used throughout the create, e.g., for creating compressed segments and accumulating batches of
+  - **Types** - Types used throughout the crate, e.g., for creating compressed segments and accumulating batches of
   them.
 - [modelardb_manager](/crates/modelardb_manager) - ModelarDB's manager in the form of the binary `modelardbm`.
   - **Cluster** - Manages edge and cloud nodes currently controlled by the ModelarDB manager and provides functionality
@@ -69,9 +69,9 @@ storage.
   tables.
   - **Delta Lake** - Module providing functionality for reading from and writing to a delta lake.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
-  - **Parser** - Extensions to Apache DataFusion's SQL parser. The first adds support for creation model tables with a
-  timestamp, one or more fields, and zero or more tags. The second adds support for adding a `INCLUDE address[,
-  address+]` clause before `SELECT`.
+  - **Parser** - Extensions to Apache DataFusion's SQL parser. The first extension adds support for creating model
+  tables with a timestamp, one or more fields, and zero or more tags. The second adds support for adding a `INCLUDE
+  address[, address+]` clause before `SELECT`.
   - **Test** - Constants and functionality for data generation for use in tests.
 - [modelardb_types](/crates/modelardb_types) - Library of shared macros and types for use by the other crates.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.

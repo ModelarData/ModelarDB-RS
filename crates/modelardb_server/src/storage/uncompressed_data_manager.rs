@@ -779,7 +779,6 @@ mod tests {
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
 
-    use crate::error::ModelarDbServerError;
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
     use crate::{ClusterMode, DataFolders};
 
@@ -805,16 +804,15 @@ mod tests {
         // Create a model table in the context.
         let modelardb_statement =
             parser::tokenize_and_parse_sql_statement(test::MODEL_TABLE_SQL).unwrap();
-        if let ModelarDbStatement::CreateModelTable(model_table_metadata) = modelardb_statement {
+        let _ = if let ModelarDbStatement::CreateModelTable(model_table_metadata) =
+            modelardb_statement
+        {
             context
                 .create_model_table(model_table_metadata, test::MODEL_TABLE_SQL)
                 .await
         } else {
-            Err(ModelarDbServerError::InvalidArgument(
-                "Expected ModelarDbStatement::CreateModelTable.".to_owned(),
-            ))
-        }
-        .unwrap();
+            panic!("Expected CreateModelTable.");
+        };
 
         // Ingest a single data point and sleep to allow the ingestion thread to finish.
         let mut storage_engine = context.storage_engine.write().await;
