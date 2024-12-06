@@ -1035,6 +1035,29 @@ fn test_cannot_ingest_invalid_time_series() {
 }
 
 #[test]
+fn test_do_get_can_execute_include_select_query() {
+    let mut test_context = TestContext::new();
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    let expected_time_series =
+        compute::concat_batches(&time_series.schema(), vec![&time_series, &time_series]).unwrap();
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        &[time_series.clone()],
+        TableType::ModelTable,
+    );
+
+    let port = test_context.port;
+    let address = format!("grpc://{HOST}:{port}");
+
+    let query_result = test_context
+        .execute_query(format!("INCLUDE '{address}' SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
+
+    assert_eq!(expected_time_series, query_result);
+}
+
+#[test]
 fn test_count_from_segments_equals_count_from_data_points() {
     assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0);
 }
@@ -1057,24 +1080,6 @@ fn test_sum_from_segments_equals_sum_from_data_points() {
 #[test]
 fn test_avg_from_segments_equals_avg_from_data_points() {
     assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001);
-}
-
-/// Creates a table of type `table_type`, ingests `time_series`, and then flushes that data to disk.
-fn ingest_time_series_and_flush_data(
-    test_context: &mut TestContext,
-    time_series: &[RecordBatch],
-    table_type: TableType,
-) {
-    let flight_data =
-        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
-
-    test_context.create_table(TABLE_NAME, table_type);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
 }
 
 /// Asserts that the query executed on segments in `segment_query` returns a result within
@@ -1142,6 +1147,24 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
             data_point_query_result.value(0)
         );
     }
+}
+
+/// Creates a table of type `table_type`, ingests `time_series`, and then flushes that data to disk.
+fn ingest_time_series_and_flush_data(
+    test_context: &mut TestContext,
+    time_series: &[RecordBatch],
+    table_type: TableType,
+) {
+    let flight_data =
+        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
+
+    test_context.create_table(TABLE_NAME, table_type);
+
+    test_context
+        .send_time_series_to_server(flight_data)
+        .unwrap();
+
+    test_context.flush_data_to_disk();
 }
 
 #[test]
