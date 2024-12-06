@@ -51,7 +51,7 @@ use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata}
 
 /// A top-level statement (SELECT, INSERT, CREATE, UPDATE, etc.) that have been tokenized, parsed,
 /// and for which semantics checks have verified that it is compatible with ModelarDB. CREATE TABLE
-/// and CREATE MODEL TABLE is supported.
+/// and CREATE MODEL TABLE are supported.
 #[derive(Debug)]
 pub enum ModelarDbStatement {
     /// CREATE TABLE.
@@ -134,7 +134,7 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
             }
             Statement::Insert(ref _insert) => Ok(ModelarDbStatement::Statement(statement)),
             _ => Err(ModelarDbStorageError::InvalidArgument(
-                "Only CREATE, DROP, TRUNCATE, EXPLAIN, SELECT, and INSERT is supported".to_owned(),
+                "Only CREATE, DROP, TRUNCATE, EXPLAIN, SELECT, and INSERT are supported".to_owned(),
             )),
         }
     }

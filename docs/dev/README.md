@@ -69,8 +69,9 @@ storage.
   tables.
   - **Delta Lake** - Module providing functionality for reading from and writing to a delta lake.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
-  - **Parser** - Extensions to Apache DataFusion's SQL parser. The first allow it to create model tables with a
-  timestamp, one or more fields, and zero or more tags. The second enable a `INCLUDE address+` before `SELECT`.
+  - **Parser** - Extensions to Apache DataFusion's SQL parser. The first adds support for creation model tables with a
+  timestamp, one or more fields, and zero or more tags. The second adds support for adding a `INCLUDE address[,
+  address+]` clause before `SELECT`.
   - **Test** - Constants and functionality for data generation for use in tests.
 - [modelardb_types](/crates/modelardb_types) - Library of shared macros and types for use by the other crates.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.

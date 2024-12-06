@@ -95,8 +95,8 @@ pub fn start_apache_arrow_flight_server(
         .map_err(|error| error.into())
 }
 
-/// Execute `sql` at `address` and merge their result with `local_sendable_record_batch_stream`.
-async fn execute_query_at_addresses_and_merge(
+/// Execute `sql` at `address` and union their result with `local_sendable_record_batch_stream`.
+async fn execute_query_at_addresses_and_union(
     sql: &str,
     addresses: Vec<String>,
     local_sendable_record_batch_stream: Pin<Box<dyn RecordBatchStream + Send>>,
@@ -108,20 +108,20 @@ async fn execute_query_at_addresses_and_merge(
     let end_of_address = start_of_address + last_address.len() + 1;
     let sql_select = &sql[end_of_address..];
 
-    // Execute queries at all addresses and merge all of the result streams.
-    let mut merged_sendable_record_batch_streams = SelectAll::new();
+    // Execute queries at all addresses and union all of the result streams.
+    let mut unioned_sendable_record_batch_streams = SelectAll::new();
     let schema = local_sendable_record_batch_stream.schema();
-    merged_sendable_record_batch_streams.push(local_sendable_record_batch_stream);
+    unioned_sendable_record_batch_streams.push(local_sendable_record_batch_stream);
 
     for address in addresses {
         let remote_sendable_record_batch_stream =
             execute_query_at_address(sql_select.to_owned(), address.to_owned()).await?;
-        merged_sendable_record_batch_streams.push(remote_sendable_record_batch_stream);
+        unioned_sendable_record_batch_streams.push(remote_sendable_record_batch_stream);
     }
 
     Ok(Box::pin(RecordBatchStreamAdapter::new(
         schema,
-        merged_sendable_record_batch_streams,
+        unioned_sendable_record_batch_streams,
     )))
 }
 
@@ -141,12 +141,12 @@ async fn execute_query_at_address(
     // Read schema of record batches.
     let flight_data = stream.message().await?.ok_or_else(|| {
         ModelarDbServerError::InvalidState(
-            "Failed to retrieve schema modelardbd at INCLUDE address.".to_owned(),
+            "Failed to retrieve schema from modelardbd at INCLUDE address.".to_owned(),
         )
     })?;
     let schema = Arc::new(Schema::try_from(&flight_data)?);
 
-    // Create copy of Arc so the scheme can be used after the closure.
+    // Create a copy of the Arc so the schema can be used after the closure.
     let schema_for_stream = schema.clone();
 
     // Create single dictionaries_by_id that can be reused for conversion,
@@ -468,7 +468,7 @@ impl FlightService for FlightServiceHandler {
                         .await
                         .map_err(error_to_status_internal)?;
 
-                execute_query_at_addresses_and_merge(
+                execute_query_at_addresses_and_union(
                     &sql,
                     addresses,
                     local_sendable_record_batch_stream,

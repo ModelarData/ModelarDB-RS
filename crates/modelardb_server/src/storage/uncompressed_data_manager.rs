@@ -811,7 +811,7 @@ mod tests {
                 .await
         } else {
             Err(ModelarDbServerError::InvalidArgument(
-                "Expected ModelarDbStatement::CreateTable.".to_owned(),
+                "Expected ModelarDbStatement::CreateModelTable.".to_owned(),
             ))
         }
         .unwrap();

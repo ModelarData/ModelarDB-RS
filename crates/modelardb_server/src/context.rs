@@ -849,7 +849,7 @@ mod tests {
                 context.create_model_table(model_table_metadata, sql).await
             }
             _ => Err(ModelarDbServerError::InvalidArgument(
-                "Expected ModelarDbStatement::CreateTable.".to_owned(),
+                "Expected ModelarDbStatement::CreateNormalTable or ModelarDbStatement::CreateModelTable.".to_owned(),
             )),
         }
     }
