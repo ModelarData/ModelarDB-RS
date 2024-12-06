@@ -251,12 +251,14 @@ fn empty_record_batch_stream() -> SendableRecordBatchStream {
     Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
 }
 
-/// Convert an `error` to [`Status::InvalidArgument`] with `error` as a [`String`].
+/// Convert an `error` to a [`Status`] with [`tonic::Code::InvalidArgument`] as the code and `error`
+/// converted to a [`String`] as the message.
 fn error_to_status_invalid_argument(error: impl Error) -> Status {
     Status::invalid_argument(error.to_string())
 }
 
-/// Convert an `error` to [`Status::Internal`] with `error` as a [`String`].
+/// Convert an `error` to a [`Status`] with [`tonic::Code::Internal`] as the code and `error`
+/// converted to a [`String`] as the message.
 fn error_to_status_internal(error: impl Error) -> Status {
     Status::internal(error.to_string())
 }
