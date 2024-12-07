@@ -67,7 +67,7 @@ pub struct QuerySchema(pub arrow::datatypes::SchemaRef);
 pub struct ConfigurationSchema(pub arrow::datatypes::SchemaRef);
 
 /// Absolute or relative per-value error bound.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ErrorBound {
     /// An error bound that guarantees each value cannot deviate more than the [`Value`].
     Absolute(Value),

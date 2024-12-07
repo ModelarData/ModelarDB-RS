@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Methods for tokenizing and parsing SQL commands. They are tokenized and parsed using [sqlparser]
-//! as it is already used by Apache Arrow DataFusion. Only public functions return
-//! [`ModelarDbStorageError`] to simplify use of traits from [sqlparser] and Apache Arrow DataFusion.
+//! Methods for tokenizing and parsing SQL statements. They are tokenized and parsed using
+//! [sqlparser] as it is already used by Apache DataFusion. Only public functions return
+//! [`ModelarDbStorageError`] to simplify use of traits from [sqlparser] and Apache DataFusion.
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
@@ -36,8 +36,10 @@ use datafusion::sql::TableReference;
 use modelardb_types::functions::normalize_name; // Fully imported to not conflict.
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType, GeneratedAs,
-    HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TableEngine, TimezoneInfo,
+    ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType, Expr,
+    GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectType, Query, Setting,
+    Statement, TableEngine, TimezoneInfo, TruncateCascadeOption, TruncateIdentityOption,
+    TruncateTableTarget, Value,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
@@ -47,11 +49,119 @@ use sqlparser::tokenizer::Token;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 
-/// Constant specifying that a model table should be created.
-pub const CREATE_MODEL_TABLE_ENGINE: &str = "ModelTable";
+/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, etc.) that have been tokenized,
+/// parsed, and for which semantic checks have verified that it is compatible with ModelarDB.
+#[derive(Debug)]
+pub enum ModelarDbStatement {
+    /// CREATE TABLE.
+    CreateNormalTable { name: String, schema: Schema },
+    /// CREATE MODEL TABLE.
+    CreateModelTable(Arc<ModelTableMetadata>),
+    /// INSERT, EXPLAIN, SELECT.
+    Statement(Statement),
+    /// INCLUDE addresses SELECT.
+    IncludeSelect(Statement, Vec<String>),
+    /// DROP TABLE.
+    DropTable(Vec<String>),
+    /// TRUNCATE TABLE.
+    TruncateTable(Vec<String>),
+}
+
+/// Tokenizes and parses the SQL statement in `sql` and return its parsed representation in the form
+/// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contain
+/// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE MODEL
+/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, and DROP TABLE are supported.
+pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
+    let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
+
+    // Check that the sql contained a parseable statement.
+    if statements.is_empty() {
+        Err(ModelarDbStorageError::InvalidArgument(
+            "An empty string cannot be tokenized and parsed.".to_owned(),
+        ))
+    } else if statements.len() > 1 {
+        Err(ModelarDbStorageError::InvalidArgument(
+            "Multiple SQL statements are not supported.".to_owned(),
+        ))
+    } else {
+        let statement = statements.remove(0);
+        match statement {
+            Statement::CreateTable(create_table) => semantic_checks_for_create_table(create_table),
+            Statement::Drop {
+                object_type,
+                if_exists,
+                names,
+                cascade,
+                restrict,
+                purge,
+                temporary,
+            } => {
+                let table_names = semantic_checks_for_drop(
+                    object_type,
+                    if_exists,
+                    names,
+                    cascade,
+                    restrict,
+                    purge,
+                    temporary,
+                )?;
+                Ok(ModelarDbStatement::DropTable(table_names))
+            }
+            Statement::Truncate {
+                table_names,
+                partitions,
+                table,
+                only,
+                identity,
+                cascade,
+            } => {
+                let table_names = semantic_checks_for_truncate(
+                    table_names,
+                    partitions,
+                    table,
+                    only,
+                    identity,
+                    cascade,
+                )?;
+                Ok(ModelarDbStatement::TruncateTable(table_names))
+            }
+            Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
+            Statement::Query(ref boxed_query) => {
+                if let Some(addresses) = extract_include_addresses(boxed_query) {
+                    Ok(ModelarDbStatement::IncludeSelect(statement, addresses))
+                } else {
+                    Ok(ModelarDbStatement::Statement(statement))
+                }
+            }
+            Statement::Insert(ref _insert) => Ok(ModelarDbStatement::Statement(statement)),
+            _ => Err(ModelarDbStorageError::InvalidArgument(
+                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, and INSERT are supported."
+                    .to_owned(),
+            )),
+        }
+    }
+}
+
+/// Parse `sql_expression` into a [`DFExpr`] if it is a correct SQL expression that only references
+/// columns in [`DFSchema`], otherwise [`ModelarDbStorageError`] is returned.
+pub fn tokenize_and_parse_sql_expression(
+    sql_expression: &str,
+    df_schema: &DFSchema,
+) -> Result<DFExpr> {
+    let context_provider = ParserContextProvider::new();
+    let sql_to_rel = SqlToRel::new(&context_provider);
+    let mut planner_context = PlannerContext::new();
+
+    let dialect = ModelarDbDialect::new();
+    let mut parser = Parser::new(&dialect).try_with_sql(sql_expression)?;
+    let parsed_sql_expr = parser.parse_expr()?;
+    sql_to_rel
+        .sql_to_expr(parsed_sql_expr, df_schema, &mut planner_context)
+        .map_err(|error| error.into())
+}
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE MODEL
-/// TABLE table_name DDL commands.
+/// TABLE table_name DDL statements and INCLUDE 'address'[, 'address']+ DQL statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -87,7 +197,7 @@ impl ModelarDbDialect {
         false
     }
 
-    /// Parse CREATE MODEL TABLE table_name DDL commands to a [`Statement::CreateTable`]. A
+    /// Parse CREATE MODEL TABLE table_name DDL statements to a [`Statement::CreateTable`]. A
     /// [`ParserError`] is returned if the column names and the column types cannot be parsed.
     fn parse_create_model_table(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // CREATE MODEL TABLE.
@@ -184,13 +294,23 @@ impl ModelarDbDialect {
         parser.expected(expected, parser.peek_token())
     }
 
+    /// Return its value as a [`String`] if the next [`Token`] is a [`Token::SingleQuotedString`],
+    /// otherwise a [`ParserError`] is returned.
+    fn parse_single_quoted_string(&self, parser: &mut Parser) -> StdResult<String, ParserError> {
+        let token_with_location = parser.next_token();
+        match token_with_location.token {
+            Token::SingleQuotedString(string) => Ok(string),
+            _ => parser.expected("single quoted string", token_with_location),
+        }
+    }
+
     /// Return its value as a [`String`] if the next [`Token`] is a
     /// [`Token::Word`], otherwise a [`ParserError`] is returned.
     fn parse_word_value(&self, parser: &mut Parser) -> StdResult<String, ParserError> {
         let token_with_location = parser.next_token();
         match token_with_location.token {
             Token::Word(word) => Ok(word.value),
-            _ => parser.expected("literal string", token_with_location),
+            _ => parser.expected("word", token_with_location),
         }
     }
 
@@ -236,7 +356,7 @@ impl ModelarDbDialect {
     }
 
     /// Create a new [`Statement::CreateTable`] with the provided `table_name` and `columns`, and
-    /// with `engine` set to [`CREATE_MODEL_TABLE_ENGINE`].
+    /// with `engine` set to "ModelTable".
     fn new_create_model_table_statement(
         table_name: ObjectName,
         columns: Vec<ColumnDef>,
@@ -270,7 +390,7 @@ impl ModelarDbDialect {
             like: None,
             clone: None,
             engine: Some(TableEngine {
-                name: CREATE_MODEL_TABLE_ENGINE.to_owned(),
+                name: "ModelTable".to_owned(),
                 parameters: None,
             }),
             comment: None,
@@ -297,6 +417,61 @@ impl ModelarDbDialect {
             with_tags: None,
         })
     }
+
+    /// Return [`true`] if the token stream starts with INCLUDE, otherwise [`false`] is returned.
+    /// The method does not consume tokens.
+    fn next_token_is_include(&self, parser: &Parser) -> bool {
+        // INCLUDE.
+        if let Token::Word(word) = parser.peek_nth_token(0).token {
+            word.keyword == Keyword::INCLUDE
+        } else {
+            false
+        }
+    }
+
+    /// Parse INCLUDE address to a [`Value`] containing the address. A [`ParserError`] is returned
+    /// if INCLUDE is typed incorrectly or the address cannot be extracted.
+    fn parse_include_query(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
+        // INCLUDE.
+        parser.expect_keyword(Keyword::INCLUDE)?;
+
+        let mut addresses = vec![];
+        loop {
+            match self.parse_single_quoted_string(parser) {
+                Ok(address) => {
+                    addresses.push(new_setting(address, None, Value::Null));
+                    if let Token::Comma = parser.peek_nth_token(0).token {
+                        parser.next_token();
+                    } else {
+                        break;
+                    };
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        // SELECT.
+        let mut boxed_query = match parser.parse_boxed_query() {
+            Ok(boxed_query) => boxed_query,
+            Err(error) => return Err(error),
+        };
+
+        // ClickHouse's SETTINGS is not supported by ModelarDB, so it is repurposed.
+        boxed_query.settings = Some(addresses);
+        let statement = Statement::Query(boxed_query);
+
+        Ok(statement)
+    }
+}
+
+/// Create a [`Setting`] with `key`, `quote_style`, and `value`.
+fn new_setting(key: String, quote_style: Option<char>, value: Value) -> Setting {
+    let key = Ident {
+        value: key,
+        quote_style,
+    };
+
+    Setting { key, value }
 }
 
 impl Dialect for ModelarDbDialect {
@@ -313,137 +488,176 @@ impl Dialect for ModelarDbDialect {
     }
 
     /// Check if the next tokens are CREATE MODEL TABLE, if so, attempt to parse the token stream as
-    /// a CREATE MODEL TABLE DDL command. If parsing succeeds, a [`Statement`] is returned, and if
-    /// not, a [`ParserError`] is returned. If the next tokens are not CREATE MODEL TABLE, [`None`]
-    /// is returned so sqlparser uses its parsing methods for all other commands.
+    /// a CREATE MODEL TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
+    /// attempt to parse the token stream as an INCLUDE 'address'[, 'address']+ DQL statement. If
+    /// both checks fail, [`None`] is returned so sqlparser uses its parsing methods for all other
+    /// statements. If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`]
+    /// is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_model_table(parser) {
             Some(self.parse_create_model_table(parser))
+        } else if self.next_token_is_include(parser) {
+            Some(self.parse_include_query(parser))
         } else {
             None
         }
     }
 }
 
-/// Tokenize and parse the SQL command in `sql` and return its parsed representation in the form of
-/// [`Statements`](Statement).
-pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement> {
-    let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql)?;
+/// Context used when converting [`Expr`](sqlparser::ast::Expr) to [`DFExpr`], e.g., when validating
+/// generation expressions. It is empty except for the functions included in Apache DataFusion. It
+/// is an extended version of the empty context provider in [rewrite_expr.rs] in the Apache
+/// DataFusion GitHub repository which was released under version 2.0 of the Apache License.
+///
+/// [rewrite_expr.rs]: https://github.com/apache/arrow-datafusion/blob/main/datafusion-examples/examples/rewrite_expr.rs
+struct ParserContextProvider {
+    /// The default options for Apache DataFusion.
+    options: ConfigOptions,
+    /// The functions included in Apache DataFusion.
+    udfs: HashMap<String, Arc<ScalarUDF>>,
+}
 
-    // Check that the sql contained a parseable statement.
-    if statements.is_empty() {
-        Err(ModelarDbStorageError::InvalidArgument(
-            "An empty string cannot be tokenized and parsed.".to_owned(),
-        ))
-    } else if statements.len() > 1 {
-        Err(ModelarDbStorageError::InvalidArgument(
-            "Multiple SQL commands are not supported.".to_owned(),
-        ))
-    } else {
-        Ok(statements.remove(0))
+impl ParserContextProvider {
+    fn new() -> Self {
+        let mut functions = functions::all_default_functions();
+
+        let udfs = functions
+            .drain(0..)
+            .map(|udf| (udf.name().to_owned(), udf))
+            .collect::<HashMap<String, Arc<ScalarUDF>>>();
+
+        ParserContextProvider {
+            options: ConfigOptions::default(),
+            udfs,
+        }
     }
 }
 
-/// A top-level statement (SELECT, INSERT, CREATE, UPDATE, etc.) that have been tokenized, parsed,
-/// and for which semantics checks have verified that it is compatible with ModelarDB. CREATE TABLE
-/// and CREATE MODEL TABLE is supported.
-#[derive(Debug)]
-pub enum ValidStatement {
-    /// CREATE TABLE.
-    CreateTable { name: String, schema: Schema },
-    /// CREATE MODEL TABLE.
-    CreateModelTable(Arc<ModelTableMetadata>),
+impl ContextProvider for ParserContextProvider {
+    fn get_table_source(
+        &self,
+        _name: TableReference,
+    ) -> StdResult<Arc<dyn TableSource>, DataFusionError> {
+        Err(DataFusionError::Plan(
+            "The table was not found.".to_string(),
+        ))
+    }
+
+    fn get_function_meta(&self, name: &str) -> Option<Arc<ScalarUDF>> {
+        self.udfs.get(name).cloned()
+    }
+
+    fn get_aggregate_meta(&self, _name: &str) -> Option<Arc<AggregateUDF>> {
+        None
+    }
+
+    fn get_window_meta(&self, _name: &str) -> Option<Arc<WindowUDF>> {
+        None
+    }
+
+    fn get_variable_type(&self, _variable_names: &[String]) -> Option<DataType> {
+        None
+    }
+
+    fn options(&self) -> &ConfigOptions {
+        &self.options
+    }
+
+    fn udf_names(&self) -> Vec<String> {
+        self.udfs.keys().cloned().collect()
+    }
+
+    fn udaf_names(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn udwf_names(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
-/// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE command in
-/// `statement` was correct. A [`ModelarDbStorageError`] is returned if `statement` is not a
-/// [`Statement::CreateTable`] or a semantic check fails. If all semantic checks are successful a
-/// [`ValidStatement`] is returned.
-pub fn semantic_checks_for_create_table(statement: Statement) -> Result<ValidStatement> {
+/// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE statement in
+/// `create_table` was correct. A [`ModelarDbStorageError`] is returned if a semantic check fails.
+/// If all semantic checks are successful a [`ModelarDbStatement`] is returned.
+fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<ModelarDbStatement> {
     // Ensure it is a create table and only supported features are enabled.
-    check_unsupported_features_are_disabled(&statement)?;
+    check_unsupported_features_are_disabled(&create_table)?;
 
-    // An else-clause is not required as statement's type was checked above.
-    if let Statement::CreateTable(CreateTable {
+    // let is used so a compile error is raised if CreateTable is changed.
+    let CreateTable {
         name,
         columns,
         engine,
         ..
-    }) = statement
-    {
-        // Extract the table name from the Statement::CreateTable.
-        if name.0.len() > 1 {
-            let message = "Multi-part table names are not supported.";
-            return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
+    } = create_table;
+
+    // Extract the table name from the Statement::CreateTable.
+    if name.0.len() > 1 {
+        let message = "Multi-part table names are not supported.";
+        return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
+    }
+
+    // Check if the table name contains whitespace, e.g., spaces or tabs.
+    let normalized_name = normalize_name(&name.0[0].value);
+    if normalized_name.contains(char::is_whitespace) {
+        let message = "Table name cannot contain whitespace.";
+        return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
+    }
+
+    // Check if the table name is a restricted keyword.
+    let table_name_uppercase = normalized_name.to_uppercase();
+    for keyword in ALL_KEYWORDS {
+        if &table_name_uppercase == keyword {
+            return Err(ModelarDbStorageError::InvalidArgument(format!(
+                "Reserved keyword '{}' cannot be used as a table name.",
+                name
+            )));
         }
+    }
 
-        // Check if the table name contains whitespace, e.g., spaces or tabs.
-        let normalized_name = normalize_name(&name.0[0].value);
-        if normalized_name.contains(char::is_whitespace) {
-            let message = "Table name cannot contain whitespace.";
-            return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
-        }
+    // Check if the table name is a valid object_store path and database table name.
+    object_store::path::Path::parse(&normalized_name)?;
 
-        // Check if the table name is a restricted keyword.
-        let table_name_uppercase = normalized_name.to_uppercase();
-        for keyword in ALL_KEYWORDS {
-            if &table_name_uppercase == keyword {
-                return Err(ModelarDbStorageError::InvalidArgument(format!(
-                    "Reserved keyword '{}' cannot be used as a table name.",
-                    name
-                )));
-            }
-        }
+    // Create a ModelarDbStatement with the information for creating the table of the specified
+    // type.
+    if let Some(_expected_engine) = engine {
+        // Create a model table for time series that only supports TIMESTAMP, FIELD, and TAG.
+        let model_table_metadata =
+            semantic_checks_for_create_model_table(normalized_name, columns)?;
 
-        // Check if the table name is a valid object_store path and database table name.
-        object_store::path::Path::parse(&normalized_name)?;
-
-        // Create a ValidStatement with the information for creating the table of the specified
-        // type.
-        let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
-        if let Some(_expected_engine) = engine {
-            // Create a model table for time series that only supports TIMESTAMP, FIELD, and TAG.
-            let model_table_metadata =
-                semantic_checks_for_create_model_table(normalized_name, columns)?;
-
-            Ok(ValidStatement::CreateModelTable(Arc::new(
-                model_table_metadata,
-            )))
-        } else {
-            // Create a table that supports all columns types supported by Apache Arrow DataFusion.
-            let context_provider = ParserContextProvider::new();
-            let sql_to_rel = SqlToRel::new(&context_provider);
-            let schema = sql_to_rel
-                .build_schema(columns)
-                .map_err(|error| ParserError::ParserError(error.to_string()))?;
-
-            // SqlToRel.build() is hard coded to create Timestamp(TimeUnit::Nanosecond, TimeZone)
-            // but Delta Lake currently only supports Timestamp(TimeUnit::Microsecond, TimeZone).
-            let supported_fields = schema
-                .flattened_fields()
-                .iter()
-                .map(|field| match field.data_type() {
-                    DataType::Timestamp(_time_unit, timezone) => {
-                        let data_type =
-                            DataType::Timestamp(TimeUnit::Microsecond, timezone.clone());
-                        Field::new(field.name(), data_type, field.is_nullable())
-                    }
-                    _data_type => (*field).clone(),
-                })
-                .collect::<Vec<Field>>();
-
-            Ok(ValidStatement::CreateTable {
-                name: normalized_name,
-                schema: Schema::new(supported_fields),
-            })
-        }
+        Ok(ModelarDbStatement::CreateModelTable(Arc::new(
+            model_table_metadata,
+        )))
     } else {
-        let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
-        Err(ModelarDbStorageError::InvalidArgument(message.to_owned()))
+        // Create a table that supports all columns types supported by Apache DataFusion.
+        let context_provider = ParserContextProvider::new();
+        let sql_to_rel = SqlToRel::new(&context_provider);
+        let schema = sql_to_rel
+            .build_schema(columns)
+            .map_err(|error| ParserError::ParserError(error.to_string()))?;
+
+        // SqlToRel.build() is hard coded to create Timestamp(TimeUnit::Nanosecond, TimeZone)
+        // but Delta Lake currently only supports Timestamp(TimeUnit::Microsecond, TimeZone).
+        let supported_fields = schema
+            .flattened_fields()
+            .iter()
+            .map(|field| match field.data_type() {
+                DataType::Timestamp(_time_unit, timezone) => {
+                    let data_type = DataType::Timestamp(TimeUnit::Microsecond, timezone.clone());
+                    Field::new(field.name(), data_type, field.is_nullable())
+                }
+                _data_type => (*field).clone(),
+            })
+            .collect::<Vec<Field>>();
+
+        Ok(ModelarDbStatement::CreateNormalTable {
+            name: normalized_name,
+            schema: Schema::new(supported_fields),
+        })
     }
 }
 
-/// Perform additional semantic checks to ensure that the CREATE MODEL TABLE command from which
+/// Perform additional semantic checks to ensure that the CREATE MODEL TABLE statement from which
 /// `name` and `column_defs` was extracted was correct. A [`ParserError`] is returned if any of the
 /// additional semantic checks fails.
 fn semantic_checks_for_create_model_table(
@@ -473,10 +687,13 @@ fn semantic_checks_for_create_model_table(
     Ok(model_table_metadata)
 }
 
-/// Return [`ParserError`] if [`Statement`] is not a [`Statement::CreateTable`] or if an unsupported
+/// Return [`ParserError`] if [`Statement`] is not a [`CreateTable`] or if an unsupported
 /// feature is set.
-fn check_unsupported_features_are_disabled(statement: &Statement) -> StdResult<(), ParserError> {
-    if let Statement::CreateTable(CreateTable {
+fn check_unsupported_features_are_disabled(
+    create_table: &CreateTable,
+) -> StdResult<(), ParserError> {
+    // let is used so a compile error is raised if CreateTable is changed.
+    let CreateTable {
         or_replace,
         temporary,
         external,
@@ -520,83 +737,79 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> StdResult<(
         with_aggregation_policy,
         with_row_access_policy,
         with_tags,
-    }) = statement
-    {
-        check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
-        check_unsupported_feature_is_disabled(*temporary, "TEMPORARY")?;
-        check_unsupported_feature_is_disabled(*external, "EXTERNAL")?;
-        check_unsupported_feature_is_disabled(global.is_some(), "GLOBAL")?;
-        check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
-        check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
-        check_unsupported_feature_is_disabled(*volatile, "VOLATILE")?;
-        check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
-        check_unsupported_feature_is_disabled(
-            hive_distribution != &HiveDistributionStyle::NONE,
-            "Hive distribution",
-        )?;
-        check_unsupported_feature_is_disabled(
-            *hive_formats
-                != Some(HiveFormat {
-                    row_format: None,
-                    serde_properties: None,
-                    storage: None,
-                    location: None,
-                }),
-            "Hive formats",
-        )?;
-        check_unsupported_feature_is_disabled(!table_properties.is_empty(), "Table properties")?;
-        check_unsupported_feature_is_disabled(!with_options.is_empty(), "OPTIONS")?;
-        check_unsupported_feature_is_disabled(file_format.is_some(), "File format")?;
-        check_unsupported_feature_is_disabled(location.is_some(), "Location")?;
-        check_unsupported_feature_is_disabled(query.is_some(), "Query")?;
-        check_unsupported_feature_is_disabled(*without_rowid, "Without ROWID")?;
-        check_unsupported_feature_is_disabled(like.is_some(), "LIKE")?;
-        check_unsupported_feature_is_disabled(clone.is_some(), "CLONE")?;
-        check_unsupported_feature_is_disabled(comment.is_some(), "Comment")?;
-        check_unsupported_feature_is_disabled(auto_increment_offset.is_some(), "AUTO INCREMENT")?;
-        check_unsupported_feature_is_disabled(default_charset.is_some(), "Charset")?;
-        check_unsupported_feature_is_disabled(collation.is_some(), "Collation")?;
-        check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
-        check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
-        check_unsupported_feature_is_disabled(primary_key.is_some(), "PRIMARY_KEY")?;
-        check_unsupported_feature_is_disabled(order_by.is_some(), "ORDER BY")?;
-        check_unsupported_feature_is_disabled(partition_by.is_some(), "PARTITION BY")?;
-        check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
-        check_unsupported_feature_is_disabled(clustered_by.is_some(), "CLUSTERED BY")?;
-        check_unsupported_feature_is_disabled(options.is_some(), "NAME=VALUE")?;
-        check_unsupported_feature_is_disabled(*strict, "STRICT")?;
-        check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;
-        check_unsupported_feature_is_disabled(
-            enable_schema_evolution.is_some(),
-            "ENABLE_SCHEMA_EVOLUTION",
-        )?;
-        check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
-        check_unsupported_feature_is_disabled(
-            data_retention_time_in_days.is_some(),
-            "DATA_RETENTION_TIME_IN_DAYS",
-        )?;
-        check_unsupported_feature_is_disabled(
-            max_data_extension_time_in_days.is_some(),
-            "MAX_DATA_EXTENSION_TIME_IN_DAYS",
-        )?;
-        check_unsupported_feature_is_disabled(
-            default_ddl_collation.is_some(),
-            "DEFAULT_DDL_COLLATION",
-        )?;
-        check_unsupported_feature_is_disabled(
-            with_aggregation_policy.is_some(),
-            "WITH_AGGREGATION_POLICY",
-        )?;
-        check_unsupported_feature_is_disabled(
-            with_row_access_policy.is_some(),
-            "WITH_ROW_ACCESS_POLICY",
-        )?;
-        check_unsupported_feature_is_disabled(with_tags.is_some(), "WITH_TAGS")?;
-        Ok(())
-    } else {
-        let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
-        Err(ParserError::ParserError(message.to_owned()))
-    }
+    } = create_table;
+
+    check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
+    check_unsupported_feature_is_disabled(*temporary, "TEMPORARY")?;
+    check_unsupported_feature_is_disabled(*external, "EXTERNAL")?;
+    check_unsupported_feature_is_disabled(global.is_some(), "GLOBAL")?;
+    check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
+    check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
+    check_unsupported_feature_is_disabled(*volatile, "VOLATILE")?;
+    check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
+    check_unsupported_feature_is_disabled(
+        hive_distribution != &HiveDistributionStyle::NONE,
+        "Hive distribution",
+    )?;
+    check_unsupported_feature_is_disabled(
+        *hive_formats
+            != Some(HiveFormat {
+                row_format: None,
+                serde_properties: None,
+                storage: None,
+                location: None,
+            }),
+        "Hive formats",
+    )?;
+    check_unsupported_feature_is_disabled(!table_properties.is_empty(), "Table properties")?;
+    check_unsupported_feature_is_disabled(!with_options.is_empty(), "OPTIONS")?;
+    check_unsupported_feature_is_disabled(file_format.is_some(), "File format")?;
+    check_unsupported_feature_is_disabled(location.is_some(), "Location")?;
+    check_unsupported_feature_is_disabled(query.is_some(), "Query")?;
+    check_unsupported_feature_is_disabled(*without_rowid, "Without ROWID")?;
+    check_unsupported_feature_is_disabled(like.is_some(), "LIKE")?;
+    check_unsupported_feature_is_disabled(clone.is_some(), "CLONE")?;
+    check_unsupported_feature_is_disabled(comment.is_some(), "Comment")?;
+    check_unsupported_feature_is_disabled(auto_increment_offset.is_some(), "AUTO INCREMENT")?;
+    check_unsupported_feature_is_disabled(default_charset.is_some(), "Charset")?;
+    check_unsupported_feature_is_disabled(collation.is_some(), "Collation")?;
+    check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
+    check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
+    check_unsupported_feature_is_disabled(primary_key.is_some(), "PRIMARY_KEY")?;
+    check_unsupported_feature_is_disabled(order_by.is_some(), "ORDER BY")?;
+    check_unsupported_feature_is_disabled(partition_by.is_some(), "PARTITION BY")?;
+    check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
+    check_unsupported_feature_is_disabled(clustered_by.is_some(), "CLUSTERED BY")?;
+    check_unsupported_feature_is_disabled(options.is_some(), "NAME=VALUE")?;
+    check_unsupported_feature_is_disabled(*strict, "STRICT")?;
+    check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;
+    check_unsupported_feature_is_disabled(
+        enable_schema_evolution.is_some(),
+        "ENABLE_SCHEMA_EVOLUTION",
+    )?;
+    check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
+    check_unsupported_feature_is_disabled(
+        data_retention_time_in_days.is_some(),
+        "DATA_RETENTION_TIME_IN_DAYS",
+    )?;
+    check_unsupported_feature_is_disabled(
+        max_data_extension_time_in_days.is_some(),
+        "MAX_DATA_EXTENSION_TIME_IN_DAYS",
+    )?;
+    check_unsupported_feature_is_disabled(
+        default_ddl_collation.is_some(),
+        "DEFAULT_DDL_COLLATION",
+    )?;
+    check_unsupported_feature_is_disabled(
+        with_aggregation_policy.is_some(),
+        "WITH_AGGREGATION_POLICY",
+    )?;
+    check_unsupported_feature_is_disabled(
+        with_row_access_policy.is_some(),
+        "WITH_ROW_ACCESS_POLICY",
+    )?;
+    check_unsupported_feature_is_disabled(with_tags.is_some(), "WITH_TAGS")?;
+    Ok(())
 }
 
 /// Return [`ParserError`] specifying that the functionality with the name `feature` is not
@@ -620,7 +833,7 @@ fn column_defs_to_model_table_query_schema(
 ) -> StdResult<Schema, DataFusionError> {
     let mut fields = Vec::with_capacity(column_defs.len());
 
-    // Manually convert TIMESTAMP, FIELD, and TAG columns to Apache Arrow DataFusion types.
+    // Manually convert TIMESTAMP, FIELD, and TAG columns to Apache DataFusion types.
     for column_def in column_defs {
         let normalized_name = normalize_name(&column_def.name.value);
 
@@ -773,9 +986,9 @@ fn extract_generation_exprs_for_all_columns(
                 let expr =
                     sql_to_rel.sql_to_expr(sql_expr.clone(), &df_schema, &mut planner_context)?;
 
-                // Ensure the logical Apache Arrow DataFusion expression can be converted to a
-                // physical Apache Arrow DataFusion expression within the context of schema. This is
-                // to improve error messages if the user-defined expression has semantic errors.
+                // Ensure the logical Apache DataFusion expression can be converted to a physical
+                // Apache DataFusion expression within the context of schema. This is to improve
+                // error messages if the user-defined expression has semantic errors.
                 let _physical_expr =
                     planner::create_physical_expr(&expr, &df_schema, &execution_props)?;
 
@@ -800,90 +1013,77 @@ fn extract_generation_exprs_for_all_columns(
     Ok(generated_columns)
 }
 
-/// Parse `sql_expr` into a [`DFExpr`] if it is a correctly formatted SQL arithmetic expression that
-/// only references columns in [`DFSchema`], otherwise [`ModelarDbStorageError`] is returned.
-pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFExpr> {
-    let context_provider = ParserContextProvider::new();
-    let sql_to_rel = SqlToRel::new(&context_provider);
-    let mut planner_context = PlannerContext::new();
-
-    let dialect = ModelarDbDialect::new();
-    let mut parser = Parser::new(&dialect).try_with_sql(sql_expr)?;
-    let parsed_sql_expr = parser.parse_expr()?;
-    sql_to_rel
-        .sql_to_expr(parsed_sql_expr, df_schema, &mut planner_context)
-        .map_err(|error| error.into())
+/// Extract the addresses specified in an INCLUDE clause if at least one is specified in `query`,
+/// otherwise [`None`] is returned.
+pub fn extract_include_addresses(query: &Query) -> Option<Vec<String>> {
+    query.settings.as_ref().map(|settings| {
+        settings
+            .iter()
+            .map(|setting| setting.key.value.to_owned())
+            .collect()
+    })
 }
 
-/// Context used when converting [`Expr`](sqlparser::ast::Expr) to [`DFExpr`], e.g., when validating
-/// generation expressions. It is empty except for the functions included in Apache DataFusion. It
-/// is an extended version of the empty context provider in [rewrite_expr.rs] in the Apache
-/// DataFusion GitHub repository which was released under version 2.0 of the Apache License.
-///
-/// [rewrite_expr.rs]: https://github.com/apache/arrow-datafusion/blob/main/datafusion-examples/examples/rewrite_expr.rs
-struct ParserContextProvider {
-    /// The default options for Apache DataFusion.
-    options: ConfigOptions,
-    /// The functions included in Apache DataFusion.
-    udfs: HashMap<String, Arc<ScalarUDF>>,
-}
-
-impl ParserContextProvider {
-    fn new() -> Self {
-        let mut functions = functions::all_default_functions();
-
-        let udfs = functions
-            .drain(0..)
-            .map(|udf| (udf.name().to_owned(), udf))
-            .collect::<HashMap<String, Arc<ScalarUDF>>>();
-
-        ParserContextProvider {
-            options: ConfigOptions::default(),
-            udfs,
-        }
-    }
-}
-
-impl ContextProvider for ParserContextProvider {
-    fn get_table_source(
-        &self,
-        _name: TableReference,
-    ) -> StdResult<Arc<dyn TableSource>, DataFusionError> {
-        Err(DataFusionError::Plan(
-            "The table was not found.".to_string(),
+/// Perform semantic checks to ensure that the DROP statement from which the arguments was extracted
+/// was correct. A [`ParserError`] is returned if any of the additional semantic checks fails.
+fn semantic_checks_for_drop(
+    object_type: ObjectType,
+    if_exists: bool,
+    names: Vec<ObjectName>,
+    cascade: bool,
+    restrict: bool,
+    purge: bool,
+    temporary: bool,
+) -> StdResult<Vec<String>, ParserError> {
+    if object_type != ObjectType::Table || if_exists || cascade || restrict || purge || temporary {
+        Err(ParserError::ParserError(
+            "Only DROP TABLE is supported.".to_owned(),
         ))
-    }
+    } else {
+        let mut table_names = Vec::with_capacity(names.len());
 
-    fn get_function_meta(&self, name: &str) -> Option<Arc<ScalarUDF>> {
-        self.udfs.get(name).cloned()
-    }
+        for parts in names {
+            let table_name = parts
+                .0
+                .iter()
+                .fold(String::new(), |name, part| name + &part.value);
 
-    fn get_aggregate_meta(&self, _name: &str) -> Option<Arc<AggregateUDF>> {
-        None
-    }
+            table_names.push(table_name);
+        }
 
-    fn get_window_meta(&self, _name: &str) -> Option<Arc<WindowUDF>> {
-        None
+        Ok(table_names)
     }
+}
 
-    fn get_variable_type(&self, _variable_names: &[String]) -> Option<DataType> {
-        None
-    }
+/// Perform semantic checks to ensure that the TRUNCATE statement from which the arguments was
+/// extracted was correct. A [`ParserError`] is returned if any of the additional semantic checks
+/// fails.
+fn semantic_checks_for_truncate(
+    names: Vec<TruncateTableTarget>,
+    partitions: Option<Vec<Expr>>,
+    table: bool,
+    only: bool,
+    identity: Option<TruncateIdentityOption>,
+    cascade: Option<TruncateCascadeOption>,
+) -> StdResult<Vec<String>, ParserError> {
+    if partitions.is_some() || !table || only || identity.is_some() || cascade.is_some() {
+        Err(ParserError::ParserError(
+            "Only TRUNCATE TABLE is supported.".to_owned(),
+        ))
+    } else {
+        let mut table_names = Vec::with_capacity(names.len());
 
-    fn options(&self) -> &ConfigOptions {
-        &self.options
-    }
+        for parts in names {
+            let table_name = parts
+                .name
+                .0
+                .iter()
+                .fold(String::new(), |name, part| name + &part.value);
 
-    fn udf_names(&self) -> Vec<String> {
-        self.udfs.keys().cloned().collect()
-    }
+            table_names.push(table_name);
+        }
 
-    fn udaf_names(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn udwf_names(&self) -> Vec<String> {
-        vec![]
+        Ok(table_names)
     }
 }
 
@@ -891,10 +1091,12 @@ impl ContextProvider for ParserContextProvider {
 mod tests {
     use super::*;
 
-    // Tests for tokenize_and_parse_sql().
+    use sqlparser::dialect::ClickHouseDialect;
+
+    // Tests for tokenize_and_parse_sql_statement().
     #[test]
     fn test_tokenize_and_parse_empty_sql() {
-        assert!(tokenize_and_parse_sql("").is_err());
+        assert!(tokenize_and_parse_sql_statement("").is_err());
     }
 
     #[test]
@@ -904,91 +1106,55 @@ mod tests {
                          field_four FIELD AS (CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)),
                          tag TAG)";
 
-        let statement = tokenize_and_parse_sql(sql).unwrap();
-        if let Statement::CreateTable(CreateTable { name, columns, .. }) = &statement {
-            assert_eq!(*name, new_object_name("table_name"));
-            let expected_columns = vec![
-                ModelarDbDialect::new_column_def(
+        let modelardb_statement = tokenize_and_parse_sql_statement(sql).unwrap();
+        if let ModelarDbStatement::CreateModelTable(model_table_metadata) = &modelardb_statement {
+            assert_eq!(model_table_metadata.name, "table_name");
+            let expected_schema = Arc::new(Schema::new(vec![
+                Field::new(
                     "timestamp",
-                    SQLDataType::Timestamp(None, TimezoneInfo::None),
-                    vec![],
+                    DataType::Timestamp(TimeUnit::Microsecond, None),
+                    false,
                 ),
-                ModelarDbDialect::new_column_def("field_one", SQLDataType::Real, vec![]),
-                ModelarDbDialect::new_column_def(
-                    "field_two",
-                    SQLDataType::Real,
-                    new_column_option_def_error_bound_and_generation_expr(
-                        Some((10.5, false)),
-                        None,
-                    ),
-                ),
-                ModelarDbDialect::new_column_def(
-                    "field_three",
-                    SQLDataType::Real,
-                    new_column_option_def_error_bound_and_generation_expr(Some((1.0, true)), None),
-                ),
-                ModelarDbDialect::new_column_def(
-                    "field_four",
-                    SQLDataType::Real,
-                    new_column_option_def_error_bound_and_generation_expr(
-                        None,
-                        Some("CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)"),
-                    ),
-                ),
-                ModelarDbDialect::new_column_def("tag", SQLDataType::Text, vec![]),
-            ];
-            assert_eq!(*columns, expected_columns);
+                Field::new("field_one", DataType::Float32, false),
+                Field::new("field_two", DataType::Float32, false).with_metadata({
+                    let mut metadata = HashMap::new();
+                    metadata.insert("Error Bound".to_owned(), "10.5".to_owned());
+                    metadata
+                }),
+                Field::new("field_three", DataType::Float32, false).with_metadata({
+                    let mut metadata = HashMap::new();
+                    metadata.insert("Error Bound".to_owned(), "1%".to_owned());
+                    metadata
+                }),
+                Field::new("field_four", DataType::Float32, false).with_metadata({
+                    let mut metadata = HashMap::new();
+                    metadata.insert(
+                        "Generated As".to_owned(),
+                        "CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)".to_owned(),
+                    );
+                    metadata
+                }),
+                Field::new("tag", DataType::Utf8, false),
+            ]));
+            assert_eq!(model_table_metadata.query_schema, expected_schema);
 
-            // unwrap() asserts that the semantic check have all passed as it otherwise panics.
-            semantic_checks_for_create_table(statement).unwrap();
+            assert_eq!(
+                model_table_metadata.error_bounds[2],
+                ErrorBound::try_new_absolute(10.5).unwrap()
+            );
+            assert_eq!(
+                model_table_metadata.error_bounds[3],
+                ErrorBound::try_new_relative(1.0).unwrap()
+            );
+            assert!(model_table_metadata.generated_columns[4].is_some())
         } else {
-            panic!("CREATE TABLE DDL did not parse to a Statement::CreateTable.");
+            panic!("CREATE TABLE DDL did not parse to a ModelarDbStatement::CreateModelTable.");
         }
-    }
-
-    fn new_object_name(name: &str) -> ObjectName {
-        ObjectName(vec![Ident::new(name)])
-    }
-
-    fn new_column_option_def_error_bound_and_generation_expr(
-        maybe_error_bound: Option<(f32, bool)>,
-        maybe_sql_expr: Option<&str>,
-    ) -> Vec<ColumnOptionDef> {
-        let mut column_option_defs = vec![];
-
-        if let Some((error_bound, is_relative)) = maybe_error_bound {
-            let dialect_specific_tokens = vec![Token::Number(error_bound.to_string(), is_relative)];
-            let error_bound = ColumnOptionDef {
-                name: None,
-                option: ColumnOption::DialectSpecific(dialect_specific_tokens),
-            };
-
-            column_option_defs.push(error_bound);
-        }
-
-        if let Some(sql_expr) = maybe_sql_expr {
-            let dialect = ModelarDbDialect::new();
-            let mut parser = Parser::new(&dialect).try_with_sql(sql_expr).unwrap();
-            let generation_expr = ColumnOptionDef {
-                name: None,
-                option: ColumnOption::Generated {
-                    generated_as: GeneratedAs::Always,
-                    sequence_options: None,
-                    generation_expr: Some(parser.parse_expr().unwrap()),
-                    generation_expr_mode: None,
-                    generated_keyword: false,
-                },
-            };
-
-            column_option_defs.push(generation_expr);
-        };
-
-        column_option_defs
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_create() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -996,7 +1162,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_create_model_space() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATEMODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1004,8 +1170,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_model() {
-        // Track if sqlparser at some point can parse fields/tags without ModelarDbDialect.
-        assert!(tokenize_and_parse_sql(
+        // Tracks if sqlparser at some point can parse fields/tags in a TABLE.
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field_one FIELD(10.5),
                                      field_two FIELD(1%), tag TAG)",
         )
@@ -1014,7 +1180,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_model_table_space() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODELTABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1022,7 +1188,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_table_name() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1030,7 +1196,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_table_table_name_space() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1038,7 +1204,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_start_parentheses() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1046,7 +1212,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_option() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP PRIMARY KEY, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1054,7 +1220,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_sql_types() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field REAL, tag VARCHAR)",
         )
         .is_err());
@@ -1062,7 +1228,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_column_name() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(TIMESTAMP, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1070,7 +1236,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_timestamps() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP AS (37), field FIELD, tag TAG)",
         )
         .is_err());
@@ -1078,7 +1244,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_tags() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG AS (37))",
         )
         .is_err());
@@ -1086,7 +1252,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_parentheses() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37, tag TAG)",
         )
         .is_err());
@@ -1095,7 +1261,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_start_parentheses()
     {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37), tag TAG)",
         )
         .is_err());
@@ -1103,7 +1269,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_end_parentheses() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS (37, tag TAG)",
         )
         .is_err());
@@ -1112,7 +1278,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_absolute_error_bound()
     {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0) AS (37), tag TAG)",
         )
         .is_err());
@@ -1121,7 +1287,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_relative_error_bound()
     {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0%) AS (37), tag TAG)",
         )
         .is_err());
@@ -1129,7 +1295,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_column_type() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp, field FIELD, tag TAG)",
         )
         .is_err());
@@ -1137,7 +1303,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_comma() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP field FIELD, tag TAG)",
         )
         .is_err());
@@ -1145,15 +1311,15 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_end_parentheses() {
-        assert!(tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG",
         )
         .is_err());
     }
 
     #[test]
-    fn test_tokenize_and_parse_two_create_model_table_commands() {
-        let error = tokenize_and_parse_sql(
+    fn test_tokenize_and_parse_two_create_model_table_statements() {
+        let error = tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG);
              CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         );
@@ -1162,7 +1328,7 @@ mod tests {
 
         assert_eq!(
             error.unwrap_err().to_string(),
-            "Invalid Argument Error: Multiple SQL commands are not supported."
+            "Invalid Argument Error: Multiple SQL statements are not supported."
         );
     }
 
@@ -1208,17 +1374,15 @@ mod tests {
             if keyword == &"END-EXEC" {
                 continue;
             }
-            let statement = tokenize_and_parse_sql(
+            let modelardb_statement = tokenize_and_parse_sql_statement(
                 sql.replace("{}", keyword_to_table_name(keyword).as_str())
                     .as_str(),
             );
 
-            let result = semantic_checks_for_create_table(statement.unwrap());
-
-            assert!(result.is_err());
+            assert!(modelardb_statement.is_err());
 
             assert_eq!(
-                result.unwrap_err().to_string(),
+                modelardb_statement.unwrap_err().to_string(),
                 format!(
                     "Invalid Argument Error: Reserved keyword '{}' cannot be used as a table name.",
                     keyword_to_table_name(keyword)
@@ -1253,26 +1417,88 @@ mod tests {
             let mut parser = Parser::new(&dialect).try_with_sql(generation_expr).unwrap();
             assert_eq!(generation_expr, parser.parse_expr().unwrap().to_string());
 
-            // Assert that the expression can be parsed to an Apache Arrow DataFusion expression.
-            parse_sql_expression(&df_schema, generation_expr).unwrap();
+            // Assert that the expression can be parsed to an Apache DataFusion expression.
+            tokenize_and_parse_sql_expression(generation_expr, &df_schema).unwrap();
         }
     }
 
     #[test]
     fn test_semantic_checks_for_create_model_table_check_correct_generated_expression() {
-        let statement = tokenize_and_parse_sql(
+        let modelardb_statement = tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_1 * PI() / 180)), tag TAG)",
         ).unwrap();
 
-        assert!(semantic_checks_for_create_table(statement).is_ok());
+        assert!(is_statement_create_table(modelardb_statement));
     }
 
     #[test]
     fn test_semantic_checks_for_create_model_table_check_wrong_generated_expression() {
-        let statement = tokenize_and_parse_sql(
+        assert!(tokenize_and_parse_sql_statement(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_3 * PI() / 180)), tag TAG)",
-        ).unwrap();
+        ).is_err());
+    }
 
-        assert!(semantic_checks_for_create_table(statement).is_err());
+    /// Return [`true`] if `modelardb_statement` is [`ModelarDbStatement::CreateNormalTable`] or
+    /// [`ModelarDbStatement::CreateModelTable`] and [`false`] otherwise.
+    fn is_statement_create_table(modelardb_statement: ModelarDbStatement) -> bool {
+        matches!(
+            modelardb_statement,
+            ModelarDbStatement::CreateNormalTable { .. } | ModelarDbStatement::CreateModelTable(..)
+        )
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_settings_with_click_house_dialect() {
+        assert!(Parser::parse_sql(
+            &ClickHouseDialect {},
+            "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true"
+        )
+        .is_ok())
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_settings_with_modelardb_dialect() {
+        assert!(Parser::parse_sql(
+            &ModelarDbDialect::new(),
+            "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true"
+        )
+        .is_err())
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_include_one_address_select() {
+        assert!(tokenize_and_parse_sql_statement(
+            "INCLUDE 'grpc://192.168.1.2:9999' SELECT * FROM table_name",
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_include_multiple_addresses_select() {
+        assert!(tokenize_and_parse_sql_statement(
+            "INCLUDE 'grpc://192.168.1.2:9999', 'grpc://192.168.1.3:9999' SELECT * FROM table_name",
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_include_one_double_qouted_address_select() {
+        assert!(tokenize_and_parse_sql_statement(
+            "INCLUDE \"grpc://192.168.1.2:9999\" SELECT * FROM table_name",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_one_address_select() {
+        assert!(tokenize_and_parse_sql_statement(
+            "'grpc://192.168.1.2:9999' SELECT * FROM table_name",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_include_zero_addresses_select() {
+        assert!(tokenize_and_parse_sql_statement("INCLUDE SELECT * FROM table_name",).is_err());
     }
 }

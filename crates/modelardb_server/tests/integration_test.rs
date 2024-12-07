@@ -271,42 +271,28 @@ impl TestContext {
             }
         };
 
-        let action = Action {
-            r#type: "CreateTable".to_owned(),
-            body: cmd.into(),
-        };
+        let ticket = Ticket { ticket: cmd.into() };
 
         self.runtime.block_on(async {
-            self.client.do_action(Request::new(action)).await.unwrap();
+            self.client.do_get(ticket).await.unwrap();
         })
     }
 
-    /// Drop a table in the server through the `do_action()` method and the `DropTable` action.
-    fn drop_table(
-        &mut self,
-        table_name: &str,
-    ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
-        let action = Action {
-            r#type: "DropTable".to_owned(),
-            body: table_name.to_owned().into(),
-        };
-
+    /// Drop a table in the server through the `do_get()` method.
+    fn drop_table(&mut self, table_name: &str) -> Result<Response<Streaming<FlightData>>, Status> {
+        let ticket = Ticket::new(format!("DROP TABLE {table_name}"));
         self.runtime
-            .block_on(async { self.client.do_action(Request::new(action)).await })
+            .block_on(async { self.client.do_get(ticket).await })
     }
 
-    /// Truncate a table in the server through the `do_action()` method and the `TruncateTable` action.
+    /// Truncate a table in the server through the `do_get()` method.
     fn truncate_table(
         &mut self,
         table_name: &str,
-    ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
-        let action = Action {
-            r#type: "TruncateTable".to_owned(),
-            body: table_name.to_owned().into(),
-        };
-
+    ) -> Result<Response<Streaming<FlightData>>, Status> {
+        let ticket = Ticket::new(format!("TRUNCATE TABLE {table_name}"));
         self.runtime
-            .block_on(async { self.client.do_action(Request::new(action)).await })
+            .block_on(async { self.client.do_get(ticket).await })
     }
 
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
@@ -782,14 +768,11 @@ fn test_can_list_actions() {
         actions,
         vec![
             "CollectMetrics",
-            "CreateTable",
-            "DropTable",
             "FlushMemory",
             "FlushNode",
             "GetConfiguration",
             "KillNode",
             "NodeType",
-            "TruncateTable",
             "UpdateConfiguration",
         ]
     );
@@ -1052,6 +1035,38 @@ fn test_cannot_ingest_invalid_time_series() {
 }
 
 #[test]
+fn test_do_get_can_execute_include_address_select_query() {
+    execute_and_assert_include_select(1);
+}
+
+#[test]
+fn test_do_get_can_execute_include_address_address_select_query() {
+    execute_and_assert_include_select(2);
+}
+
+fn execute_and_assert_include_select(address_count: usize) {
+    let mut test_context = TestContext::new();
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+
+    let expected_record_batches: Vec<_> = (0..address_count + 1).map(|_| &time_series).collect();
+    let expected_time_series =
+        compute::concat_batches(&time_series.schema(), expected_record_batches).unwrap();
+
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
+
+    let port = test_context.port;
+    let address = format!("'grpc://{HOST}:{port}'");
+    let addresses_separate: Vec<_> = (0..address_count).map(|_| address.clone()).collect();
+    let address = addresses_separate.join(", ");
+
+    let query_result = test_context
+        .execute_query(format!("INCLUDE {address} SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
+
+    assert_eq!(expected_time_series, query_result);
+}
+
+#[test]
 fn test_count_from_segments_equals_count_from_data_points() {
     assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0);
 }
@@ -1074,24 +1089,6 @@ fn test_sum_from_segments_equals_sum_from_data_points() {
 #[test]
 fn test_avg_from_segments_equals_avg_from_data_points() {
     assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001);
-}
-
-/// Creates a table of type `table_type`, ingests `time_series`, and then flushes that data to disk.
-fn ingest_time_series_and_flush_data(
-    test_context: &mut TestContext,
-    time_series: &[RecordBatch],
-    table_type: TableType,
-) {
-    let flight_data =
-        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
-
-    test_context.create_table(TABLE_NAME, table_type);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
 }
 
 /// Asserts that the query executed on segments in `segment_query` returns a result within
@@ -1159,6 +1156,24 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
             data_point_query_result.value(0)
         );
     }
+}
+
+/// Creates a table of type `table_type`, ingests `time_series`, and then flushes that data to disk.
+fn ingest_time_series_and_flush_data(
+    test_context: &mut TestContext,
+    time_series: &[RecordBatch],
+    table_type: TableType,
+) {
+    let flight_data =
+        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
+
+    test_context.create_table(TABLE_NAME, table_type);
+
+    test_context
+        .send_time_series_to_server(flight_data)
+        .unwrap();
+
+    test_context.flush_data_to_disk();
 }
 
 #[test]

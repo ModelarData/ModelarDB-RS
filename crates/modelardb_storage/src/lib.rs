@@ -33,6 +33,7 @@ use arrow::compute::concat_batches;
 use arrow::datatypes::{DataType, Schema};
 use datafusion::catalog::TableProvider;
 use datafusion::execution::session_state::SessionStateBuilder;
+use datafusion::execution::SendableRecordBatchStream;
 use datafusion::parquet::arrow::async_reader::{
     AsyncFileReader, ParquetObjectReader, ParquetRecordBatchStream,
 };
@@ -43,11 +44,13 @@ use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties}
 use datafusion::parquet::format::SortingColumn;
 use datafusion::physical_plan::insert::DataSink;
 use datafusion::prelude::SessionContext;
+use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use futures::StreamExt;
 use modelardb_types::schemas::{DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use object_store::path::Path;
 use object_store::ObjectStore;
+use sqlparser::ast::Statement;
 use tonic::codegen::Bytes;
 
 use crate::error::Result;
@@ -141,6 +144,23 @@ pub fn maybe_table_provider_to_model_table_metadata(
         .as_any()
         .downcast_ref::<ModelTable>()
         .map(|model_table| model_table.model_table_metadata())
+}
+
+/// Execute `statement` in `session_context` and return the result as a
+/// [`SendableRecordBatchStream`]. If `statement` could not be executed successfully,
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError) is returned.
+pub async fn execute_statement(
+    session_context: &SessionContext,
+    statement: Statement,
+) -> Result<SendableRecordBatchStream> {
+    let session_state = session_context.state();
+    let df_statement = DFStatement::Statement(Box::new(statement));
+
+    let logical_plan = session_state.statement_to_plan(df_statement).await?;
+    let data_frame = session_context.execute_logical_plan(logical_plan).await?;
+    let sendable_record_batch_stream = data_frame.execute_stream().await?;
+
+    Ok(sendable_record_batch_stream)
 }
 
 /// Execute the SQL query `sql` in `session_context` and return the result as a single

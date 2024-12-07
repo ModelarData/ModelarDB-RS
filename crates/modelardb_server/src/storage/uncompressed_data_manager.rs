@@ -770,7 +770,8 @@ mod tests {
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
         UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
-    use modelardb_storage::test;
+    use modelardb_storage::parser::ModelarDbStatement;
+    use modelardb_storage::{parser, test};
     use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
@@ -801,10 +802,17 @@ mod tests {
         );
 
         // Create a model table in the context.
-        context
-            .parse_and_create_table(test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
+        let modelardb_statement =
+            parser::tokenize_and_parse_sql_statement(test::MODEL_TABLE_SQL).unwrap();
+        let _ = if let ModelarDbStatement::CreateModelTable(model_table_metadata) =
+            modelardb_statement
+        {
+            context
+                .create_model_table(model_table_metadata, test::MODEL_TABLE_SQL)
+                .await
+        } else {
+            panic!("Expected CreateModelTable.");
+        };
 
         // Ingest a single data point and sleep to allow the ingestion thread to finish.
         let mut storage_engine = context.storage_engine.write().await;

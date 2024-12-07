@@ -18,14 +18,17 @@
 //! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
 use std::collections::HashMap;
+use std::error::Error;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::result::Result as StdResult;
 use std::str;
 use std::sync::Arc;
 
+use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
@@ -33,16 +36,20 @@ use datafusion::arrow::array::{
     ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
 };
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
 };
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::physical_plan::SendableRecordBatchStream;
-use futures::stream::{self, BoxStream};
+use datafusion::error::DataFusionError;
+use datafusion::execution::RecordBatchStream;
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStream};
+use deltalake::arrow::datatypes::Schema;
+use futures::stream::{self, BoxStream, SelectAll};
 use futures::StreamExt;
 use modelardb_common::{arguments, remote};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::functions;
 use modelardb_types::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_types::types::TimestampBuilder;
@@ -88,6 +95,85 @@ pub fn start_apache_arrow_flight_server(
         .map_err(|error| error.into())
 }
 
+/// Execute `sql` at `addresses` and union their result with `local_sendable_record_batch_stream`.
+/// Returns a [`ModelarDbServerError`] if `sql` does not contain an INCLUDE clause, if `sql` cannot
+/// be executed at one of the `addresses`, or if the [`Schema`] of the result cannot be retrieved.
+async fn execute_query_at_addresses_and_union(
+    sql: &str,
+    addresses: Vec<String>,
+    local_sendable_record_batch_stream: Pin<Box<dyn RecordBatchStream + Send>>,
+) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
+    // Remove INCLUDE address+ as sqlparser seems incapable of doing so.
+    let no_addresses_error_fn =
+        || ModelarDbServerError::InvalidArgument("Missing INCLUDE address.".to_owned());
+    let last_address = addresses.last().ok_or_else(no_addresses_error_fn)?;
+    let start_of_address = sql.rfind(last_address).ok_or_else(no_addresses_error_fn)?;
+    let end_of_address = start_of_address + last_address.len() + 1;
+    let sql_select = &sql[end_of_address..];
+
+    // Execute queries at all addresses and union all of the result streams.
+    let mut unioned_sendable_record_batch_streams = SelectAll::new();
+    let schema = local_sendable_record_batch_stream.schema();
+    unioned_sendable_record_batch_streams.push(local_sendable_record_batch_stream);
+
+    for address in addresses {
+        let remote_sendable_record_batch_stream =
+            execute_query_at_address(sql_select.to_owned(), address.to_owned()).await?;
+        unioned_sendable_record_batch_streams.push(remote_sendable_record_batch_stream);
+    }
+
+    Ok(Box::pin(RecordBatchStreamAdapter::new(
+        schema,
+        unioned_sendable_record_batch_streams,
+    )))
+}
+
+/// Execute `sql` at `address`. Returns a [`ModelarDbServerError`] if `sql` cannot be executed at
+/// `address` or if the [`Schema`] of the result cannot be retrieved.
+async fn execute_query_at_address(
+    sql: String,
+    address: String,
+) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
+    // Connect and execute query.
+    let mut flight_client = FlightServiceClient::connect(address.clone())
+        .await
+        .map_err(error_to_status_invalid_argument)?;
+
+    let ticket = Ticket { ticket: sql.into() };
+    let mut stream = flight_client.do_get(ticket).await?.into_inner();
+
+    // Read schema of record batches.
+    let flight_data = stream.message().await?.ok_or_else(|| {
+        ModelarDbServerError::InvalidState(format!("Failed to retrieve schema from {address}."))
+    })?;
+    let schema = Arc::new(Schema::try_from(&flight_data)?);
+
+    // Create a copy of the Arc so the schema can be used after the closure.
+    let schema_for_stream = schema.clone();
+
+    // Create single dictionaries_by_id that can be reused for conversion,
+    // FlightServiceHandler.dictionaries_by_id is not used to simplify lifetimes.
+    let dictionaries_by_id = HashMap::new();
+
+    // Create SenableRecordBatchStream.
+    let record_batch_stream = stream.map(move |maybe_flight_data| {
+        let flight_data = match maybe_flight_data {
+            Ok(flight_data) => flight_data,
+            Err(error) => return Err(DataFusionError::External(Box::new(error))),
+        };
+
+        let maybe_record_batch =
+            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id);
+
+        maybe_record_batch.map_err(|error| error.into())
+    });
+
+    Ok(Box::pin(RecordBatchStreamAdapter::new(
+        schema_for_stream,
+        record_batch_stream,
+    )))
+}
+
 /// Read [`RecordBatches`](RecordBatch) from `query_result_stream` and send them one at a time to
 /// [`FlightService`] using `sender`. Returns [`Status`] with the code [`tonic::Code::Internal`] if
 /// the result cannot be sent through `sender`.
@@ -116,7 +202,7 @@ async fn send_query_result(
             }
         };
 
-        // unwrap() is safe as the result is produced by Apache Arrow DataFusion.
+        // unwrap() is safe as the result is produced by Apache DataFusion.
         let (encoded_dictionaries, encoded_batch) = data_generator
             .encoded_batch(&record_batch, &mut dictionary_tracker, &writer_options)
             .unwrap();
@@ -139,7 +225,7 @@ async fn send_flight_data(
     sender
         .send(flight_data_or_error)
         .await
-        .map_err(|error| Status::internal(error.to_string()))
+        .map_err(error_to_status_internal)
 }
 
 /// Write the schema and corresponding record batch to a stream within a gRPC response.
@@ -149,20 +235,34 @@ fn send_record_batch(
 ) -> StdResult<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
     let options = IpcWriteOptions::default();
     let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options)
-        .map_err(|error| Status::internal(error.to_string()))?;
+        .map_err(error_to_status_internal)?;
 
-    writer
-        .write(&batch)
-        .map_err(|error| Status::internal(error.to_string()))?;
-    let batch_bytes = writer
-        .into_inner()
-        .map_err(|error| Status::internal(error.to_string()))?;
+    writer.write(&batch).map_err(error_to_status_internal)?;
+    let batch_bytes = writer.into_inner().map_err(error_to_status_internal)?;
 
     Ok(Response::new(Box::pin(stream::once(async {
         Ok(FlightResult {
             body: batch_bytes.into(),
         })
     }))))
+}
+
+/// Return an empty stream of [`RecordBatches`](RecordBatch) that can be returned when a SQL
+/// command has been successfully executed but did not produce any rows to return.
+fn empty_record_batch_stream() -> SendableRecordBatchStream {
+    Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
+}
+
+/// Convert an `error` to a [`Status`] with [`tonic::Code::InvalidArgument`] as the code and `error`
+/// converted to a [`String`] as the message.
+fn error_to_status_invalid_argument(error: impl Error) -> Status {
+    Status::invalid_argument(error.to_string())
+}
+
+/// Convert an `error` to a [`Status`] with [`tonic::Code::Internal`] as the code and `error`
+/// converted to a [`String`] as the message.
+fn error_to_status_internal(error: impl Error) -> Status {
+    Status::internal(error.to_string())
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -275,7 +375,7 @@ impl FlightService for FlightServiceHandler {
         let table_names = self
             .context
             .default_database_schema()
-            .map_err(|error| Status::internal(error.to_string()))?
+            .map_err(error_to_status_internal)?
             .table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info = FlightInfo::new().with_descriptor(flight_descriptor);
@@ -312,18 +412,17 @@ impl FlightService for FlightServiceHandler {
             .context
             .schema_of_table_in_default_database_schema(table_name)
             .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(error_to_status_invalid_argument)?;
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let schema_result = schema_as_ipc
-            .try_into()
-            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
+        let schema_result = schema_as_ipc.try_into().map_err(error_to_status_internal)?;
         Ok(Response::new(schema_result))
     }
 
-    /// Execute a SQL query provided in UTF-8 and return the schema of the query result followed by
-    /// the query result.
+    /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
+    /// the result itself. Currently, CREATE TABLE, CREATE MODEL TABLE, EXPLAIN, INCLUDE, SELECT,
+    /// INSERT, TRUNCATE TABLE, and DROP TABLE are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -331,26 +430,79 @@ impl FlightService for FlightServiceHandler {
         let ticket = request.into_inner();
 
         // Extract the query.
-        let query = str::from_utf8(&ticket.ticket)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?
+        let sql = str::from_utf8(&ticket.ticket)
+            .map_err(error_to_status_invalid_argument)?
             .to_owned();
 
-        // Plan the query.
-        info!("Executing the statement: {}.", query);
-        let session_context = self.context.session_context.clone();
-        let data_frame = session_context
-            .sql(&query)
-            .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+        // Parse the statement.
+        info!("Received SQL: '{}'.", sql);
+
+        let modelardb_statement = parser::tokenize_and_parse_sql_statement(&sql)
+            .map_err(error_to_status_invalid_argument)?;
 
         // Execute the query.
-        let query_result_stream = data_frame
-            .execute_stream()
-            .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+        info!("Executing SQL: '{}'.", sql);
 
-        // Send the result, a channel is needed as sync is not implemented for RecordBatchStream.
-        // A buffer size of two is used based on Apache Arrow DataFusion and Apache Arrow Ballista.
+        let sendable_record_batch_stream = match modelardb_statement {
+            ModelarDbStatement::CreateNormalTable { name, schema } => {
+                self.context
+                    .create_normal_table(name, schema, &sql)
+                    .await
+                    .map_err(error_to_status_invalid_argument)?;
+
+                Ok(empty_record_batch_stream())
+            }
+            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+                self.context
+                    .create_model_table(model_table_metadata, &sql)
+                    .await
+                    .map_err(error_to_status_invalid_argument)?;
+
+                Ok(empty_record_batch_stream())
+            }
+            ModelarDbStatement::Statement(statement) => {
+                modelardb_storage::execute_statement(&self.context.session_context, statement)
+                    .await
+                    .map_err(|error| error.into())
+            }
+            ModelarDbStatement::IncludeSelect(statement, addresses) => {
+                let local_sendable_record_batch_stream =
+                    modelardb_storage::execute_statement(&self.context.session_context, statement)
+                        .await
+                        .map_err(error_to_status_internal)?;
+
+                execute_query_at_addresses_and_union(
+                    &sql,
+                    addresses,
+                    local_sendable_record_batch_stream,
+                )
+                .await
+            }
+            ModelarDbStatement::TruncateTable(table_names) => {
+                for table_name in table_names {
+                    self.context
+                        .truncate_table(&table_name)
+                        .await
+                        .map_err(error_to_status_invalid_argument)?;
+                }
+
+                Ok(empty_record_batch_stream())
+            }
+            ModelarDbStatement::DropTable(table_names) => {
+                for table_name in table_names {
+                    self.context
+                        .drop_table(&table_name)
+                        .await
+                        .map_err(error_to_status_invalid_argument)?;
+                }
+
+                Ok(empty_record_batch_stream())
+            }
+        }
+        .map_err(error_to_status_internal)?;
+
+        // Send the result using a channel, a channel is needed as sync is not implemented for
+        // SenableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
         let (sender, receiver) = mpsc::channel(2);
 
         task::spawn(async move {
@@ -358,11 +510,8 @@ impl FlightService for FlightServiceHandler {
             // error occurs it is logged using error!(). Simply calling await! on the JoinHandle
             // returned by task::spawn is also not an option as it waits until send_query_result()
             // returns and thus creates a deadlock since the results are never read from receiver.
-            if let Err(error) = send_query_result(query_result_stream, sender).await {
-                error!(
-                    "Failed to send the result for '{}' due to: {}.",
-                    query, error
-                );
+            if let Err(error) = send_query_result(sendable_record_batch_stream, sender).await {
+                error!("Failed to send the result for '{}' due to: {}.", sql, error);
             }
         });
 
@@ -396,7 +545,7 @@ impl FlightService for FlightServiceHandler {
             .context
             .model_table_metadata_from_default_database_schema(&normalized_table_name)
             .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .map_err(error_to_status_invalid_argument)?
         {
             debug!("Writing data to model table '{}'.", normalized_table_name);
             self.ingest_into_model_table(model_table_metadata, &mut flight_data_stream)
@@ -407,7 +556,7 @@ impl FlightService for FlightServiceHandler {
                 .context
                 .schema_of_table_in_default_database_schema(&normalized_table_name)
                 .await
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
             self.ingest_into_normal_table(&normalized_table_name, &schema, &mut flight_data_stream)
                 .await?;
         }
@@ -426,15 +575,6 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTable`: Execute a SQL query containing a command that creates a table.
-    /// These commands can be `CREATE TABLE table_name(...` which creates a normal table, and
-    /// `CREATE MODEL TABLE table_name(...` which creates a model table.
-    /// * `DropTable`: Drop a table previously created with `CreateTable`. The name of
-    /// table that should be dropped must be provided in the body of the action. All data in the
-    /// table, both in memory and on disk, is deleted.
-    /// * `TruncateTable`: Truncate a table previously created with `CreateTable`. The name of
-    /// the table that should be truncated must be provided in the body of the action. All data in
-    /// the table, both in memory and on disk, is deleted.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -477,53 +617,14 @@ impl FlightService for FlightServiceHandler {
         // Manually drop the read lock on the configuration manager to avoid deadlock issues.
         std::mem::drop(configuration_manager);
 
-        if action.r#type == "CreateTable" {
-            // Read the SQL from the action.
-            let sql = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!("Received request to execute '{}'.", sql);
-
-            self.context
-                .parse_and_create_table(sql)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Confirm the table was created.
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "DropTable" {
-            // Read the table name from the action body.
-            let table_name = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!("Received request to drop table '{}'.", table_name);
-
-            self.context
-                .drop_table(table_name)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Confirm the table was dropped.
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "TruncateTable" {
-            // Read the table name from the action body.
-            let table_name = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!("Received request to truncate table '{}'.", table_name);
-
-            self.context
-                .truncate_table(table_name)
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Confirm the table was truncated.
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "FlushMemory" {
+        if action.r#type == "FlushMemory" {
             self.context
                 .storage_engine
                 .write()
                 .await
                 .flush()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -532,11 +633,11 @@ impl FlightService for FlightServiceHandler {
             storage_engine
                 .flush()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
             storage_engine
                 .transfer()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -545,11 +646,11 @@ impl FlightService for FlightServiceHandler {
             storage_engine
                 .flush()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
             storage_engine
                 .transfer()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Since the process is killed, a conventional response cannot be given. If the action
             // returns a "Stream removed" message, the edge was successfully flushed and killed.
@@ -629,10 +730,10 @@ impl FlightService for FlightServiceHandler {
 
             send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateConfiguration" {
-            let (setting, offset_data) = arguments::decode_argument(&action.body)
-                .map_err(|error| Status::internal(error.to_string()))?;
-            let (new_value, _offset_data) = arguments::decode_argument(offset_data)
-                .map_err(|error| Status::internal(error.to_string()))?;
+            let (setting, offset_data) =
+                arguments::decode_argument(&action.body).map_err(error_to_status_internal)?;
+            let (new_value, _offset_data) =
+                arguments::decode_argument(offset_data).map_err(error_to_status_internal)?;
 
             // Parse the new value into None if it is empty and a usize integer if it is not empty.
             let new_value: Option<usize> = (!new_value.is_empty())
@@ -667,7 +768,7 @@ impl FlightService for FlightServiceHandler {
                     configuration_manager
                         .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
                         .await
-                        .map_err(|error| Status::internal(error.to_string()))
+                        .map_err(error_to_status_internal)
                 }
                 "compressed_reserved_memory_in_bytes" => {
                     let new_value = new_value.ok_or(invalid_empty_error)?;
@@ -675,16 +776,16 @@ impl FlightService for FlightServiceHandler {
                     configuration_manager
                         .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
                         .await
-                        .map_err(|error| Status::internal(error.to_string()))
+                        .map_err(error_to_status_internal)
                 }
                 "transfer_batch_size_in_bytes" => configuration_manager
                     .set_transfer_batch_size_in_bytes(new_value, storage_engine)
                     .await
-                    .map_err(|error| Status::internal(error.to_string())),
+                    .map_err(error_to_status_internal),
                 "transfer_time_in_seconds" => configuration_manager
                     .set_transfer_time_in_seconds(new_value, storage_engine)
                     .await
-                    .map_err(|error| Status::internal(error.to_string())),
+                    .map_err(error_to_status_internal),
                 "ingestion_threads" | "compression_threads" | "writer_threads" => {
                     Err(Status::unimplemented(format!(
                         "{setting} is not an updatable setting in the server configuration."
@@ -715,22 +816,6 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
-        let create_table_action = ActionType {
-            r#type: "CreateTable".to_owned(),
-            description: "Execute a SQL query containing a command that creates a table."
-                .to_owned(),
-        };
-
-        let drop_table_action = ActionType {
-            r#type: "DropTable".to_owned(),
-            description: "Drop a table and all its data.".to_owned(),
-        };
-
-        let truncate_table_action = ActionType {
-            r#type: "TruncateTable".to_owned(),
-            description: "Delete all data from a table.".to_owned(),
-        };
-
         let flush_memory_action = ActionType {
             r#type: "FlushMemory".to_owned(),
             description: "Flush the uncompressed data to disk by compressing and saving the data."
@@ -777,9 +862,6 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
-            Ok(create_table_action),
-            Ok(drop_table_action),
-            Ok(truncate_table_action),
             Ok(flush_memory_action),
             Ok(flush_node_action),
             Ok(kill_node_action),

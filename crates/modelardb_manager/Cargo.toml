@@ -24,8 +24,8 @@ name = "modelardbm"
 path = "src/main.rs"
 
 [dependencies]
-arrow.workspace = true
 arrow-flight.workspace = true
+arrow.workspace = true
 deltalake.workspace = true
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
