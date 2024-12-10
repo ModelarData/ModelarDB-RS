@@ -448,6 +448,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Ticket>,
     ) -> StdResult<Response<Self::DoGetStream>, Status> {
+        let request_metadata = request.metadata().clone();
         let ticket = request.into_inner();
 
         // Extract the query.
@@ -466,6 +467,8 @@ impl FlightService for FlightServiceHandler {
 
         let sendable_record_batch_stream = match modelardb_statement {
             ModelarDbStatement::CreateNormalTable { name, schema } => {
+                self.validate_request(&request_metadata).await?;
+
                 self.context
                     .create_normal_table(name, schema, &sql)
                     .await
@@ -474,6 +477,8 @@ impl FlightService for FlightServiceHandler {
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+                self.validate_request(&request_metadata).await?;
+
                 self.context
                     .create_model_table(model_table_metadata, &sql)
                     .await
@@ -510,6 +515,8 @@ impl FlightService for FlightServiceHandler {
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::DropTable(table_names) => {
+                self.validate_request(&request_metadata).await?;
+
                 for table_name in table_names {
                     self.context
                         .drop_table(&table_name)
@@ -623,20 +630,9 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Action>,
     ) -> StdResult<Response<Self::DoActionStream>, Status> {
-        let metadata = request.metadata().clone();
+        let request_metadata = request.metadata().clone();
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
-
-        // If the server was started with a manager, validate the request.
-        let configuration_manager = self.context.configuration_manager.read().await;
-        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
-            manager
-                .validate_action_request(&action.r#type, &metadata)
-                .map_err(|error| Status::unauthenticated(error.to_string()))?
-        };
-
-        // Manually drop the read lock on the configuration manager to avoid deadlock issues.
-        std::mem::drop(configuration_manager);
 
         if action.r#type == "FlushMemory" {
             self.context
@@ -663,6 +659,8 @@ impl FlightService for FlightServiceHandler {
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "KillNode" {
+            self.validate_request(&request_metadata).await?;
+
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine
                 .flush()
