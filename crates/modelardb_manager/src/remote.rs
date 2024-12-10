@@ -144,7 +144,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_table(sql, &self.context.key)
+            .cluster_do_get(sql, &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -183,7 +183,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_table(sql, &self.context.key)
+            .cluster_do_get(sql, &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -219,7 +219,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .drop_table(table_name, &self.context.key)
+            .cluster_do_get(&format!("DROP TABLE {table_name}"), &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -253,7 +253,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .truncate_table(table_name, &self.context.key)
+            .cluster_do_get(&format!("TRUNCATE TABLE {table_name}"), &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -407,7 +407,7 @@ impl FlightService for FlightServiceHandler {
     }
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
-    /// the result itself. Currently CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, and DROP
+    /// the result itself. Currently, CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, and DROP
     /// TABLE are supported.
     async fn do_get(
         &self,
@@ -459,8 +459,13 @@ impl FlightService for FlightServiceHandler {
             }
         };
 
-        // Confirm the SQL statement was executed.
-        Ok(Response::new(Box::pin(stream::empty())))
+        // Confirm the SQL statement was executed by returning a stream with a schema but no data.
+        // stream::empty() cannot be used since do_get requires a schema in the response.
+        let options = IpcWriteOptions::default();
+        let schema_as_flight_data = SchemaAsIpc::new(&Schema::empty(), &options).into();
+        let output = stream::once(async { Ok(schema_as_flight_data) });
+
+        Ok(Response::new(Box::pin(output)))
     }
 
     /// Not implemented.

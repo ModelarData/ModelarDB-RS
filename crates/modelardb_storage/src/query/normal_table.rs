@@ -133,7 +133,7 @@ impl TableProvider for NormalTable {
         &self,
         _state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
-        _inser_op: InsertOp,
+        _insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let file_sink = Arc::new(DataSinkExec::new(
             input,

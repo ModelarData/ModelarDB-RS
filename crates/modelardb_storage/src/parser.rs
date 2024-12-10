@@ -1024,7 +1024,7 @@ pub fn extract_include_addresses(query: &Query) -> Option<Vec<String>> {
     })
 }
 
-/// Perform semantic checks to ensure that the DROP statement from which the arguments was extracted
+/// Perform semantic checks to ensure that the DROP statement from which the arguments were extracted
 /// was correct. A [`ParserError`] is returned if any of the additional semantic checks fails.
 fn semantic_checks_for_drop(
     object_type: ObjectType,
@@ -1055,7 +1055,7 @@ fn semantic_checks_for_drop(
     }
 }
 
-/// Perform semantic checks to ensure that the TRUNCATE statement from which the arguments was
+/// Perform semantic checks to ensure that the TRUNCATE statement from which the arguments were
 /// extracted was correct. A [`ParserError`] is returned if any of the additional semantic checks
 /// fails.
 fn semantic_checks_for_truncate(
@@ -1482,7 +1482,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_include_one_double_qouted_address_select() {
+    fn test_tokenize_and_parse_include_one_double_quoted_address_select() {
         assert!(tokenize_and_parse_sql_statement(
             "INCLUDE \"grpc://192.168.1.2:9999\" SELECT * FROM table_name",
         )
