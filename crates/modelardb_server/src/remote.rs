@@ -355,18 +355,13 @@ impl FlightServiceHandler {
     async fn validate_request(&self, request_metadata: &MetadataMap) -> StdResult<(), Status> {
         let configuration_manager = self.context.configuration_manager.read().await;
 
-        let result = if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
+        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
             manager
                 .validate_request(request_metadata)
                 .map_err(|error| Status::unauthenticated(error.to_string()))
         } else {
             Ok(())
-        };
-
-        // Manually drop the read lock on the configuration manager to avoid deadlock issues.
-        std::mem::drop(configuration_manager);
-
-        result
+        }
     }
 }
 
