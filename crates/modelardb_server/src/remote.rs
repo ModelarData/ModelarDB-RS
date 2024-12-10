@@ -357,7 +357,7 @@ impl FlightServiceHandler {
 
         let result = if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
             manager
-                .validate_manager_request(request_metadata)
+                .validate_request(request_metadata)
                 .map_err(|error| Status::unauthenticated(error.to_string()))
         } else {
             Ok(())
