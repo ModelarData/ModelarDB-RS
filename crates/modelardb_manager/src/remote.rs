@@ -460,7 +460,11 @@ impl FlightService for FlightServiceHandler {
         };
 
         // Confirm the SQL statement was executed.
-        Ok(Response::new(Box::pin(stream::empty())))
+        let options = IpcWriteOptions::default();
+        let schema_as_flight_data = SchemaAsIpc::new(&Schema::empty(), &options).into();
+        let output = stream::once(async { Ok(schema_as_flight_data) });
+
+        Ok(Response::new(Box::pin(output)))
     }
 
     /// Not implemented.
