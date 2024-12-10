@@ -443,8 +443,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Ticket>,
     ) -> StdResult<Response<Self::DoGetStream>, Status> {
-        let request_metadata = request.metadata().clone();
-        let ticket = request.into_inner();
+        let ticket = request.get_ref();
 
         // Extract the query.
         let sql = str::from_utf8(&ticket.ticket)
@@ -462,7 +461,7 @@ impl FlightService for FlightServiceHandler {
 
         let sendable_record_batch_stream = match modelardb_statement {
             ModelarDbStatement::CreateNormalTable { name, schema } => {
-                self.validate_request(&request_metadata).await?;
+                self.validate_request(request.metadata()).await?;
 
                 self.context
                     .create_normal_table(name, schema, &sql)
@@ -472,7 +471,7 @@ impl FlightService for FlightServiceHandler {
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
-                self.validate_request(&request_metadata).await?;
+                self.validate_request(request.metadata()).await?;
 
                 self.context
                     .create_model_table(model_table_metadata, &sql)
@@ -510,7 +509,7 @@ impl FlightService for FlightServiceHandler {
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::DropTable(table_names) => {
-                self.validate_request(&request_metadata).await?;
+                self.validate_request(request.metadata()).await?;
 
                 for table_name in table_names {
                     self.context
@@ -625,8 +624,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Action>,
     ) -> StdResult<Response<Self::DoActionStream>, Status> {
-        let request_metadata = request.metadata().clone();
-        let action = request.into_inner();
+        let action = request.get_ref();
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "FlushMemory" {
@@ -654,7 +652,7 @@ impl FlightService for FlightServiceHandler {
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "KillNode" {
-            self.validate_request(&request_metadata).await?;
+            self.validate_request(request.metadata()).await?;
 
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine

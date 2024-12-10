@@ -137,9 +137,9 @@ impl Cluster {
         }
     }
 
-    /// For each node in the cluster, execute the given `sql` statement with the given `key`. If the
-    /// statement was successfully executed for each node, return [`Ok`], otherwise return
-    /// [`ModelarDbManagerError`].
+    /// For each node in the cluster, execute the given `sql` statement with the given `key` as
+    /// metadata. If the statement was successfully executed for each node, return [`Ok`], otherwise
+    /// return [`ModelarDbManagerError`].
     pub async fn cluster_do_get(&self, sql: &str, key: &MetadataValue<Ascii>) -> Result<()> {
         let mut do_get_futures: FuturesUnordered<_> = self
             .nodes
@@ -157,9 +157,9 @@ impl Cluster {
         Ok(())
     }
 
-    /// Connect to the Apache Arrow flight client given by `url` and execute the given `sql`
-    /// statement with the given `key`. If the statement was successfully executed, return the url
-    /// of the node, otherwise return [`ModelarDbManagerError`].
+    /// Connect to the Apache Arrow flight server given by `url` and execute the given `sql`
+    /// statement with the given `key` as metadata. If the statement was successfully executed,
+    /// return the url of the node, otherwise return [`ModelarDbManagerError`].
     async fn connect_and_do_get(
         &self,
         url: &str,

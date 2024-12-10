@@ -459,7 +459,8 @@ impl FlightService for FlightServiceHandler {
             }
         };
 
-        // Confirm the SQL statement was executed.
+        // Confirm the SQL statement was executed by returning a stream with a schema but no data.
+        // stream::empty() cannot be used since do_get requires a schema in the response.
         let options = IpcWriteOptions::default();
         let schema_as_flight_data = SchemaAsIpc::new(&Schema::empty(), &options).into();
         let output = stream::once(async { Ok(schema_as_flight_data) });
