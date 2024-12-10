@@ -407,7 +407,7 @@ impl FlightService for FlightServiceHandler {
     }
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
-    /// the result itself. Currently CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, and DROP
+    /// the result itself. Currently, CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, and DROP
     /// TABLE are supported.
     async fn do_get(
         &self,

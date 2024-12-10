@@ -155,7 +155,7 @@ async fn execute_query_at_address(
     // FlightServiceHandler.dictionaries_by_id is not used to simplify lifetimes.
     let dictionaries_by_id = HashMap::new();
 
-    // Create SenableRecordBatchStream.
+    // Create SendableRecordBatchStream.
     let record_batch_stream = stream.map(move |maybe_flight_data| {
         let flight_data = match maybe_flight_data {
             Ok(flight_data) => flight_data,
@@ -502,7 +502,7 @@ impl FlightService for FlightServiceHandler {
         .map_err(error_to_status_internal)?;
 
         // Send the result using a channel, a channel is needed as sync is not implemented for
-        // SenableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
+        // SendableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
         let (sender, receiver) = mpsc::channel(2);
 
         task::spawn(async move {
