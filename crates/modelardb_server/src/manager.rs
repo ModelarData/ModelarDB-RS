@@ -131,29 +131,23 @@ impl Manager {
         Ok(())
     }
 
-    /// If `action_type` is `CreateTable`, `DropTable`, or `KillNode`, check that the request
-    /// actually came from the manager. If the request is valid, return [`Ok`], otherwise return
-    /// [`ModelarDbServerError`].
-    pub fn validate_action_request(&self, action_type: &str, metadata: &MetadataMap) -> Result<()> {
-        // If the server is started with a manager, these actions require a manager key.
-        let restricted_actions = ["CreateTable", "DropTable", "KillNode"];
+    /// Validate the request by checking that the key in the request metadata matches the key of the
+    /// manager. If the request is valid, return [`Ok`], otherwise return [`ModelarDbServerError`].
+    pub fn validate_request(&self, request_metadata: &MetadataMap) -> Result<()> {
+        let request_key =
+            request_metadata
+                .get("x-manager-key")
+                .ok_or(ModelarDbServerError::InvalidState(
+                    "Missing manager key.".to_owned(),
+                ))?;
 
-        if restricted_actions.iter().any(|&a| a == action_type) {
-            let request_key =
-                metadata
-                    .get("x-manager-key")
-                    .ok_or(ModelarDbServerError::InvalidState(
-                        "Missing manager key.".to_owned(),
-                    ))?;
-
-            if &self.key != request_key {
-                return Err(ModelarDbServerError::InvalidState(format!(
-                    "Manager key '{request_key:?}' is invalid.",
-                )));
-            }
+        if &self.key != request_key {
+            Err(ModelarDbServerError::InvalidState(format!(
+                "Manager key '{request_key:?}' is invalid.",
+            )))
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 }
 
