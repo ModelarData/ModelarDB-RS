@@ -57,6 +57,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::metadata::MetadataMap;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
@@ -346,6 +347,26 @@ impl FlightServiceHandler {
         }
 
         Ok(())
+    }
+
+    /// If the server was started with a manager, validate the request by checking that the key in
+    /// the request metadata matches the key of the manager. If the request is invalid, return a
+    /// [`Status`] with the code [`tonic::Code::Unauthenticated`].
+    async fn validate_request(&self, request_metadata: &MetadataMap) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        let result = if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
+            manager
+                .validate_manager_request(request_metadata)
+                .map_err(|error| Status::unauthenticated(error.to_string()))
+        } else {
+            Ok(())
+        };
+
+        // Manually drop the read lock on the configuration manager to avoid deadlock issues.
+        std::mem::drop(configuration_manager);
+
+        result
     }
 }
 

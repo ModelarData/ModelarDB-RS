@@ -133,7 +133,7 @@ impl Manager {
 
     /// Validate the request by checking that the key in the request metadata matches the key of the
     /// manager. If the request is valid, return [`Ok`], otherwise return [`ModelarDbServerError`].
-    pub fn validate_request(&self, request_metadata: &MetadataMap) -> Result<()> {
+    pub fn validate_manager_request(&self, request_metadata: &MetadataMap) -> Result<()> {
         let request_key =
             request_metadata
                 .get("x-manager-key")
