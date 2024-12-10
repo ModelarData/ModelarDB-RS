@@ -18,7 +18,7 @@
 use std::collections::VecDeque;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Action;
+use arrow_flight::{Action, Ticket};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::info;
@@ -137,84 +137,42 @@ impl Cluster {
         }
     }
 
-    /// For each node in the cluster, use the `CreateTable` action to create the table given by
-    /// `sql`. If the table was successfully created for each node, return [`Ok`], otherwise return
+    /// For each node in the cluster, execute the given `sql` statement with the given `key`. If the
+    /// statement was successfully executed for each node, return [`Ok`], otherwise return
     /// [`ModelarDbManagerError`].
-    pub async fn create_table(&self, sql: &str, key: &MetadataValue<Ascii>) -> Result<()> {
-        let action = Action {
-            r#type: "CreateTable".to_owned(),
-            body: sql.to_owned().into(),
-        };
-
-        self.execute_cluster_action(action, key).await
-    }
-
-    /// For each node in the cluster, use the `DropTable` action to drop the table given by
-    /// `table_name`. If the table was successfully dropped for each node, return [`Ok`], otherwise
-    /// return [`ModelarDbManagerError`].
-    pub async fn drop_table(&self, table_name: &str, key: &MetadataValue<Ascii>) -> Result<()> {
-        let action = Action {
-            r#type: "DropTable".to_owned(),
-            body: table_name.to_owned().into(),
-        };
-
-        self.execute_cluster_action(action, key).await
-    }
-
-    /// For each node in the cluster, use the `TruncateTable` action to truncate the table given by
-    /// `table_name`. If the table was successfully truncated for each node, return [`Ok`], otherwise
-    /// return [`ModelarDbManagerError`].
-    pub async fn truncate_table(&self, table_name: &str, key: &MetadataValue<Ascii>) -> Result<()> {
-        let action = Action {
-            r#type: "TruncateTable".to_owned(),
-            body: table_name.to_owned().into(),
-        };
-
-        self.execute_cluster_action(action, key).await
-    }
-
-    /// For each node in the cluster, execute the given `action` with the given `key`. If the action
-    /// was successfully executed for each node, return [`Ok`], otherwise return [`ModelarDbManagerError`].
-    async fn execute_cluster_action(
-        &self,
-        action: Action,
-        key: &MetadataValue<Ascii>,
-    ) -> Result<()> {
-        let mut action_futures: FuturesUnordered<_> = self
+    pub async fn cluster_do_get(&self, sql: &str, key: &MetadataValue<Ascii>) -> Result<()> {
+        let mut do_get_futures: FuturesUnordered<_> = self
             .nodes
             .iter()
-            .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
+            .map(|node| self.connect_and_do_get(&node.url, sql, key))
             .collect();
 
         // TODO: Fix issue where we return immediately if we encounter an error. If it is a
         //       connection error, we either need to retry later or remove the node.
-        // Run the futures concurrently and log when the action has been executed on each node.
-        while let Some(result) = action_futures.next().await {
-            info!(
-                "Executed action `{}` on node with url '{}'.",
-                action.r#type, result?
-            );
+        // Run the futures concurrently and log when the statement has been executed on each node.
+        while let Some(result) = do_get_futures.next().await {
+            info!("Executed statement `{sql}` on node with url '{}'.", result?);
         }
 
         Ok(())
     }
 
-    /// Connect to the Apache Arrow flight client given by `url` and make a request to do `action`.
-    /// If the action was successfully executed, return the url of the node, otherwise return
-    /// [`ModelarDbManagerError`].
-    async fn connect_and_do_action(
+    /// Connect to the Apache Arrow flight client given by `url` and execute the given `sql`
+    /// statement with the given `key`. If the statement was successfully executed, return the url
+    /// of the node, otherwise return [`ModelarDbManagerError`].
+    async fn connect_and_do_get(
         &self,
         url: &str,
-        action: Action,
+        sql: &str,
         key: &MetadataValue<Ascii>,
     ) -> Result<String> {
         let mut flight_client = FlightServiceClient::connect(url.to_owned()).await?;
 
         // Add the key to the request metadata to indicate that the request is from the manager.
-        let mut request = Request::new(action);
+        let mut request = Request::new(Ticket::new(sql.to_owned()));
         request.metadata_mut().insert("x-manager-key", key.clone());
 
-        flight_client.do_action(request).await?;
+        flight_client.do_get(request).await?;
 
         Ok(url.to_owned())
     }

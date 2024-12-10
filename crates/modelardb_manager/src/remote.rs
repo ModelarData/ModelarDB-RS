@@ -144,7 +144,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_table(sql, &self.context.key)
+            .cluster_do_get(sql, &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -183,7 +183,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_table(sql, &self.context.key)
+            .cluster_do_get(sql, &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -219,7 +219,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .drop_table(table_name, &self.context.key)
+            .cluster_do_get(&format!("DROP TABLE {table_name}"), &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -253,7 +253,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .truncate_table(table_name, &self.context.key)
+            .cluster_do_get(&format!("TRUNCATE TABLE {table_name}"), &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
