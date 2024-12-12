@@ -131,29 +131,23 @@ impl Manager {
         Ok(())
     }
 
-    /// If `action_type` is `CreateTable`, `DropTable`, or `KillNode`, check that the request
-    /// actually came from the manager. If the request is valid, return [`Ok`], otherwise return
-    /// [`ModelarDbServerError`].
-    pub fn validate_action_request(&self, action_type: &str, metadata: &MetadataMap) -> Result<()> {
-        // If the server is started with a manager, these actions require a manager key.
-        let restricted_actions = ["CreateTable", "DropTable", "KillNode"];
+    /// Validate the request by checking that the key in the request metadata matches the key of the
+    /// manager. If the request is valid, return [`Ok`], otherwise return [`ModelarDbServerError`].
+    pub fn validate_request(&self, request_metadata: &MetadataMap) -> Result<()> {
+        let request_key =
+            request_metadata
+                .get("x-manager-key")
+                .ok_or(ModelarDbServerError::InvalidState(
+                    "Missing manager key.".to_owned(),
+                ))?;
 
-        if restricted_actions.iter().any(|&a| a == action_type) {
-            let request_key =
-                metadata
-                    .get("x-manager-key")
-                    .ok_or(ModelarDbServerError::InvalidState(
-                        "Missing manager key.".to_owned(),
-                    ))?;
-
-            if &self.key != request_key {
-                return Err(ModelarDbServerError::InvalidState(format!(
-                    "Manager key '{request_key:?}' is invalid.",
-                )));
-            }
+        if &self.key != request_key {
+            Err(ModelarDbServerError::InvalidState(format!(
+                "Manager key '{request_key:?}' is invalid.",
+            )))
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 }
 
@@ -196,65 +190,31 @@ mod tests {
 
     use uuid::Uuid;
 
-    const UNRESTRICTED_ACTIONS: [&str; 5] = [
-        "FlushMemory",
-        "FlushNode",
-        "CollectMetrics",
-        "GetConfiguration",
-        "UpdateConfiguration",
-    ];
-
-    const RESTRICTED_ACTIONS: [&str; 3] = ["CreateTable", "KillNode", "DropTable"];
-
-    // Tests for validate_action_request().
+    // Tests for validate_request().
     #[tokio::test]
-    async fn test_validate_unrestricted_action_request() {
-        let manager = create_manager();
-        let request_metadata = MetadataMap::new();
-
-        for action_type in UNRESTRICTED_ACTIONS {
-            assert!(manager
-                .validate_action_request(action_type, &request_metadata)
-                .is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_validate_restricted_action_request() {
+    async fn test_validate_request() {
         let manager = create_manager();
         let mut request_metadata = MetadataMap::new();
         request_metadata.append("x-manager-key", manager.key.parse().unwrap());
 
-        for action_type in RESTRICTED_ACTIONS {
-            assert!(manager
-                .validate_action_request(action_type, &request_metadata)
-                .is_ok());
-        }
+        assert!(manager.validate_request(&request_metadata).is_ok());
     }
 
     #[tokio::test]
-    async fn test_validate_restricted_action_request_without_key() {
+    async fn test_validate_request_without_key() {
         let manager = create_manager();
         let request_metadata = MetadataMap::new();
 
-        for action_type in RESTRICTED_ACTIONS {
-            assert!(manager
-                .validate_action_request(action_type, &request_metadata)
-                .is_err());
-        }
+        assert!(manager.validate_request(&request_metadata).is_err());
     }
 
     #[tokio::test]
-    async fn test_validate_restricted_action_request_with_invalid_key() {
+    async fn test_validate_request_with_invalid_key() {
         let manager = create_manager();
         let mut request_metadata = MetadataMap::new();
         request_metadata.append("x-manager-key", Uuid::new_v4().to_string().parse().unwrap());
 
-        for action_type in RESTRICTED_ACTIONS {
-            assert!(manager
-                .validate_action_request(action_type, &request_metadata)
-                .is_err());
-        }
+        assert!(manager.validate_request(&request_metadata).is_err());
     }
 
     fn create_manager() -> Manager {

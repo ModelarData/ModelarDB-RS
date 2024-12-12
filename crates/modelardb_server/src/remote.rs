@@ -57,6 +57,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::metadata::MetadataMap;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
@@ -155,7 +156,7 @@ async fn execute_query_at_address(
     // FlightServiceHandler.dictionaries_by_id is not used to simplify lifetimes.
     let dictionaries_by_id = HashMap::new();
 
-    // Create SenableRecordBatchStream.
+    // Create SendableRecordBatchStream.
     let record_batch_stream = stream.map(move |maybe_flight_data| {
         let flight_data = match maybe_flight_data {
             Ok(flight_data) => flight_data,
@@ -347,6 +348,21 @@ impl FlightServiceHandler {
 
         Ok(())
     }
+
+    /// If the server was started with a manager, validate the request by checking that the key in
+    /// the request metadata matches the key of the manager. If the request is invalid, return a
+    /// [`Status`] with the code [`tonic::Code::Unauthenticated`].
+    async fn validate_request(&self, request_metadata: &MetadataMap) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
+            manager
+                .validate_request(request_metadata)
+                .map_err(|error| Status::unauthenticated(error.to_string()))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -427,7 +443,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Ticket>,
     ) -> StdResult<Response<Self::DoGetStream>, Status> {
-        let ticket = request.into_inner();
+        let ticket = request.get_ref();
 
         // Extract the query.
         let sql = str::from_utf8(&ticket.ticket)
@@ -445,6 +461,8 @@ impl FlightService for FlightServiceHandler {
 
         let sendable_record_batch_stream = match modelardb_statement {
             ModelarDbStatement::CreateNormalTable { name, schema } => {
+                self.validate_request(request.metadata()).await?;
+
                 self.context
                     .create_normal_table(name, schema, &sql)
                     .await
@@ -453,6 +471,8 @@ impl FlightService for FlightServiceHandler {
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+                self.validate_request(request.metadata()).await?;
+
                 self.context
                     .create_model_table(model_table_metadata, &sql)
                     .await
@@ -489,6 +509,8 @@ impl FlightService for FlightServiceHandler {
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::DropTable(table_names) => {
+                self.validate_request(request.metadata()).await?;
+
                 for table_name in table_names {
                     self.context
                         .drop_table(&table_name)
@@ -502,7 +524,7 @@ impl FlightService for FlightServiceHandler {
         .map_err(error_to_status_internal)?;
 
         // Send the result using a channel, a channel is needed as sync is not implemented for
-        // SenableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
+        // SendableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
         let (sender, receiver) = mpsc::channel(2);
 
         task::spawn(async move {
@@ -602,20 +624,8 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Action>,
     ) -> StdResult<Response<Self::DoActionStream>, Status> {
-        let metadata = request.metadata().clone();
-        let action = request.into_inner();
+        let action = request.get_ref();
         info!("Received request to perform action '{}'.", action.r#type);
-
-        // If the server was started with a manager, validate the request.
-        let configuration_manager = self.context.configuration_manager.read().await;
-        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
-            manager
-                .validate_action_request(&action.r#type, &metadata)
-                .map_err(|error| Status::unauthenticated(error.to_string()))?
-        };
-
-        // Manually drop the read lock on the configuration manager to avoid deadlock issues.
-        std::mem::drop(configuration_manager);
 
         if action.r#type == "FlushMemory" {
             self.context
@@ -642,6 +652,8 @@ impl FlightService for FlightServiceHandler {
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "KillNode" {
+            self.validate_request(request.metadata()).await?;
+
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine
                 .flush()
