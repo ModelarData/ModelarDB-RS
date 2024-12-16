@@ -243,13 +243,24 @@ impl TableMetadataManager {
 
         // Register the model_table_name_tags table for each model table.
         for model_table_name in self.model_table_names().await? {
-            let tags_table_name = format!("{}_tags", model_table_name);
+            self.register_tags_table(&model_table_name).await?;
+        }
 
-            let delta_table = self
-                .delta_lake
-                .metadata_delta_table(&tags_table_name)
-                .await?;
+        Ok(())
+    }
 
+    /// Register the tags table for the model table with `model_table_name` if it is not already
+    /// registered. The tags table is required to be registered to allow querying a model table.
+    /// If the tags table could not be registered, [`ModelarDbStorageError`] is returned.
+    pub async fn register_tags_table(&self, model_table_name: &str) -> Result<()> {
+        let tags_table_name = format!("{}_tags", model_table_name);
+
+        let delta_table = self
+            .delta_lake
+            .metadata_delta_table(&tags_table_name)
+            .await?;
+
+        if !self.session_context.table_exist(&tags_table_name)? {
             register_metadata_table(&self.session_context, &tags_table_name, delta_table)?;
         }
 
