@@ -1030,6 +1030,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_register_tags_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let session_context = &metadata_manager.session_context;
+
+        let tags_table_name = format!("{}_tags", test::MODEL_TABLE_NAME);
+        session_context.deregister_table(&tags_table_name).unwrap();
+        assert!(!session_context.table_exist(&tags_table_name).unwrap());
+
+        metadata_manager
+            .register_tags_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        assert!(session_context.table_exist(&tags_table_name).unwrap());
+
+        // If the table is already registered, it should not be registered again.
+        let result = metadata_manager
+            .register_tags_table(test::MODEL_TABLE_NAME)
+            .await;
+
+        assert!(result.is_ok());
+        assert!(session_context.table_exist(&tags_table_name).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_register_missing_model_table_tags_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let result = metadata_manager.register_tags_table("missing_table").await;
+
+        assert!(result.is_err());
+        assert!(!metadata_manager
+            .session_context
+            .table_exist("missing_table_tags")
+            .unwrap());
+    }
+
+    #[tokio::test]
     async fn test_normal_table_is_normal_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
         assert!(metadata_manager
