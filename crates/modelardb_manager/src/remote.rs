@@ -486,6 +486,11 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
+    /// * `CreateTables`: Create the tables given in the record batch in the action body. The tables
+    /// are created for each node in the cluster of nodes controlled by the manager. The record batch
+    /// should have the fields `type`, `name`, `schema`, `error_bounds` and `generated_columns`.
+    /// `type` can be either `normal` or `model` and `error_bounds` and `generated_columns` should
+    /// be null if type is `normal`.
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
     /// to create the normal tables and model tables that are missing in the list. The list of table
     /// names is also checked to make sure all given tables actually exist.
@@ -504,7 +509,10 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "InitializeDatabase" {
+        if action.r#type == "CreateTables" {
+            // Confirm the tables were created.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "InitializeDatabase" {
             // Extract the list of comma seperated tables that already exist in the node.
             let node_tables: Vec<&str> = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?
@@ -646,6 +654,12 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
+        let create_tables_action = ActionType {
+            r#type: "CreateTables".to_owned(),
+            description: "Create the tables given in the record batch in the action body."
+                .to_owned(),
+        };
+
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
             description: "Return the SQL required to create all normal tables and model tables \
@@ -670,6 +684,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
+            Ok(create_tables_action),
             Ok(initialize_database_action),
             Ok(register_node_action),
             Ok(remove_node_action),
