@@ -597,6 +597,10 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
+    /// * `CreateTables`: Create the tables given in the record batch in the action body. The record
+    /// batch should have the fields `type`, `name`, `schema`, `error_bounds` and `generated_columns`.
+    /// `type` can be either `normal` or `model` and `error_bounds` and `generated_columns` should
+    /// be null if type is `normal`.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -627,7 +631,10 @@ impl FlightService for FlightServiceHandler {
         let action = request.get_ref();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "FlushMemory" {
+        if action.r#type == "CreateTables" {
+            // Confirm the tables were created.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "FlushMemory" {
             self.context
                 .storage_engine
                 .write()
@@ -828,6 +835,12 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
+        let create_tables_action = ActionType {
+            r#type: "CreateTables".to_owned(),
+            description: "Create the tables given in the record batch in the action body."
+                .to_owned(),
+        };
+
         let flush_memory_action = ActionType {
             r#type: "FlushMemory".to_owned(),
             description: "Flush the uncompressed data to disk by compressing and saving the data."
@@ -874,6 +887,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
+            Ok(create_tables_action),
             Ok(flush_memory_action),
             Ok(flush_node_action),
             Ok(kill_node_action),

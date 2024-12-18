@@ -768,6 +768,7 @@ fn test_can_list_actions() {
         actions,
         vec![
             "CollectMetrics",
+            "CreateTables",
             "FlushMemory",
             "FlushNode",
             "GetConfiguration",
