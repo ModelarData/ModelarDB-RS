@@ -146,7 +146,7 @@ impl Context {
             .create_model_table(&model_table_metadata.name)
             .await?;
 
-        let query_table_metadata_manager = self
+        let query_folder_table_metadata_manager = self
             .data_folders
             .query_data_folder
             .table_metadata_manager
@@ -155,7 +155,7 @@ impl Context {
         // Register the model table with Apache DataFusion.
         self.register_model_table(
             model_table_metadata.clone(),
-            query_table_metadata_manager.clone(),
+            query_folder_table_metadata_manager.clone(),
         )
         .await?;
 
@@ -169,7 +169,7 @@ impl Context {
         // Register the metadata table needed for querying the model table if it is not already
         // registered. The tags table is already registered if the query data folder and local data
         // folder is the same.
-        query_table_metadata_manager
+        query_folder_table_metadata_manager
             .register_tags_table(&model_table_metadata.name)
             .await?;
 
