@@ -146,21 +146,31 @@ impl Context {
             .create_model_table(&model_table_metadata.name)
             .await?;
 
-        let table_metadata_manager = self
+        let query_folder_table_metadata_manager = self
             .data_folders
             .query_data_folder
             .table_metadata_manager
             .clone();
 
         // Register the model table with Apache DataFusion.
-        self.register_model_table(model_table_metadata.clone(), table_metadata_manager)
-            .await?;
+        self.register_model_table(
+            model_table_metadata.clone(),
+            query_folder_table_metadata_manager.clone(),
+        )
+        .await?;
 
-        // Persist the new model table to the Delta Lake.
+        // Persist the new model table to the metadata Delta Lake.
         self.data_folders
             .local_data_folder
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
+            .await?;
+
+        // Register the metadata table needed for querying the model table if it is not already
+        // registered. The tags table is already registered if the query data folder and local data
+        // folder is the same.
+        query_folder_table_metadata_manager
+            .register_tags_table(&model_table_metadata.name)
             .await?;
 
         info!("Created model table '{}'.", model_table_metadata.name);

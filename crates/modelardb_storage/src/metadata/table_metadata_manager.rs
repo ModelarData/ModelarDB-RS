@@ -243,13 +243,24 @@ impl TableMetadataManager {
 
         // Register the model_table_name_tags table for each model table.
         for model_table_name in self.model_table_names().await? {
-            let tags_table_name = format!("{}_tags", model_table_name);
+            self.register_tags_table(&model_table_name).await?;
+        }
 
-            let delta_table = self
-                .delta_lake
-                .metadata_delta_table(&tags_table_name)
-                .await?;
+        Ok(())
+    }
 
+    /// Register the tags table for the model table with `model_table_name` if it is not already
+    /// registered. The tags table is required to be registered to allow querying a model table.
+    /// If the tags table could not be registered, [`ModelarDbStorageError`] is returned.
+    pub async fn register_tags_table(&self, model_table_name: &str) -> Result<()> {
+        let tags_table_name = format!("{}_tags", model_table_name);
+
+        let delta_table = self
+            .delta_lake
+            .metadata_delta_table(&tags_table_name)
+            .await?;
+
+        if !self.session_context.table_exist(&tags_table_name)? {
             register_metadata_table(&self.session_context, &tags_table_name, delta_table)?;
         }
 
@@ -1016,6 +1027,44 @@ mod tests {
                   generated_column_expr, generated_column_sources FROM model_table_field_columns")
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_register_tags_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let session_context = &metadata_manager.session_context;
+
+        let tags_table_name = format!("{}_tags", test::MODEL_TABLE_NAME);
+        session_context.deregister_table(&tags_table_name).unwrap();
+        assert!(!session_context.table_exist(&tags_table_name).unwrap());
+
+        metadata_manager
+            .register_tags_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        assert!(session_context.table_exist(&tags_table_name).unwrap());
+
+        // If the table is already registered, it should not be registered again.
+        let result = metadata_manager
+            .register_tags_table(test::MODEL_TABLE_NAME)
+            .await;
+
+        assert!(result.is_ok());
+        assert!(session_context.table_exist(&tags_table_name).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_register_missing_model_table_tags_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let result = metadata_manager.register_tags_table("missing_table").await;
+
+        assert!(result.is_err());
+        assert!(!metadata_manager
+            .session_context
+            .table_exist("missing_table_tags")
+            .unwrap());
     }
 
     #[tokio::test]
