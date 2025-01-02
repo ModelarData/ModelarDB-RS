@@ -330,13 +330,13 @@ mod test {
         let (query_schema, error_bounds, mut generated_columns) =
             model_table_schema_error_bounds_and_generated_columns();
 
-        let wild_card_options = WildcardOptions {
+        let wild_card_options = Box::new(WildcardOptions {
             ilike: None,
             exclude: None,
             except: None,
             replace: None,
             rename: None,
-        };
+        });
 
         generated_columns[5] = Some(GeneratedColumn {
             expr: Expr::Wildcard {

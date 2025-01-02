@@ -36,13 +36,13 @@ use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, LexRequirement};
+use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet,
 };
 use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, Distribution, ExecutionMode, ExecutionPlan,
-    ExecutionPlanProperties, PhysicalExpr, PlanProperties, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+    DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, ExecutionPlanProperties,
+    PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
@@ -90,7 +90,8 @@ impl GridExec {
         let plan_properties = PlanProperties::new(
             equivalence_properties,
             input.output_partitioning().clone(),
-            ExecutionMode::Bounded,
+            EmissionType::Incremental,
+            Boundedness::Bounded,
         );
 
         Arc::new(GridExec {

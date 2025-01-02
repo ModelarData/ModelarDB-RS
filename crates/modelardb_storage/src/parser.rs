@@ -44,7 +44,7 @@ use sqlparser::ast::{
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
 use sqlparser::parser::{Parser, ParserError};
-use sqlparser::tokenizer::Token;
+use sqlparser::tokenizer::{Span, Token};
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
@@ -114,6 +114,7 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 only,
                 identity,
                 cascade,
+                on_cluster,
             } => {
                 let table_names = semantic_checks_for_truncate(
                     table_names,
@@ -122,6 +123,7 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                     only,
                     identity,
                     cascade,
+                    on_cluster,
                 )?;
                 Ok(ModelarDbStatement::TruncateTable(table_names))
             }
@@ -439,7 +441,7 @@ impl ModelarDbDialect {
         loop {
             match self.parse_single_quoted_string(parser) {
                 Ok(address) => {
-                    addresses.push(new_setting(address, None, Value::Null));
+                    addresses.push(new_setting(address, None, Span::empty(), Value::Null));
                     if let Token::Comma = parser.peek_nth_token(0).token {
                         parser.next_token();
                     } else {
@@ -451,7 +453,7 @@ impl ModelarDbDialect {
         }
 
         // SELECT.
-        let mut boxed_query = match parser.parse_boxed_query() {
+        let mut boxed_query = match parser.parse_query() {
             Ok(boxed_query) => boxed_query,
             Err(error) => return Err(error),
         };
@@ -465,10 +467,11 @@ impl ModelarDbDialect {
 }
 
 /// Create a [`Setting`] with `key`, `quote_style`, and `value`.
-fn new_setting(key: String, quote_style: Option<char>, value: Value) -> Setting {
+fn new_setting(key: String, quote_style: Option<char>, span: Span, value: Value) -> Setting {
     let key = Ident {
         value: key,
         quote_style,
+        span,
     };
 
     Setting { key, value }
@@ -1065,8 +1068,15 @@ fn semantic_checks_for_truncate(
     only: bool,
     identity: Option<TruncateIdentityOption>,
     cascade: Option<TruncateCascadeOption>,
+    on_cluster: Option<Ident>,
 ) -> StdResult<Vec<String>, ParserError> {
-    if partitions.is_some() || !table || only || identity.is_some() || cascade.is_some() {
+    if partitions.is_some()
+        || !table
+        || only
+        || identity.is_some()
+        || cascade.is_some()
+        || on_cluster.is_some()
+    {
         Err(ParserError::ParserError(
             "Only TRUNCATE TABLE is supported.".to_owned(),
         ))
