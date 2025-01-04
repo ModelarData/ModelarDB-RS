@@ -370,6 +370,7 @@ fn logical_file_to_partitioned_file(
         range: None,
         statistics: None,
         extensions: None,
+        metadata_size_hint: None,
     };
 
     Ok(partitioned_file)
