@@ -26,6 +26,7 @@ env:
   RUSTFLAGS: -C instrument-coverage -C strip=symbols -D warnings
   RUSTDOCFLAGS: -D warnings
   LLVM_PROFILE_FILE: modelardb-%p-%m.profraw
+  CXXFLAGS: /std:c++20
 
   # MinIO.
   AWS_ACCESS_KEY_ID: minioadmin
