@@ -16,9 +16,12 @@
 //! Implementation of the type containing the metadata required to read from and
 //! write to a model table.
 
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
+use datafusion::common::DFSchema;
+use datafusion::error::DataFusionError;
 use datafusion::logical_expr::expr::Expr;
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 
@@ -213,6 +216,27 @@ pub struct GeneratedColumn {
     /// Original representation of `expr`. It is copied from the SQL statement, so it can be stored
     /// in the metadata Delta Lake as `expr` does not implement serialization and deserialization.
     pub original_expr: Option<String>,
+}
+
+impl GeneratedColumn {
+    /// Create a [`GeneratedColumn`] from an [`Expr`] and a [`DFSchema`]. If the [`Expr`] refers to
+    /// columns that are not in the [`DFSchema`], a [`ModelarDbStorageError`] is returned.
+    pub fn try_from_expr(expr: Expr, df_schema: &DFSchema) -> Result<Self> {
+        // The expression is saved as a string, so it can be stored in the metadata Delta Lake.
+        let original_expr = Some(expr.to_string());
+
+        let source_columns: StdResult<Vec<usize>, DataFusionError> = expr
+            .column_refs()
+            .iter()
+            .map(|column| df_schema.index_of_column(column))
+            .collect();
+
+        Ok(Self {
+            expr,
+            source_columns: source_columns?,
+            original_expr,
+        })
+    }
 }
 
 #[cfg(test)]
