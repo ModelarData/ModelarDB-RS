@@ -217,8 +217,8 @@ impl TableMetadataManager {
         )?;
 
         // Create and register the model_table_field_columns table if it does not exist. Note that
-        // column_index will only use a maximum of 10 bits. generated_column_* is NULL if the fields
-        // are stored as segments.
+        // column_index will only use a maximum of 10 bits. generated_column_expr is NULL if the
+        // fields are stored as segments.
         let delta_table = self
             .delta_lake
             .create_metadata_table(
@@ -230,7 +230,6 @@ impl TableMetadataManager {
                     Field::new("error_bound_value", DataType::Float32, false),
                     Field::new("error_bound_is_relative", DataType::Boolean, false),
                     Field::new("generated_column_expr", DataType::Utf8, true),
-                    Field::new("generated_column_sources", DataType::Binary, true),
                 ]),
             )
             .await?;
@@ -381,19 +380,13 @@ impl TableMetadataManager {
             .enumerate()
         {
             if model_table_metadata.is_field(query_schema_index) {
-                let (generated_column_expr, generated_column_sources) =
-                    if let Some(generated_column) =
-                        &model_table_metadata.generated_columns[query_schema_index]
-                    {
-                        (
-                            generated_column.original_expr.clone(),
-                            Some(convert_slice_usize_to_vec_u8(
-                                &generated_column.source_columns,
-                            )),
-                        )
-                    } else {
-                        (None, None)
-                    };
+                let generated_column_expr = if let Some(generated_column) =
+                    &model_table_metadata.generated_columns[query_schema_index]
+                {
+                    generated_column.original_expr.clone()
+                } else {
+                    None
+                };
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of model tables.
@@ -418,9 +411,6 @@ impl TableMetadataManager {
                             Arc::new(Float32Array::from(vec![error_bound_value])),
                             Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
                             Arc::new(StringArray::from(vec![generated_column_expr])),
-                            Arc::new(BinaryArray::from_opt_vec(vec![
-                                generated_column_sources.as_deref()
-                            ])),
                         ],
                     )
                     .await?;
@@ -679,7 +669,7 @@ impl TableMetadataManager {
         df_schema: &DFSchema,
     ) -> Result<Vec<Option<GeneratedColumn>>> {
         let sql = format!(
-            "SELECT column_index, generated_column_expr, generated_column_sources
+            "SELECT column_index, generated_column_expr
              FROM model_table_field_columns
              WHERE table_name = '{table_name}'
              ORDER BY column_index"
@@ -690,12 +680,10 @@ impl TableMetadataManager {
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
         let generated_column_expr_array = modelardb_types::array!(batch, 1, StringArray);
-        let generated_column_sources_array = modelardb_types::array!(batch, 2, BinaryArray);
 
         for row_index in 0..batch.num_rows() {
             let generated_column_index = column_index_array.value(row_index);
             let generated_column_expr = generated_column_expr_array.value(row_index);
-            let generated_column_sources = generated_column_sources_array.value(row_index);
 
             // If generated_column_expr is null, it is saved as an empty string in the column values.
             if !generated_column_expr.is_empty() {
@@ -1018,7 +1006,7 @@ mod tests {
         assert!(metadata_manager
             .session_context
             .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                  generated_column_expr, generated_column_sources FROM model_table_field_columns")
+                  generated_column_expr FROM model_table_field_columns")
             .await
             .is_ok());
     }
@@ -1168,7 +1156,7 @@ mod tests {
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
         let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                   generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name";
+                   generated_column_expr FROM model_table_field_columns ORDER BY column_name";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
@@ -1188,7 +1176,6 @@ mod tests {
             **batch.column(5),
             StringArray::from(vec![None, None] as Vec<Option<&str>>)
         );
-        assert_eq!(**batch.column(6), BinaryArray::from(vec![None, None]));
     }
 
     #[tokio::test]
