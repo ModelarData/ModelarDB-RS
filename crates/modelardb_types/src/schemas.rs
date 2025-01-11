@@ -22,7 +22,7 @@ use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use crate::types::{
     ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
-    MetricSchema, QueryCompressedSchema, QuerySchema, UncompressedSchema,
+    CreateTableSchema, MetricSchema, QueryCompressedSchema, QuerySchema, UncompressedSchema,
 };
 
 /// Name of the column used to partition the compressed segments.
@@ -125,5 +125,33 @@ pub static CONFIGURATION_SCHEMA: LazyLock<ConfigurationSchema> = LazyLock::new(|
     ConfigurationSchema(Arc::new(Schema::new(vec![
         Field::new("setting", DataType::Utf8, false),
         Field::new("value", DataType::UInt64, true),
+    ])))
+});
+
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for creating tables using
+/// table data.
+pub static CREATE_TABLE_SCHEMA: LazyLock<CreateTableSchema> = LazyLock::new(|| {
+    CreateTableSchema(Arc::new(Schema::new(vec![
+        Field::new("type", DataType::Utf8, false),
+        Field::new("name", DataType::Utf8, false),
+        Field::new("schema", DataType::Binary, false),
+        Field::new(
+            "error_bounds",
+            DataType::List(Arc::new(Field::new(
+                "error_bound",
+                DataType::Float32,
+                false,
+            ))),
+            true,
+        ),
+        Field::new(
+            "generated_columns",
+            DataType::List(Arc::new(Field::new(
+                "generated_column_expr",
+                DataType::Utf8,
+                true,
+            ))),
+            true,
+        ),
     ])))
 });
