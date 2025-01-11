@@ -26,6 +26,7 @@ use datafusion::logical_expr::expr::Expr;
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 
 use crate::error::{ModelarDbStorageError, Result};
+use crate::parser::tokenize_and_parse_sql_expression;
 
 /// Metadata required to ingest data into a model table and query a model table.
 #[derive(Debug, Clone)]
@@ -219,11 +220,11 @@ pub struct GeneratedColumn {
 }
 
 impl GeneratedColumn {
-    /// Create a [`GeneratedColumn`] from an [`Expr`] and a [`DFSchema`]. If the [`Expr`] refers to
-    /// columns that are not in the [`DFSchema`], a [`ModelarDbStorageError`] is returned.
-    pub fn try_from_expr(expr: Expr, df_schema: &DFSchema) -> Result<Self> {
-        // The expression is saved as a string, so it can be stored in the metadata Delta Lake.
-        let original_expr = Some(expr.to_string());
+    /// Create a [`GeneratedColumn`] from a SQL expression and a [`DFSchema`]. If the SQL expression
+    /// is not valid or refers to columns that are not in the [`DFSchema`],
+    /// a [`ModelarDbStorageError`] is returned.
+    pub fn try_from_sql_expr(sql_expr: &str, df_schema: &DFSchema) -> Result<Self> {
+        let expr = tokenize_and_parse_sql_expression(&sql_expr, &df_schema)?;
 
         let source_columns: StdResult<Vec<usize>, DataFusionError> = expr
             .column_refs()
@@ -234,7 +235,7 @@ impl GeneratedColumn {
         Ok(Self {
             expr,
             source_columns: source_columns?,
-            original_expr,
+            original_expr: Some(sql_expr.to_owned()),
         })
     }
 }

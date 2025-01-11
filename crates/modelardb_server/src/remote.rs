@@ -632,6 +632,8 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTables" {
+            // Extract the record batch from the action body.
+
             // Confirm the tables were created.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "FlushMemory" {
