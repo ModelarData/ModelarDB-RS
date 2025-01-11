@@ -19,7 +19,6 @@
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
-use std::mem;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
@@ -941,27 +940,6 @@ fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
     Schema::try_from(ipc_message).map_err(|error| error.into())
 }
 
-/// Convert a [`&[usize]`] to a [`Vec<u8>`].
-fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
-    usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-/// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
-/// [`mem::size_of::<usize>()`], otherwise [`ModelarDbStorageError`] is returned.
-fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
-    if bytes.len() % mem::size_of::<usize>() != 0 {
-        Err(ModelarDbStorageError::InvalidArgument(
-            "Bytes is not a vector of usizes.".to_owned(),
-        ))
-    } else {
-        // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
-        Ok(bytes
-            .chunks(mem::size_of::<usize>())
-            .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
-            .collect())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,7 +949,6 @@ mod tests {
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue};
-    use proptest::{collection, num, prop_assert_eq, proptest};
     use tempfile::TempDir;
 
     use crate::test;
@@ -1711,14 +1688,5 @@ mod tests {
         // Deserialize the bytes to the schema.
         let bytes_schema = try_convert_bytes_to_schema(bytes).unwrap();
         assert_eq!(*schema, bytes_schema);
-    }
-
-    proptest! {
-        #[test]
-        fn test_slice_usize_to_vec_u8_and_slice_u8_to_vec_usize(values in collection::vec(num::usize::ANY, 0..50)) {
-            let bytes = convert_slice_usize_to_vec_u8(&values);
-            let usizes = try_convert_slice_u8_to_vec_usize(&bytes).unwrap();
-            prop_assert_eq!(values, usizes);
-        }
     }
 }
