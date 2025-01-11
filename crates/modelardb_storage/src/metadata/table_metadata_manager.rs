@@ -27,8 +27,6 @@ use arrow::array::{
     StringArray,
 };
 use arrow::datatypes::{DataType, Field, Schema};
-use arrow::ipc::writer::IpcWriteOptions;
-use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, ToDFSchema};
@@ -41,7 +39,10 @@ use modelardb_types::types::ErrorBound;
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::{register_metadata_table, sql_and_concat};
+use crate::{
+    register_metadata_table, sql_and_concat, try_convert_bytes_to_schema,
+    try_convert_schema_to_bytes,
+};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -923,23 +924,6 @@ impl TableMetadataManager {
     }
 }
 
-/// Convert a [`Schema`] to [`Vec<u8>`].
-fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
-    let options = IpcWriteOptions::default();
-    let schema_as_ipc = SchemaAsIpc::new(schema, &options);
-
-    let ipc_message: IpcMessage = schema_as_ipc.try_into()?;
-
-    Ok(ipc_message.0.to_vec())
-}
-
-/// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-/// [`ModelarDbStorageError`].
-fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
-    let ipc_message = IpcMessage(schema_bytes.into());
-    Schema::try_from(ipc_message).map_err(|error| error.into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1667,26 +1651,5 @@ mod tests {
             .unwrap();
 
         (temp_dir, metadata_manager)
-    }
-
-    // Tests for conversion functions.
-    #[test]
-    fn test_invalid_bytes_to_schema() {
-        assert!(try_convert_bytes_to_schema(vec!(1, 2, 4, 8)).is_err());
-    }
-
-    #[test]
-    fn test_schema_to_bytes_and_bytes_to_schema() {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("field_2", ArrowValue::DATA_TYPE, false),
-        ]));
-
-        // Serialize the schema to bytes.
-        let bytes = try_convert_schema_to_bytes(&schema).unwrap();
-
-        // Deserialize the bytes to the schema.
-        let bytes_schema = try_convert_bytes_to_schema(bytes).unwrap();
-        assert_eq!(*schema, bytes_schema);
     }
 }
