@@ -42,7 +42,7 @@ use modelardb_types::types::ErrorBound;
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::{parser, register_metadata_table, sql_and_concat};
+use crate::{register_metadata_table, sql_and_concat};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -699,14 +699,8 @@ impl TableMetadataManager {
 
             // If generated_column_expr is null, it is saved as an empty string in the column values.
             if !generated_column_expr.is_empty() {
-                let expr =
-                    parser::tokenize_and_parse_sql_expression(generated_column_expr, df_schema)?;
-
-                let generated_column = GeneratedColumn {
-                    expr,
-                    source_columns: try_convert_slice_u8_to_vec_usize(generated_column_sources)?,
-                    original_expr: Some(generated_column_expr.to_owned()),
-                };
+                let generated_column =
+                    GeneratedColumn::try_from_sql_expr(generated_column_expr, &df_schema)?;
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
             }
@@ -1474,7 +1468,19 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(generated_columns, expected_generated_columns);
+        assert_eq!(
+            generated_columns[0..generated_columns.len() - 1],
+            expected_generated_columns[0..expected_generated_columns.len() - 1]
+        );
+
+        // Sort the source columns to ensure the order is consistent.
+        let mut last_generated_column = generated_columns.last().unwrap().clone().unwrap();
+        last_generated_column.source_columns.sort();
+
+        assert_eq!(
+            &Some(last_generated_column),
+            expected_generated_columns.last().unwrap()
+        );
     }
 
     #[tokio::test]
