@@ -18,7 +18,7 @@
 use std::sync::Arc;
 use std::sync::LazyLock;
 
-use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Fields, Schema};
+use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use crate::types::{
     ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
@@ -137,15 +137,12 @@ pub static CREATE_TABLE_SCHEMA: LazyLock<CreateTableSchema> = LazyLock::new(|| {
         Field::new("schema", DataType::Binary, false),
         Field::new(
             "error_bounds",
-            DataType::Struct(Fields::from(vec![
-                Field::new("value", DataType::Float32, false),
-                Field::new("is_relative", DataType::Boolean, false),
-            ])),
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
             true,
         ),
         Field::new(
             "generated_columns",
-            DataType::Struct(Fields::from(vec![Field::new("expr", DataType::Utf8, true)])),
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
             true,
         ),
     ])))
