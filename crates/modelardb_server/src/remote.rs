@@ -32,10 +32,12 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
+use bytes::Buf;
 use datafusion::arrow::array::{
     ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
 };
 use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
 };
@@ -632,7 +634,16 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTables" {
-            // Extract the record batch from the action body.
+            // Extract the record batches from the action body.
+            let action_bytes = action.body.clone();
+            let mut reader = StreamReader::try_new(action_bytes.reader(), None)
+                .map_err(error_to_status_internal)?;
+
+            while let Some(maybe_record_batch) = reader.next() {
+                let record_batch = maybe_record_batch.map_err(error_to_status_internal)?;
+
+                println!("Batch: {:?}", record_batch);
+            }
 
             // Confirm the tables were created.
             Ok(Response::new(Box::pin(stream::empty())))
