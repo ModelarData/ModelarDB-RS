@@ -19,6 +19,7 @@
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
@@ -68,6 +69,19 @@ impl Context {
             session_context,
             storage_engine,
         })
+    }
+
+    /// Parse the [`RecordBatch`] in `record_batch` and create the tables based on the data in the
+    /// record batch. Returns [`ModelarDbServerError`] if the schema of the record batch is invalid
+    /// or if the tables could not be created. Note that if an error occurs while creating the
+    /// tables, the tables that were created before the error occurred are not dropped.
+    pub(crate) async fn create_tables_from_record_batch(
+        &self,
+        record_batch: RecordBatch,
+    ) -> Result<()> {
+        println!("Batch: {:?}", record_batch);
+
+        Ok(())
     }
 
     /// Create a normal table based on `name` and `schema` created from `sql`. Returns

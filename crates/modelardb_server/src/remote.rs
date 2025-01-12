@@ -642,7 +642,10 @@ impl FlightService for FlightServiceHandler {
             while let Some(maybe_record_batch) = reader.next() {
                 let record_batch = maybe_record_batch.map_err(error_to_status_internal)?;
 
-                println!("Batch: {:?}", record_batch);
+                self.context
+                    .create_tables_from_record_batch(record_batch)
+                    .await
+                    .map_err(error_to_status_invalid_argument)?;
             }
 
             // Confirm the tables were created.
