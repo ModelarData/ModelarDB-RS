@@ -18,12 +18,15 @@
 
 use std::sync::Arc;
 
+use datafusion::arrow::array::StringArray;
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
+use deltalake::arrow::array::{BinaryArray, ListArray};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
+use modelardb_storage::try_convert_bytes_to_schema;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -79,7 +82,41 @@ impl Context {
         &self,
         record_batch: RecordBatch,
     ) -> Result<()> {
-        println!("Batch: {:?}", record_batch);
+        let type_array = modelardb_types::array!(record_batch, 0, StringArray);
+        let name_array = modelardb_types::array!(record_batch, 1, StringArray);
+        let schema_array = modelardb_types::array!(record_batch, 2, BinaryArray);
+        let error_bounds_array = modelardb_types::array!(record_batch, 3, ListArray);
+        let generated_columns_array = modelardb_types::array!(record_batch, 4, ListArray);
+
+        for row_index in 0..record_batch.num_rows() {
+            let table_type = type_array.value(row_index);
+            let table_name = name_array.value(row_index);
+            let schema_bytes = schema_array.value(row_index);
+            let error_bounds = error_bounds_array.value(row_index);
+            let generated_columns = generated_columns_array.value(row_index);
+
+            let schema = try_convert_bytes_to_schema(schema_bytes.to_vec())?;
+
+            match table_type {
+                "normal" => {
+                    println!(
+                        "Create normal table '{}' with schema {}.",
+                        table_name, schema
+                    );
+                }
+                "model" => {
+                    println!(
+                        "Create model table '{}' with schema {}, error bounds {:?}, and generated columns {:?}.",
+                        table_name, schema, error_bounds, generated_columns
+                    );
+                }
+                _ => {
+                    return Err(ModelarDbServerError::InvalidArgument(format!(
+                        "Table type '{table_type}' is not supported.",
+                    )));
+                }
+            }
+        }
 
         Ok(())
     }
