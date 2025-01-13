@@ -18,15 +18,17 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::StringArray;
+use datafusion::arrow::array::{Array, BinaryArray, Float32Array, ListArray, StringArray};
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::SchemaProvider;
+use datafusion::common::ToDFSchema;
 use datafusion::prelude::SessionContext;
-use deltalake::arrow::array::{BinaryArray, ListArray};
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_storage::try_convert_bytes_to_schema;
+use modelardb_types::schemas::CREATE_TABLE_SCHEMA;
+use modelardb_types::types::ErrorBound;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -82,6 +84,12 @@ impl Context {
         &self,
         record_batch: RecordBatch,
     ) -> Result<()> {
+        if record_batch.schema() != CREATE_TABLE_SCHEMA.0 {
+            return Err(ModelarDbServerError::InvalidArgument(
+                "Record batch does not contain the expected table data.".to_owned(),
+            ));
+        }
+
         let type_array = modelardb_types::array!(record_batch, 0, StringArray);
         let name_array = modelardb_types::array!(record_batch, 1, StringArray);
         let schema_array = modelardb_types::array!(record_batch, 2, BinaryArray);
@@ -90,25 +98,57 @@ impl Context {
 
         for row_index in 0..record_batch.num_rows() {
             let table_type = type_array.value(row_index);
-            let table_name = name_array.value(row_index);
-            let schema_bytes = schema_array.value(row_index);
-            let error_bounds = error_bounds_array.value(row_index);
-            let generated_columns = generated_columns_array.value(row_index);
-
-            let schema = try_convert_bytes_to_schema(schema_bytes.to_vec())?;
+            let table_name = name_array.value(row_index).to_owned();
+            let schema = try_convert_bytes_to_schema(schema_array.value(row_index).to_vec())?;
 
             match table_type {
-                "normal" => {
-                    println!(
-                        "Create normal table '{}' with schema {}.",
-                        table_name, schema
-                    );
-                }
+                "normal" => self.create_normal_table(table_name, schema, "").await?,
                 "model" => {
-                    println!(
-                        "Create model table '{}' with schema {}, error bounds {:?}, and generated columns {:?}.",
-                        table_name, schema, error_bounds, generated_columns
-                    );
+                    // Convert the error bound values to ErrorBound. unwrap() is safe since the
+                    // schema is checked above.
+                    let row_error_bounds_array = error_bounds_array.value(row_index);
+                    let error_bounds_array = row_error_bounds_array
+                        .as_any()
+                        .downcast_ref::<Float32Array>()
+                        .unwrap();
+
+                    let mut error_bounds = Vec::with_capacity(error_bounds_array.len());
+                    for value in error_bounds_array.iter().flatten() {
+                        if value < 0.0 {
+                            error_bounds.push(ErrorBound::try_new_relative(-value)?);
+                        } else {
+                            error_bounds.push(ErrorBound::try_new_absolute(value)?);
+                        }
+                    }
+
+                    // Convert the generated column expressions to GeneratedColumn. unwrap() is
+                    // safe since the schema is checked above.
+                    let row_generated_columns_array = generated_columns_array.value(row_index);
+                    let generated_columns_array = row_generated_columns_array
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .unwrap();
+
+                    let df_schema = schema.clone().to_dfschema()?;
+                    let mut generated_columns = Vec::with_capacity(generated_columns_array.len());
+                    for maybe_expr in generated_columns_array.iter() {
+                        if let Some(expr) = maybe_expr {
+                            generated_columns
+                                .push(Some(GeneratedColumn::try_from_sql_expr(expr, &df_schema)?));
+                        } else {
+                            generated_columns.push(None);
+                        }
+                    }
+
+                    let model_table_metadata = ModelTableMetadata::try_new(
+                        table_name,
+                        Arc::new(schema),
+                        error_bounds,
+                        generated_columns,
+                    )?;
+
+                    self.create_model_table(Arc::new(model_table_metadata), "")
+                        .await?;
                 }
                 _ => {
                     return Err(ModelarDbServerError::InvalidArgument(format!(

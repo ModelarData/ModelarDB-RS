@@ -91,7 +91,7 @@ impl ErrorBound {
         }
     }
 
-    /// Return an [ErrorBound::Relative`] with `percentage` as its relative per-value bound. A
+    /// Return an [`ErrorBound::Relative`] with `percentage` as its relative per-value bound. A
     /// [`ModelarDbTypesError`] is returned if a value below 0% or a value above 100% is passed.
     pub fn try_new_relative(percentage: f32) -> Result<Self> {
         if !(0.0..=100.0).contains(&percentage) {
