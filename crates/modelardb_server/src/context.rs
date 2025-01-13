@@ -503,7 +503,7 @@ fn array_to_error_bounds(error_bounds_array: ArrayRef) -> Result<Vec<ErrorBound>
         .downcast_ref::<Float32Array>()
         .unwrap();
 
-    let mut error_bounds = Vec::with_capacity(error_bounds_array.len());
+    let mut error_bounds = Vec::with_capacity(value_array.len());
     for value in value_array.iter().flatten() {
         if value < 0.0 {
             error_bounds.push(ErrorBound::try_new_relative(-value)?);
@@ -523,13 +523,13 @@ fn array_to_generated_columns(
     df_schema: &DFSchema,
 ) -> Result<Vec<Option<GeneratedColumn>>> {
     // unwrap() is safe since generated column expressions are always strings.
-    let generated_columns_array = generated_columns_array
+    let expr_array = generated_columns_array
         .as_any()
         .downcast_ref::<StringArray>()
         .unwrap();
 
-    let mut generated_columns = Vec::with_capacity(generated_columns_array.len());
-    for maybe_expr in generated_columns_array.iter() {
+    let mut generated_columns = Vec::with_capacity(expr_array.len());
+    for maybe_expr in expr_array.iter() {
         if let Some(expr) = maybe_expr {
             generated_columns.push(Some(GeneratedColumn::try_from_sql_expr(expr, df_schema)?));
         } else {
