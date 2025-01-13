@@ -453,10 +453,7 @@ impl ModelarDbDialect {
         }
 
         // SELECT.
-        let mut boxed_query = match parser.parse_query() {
-            Ok(boxed_query) => boxed_query,
-            Err(error) => return Err(error),
-        };
+        let mut boxed_query = parser.parse_query()?;
 
         // ClickHouse's SETTINGS is not supported by ModelarDB, so it is repurposed.
         boxed_query.settings = Some(addresses);
