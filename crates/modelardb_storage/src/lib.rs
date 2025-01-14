@@ -27,7 +27,10 @@ pub mod test;
 use std::result::Result as StdResult;
 use std::sync::Arc;
 
-use arrow::array::{BinaryArray, Int64Array, ListArray, RecordBatch, StringArray, UInt64Array};
+use arrow::array::{
+    BinaryArray, Float32Builder, Int64Array, ListArray, ListBuilder, RecordBatch, StringArray,
+    StringBuilder, UInt64Array,
+};
 use arrow::compute;
 use arrow::compute::concat_batches;
 use arrow::datatypes::{DataType, Field, Schema};
@@ -355,6 +358,47 @@ pub fn normal_table_metadata_record_batch(
         ],
     )
     .map_err(|error| error.into())
+}
+
+/// Convert a list of [`ErrorBounds`](ErrorBound) to a [`ListArray`] that can be sent to ModelarDB.
+fn error_bounds_to_list_array(error_bounds: Vec<ErrorBound>) -> ListArray {
+    let mut error_bounds_builder = ListBuilder::new(Float32Builder::new());
+
+    for error_bound in error_bounds {
+        match error_bound {
+            ErrorBound::Absolute(value) => {
+                error_bounds_builder.values().append_value(value);
+            }
+            ErrorBound::Relative(value) => {
+                // Relative error bounds are encoded as negative values for simplicity.
+                error_bounds_builder.values().append_value(-value);
+            }
+        }
+    }
+
+    error_bounds_builder.append(true);
+    error_bounds_builder.finish()
+}
+
+/// Convert a list of optional [`GeneratedColumns`](GeneratedColumn) to a [`ListArray`] that can be
+/// sent to ModelarDB.
+fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn>>) -> ListArray {
+    let mut generated_columns_builder = ListBuilder::new(StringBuilder::new());
+
+    for generated_column in generated_columns {
+        if let Some(generated_column) = generated_column {
+            if let Some(sql_expr) = generated_column.original_expr {
+                generated_columns_builder.values().append_value(sql_expr);
+            } else {
+                generated_columns_builder.values().append_null();
+            }
+        } else {
+            generated_columns_builder.values().append_null();
+        }
+    }
+
+    generated_columns_builder.append(true);
+    generated_columns_builder.finish()
 }
 
 #[cfg(test)]
