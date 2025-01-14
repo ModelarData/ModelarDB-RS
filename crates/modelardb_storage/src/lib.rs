@@ -598,4 +598,29 @@ mod tests {
         let bytes_schema = try_convert_bytes_to_schema(bytes).unwrap();
         assert_eq!(*schema, bytes_schema);
     }
+
+    // Test for normal_table_metadata_record_batch().
+    #[test]
+    fn test_normal_table_metadata_record_batch() {
+        let record_batch = normal_table_metadata_record_batch(
+            test::NORMAL_TABLE_NAME,
+            &test::normal_table_schema(),
+        )
+        .unwrap();
+
+        assert_eq!(record_batch.num_rows(), 1);
+
+        assert_eq!(**record_batch.column(0), StringArray::from(vec!["normal"]));
+        assert_eq!(
+            **record_batch.column(1),
+            StringArray::from(vec![test::NORMAL_TABLE_NAME])
+        );
+
+        let expected_schema_bytes =
+            try_convert_schema_to_bytes(&test::normal_table_schema()).unwrap();
+        assert_eq!(
+            **record_batch.column(2),
+            BinaryArray::from_vec(vec![&expected_schema_bytes])
+        );
+    }
 }
