@@ -494,7 +494,7 @@ impl Context {
     }
 }
 
-/// Parse the error bound values in `error_bounds_array` into a vector of [`ErrorBound`].
+/// Parse the error bound values in `error_bounds_array` into a list of [`ErrorBounds`](ErrorBound).
 /// Returns [`ModelarDbServerError`] if an error bound value is invalid.
 fn array_to_error_bounds(error_bounds_array: ArrayRef) -> Result<Vec<ErrorBound>> {
     // unwrap() is safe since error bound values are always f32.
@@ -515,9 +515,9 @@ fn array_to_error_bounds(error_bounds_array: ArrayRef) -> Result<Vec<ErrorBound>
     Ok(error_bounds)
 }
 
-/// Parse the generated column expressions in `generated_columns_array` into a vector of optional
-/// [`GeneratedColumn`]. Returns [`ModelarDbServerError`] if a generated column expression is
-/// invalid.
+/// Parse the generated column expressions in `generated_columns_array` into a list of optional
+/// [`GeneratedColumns`](GeneratedColumn). Returns [`ModelarDbServerError`] if a generated column
+/// expression is invalid.
 fn array_to_generated_columns(
     generated_columns_array: ArrayRef,
     df_schema: &DFSchema,
@@ -544,12 +544,52 @@ fn array_to_generated_columns(
 mod tests {
     use super::*;
 
+    use datafusion::arrow::compute;
     use modelardb_storage::parser;
     use modelardb_storage::parser::ModelarDbStatement;
     use modelardb_storage::test;
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
+
+    #[tokio::test]
+    async fn test_create_tables_from_record_batch() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        let normal_table_record_batch = modelardb_storage::normal_table_metadata_record_batch(
+            test::NORMAL_TABLE_NAME,
+            &test::normal_table_schema(),
+        )
+        .unwrap();
+
+        let model_table_record_batch =
+            modelardb_storage::model_table_metadata_record_batch(&test::model_table_metadata())
+                .unwrap();
+
+        let table_record_batch = compute::concat_batches(
+            &CREATE_TABLE_SCHEMA.0,
+            &vec![normal_table_record_batch, model_table_record_batch],
+        )
+        .unwrap();
+
+        let result = context
+            .create_tables_from_record_batch(table_record_batch)
+            .await;
+
+        assert!(result.is_ok());
+
+        // Both the normal table and model table should be created.
+        assert!(context
+            .check_if_table_exists(test::NORMAL_TABLE_NAME)
+            .await
+            .is_err());
+
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
+    }
 
     #[tokio::test]
     async fn test_parse_and_create_normal_table() {
