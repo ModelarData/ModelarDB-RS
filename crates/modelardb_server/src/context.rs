@@ -592,6 +592,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_tables_from_invalid_record_batch() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        let record_batch = test::normal_table_record_batch();
+        let result = context.create_tables_from_record_batch(record_batch).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: Record batch does not contain the expected table data."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_tables_from_record_batch_with_invalid_table_type() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        let table_record_batch = modelardb_storage::normal_table_metadata_record_batch(
+            test::NORMAL_TABLE_NAME,
+            &test::normal_table_schema(),
+        )
+        .unwrap();
+
+        let mut columns = table_record_batch.columns().to_vec();
+        columns[0] = Arc::new(StringArray::from(vec!["invalid"]));
+
+        let invalid_table_record_batch =
+            RecordBatch::try_new(CREATE_TABLE_SCHEMA.0.clone(), columns).unwrap();
+
+        let result = context
+            .create_tables_from_record_batch(invalid_table_record_batch)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: Table type 'invalid' is not supported."
+        );
+    }
+
+    #[tokio::test]
     async fn test_parse_and_create_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
