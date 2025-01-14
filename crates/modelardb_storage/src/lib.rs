@@ -55,13 +55,14 @@ use futures::StreamExt;
 use modelardb_types::schemas::{
     CREATE_TABLE_SCHEMA, DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA,
 };
+use modelardb_types::types::ErrorBound;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use sqlparser::ast::Statement;
 use tonic::codegen::Bytes;
 
 use crate::error::Result;
-use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::table_metadata_manager::TableMetadataManager;
 use crate::query::metadata_table::MetadataTable;
 use crate::query::model_table::ModelTable;
@@ -355,6 +356,45 @@ pub fn normal_table_metadata_record_batch(
             Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
             Arc::new(ListArray::new_null(error_bounds_field, 1)),
             Arc::new(ListArray::new_null(generated_columns_field, 1)),
+        ],
+    )
+    .map_err(|error| error.into())
+}
+
+/// Return a [`RecordBatch`] constructed from the metadata in `model_table_metadata`. If the schema
+/// could not be converted to bytes or the record batch could not be created, return
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
+pub fn model_table_metadata_record_batch(
+    model_table_metadata: &ModelTableMetadata,
+) -> Result<RecordBatch> {
+    // Since the model table metadata does not include error bounds for the generated columns,
+    // lossless error bounds are added for each generated column.
+    let mut error_bounds_all = Vec::with_capacity(model_table_metadata.query_schema.fields().len());
+
+    // unwrap() is safe as zero is always a legal absolute error bound.
+    let lossless = ErrorBound::try_new_absolute(0.0).unwrap();
+
+    for field in model_table_metadata.query_schema.fields() {
+        if let Ok(field_index) = model_table_metadata.schema.index_of(field.name()) {
+            error_bounds_all.push(model_table_metadata.error_bounds[field_index]);
+        } else {
+            error_bounds_all.push(lossless);
+        }
+    }
+
+    let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
+    let error_bounds_array = error_bounds_to_list_array(error_bounds_all);
+    let generated_columns_array =
+        generated_columns_to_list_array(model_table_metadata.generated_columns.clone());
+
+    RecordBatch::try_new(
+        CREATE_TABLE_SCHEMA.0.clone(),
+        vec![
+            Arc::new(StringArray::from(vec!["model"])),
+            Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+            Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+            Arc::new(error_bounds_array),
+            Arc::new(generated_columns_array),
         ],
     )
     .map_err(|error| error.into())
