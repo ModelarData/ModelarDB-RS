@@ -245,6 +245,8 @@ mod test {
     use super::*;
 
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::common::ToDFSchema;
+    use datafusion::logical_expr::col;
     use datafusion::logical_expr::expr::WildcardOptions;
     use modelardb_common::test::ERROR_BOUND_ZERO;
 
@@ -469,5 +471,42 @@ mod test {
         assert!(!model_table_metadata.is_tag(1));
         assert!(!model_table_metadata.is_tag(2));
         assert!(model_table_metadata.is_tag(3));
+    }
+
+    // Tests for GeneratedColumn.
+    #[test]
+    fn test_can_create_generated_column() {
+        let schema = Schema::new(vec![
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("field_2", ArrowValue::DATA_TYPE, false),
+            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let sql_expr = "field_1 + field_2";
+        let expected_generated_column = GeneratedColumn {
+            expr: col("field_1") + col("field_2"),
+            source_columns: vec![0, 1],
+            original_expr: Some(sql_expr.to_owned()),
+        };
+
+        let df_schema = schema.to_dfschema().unwrap();
+        let mut result = GeneratedColumn::try_from_sql_expr(sql_expr, &df_schema).unwrap();
+
+        // Sort the source columns to ensure the order is consistent.
+        result.source_columns.sort();
+        assert_eq!(expected_generated_column, result);
+    }
+
+    #[test]
+    fn test_cannot_create_generated_column_with_invalid_sql_expr() {
+        let schema = Schema::new(vec![
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let df_schema = schema.to_dfschema().unwrap();
+        let result = GeneratedColumn::try_from_sql_expr("field_1 + field_2", &df_schema);
+
+        assert!(result.is_err());
     }
 }
