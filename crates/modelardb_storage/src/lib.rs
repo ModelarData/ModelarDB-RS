@@ -27,10 +27,10 @@ pub mod test;
 use std::result::Result as StdResult;
 use std::sync::Arc;
 
-use arrow::array::{Int64Array, RecordBatch, UInt64Array};
+use arrow::array::{BinaryArray, Int64Array, ListArray, RecordBatch, StringArray, UInt64Array};
 use arrow::compute;
 use arrow::compute::concat_batches;
-use arrow::datatypes::{DataType, Schema};
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use datafusion::catalog::TableProvider;
@@ -49,7 +49,9 @@ use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use futures::StreamExt;
-use modelardb_types::schemas::{DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA};
+use modelardb_types::schemas::{
+    CREATE_TABLE_SCHEMA, DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA,
+};
 use object_store::path::Path;
 use object_store::ObjectStore;
 use sqlparser::ast::Statement;
@@ -324,10 +326,35 @@ pub fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
 }
 
 /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-/// [`error::ModelarDbStorageError`].
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
     let ipc_message = IpcMessage(schema_bytes.into());
     Schema::try_from(ipc_message).map_err(|error| error.into())
+}
+
+/// Return a [`RecordBatch`] constructed from the metadata of a normal table with the name
+/// `table_name` and the schema `schema`. If the schema could not be converted to bytes or the
+/// record batch could not be created, return [`ModelarDbStorageError`](error::ModelarDbStorageError).
+pub fn normal_table_metadata_record_batch(
+    table_name: &str,
+    schema: &Schema,
+) -> Result<RecordBatch> {
+    let query_schema_bytes = try_convert_schema_to_bytes(&schema)?;
+
+    let error_bounds_field = Arc::new(Field::new("item", DataType::Float32, true));
+    let generated_columns_field = Arc::new(Field::new("item", DataType::Utf8, true));
+
+    RecordBatch::try_new(
+        CREATE_TABLE_SCHEMA.0.clone(),
+        vec![
+            Arc::new(StringArray::from(vec!["normal"])),
+            Arc::new(StringArray::from(vec![table_name])),
+            Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+            Arc::new(ListArray::new_null(error_bounds_field, 1)),
+            Arc::new(ListArray::new_null(generated_columns_field, 1)),
+        ],
+    )
+    .map_err(|error| error.into())
 }
 
 #[cfg(test)]
