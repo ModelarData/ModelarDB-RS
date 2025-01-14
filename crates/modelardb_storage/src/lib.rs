@@ -445,8 +445,7 @@ fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn
 mod tests {
     use super::*;
 
-    use std::sync::Arc;
-
+    use arrow::array::{Array, Float32Array};
     use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use modelardb_types::types::ArrowValue;
     use object_store::local::LocalFileSystem;
@@ -599,28 +598,56 @@ mod tests {
         assert_eq!(*schema, bytes_schema);
     }
 
-    // Test for normal_table_metadata_record_batch().
+    // Tests for normal_table_metadata_record_batch() and model_table_metadata_record_batch().
     #[test]
     fn test_normal_table_metadata_record_batch() {
-        let record_batch = normal_table_metadata_record_batch(
-            test::NORMAL_TABLE_NAME,
-            &test::normal_table_schema(),
-        )
-        .unwrap();
-
-        assert_eq!(record_batch.num_rows(), 1);
+        let schema = test::normal_table_schema();
+        let record_batch =
+            normal_table_metadata_record_batch(test::NORMAL_TABLE_NAME, &schema).unwrap();
 
         assert_eq!(**record_batch.column(0), StringArray::from(vec!["normal"]));
         assert_eq!(
             **record_batch.column(1),
             StringArray::from(vec![test::NORMAL_TABLE_NAME])
         );
+        assert_eq!(
+            **record_batch.column(2),
+            BinaryArray::from_vec(vec![&try_convert_schema_to_bytes(&schema).unwrap()])
+        );
+    }
+
+    #[test]
+    fn test_model_table_metadata_record_batch() {
+        let model_table_metadata = test::model_table_metadata();
+        let record_batch = model_table_metadata_record_batch(&model_table_metadata).unwrap();
+
+        assert_eq!(**record_batch.column(0), StringArray::from(vec!["model"]));
+        assert_eq!(
+            **record_batch.column(1),
+            StringArray::from(vec![test::MODEL_TABLE_NAME])
+        );
 
         let expected_schema_bytes =
-            try_convert_schema_to_bytes(&test::normal_table_schema()).unwrap();
+            try_convert_schema_to_bytes(&model_table_metadata.query_schema).unwrap();
         assert_eq!(
             **record_batch.column(2),
             BinaryArray::from_vec(vec![&expected_schema_bytes])
         );
+
+        let error_bounds_array = modelardb_types::array!(record_batch, 3, ListArray).value(0);
+        let value_array = error_bounds_array
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+
+        assert_eq!(value_array, &Float32Array::from(vec![0.0, 1.0, -5.0, -0.0]));
+
+        let generated_columns_array = modelardb_types::array!(record_batch, 4, ListArray).value(0);
+        let expr_array = generated_columns_array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+
+        assert_eq!(expr_array, &StringArray::new_null(4));
     }
 }
