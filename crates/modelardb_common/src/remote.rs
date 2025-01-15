@@ -16,6 +16,7 @@
 //! Utility functions used in the Apache Arrow Flight API for both the server and manager.
 
 use std::collections::HashMap;
+use std::error::Error;
 
 use arrow::array::ArrayRef;
 use arrow::datatypes::SchemaRef;
@@ -45,4 +46,16 @@ pub fn flight_data_to_record_batch(
 
     utils::flight_data_to_arrow_batch(flight_data, schema.clone(), dictionaries_by_id)
         .map_err(|error| Status::invalid_argument(error.to_string()))
+}
+
+/// Convert an `error` to a [`Status`] with [`tonic::Code::InvalidArgument`] as the code and `error`
+/// converted to a [`String`] as the message.
+pub fn error_to_status_invalid_argument(error: impl Error) -> Status {
+    Status::invalid_argument(error.to_string())
+}
+
+/// Convert an `error` to a [`Status`] with [`tonic::Code::Internal`] as the code and `error`
+/// converted to a [`String`] as the message.
+pub fn error_to_status_internal(error: impl Error) -> Status {
+    Status::internal(error.to_string())
 }

@@ -18,7 +18,6 @@
 //! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
 use std::collections::HashMap;
-use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::result::Result as StdResult;
@@ -49,6 +48,7 @@ use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStrea
 use deltalake::arrow::datatypes::Schema;
 use futures::stream::{self, BoxStream, SelectAll};
 use futures::StreamExt;
+use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_common::{arguments, remote};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser::{self, ModelarDbStatement};
@@ -254,18 +254,6 @@ fn send_record_batch(
 /// command has been successfully executed but did not produce any rows to return.
 fn empty_record_batch_stream() -> SendableRecordBatchStream {
     Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
-}
-
-/// Convert an `error` to a [`Status`] with [`tonic::Code::InvalidArgument`] as the code and `error`
-/// converted to a [`String`] as the message.
-fn error_to_status_invalid_argument(error: impl Error) -> Status {
-    Status::invalid_argument(error.to_string())
-}
-
-/// Convert an `error` to a [`Status`] with [`tonic::Code::Internal`] as the code and `error`
-/// converted to a [`String`] as the message.
-fn error_to_status_internal(error: impl Error) -> Status {
-    Status::internal(error.to_string())
 }
 
 /// Handler for processing Apache Arrow Flight requests.
