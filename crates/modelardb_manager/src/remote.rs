@@ -91,6 +91,56 @@ impl FlightServiceHandler {
         Self { context }
     }
 
+    /// Return the schema of the table with the name `table_name`. If the table does not exist or
+    /// the schema cannot be retrieved, return [`Status`].
+    async fn table_schema(&self, table_name: &str) -> StdResult<Arc<Schema>, Status> {
+        let table_metadata_manager = &self
+            .context
+            .remote_data_folder
+            .metadata_manager
+            .table_metadata_manager;
+
+        let schema = if table_metadata_manager
+            .is_normal_table(&table_name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?
+        {
+            let delta_table = self
+                .context
+                .remote_data_folder
+                .delta_lake
+                .delta_table(&table_name)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // unwrap() is safe since the schema is always valid.
+            let schema = delta_table
+                .get_schema()
+                .map_err(|error| Status::internal(error.to_string()))?
+                .try_into()
+                .unwrap();
+
+            Arc::new(schema)
+        } else if table_metadata_manager
+            .is_model_table(&table_name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?
+        {
+            let model_table_metadata = table_metadata_manager
+                .model_table_metadata_for_model_table(&table_name)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            model_table_metadata.query_schema
+        } else {
+            return Err(Status::invalid_argument(format!(
+                "Table with name '{table_name}' does not exist.",
+            )));
+        };
+
+        Ok(schema)
+    }
+
     /// Return [`Ok`] if a table named `table_name` does not exist already in the metadata
     /// database, otherwise return [`Status`].
     async fn check_if_table_exists(&self, table_name: &str) -> StdResult<(), Status> {
@@ -365,37 +415,7 @@ impl FlightService for FlightServiceHandler {
         let flight_descriptor = request.into_inner();
         let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
 
-        let table_sql = self
-            .context
-            .remote_data_folder
-            .metadata_manager
-            .table_sql(table_name)
-            .await
-            .map_err(|error| {
-                Status::not_found(format!(
-                    "Table with name '{table_name}' does not exist: {error}",
-                ))
-            })?;
-
-        // Parse the SQL and perform semantic checks to extract the schema from the statement.
-        let modelardb_statement = parser::tokenize_and_parse_sql_statement(table_sql.as_str())
-            .map_err(|error| Status::internal(error.to_string()))?;
-
-        let schema = match modelardb_statement {
-            ModelarDbStatement::CreateNormalTable { schema, .. } => Arc::new(schema),
-            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
-                model_table_metadata.schema.clone()
-            }
-            // .. is not used so a compile error is raised if a new ModelarDbStatement is added.
-            ModelarDbStatement::Statement(_)
-            | ModelarDbStatement::IncludeSelect(..)
-            | ModelarDbStatement::DropTable(_)
-            | ModelarDbStatement::TruncateTable(_) => {
-                return Err(Status::internal(
-                    "Expected CreateNormalTable or CreateModelTable.",
-                ));
-            }
-        };
+        let schema = self.table_schema(&table_name).await?;
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
