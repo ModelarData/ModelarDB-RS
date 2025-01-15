@@ -622,6 +622,8 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTables" {
+            self.validate_request(request.metadata()).await?;
+
             // Extract the record batches from the action body.
             let action_bytes = action.body.clone();
             let mut reader = StreamReader::try_new(action_bytes.reader(), None)
