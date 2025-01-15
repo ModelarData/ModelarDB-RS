@@ -25,7 +25,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
-use arrow::error::ArrowError;
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
@@ -38,6 +37,7 @@ use bytes::Buf;
 use futures::{stream, Stream};
 use modelardb_common::arguments;
 use modelardb_common::remote;
+use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
@@ -105,7 +105,7 @@ impl FlightServiceHandler {
         let schema = if table_metadata_manager
             .is_normal_table(&table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?
+            .map_err(error_to_status_internal)?
         {
             let delta_table = self
                 .context
@@ -113,25 +113,24 @@ impl FlightServiceHandler {
                 .delta_lake
                 .delta_table(&table_name)
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
-            // unwrap() is safe since the schema is always valid.
             let schema = delta_table
                 .get_schema()
-                .map_err(|error| Status::internal(error.to_string()))?
+                .map_err(error_to_status_internal)?
                 .try_into()
-                .unwrap();
+                .map_err(error_to_status_internal)?;
 
             Arc::new(schema)
         } else if table_metadata_manager
             .is_model_table(&table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?
+            .map_err(error_to_status_internal)?
         {
             let model_table_metadata = table_metadata_manager
                 .model_table_metadata_for_model_table(&table_name)
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             model_table_metadata.query_schema
         } else {
@@ -152,7 +151,7 @@ impl FlightServiceHandler {
             .metadata_manager
             .table_metadata_column("table_name")
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         if existing_tables
             .iter()
@@ -180,7 +179,7 @@ impl FlightServiceHandler {
             .delta_lake
             .create_normal_table(table_name, schema)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Persist the new normal table to the metadata Delta Lake.
         self.context
@@ -189,7 +188,7 @@ impl FlightServiceHandler {
             .table_metadata_manager
             .save_normal_table_metadata(table_name, sql)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Register and save the table to each node in the cluster.
         self.context
@@ -198,7 +197,7 @@ impl FlightServiceHandler {
             .await
             .cluster_do_get(sql, &self.context.key)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         info!("Created normal table '{}'.", table_name);
 
@@ -219,7 +218,7 @@ impl FlightServiceHandler {
             .delta_lake
             .create_model_table(&model_table_metadata.name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Persist the new model table to the metadata Delta Lake.
         self.context
@@ -228,7 +227,7 @@ impl FlightServiceHandler {
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Register and save the model table to each node in the cluster.
         self.context
@@ -237,7 +236,7 @@ impl FlightServiceHandler {
             .await
             .cluster_do_get(sql, &self.context.key)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
 
@@ -256,7 +255,7 @@ impl FlightServiceHandler {
             .table_metadata_manager
             .drop_table_metadata(table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Drop the table from the remote data folder data Delta lake.
         self.context
@@ -264,7 +263,7 @@ impl FlightServiceHandler {
             .delta_lake
             .drop_table(table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Drop the table from the nodes controlled by the manager.
         self.context
@@ -273,7 +272,7 @@ impl FlightServiceHandler {
             .await
             .cluster_do_get(&format!("DROP TABLE {table_name}"), &self.context.key)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         Ok(())
     }
@@ -290,7 +289,7 @@ impl FlightServiceHandler {
             .table_metadata_manager
             .truncate_table_metadata(table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Truncate the table in the remote data folder data Delta lake.
         self.context
@@ -298,7 +297,7 @@ impl FlightServiceHandler {
             .delta_lake
             .truncate_table(table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Truncate the table in the nodes controlled by the manager.
         self.context
@@ -307,7 +306,7 @@ impl FlightServiceHandler {
             .await
             .cluster_do_get(&format!("TRUNCATE TABLE {table_name}"), &self.context.key)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         Ok(())
     }
@@ -351,7 +350,7 @@ impl FlightService for FlightServiceHandler {
             .metadata_manager
             .table_metadata_column("table_name")
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info = FlightInfo::new().with_descriptor(flight_descriptor);
@@ -371,7 +370,7 @@ impl FlightService for FlightServiceHandler {
 
         // Extract the query.
         let query = str::from_utf8(&flight_descriptor.cmd)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .map_err(error_to_status_invalid_argument)?
             .to_owned();
 
         // Retrieve the cloud node that should execute the given query.
@@ -421,9 +420,7 @@ impl FlightService for FlightServiceHandler {
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let schema_result = schema_as_ipc
-            .try_into()
-            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
+        let schema_result = schema_as_ipc.try_into().map_err(error_to_status_internal)?;
 
         Ok(Response::new(schema_result))
     }
@@ -439,14 +436,14 @@ impl FlightService for FlightServiceHandler {
 
         // Extract the query.
         let sql = str::from_utf8(&ticket.ticket)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .map_err(error_to_status_invalid_argument)?
             .to_owned();
 
         // Parse the query.
         info!("Received SQL: '{}'.", sql);
 
         let modelardb_statement = parser::tokenize_and_parse_sql_statement(&sql)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(error_to_status_invalid_argument)?;
 
         // Execute the statement.
         info!("Executing SQL: '{}'.", sql);
@@ -535,11 +532,10 @@ impl FlightService for FlightServiceHandler {
             // Extract the record batches from the action body.
             let action_bytes = action.body.clone();
             let mut reader = StreamReader::try_new(action_bytes.reader(), None)
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             while let Some(maybe_record_batch) = reader.next() {
-                let record_batch =
-                    maybe_record_batch.map_err(|error| Status::internal(error.to_string()))?;
+                let record_batch = maybe_record_batch.map_err(error_to_status_internal)?;
 
                 println!("{:?}", record_batch);
             }
@@ -549,7 +545,7 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "InitializeDatabase" {
             // Extract the list of comma seperated tables that already exist in the node.
             let node_tables: Vec<&str> = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?
+                .map_err(error_to_status_invalid_argument)?
                 .split(',')
                 .filter(|table| !table.is_empty())
                 .collect();
@@ -561,7 +557,7 @@ impl FlightService for FlightServiceHandler {
                 .metadata_manager
                 .table_metadata_column("table_name")
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Check that all the node's tables exist in the cluster's database schema already.
             let invalid_node_tables: Vec<&str> = node_tables
@@ -586,7 +582,7 @@ impl FlightService for FlightServiceHandler {
                             .metadata_manager
                             .table_sql(table)
                             .await
-                            .map_err(|error| Status::internal(error.to_string()))?,
+                            .map_err(error_to_status_internal)?,
                     )
                 }
 
@@ -607,12 +603,12 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let (url, offset_data) = arguments::decode_argument(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
             let (mode, _offset_data) = arguments::decode_argument(offset_data)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
 
-            let server_mode = ServerMode::from_str(mode)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            let server_mode =
+                ServerMode::from_str(mode).map_err(error_to_status_invalid_argument)?;
             let node = Node::new(url.to_string(), server_mode.clone());
 
             // Use the cluster to register the node in memory. This returns an error if the node is
@@ -622,7 +618,7 @@ impl FlightService for FlightServiceHandler {
                 .write()
                 .await
                 .register_node(node.clone())
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Use the metadata manager to persist the node to the metadata Delta Lake. Note that if
             // this fails, the metadata Delta Lake and the cluster will be out of sync until the
@@ -632,7 +628,7 @@ impl FlightService for FlightServiceHandler {
                 .metadata_manager
                 .save_node(node)
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // unwrap() is safe since the key cannot contain invalid characters.
             let mut response_body = arguments::encode_argument(self.context.key.to_str().unwrap());
@@ -648,7 +644,7 @@ impl FlightService for FlightServiceHandler {
             }))))
         } else if action.r#type == "RemoveNode" {
             let (url, _offset_data) = arguments::decode_argument(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
 
             // Remove the node with the given url from the metadata Delta Lake.
             self.context
@@ -656,7 +652,7 @@ impl FlightService for FlightServiceHandler {
                 .metadata_manager
                 .remove_node(url)
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Remove the node with the given url from the cluster and kill it. Note that if this fails,
             // the cluster and metadata Delta Lake will be out of sync until the manager is restarted.
@@ -666,7 +662,7 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .remove_node(url, &self.context.key)
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Confirm the node was removed.
             Ok(Response::new(Box::pin(stream::empty())))
