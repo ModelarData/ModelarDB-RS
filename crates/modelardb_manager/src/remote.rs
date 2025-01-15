@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
+use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
@@ -33,6 +34,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
+use bytes::Buf;
 use futures::{stream, Stream};
 use modelardb_common::arguments;
 use modelardb_common::remote;
@@ -530,6 +532,18 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTables" {
+            // Extract the record batches from the action body.
+            let action_bytes = action.body.clone();
+            let mut reader = StreamReader::try_new(action_bytes.reader(), None)
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            while let Some(maybe_record_batch) = reader.next() {
+                let record_batch =
+                    maybe_record_batch.map_err(|error| Status::internal(error.to_string()))?;
+
+                println!("{:?}", record_batch);
+            }
+
             // Confirm the tables were created.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "InitializeDatabase" {
