@@ -441,6 +441,52 @@ fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn
     generated_columns_builder.finish()
 }
 
+/// Parse the error bound values in `error_bounds_array` into a list of [`ErrorBounds`](ErrorBound).
+/// Returns [`ModelarDbServerError`] if an error bound value is invalid.
+fn array_to_error_bounds(error_bounds_array: ArrayRef) -> Result<Vec<ErrorBound>> {
+    // unwrap() is safe since error bound values are always f32.
+    let value_array = error_bounds_array
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .unwrap();
+
+    let mut error_bounds = Vec::with_capacity(value_array.len());
+    for value in value_array.iter().flatten() {
+        if value < 0.0 {
+            error_bounds.push(ErrorBound::try_new_relative(-value)?);
+        } else {
+            error_bounds.push(ErrorBound::try_new_absolute(value)?);
+        }
+    }
+
+    Ok(error_bounds)
+}
+
+/// Parse the generated column expressions in `generated_columns_array` into a list of optional
+/// [`GeneratedColumns`](GeneratedColumn). Returns [`ModelarDbServerError`] if a generated column
+/// expression is invalid.
+fn array_to_generated_columns(
+    generated_columns_array: ArrayRef,
+    df_schema: &DFSchema,
+) -> Result<Vec<Option<GeneratedColumn>>> {
+    // unwrap() is safe since generated column expressions are always strings.
+    let expr_array = generated_columns_array
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+
+    let mut generated_columns = Vec::with_capacity(expr_array.len());
+    for maybe_expr in expr_array.iter() {
+        if let Some(expr) = maybe_expr {
+            generated_columns.push(Some(GeneratedColumn::try_from_sql_expr(expr, df_schema)?));
+        } else {
+            generated_columns.push(None);
+        }
+    }
+
+    Ok(generated_columns)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
