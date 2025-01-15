@@ -630,10 +630,23 @@ impl FlightService for FlightServiceHandler {
             while let Some(maybe_record_batch) = reader.next() {
                 let record_batch = maybe_record_batch.map_err(error_to_status_internal)?;
 
-                self.context
-                    .create_tables_from_record_batch(record_batch)
-                    .await
-                    .map_err(error_to_status_invalid_argument)?;
+                let (normal_table_metadata, model_table_metadata) =
+                    modelardb_storage::table_metadata_from_record_batch(&record_batch)
+                        .map_err(error_to_status_invalid_argument)?;
+
+                for (table_name, schema) in normal_table_metadata {
+                    self.context
+                        .create_normal_table(table_name, schema, "")
+                        .await
+                        .map_err(error_to_status_invalid_argument)?;
+                }
+
+                for metadata in model_table_metadata {
+                    self.context
+                        .create_model_table(Arc::new(metadata), "")
+                        .await
+                        .map_err(error_to_status_invalid_argument)?;
+                }
             }
 
             // Confirm the tables were created.
