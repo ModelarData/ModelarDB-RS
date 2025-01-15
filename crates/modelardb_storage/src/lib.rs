@@ -28,8 +28,8 @@ use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::array::{
-    BinaryArray, Float32Builder, Int64Array, ListArray, ListBuilder, RecordBatch, StringArray,
-    StringBuilder, UInt64Array,
+    Array, ArrayRef, BinaryArray, Float32Array, Float32Builder, Int64Array, ListArray, ListBuilder,
+    RecordBatch, StringArray, StringBuilder, UInt64Array,
 };
 use arrow::compute;
 use arrow::compute::concat_batches;
@@ -37,6 +37,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use datafusion::catalog::TableProvider;
+use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::parquet::arrow::async_reader::{
@@ -61,7 +62,7 @@ use object_store::ObjectStore;
 use sqlparser::ast::Statement;
 use tonic::codegen::Bytes;
 
-use crate::error::Result;
+use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::table_metadata_manager::TableMetadataManager;
 use crate::query::metadata_table::MetadataTable;
@@ -94,7 +95,7 @@ pub fn create_session_context() -> SessionContext {
 
 /// Register the metadata table stored in `delta_table` with `table_name` in `session_context`. If
 /// the metadata table could not be registered with Apache DataFusion, return
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
+/// [`ModelarDbStorageError`].
 pub fn register_metadata_table(
     session_context: &SessionContext,
     table_name: &str,
@@ -108,7 +109,7 @@ pub fn register_metadata_table(
 
 /// Register the normal table stored in `delta_table` with `table_name` and `data_sink` in
 /// `session_context`. If the normal table could not be registered with Apache DataFusion, return
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
+/// [`ModelarDbStorageError`].
 pub fn register_normal_table(
     session_context: &SessionContext,
     table_name: &str,
@@ -123,7 +124,7 @@ pub fn register_normal_table(
 
 /// Register the model table stored in `delta_table` with `model_table_metadata` from
 /// `table_metadata_manager` and `data_sink` in `session_context`. If the model table could not be
-/// registered with Apache DataFusion, return [`ModelarDbStorageError`](error::ModelarDbStorageError).
+/// registered with Apache DataFusion, return [`ModelarDbStorageError`].
 pub fn register_model_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,
@@ -156,7 +157,7 @@ pub fn maybe_table_provider_to_model_table_metadata(
 
 /// Execute `statement` in `session_context` and return the result as a
 /// [`SendableRecordBatchStream`]. If `statement` could not be executed successfully,
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError) is returned.
+/// [`ModelarDbStorageError`] is returned.
 pub async fn execute_statement(
     session_context: &SessionContext,
     statement: Statement,
@@ -173,7 +174,7 @@ pub async fn execute_statement(
 
 /// Execute the SQL query `sql` in `session_context` and return the result as a single
 /// [`RecordBatch`]. If the query could not be executed successfully, return
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
+/// [`ModelarDbStorageError`].
 pub async fn sql_and_concat(session_context: &SessionContext, sql: &str) -> Result<RecordBatch> {
     let dataframe = session_context.sql(sql).await?;
     let schema = Schema::from(dataframe.schema());
@@ -228,7 +229,7 @@ pub fn univariate_ids_int64_to_uint64(compressed_segments: &RecordBatch) -> Reco
 
 /// Read all rows from the Apache Parquet file at the location given by `file_path` in
 /// `object_store` and return them as a [`RecordBatch`]. If the file could not be read successfully,
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError) is returned.
+/// [`ModelarDbStorageError`] is returned.
 pub async fn read_record_batch_from_apache_parquet_file(
     file_path: &Path,
     object_store: Arc<dyn ObjectStore>,
@@ -250,7 +251,7 @@ pub async fn read_record_batch_from_apache_parquet_file(
 
 /// Read each batch of data from the Apache Parquet file given by `reader` and return them as a
 /// [`Vec`] of [`RecordBatch`]. If the file could not be read successfully,
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError) is returned.
+/// [`ModelarDbStorageError`] is returned.
 pub async fn read_batches_from_apache_parquet_file<R>(reader: R) -> Result<Vec<RecordBatch>>
 where
     R: AsyncFileReader + Send + Unpin + 'static,
@@ -271,7 +272,7 @@ where
 /// Write the rows in `record_batch` to an Apache Parquet file at the location given by `file_path`
 /// in `object_store`. `file_path` must use the extension `.parquet`. `sorting_columns` can be set
 /// to control the sorting order of the rows in the written file. Return [`Ok`] if the file was
-/// written successfully, otherwise return [`ModelarDbStorageError`](error::ModelarDbStorageError).
+/// written successfully, otherwise return [`ModelarDbStorageError`].
 pub async fn write_record_batch_to_apache_parquet_file(
     file_path: &Path,
     record_batch: &RecordBatch,
@@ -330,7 +331,7 @@ pub fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
 }
 
 /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
+/// [`ModelarDbStorageError`].
 pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
     let ipc_message = IpcMessage(schema_bytes.into());
     Schema::try_from(ipc_message).map_err(|error| error.into())
@@ -338,7 +339,7 @@ pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
 
 /// Return a [`RecordBatch`] constructed from the metadata of a normal table with the name
 /// `table_name` and the schema `schema`. If the schema could not be converted to bytes or the
-/// record batch could not be created, return [`ModelarDbStorageError`](error::ModelarDbStorageError).
+/// record batch could not be created, return [`ModelarDbStorageError`].
 pub fn normal_table_metadata_record_batch(
     table_name: &str,
     schema: &Schema,
@@ -363,7 +364,7 @@ pub fn normal_table_metadata_record_batch(
 
 /// Return a [`RecordBatch`] constructed from the metadata in `model_table_metadata`. If the schema
 /// could not be converted to bytes or the record batch could not be created, return
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
+/// [`ModelarDbStorageError`].
 pub fn model_table_metadata_record_batch(
     model_table_metadata: &ModelTableMetadata,
 ) -> Result<RecordBatch> {
@@ -439,6 +440,63 @@ fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn
 
     generated_columns_builder.append(true);
     generated_columns_builder.finish()
+}
+
+/// Extract the table metadata from `record_batch` and return the table metadata as a tuple of
+/// `(normal_table_metadata, model_table_metadata)`. `normal_table_metadata` is a vector of tuples
+/// containing the table name and schema of the normal tables. If the schema of the record batch
+/// is invalid or the table metadata could not be extracted, return [`ModelarDbStorageError`].
+pub fn table_metadata_from_record_batch(
+    record_batch: &RecordBatch,
+) -> Result<(Vec<(String, Schema)>, Vec<ModelTableMetadata>)> {
+    if record_batch.schema() != CREATE_TABLE_SCHEMA.0 {
+        return Err(ModelarDbStorageError::InvalidArgument(
+            "Record batch does not contain the expected table data.".to_owned(),
+        ));
+    }
+
+    let mut normal_table_metadata = Vec::new();
+    let mut model_table_metadata = Vec::new();
+
+    let type_array = modelardb_types::array!(record_batch, 0, StringArray);
+    let name_array = modelardb_types::array!(record_batch, 1, StringArray);
+    let schema_array = modelardb_types::array!(record_batch, 2, BinaryArray);
+    let error_bounds_array = modelardb_types::array!(record_batch, 3, ListArray);
+    let generated_columns_array = modelardb_types::array!(record_batch, 4, ListArray);
+
+    for row_index in 0..record_batch.num_rows() {
+        let table_type = type_array.value(row_index);
+        let table_name = name_array.value(row_index).to_owned();
+        let schema = try_convert_bytes_to_schema(schema_array.value(row_index).to_vec())?;
+
+        match table_type {
+            "normal" => normal_table_metadata.push((table_name, schema)),
+            "model" => {
+                let error_bounds = array_to_error_bounds(error_bounds_array.value(row_index))?;
+
+                let generated_columns = array_to_generated_columns(
+                    generated_columns_array.value(row_index),
+                    &schema.clone().to_dfschema()?,
+                )?;
+
+                let metadata = ModelTableMetadata::try_new(
+                    table_name,
+                    Arc::new(schema),
+                    error_bounds,
+                    generated_columns,
+                )?;
+
+                model_table_metadata.push(metadata);
+            }
+            _ => {
+                return Err(ModelarDbStorageError::InvalidArgument(format!(
+                    "Table type '{table_type}' is not supported.",
+                )));
+            }
+        }
+    }
+
+    Ok((normal_table_metadata, model_table_metadata))
 }
 
 /// Parse the error bound values in `error_bounds_array` into a list of [`ErrorBounds`](ErrorBound).
