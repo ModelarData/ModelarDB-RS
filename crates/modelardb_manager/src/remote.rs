@@ -537,6 +537,22 @@ impl FlightService for FlightServiceHandler {
             while let Some(maybe_record_batch) = reader.next() {
                 let record_batch = maybe_record_batch.map_err(error_to_status_internal)?;
 
+                let (normal_table_metadata, model_table_metadata) =
+                    modelardb_storage::table_metadata_from_record_batch(&record_batch)
+                        .map_err(error_to_status_invalid_argument)?;
+
+                for (table_name, schema) in normal_table_metadata {
+                    self.check_if_table_exists(&table_name).await?;
+                    self.save_and_create_cluster_normal_table(&table_name, &schema, "")
+                        .await?;
+                }
+
+                for metadata in model_table_metadata {
+                    self.check_if_table_exists(&metadata.name).await?;
+                    self.save_and_create_cluster_model_table(Arc::new(metadata), "")
+                        .await?;
+                }
+
                 println!("{:?}", record_batch);
             }
 
