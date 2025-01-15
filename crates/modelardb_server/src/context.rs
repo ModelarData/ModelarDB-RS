@@ -18,19 +18,11 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{
-    Array, ArrayRef, BinaryArray, Float32Array, ListArray, StringArray,
-};
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
-use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::SchemaProvider;
-use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::prelude::SessionContext;
-use modelardb_storage::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_storage::try_convert_bytes_to_schema;
-use modelardb_types::schemas::CREATE_TABLE_SCHEMA;
-use modelardb_types::types::ErrorBound;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -76,62 +68,6 @@ impl Context {
             session_context,
             storage_engine,
         })
-    }
-
-    /// Parse the [`RecordBatch`] in `record_batch` and create the tables based on the data in the
-    /// record batch. Returns [`ModelarDbServerError`] if the schema of the record batch is invalid
-    /// or if the tables could not be created. Note that if an error occurs while creating the
-    /// tables, the tables that were created before the error occurred are not dropped.
-    pub(crate) async fn create_tables_from_record_batch(
-        &self,
-        record_batch: RecordBatch,
-    ) -> Result<()> {
-        if record_batch.schema() != CREATE_TABLE_SCHEMA.0 {
-            return Err(ModelarDbServerError::InvalidArgument(
-                "Record batch does not contain the expected table data.".to_owned(),
-            ));
-        }
-
-        let type_array = modelardb_types::array!(record_batch, 0, StringArray);
-        let name_array = modelardb_types::array!(record_batch, 1, StringArray);
-        let schema_array = modelardb_types::array!(record_batch, 2, BinaryArray);
-        let error_bounds_array = modelardb_types::array!(record_batch, 3, ListArray);
-        let generated_columns_array = modelardb_types::array!(record_batch, 4, ListArray);
-
-        for row_index in 0..record_batch.num_rows() {
-            let table_type = type_array.value(row_index);
-            let table_name = name_array.value(row_index).to_owned();
-            let schema = try_convert_bytes_to_schema(schema_array.value(row_index).to_vec())?;
-
-            match table_type {
-                "normal" => self.create_normal_table(table_name, schema, "").await?,
-                "model" => {
-                    let error_bounds = array_to_error_bounds(error_bounds_array.value(row_index))?;
-
-                    let generated_columns = array_to_generated_columns(
-                        generated_columns_array.value(row_index),
-                        &schema.clone().to_dfschema()?,
-                    )?;
-
-                    let model_table_metadata = ModelTableMetadata::try_new(
-                        table_name,
-                        Arc::new(schema),
-                        error_bounds,
-                        generated_columns,
-                    )?;
-
-                    self.create_model_table(Arc::new(model_table_metadata), "")
-                        .await?;
-                }
-                _ => {
-                    return Err(ModelarDbServerError::InvalidArgument(format!(
-                        "Table type '{table_type}' is not supported.",
-                    )));
-                }
-            }
-        }
-
-        Ok(())
     }
 
     /// Create a normal table based on `name` and `schema` created from `sql`. Returns
@@ -494,143 +430,16 @@ impl Context {
     }
 }
 
-/// Parse the error bound values in `error_bounds_array` into a list of [`ErrorBounds`](ErrorBound).
-/// Returns [`ModelarDbServerError`] if an error bound value is invalid.
-fn array_to_error_bounds(error_bounds_array: ArrayRef) -> Result<Vec<ErrorBound>> {
-    // unwrap() is safe since error bound values are always f32.
-    let value_array = error_bounds_array
-        .as_any()
-        .downcast_ref::<Float32Array>()
-        .unwrap();
-
-    let mut error_bounds = Vec::with_capacity(value_array.len());
-    for value in value_array.iter().flatten() {
-        if value < 0.0 {
-            error_bounds.push(ErrorBound::try_new_relative(-value)?);
-        } else {
-            error_bounds.push(ErrorBound::try_new_absolute(value)?);
-        }
-    }
-
-    Ok(error_bounds)
-}
-
-/// Parse the generated column expressions in `generated_columns_array` into a list of optional
-/// [`GeneratedColumns`](GeneratedColumn). Returns [`ModelarDbServerError`] if a generated column
-/// expression is invalid.
-fn array_to_generated_columns(
-    generated_columns_array: ArrayRef,
-    df_schema: &DFSchema,
-) -> Result<Vec<Option<GeneratedColumn>>> {
-    // unwrap() is safe since generated column expressions are always strings.
-    let expr_array = generated_columns_array
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
-
-    let mut generated_columns = Vec::with_capacity(expr_array.len());
-    for maybe_expr in expr_array.iter() {
-        if let Some(expr) = maybe_expr {
-            generated_columns.push(Some(GeneratedColumn::try_from_sql_expr(expr, df_schema)?));
-        } else {
-            generated_columns.push(None);
-        }
-    }
-
-    Ok(generated_columns)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use datafusion::arrow::compute;
     use modelardb_storage::parser;
     use modelardb_storage::parser::ModelarDbStatement;
     use modelardb_storage::test;
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
-
-    #[tokio::test]
-    async fn test_create_tables_from_record_batch() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(&temp_dir).await;
-
-        let normal_table_record_batch = modelardb_storage::normal_table_metadata_record_batch(
-            test::NORMAL_TABLE_NAME,
-            &test::normal_table_schema(),
-        )
-        .unwrap();
-
-        let model_table_record_batch =
-            modelardb_storage::model_table_metadata_record_batch(&test::model_table_metadata())
-                .unwrap();
-
-        let table_record_batch = compute::concat_batches(
-            &CREATE_TABLE_SCHEMA.0,
-            &vec![normal_table_record_batch, model_table_record_batch],
-        )
-        .unwrap();
-
-        let result = context
-            .create_tables_from_record_batch(table_record_batch)
-            .await;
-
-        assert!(result.is_ok());
-
-        // Both the normal table and model table should be created.
-        assert!(context
-            .check_if_table_exists(test::NORMAL_TABLE_NAME)
-            .await
-            .is_err());
-
-        assert!(context
-            .check_if_table_exists(test::MODEL_TABLE_NAME)
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
-    async fn test_create_tables_from_invalid_record_batch() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(&temp_dir).await;
-
-        let record_batch = test::normal_table_record_batch();
-        let result = context.create_tables_from_record_batch(record_batch).await;
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid Argument Error: Record batch does not contain the expected table data."
-        );
-    }
-
-    #[tokio::test]
-    async fn test_create_tables_from_record_batch_with_invalid_table_type() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(&temp_dir).await;
-
-        let table_record_batch = modelardb_storage::normal_table_metadata_record_batch(
-            test::NORMAL_TABLE_NAME,
-            &test::normal_table_schema(),
-        )
-        .unwrap();
-
-        let mut columns = table_record_batch.columns().to_vec();
-        columns[0] = Arc::new(StringArray::from(vec!["invalid"]));
-
-        let invalid_table_record_batch =
-            RecordBatch::try_new(CREATE_TABLE_SCHEMA.0.clone(), columns).unwrap();
-
-        let result = context
-            .create_tables_from_record_batch(invalid_table_record_batch)
-            .await;
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid Argument Error: Table type 'invalid' is not supported."
-        );
-    }
 
     #[tokio::test]
     async fn test_parse_and_create_normal_table() {
