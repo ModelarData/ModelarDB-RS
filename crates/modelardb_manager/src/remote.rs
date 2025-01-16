@@ -24,6 +24,7 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arrow::compute;
 use arrow::datatypes::Schema;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
@@ -517,7 +518,7 @@ impl FlightService for FlightServiceHandler {
     /// should have the fields `type`, `name`, `schema`, `error_bounds` and `generated_columns`.
     /// `type` can be either `normal` or `model` and `error_bounds` and `generated_columns` should
     /// be null if type is `normal`.
-    /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
+    /// * `InitializeDatabase`: Given a list of existing table names, respond with the metadata required
     /// to create the normal tables and model tables that are missing in the list. The list of table
     /// names is also checked to make sure all given tables actually exist.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
@@ -586,31 +587,52 @@ impl FlightService for FlightServiceHandler {
                 .collect();
 
             if invalid_node_tables.is_empty() {
-                // For each table that does not already exist in the node, retrieve the SQL
-                // required to create it.
+                // For each table that does not already exist in the node, retrieve the table metadata.
                 let missing_cluster_tables = cluster_tables
                     .iter()
                     .filter(|table| !node_tables.contains(&table.as_str()));
 
-                let mut table_sql_queries: Vec<String> = vec![];
+                let table_metadata_manager = &self
+                    .context
+                    .remote_data_folder
+                    .metadata_manager
+                    .table_metadata_manager;
 
+                let mut record_batches = vec![];
                 for table in missing_cluster_tables {
-                    table_sql_queries.push(
-                        self.context
-                            .remote_data_folder
-                            .metadata_manager
-                            .table_sql(table)
+                    let record_batch = if table_metadata_manager
+                        .is_normal_table(table)
+                        .await
+                        .map_err(error_to_status_internal)?
+                    {
+                        let schema = self.table_schema(table).await?;
+                        modelardb_storage::normal_table_metadata_record_batch(table, &schema)
+                            .map_err(error_to_status_internal)?
+                    } else {
+                        let model_table_metadata = table_metadata_manager
+                            .model_table_metadata_for_model_table(table)
                             .await
-                            .map_err(error_to_status_internal)?,
-                    )
+                            .map_err(error_to_status_internal)?;
+
+                        modelardb_storage::model_table_metadata_record_batch(&model_table_metadata)
+                            .map_err(error_to_status_internal)?
+                    };
+
+                    record_batches.push(record_batch);
                 }
 
-                let response_body = table_sql_queries.join(";").as_bytes().to_vec();
+                let record_batch =
+                    compute::concat_batches(&CREATE_TABLE_SCHEMA.0.clone(), &record_batches)
+                        .map_err(error_to_status_internal)?;
 
-                // Return the SQL for the tables that need to be created in the requesting node.
+                let record_batch_bytes =
+                    modelardb_storage::try_convert_record_batch_to_bytes(&record_batch)
+                        .map_err(error_to_status_internal)?;
+
+                // Return the metadata for the tables that need to be created in the requesting node.
                 Ok(Response::new(Box::pin(stream::once(async {
                     Ok(FlightResult {
-                        body: response_body.into(),
+                        body: record_batch_bytes.into(),
                     })
                 }))))
             } else {
@@ -711,7 +733,7 @@ impl FlightService for FlightServiceHandler {
 
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
-            description: "Return the SQL required to create all normal tables and model tables \
+            description: "Return the metadata required to create all normal tables and model tables \
             currently in the manager's database schema."
                 .to_owned(),
         };
