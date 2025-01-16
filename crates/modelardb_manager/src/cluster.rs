@@ -17,6 +17,7 @@
 
 use std::collections::VecDeque;
 
+use arrow::record_batch::RecordBatch;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Ticket};
 use futures::stream::FuturesUnordered;
@@ -135,6 +136,22 @@ impl Cluster {
                 "There are no cloud nodes to execute the query in the cluster.".to_owned(),
             ))
         }
+    }
+
+    /// Create tables on each node in the cluster with the given `record_batch` and `key` as metadata.
+    /// If the tables were successfully created on each node, return [`Ok`], otherwise return
+    /// [`ModelarDbManagerError`].
+    pub async fn create_tables(
+        &self,
+        record_batch: &RecordBatch,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<()> {
+        let action = Action {
+            r#type: "CreateTables".to_owned(),
+            body: modelardb_storage::try_convert_record_batch_to_bytes(record_batch)?.into(),
+        };
+
+        self.cluster_do_action(action, key).await
     }
 
     /// For each node in the cluster, execute the given `sql` statement with the given `key` as

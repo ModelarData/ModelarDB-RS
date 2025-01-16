@@ -191,11 +191,15 @@ impl FlightServiceHandler {
             .map_err(error_to_status_internal)?;
 
         // Register and save the table to each node in the cluster.
+        let record_batch =
+            modelardb_storage::normal_table_metadata_record_batch(table_name, schema)
+                .map_err(error_to_status_internal)?;
+
         self.context
             .cluster
             .read()
             .await
-            .cluster_do_get(sql, &self.context.key)
+            .create_tables(&record_batch, &self.context.key)
             .await
             .map_err(error_to_status_internal)?;
 
@@ -230,11 +234,15 @@ impl FlightServiceHandler {
             .map_err(error_to_status_internal)?;
 
         // Register and save the model table to each node in the cluster.
+        let record_batch =
+            modelardb_storage::model_table_metadata_record_batch(&model_table_metadata)
+                .map_err(error_to_status_internal)?;
+
         self.context
             .cluster
             .read()
             .await
-            .cluster_do_get(sql, &self.context.key)
+            .create_tables(&record_batch, &self.context.key)
             .await
             .map_err(error_to_status_internal)?;
 
