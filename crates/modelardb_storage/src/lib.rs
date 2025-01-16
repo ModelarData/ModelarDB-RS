@@ -711,11 +711,6 @@ mod tests {
 
     // Tests for try_convert_schema_to_bytes() and try_convert_bytes_to_schema().
     #[test]
-    fn test_invalid_bytes_to_schema() {
-        assert!(try_convert_bytes_to_schema(vec!(1, 2, 4, 8)).is_err());
-    }
-
-    #[test]
     fn test_schema_to_bytes_and_bytes_to_schema() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
@@ -728,6 +723,40 @@ mod tests {
         // Deserialize the bytes to the schema.
         let bytes_schema = try_convert_bytes_to_schema(bytes).unwrap();
         assert_eq!(*schema, bytes_schema);
+    }
+
+    #[test]
+    fn test_invalid_bytes_to_schema() {
+        assert!(try_convert_bytes_to_schema(vec!(1, 2, 4, 8)).is_err());
+    }
+
+    // Tests for try_convert_record_batch_to_bytes() and try_convert_bytes_to_record_batch().
+    #[test]
+    fn test_convert_invalid_bytes_to_record_batch() {
+        let result = try_convert_bytes_to_record_batch(
+            vec![1, 2, 4, 8],
+            &Arc::new(test::normal_table_schema()),
+        );
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Arrow Error: Io error: failed to fill whole buffer"
+        );
+    }
+
+    #[test]
+    fn test_convert_bytes_with_invalid_schema_to_record_batch() {
+        let bytes = try_convert_record_batch_to_bytes(&test::normal_table_record_batch()).unwrap();
+
+        let field = Field::new("field", ArrowValue::DATA_TYPE, false);
+        let schema = Arc::new(Schema::new(vec![field]));
+        let result = try_convert_bytes_to_record_batch(bytes, &schema);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Arrow Error: Invalid argument error: column types must match schema types, expected \
+            Float32 but found Timestamp(Microsecond, None) at column index 0"
+        );
     }
 
     // Tests for normal_table_metadata_record_batch() and model_table_metadata_record_batch().
