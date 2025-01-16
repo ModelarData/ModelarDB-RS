@@ -25,7 +25,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
-use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
@@ -33,7 +32,6 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
-use bytes::Buf;
 use futures::{stream, Stream};
 use modelardb_common::arguments;
 use modelardb_common::remote;
@@ -41,6 +39,7 @@ use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
+use modelardb_types::schemas::CREATE_TABLE_SCHEMA;
 use modelardb_types::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -537,31 +536,27 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTables" {
-            // Extract the record batches from the action body.
-            let action_bytes = action.body.clone();
-            let mut reader = StreamReader::try_new(action_bytes.reader(), None)
-                .map_err(error_to_status_internal)?;
+            // Extract the record batch from the action body.
+            let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
+                action.body.into(),
+                &CREATE_TABLE_SCHEMA.0.clone(),
+            )
+            .map_err(error_to_status_invalid_argument)?;
 
-            while let Some(maybe_record_batch) = reader.next() {
-                let record_batch = maybe_record_batch.map_err(error_to_status_internal)?;
+            let (normal_table_metadata, model_table_metadata) =
+                modelardb_storage::table_metadata_from_record_batch(&record_batch)
+                    .map_err(error_to_status_invalid_argument)?;
 
-                let (normal_table_metadata, model_table_metadata) =
-                    modelardb_storage::table_metadata_from_record_batch(&record_batch)
-                        .map_err(error_to_status_invalid_argument)?;
+            for (table_name, schema) in normal_table_metadata {
+                self.check_if_table_exists(&table_name).await?;
+                self.save_and_create_cluster_normal_table(&table_name, &schema, "")
+                    .await?;
+            }
 
-                for (table_name, schema) in normal_table_metadata {
-                    self.check_if_table_exists(&table_name).await?;
-                    self.save_and_create_cluster_normal_table(&table_name, &schema, "")
-                        .await?;
-                }
-
-                for metadata in model_table_metadata {
-                    self.check_if_table_exists(&metadata.name).await?;
-                    self.save_and_create_cluster_model_table(Arc::new(metadata), "")
-                        .await?;
-                }
-
-                println!("{:?}", record_batch);
+            for metadata in model_table_metadata {
+                self.check_if_table_exists(&metadata.name).await?;
+                self.save_and_create_cluster_model_table(Arc::new(metadata), "")
+                    .await?;
             }
 
             // Confirm the tables were created.
