@@ -35,9 +35,7 @@ use datafusion::arrow::array::{
     ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
 };
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::ipc::writer::{
-    DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
-};
+use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
@@ -229,17 +227,12 @@ async fn send_flight_data(
         .map_err(error_to_status_internal)
 }
 
-/// Write the schema and corresponding record batch to a stream within a gRPC response.
+/// Write the record batch to a stream within a gRPC response.
 fn send_record_batch(
-    schema: SchemaRef,
-    batch: RecordBatch,
+    batch: &RecordBatch,
 ) -> StdResult<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
-    let options = IpcWriteOptions::default();
-    let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options)
+    let batch_bytes = modelardb_storage::try_convert_record_batch_to_bytes(batch)
         .map_err(error_to_status_internal)?;
-
-    writer.write(&batch).map_err(error_to_status_internal)?;
-    let batch_bytes = writer.into_inner().map_err(error_to_status_internal)?;
 
     Ok(Response::new(Box::pin(stream::once(async {
         Ok(FlightResult {
@@ -723,7 +716,7 @@ impl FlightService for FlightServiceHandler {
             )
             .unwrap();
 
-            send_record_batch(schema.0, batch)
+            send_record_batch(&batch)
         } else if action.r#type == "GetConfiguration" {
             // Extract the configuration data from the configuration manager.
             let configuration_manager = self.context.configuration_manager.read().await;
@@ -762,7 +755,7 @@ impl FlightService for FlightServiceHandler {
             )
             .unwrap();
 
-            send_record_batch(schema.0, batch)
+            send_record_batch(&batch)
         } else if action.r#type == "UpdateConfiguration" {
             let (setting, offset_data) =
                 arguments::decode_argument(&action.body).map_err(error_to_status_internal)?;
