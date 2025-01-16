@@ -732,6 +732,20 @@ mod tests {
 
     // Tests for try_convert_record_batch_to_bytes() and try_convert_bytes_to_record_batch().
     #[test]
+    fn test_convert_record_batch_to_bytes_and_bytes_to_record_batch() {
+        let record_batch = test::normal_table_record_batch();
+
+        // Serialize the record batch to bytes.
+        let bytes = try_convert_record_batch_to_bytes(&record_batch).unwrap();
+
+        // Deserialize the bytes to the record batch.
+        let bytes_record_batch =
+            try_convert_bytes_to_record_batch(bytes, &record_batch.schema()).unwrap();
+
+        assert_eq!(record_batch, bytes_record_batch);
+    }
+
+    #[test]
     fn test_convert_invalid_bytes_to_record_batch() {
         let result = try_convert_bytes_to_record_batch(
             vec![1, 2, 4, 8],
