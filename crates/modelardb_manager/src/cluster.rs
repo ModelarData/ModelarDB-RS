@@ -176,6 +176,51 @@ impl Cluster {
 
         Ok(url.to_owned())
     }
+
+    /// For each node in the cluster, execute the given `action` with the given `key` as metadata.
+    /// If the action was successfully executed for each node, return [`Ok`], otherwise return
+    /// [`ModelarDbManagerError`].
+    pub async fn cluster_do_action(
+        &self,
+        action: Action,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<()> {
+        let mut action_futures: FuturesUnordered<_> = self
+            .nodes
+            .iter()
+            .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
+            .collect();
+
+        // Run the futures concurrently and log when the action has been executed on each node.
+        while let Some(result) = action_futures.next().await {
+            info!(
+                "Executed action `{}` on node with url '{}'.",
+                action.r#type, result?
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Connect to the Apache Arrow flight server given by `url` and make a request to do `action`
+    /// with the given `key` as metadata. If the action was successfully executed, return the url
+    /// of the node, otherwise return [`ModelarDbManagerError`].
+    async fn connect_and_do_action(
+        &self,
+        url: &str,
+        action: Action,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<String> {
+        let mut flight_client = FlightServiceClient::connect(url.to_owned()).await?;
+
+        // Add the key to the request metadata to indicate that the request is from the manager.
+        let mut request = Request::new(action);
+        request.metadata_mut().insert("x-manager-key", key.clone());
+
+        flight_client.do_action(request).await?;
+
+        Ok(url.to_owned())
+    }
 }
 
 impl Default for Cluster {
