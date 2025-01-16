@@ -33,9 +33,11 @@ use arrow::array::{
 };
 use arrow::compute;
 use arrow::compute::concat_batches;
-use arrow::datatypes::{DataType, Field, Schema};
-use arrow::ipc::writer::IpcWriteOptions;
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::ipc::reader::StreamReader;
+use arrow::ipc::writer::{IpcWriteOptions, StreamWriter};
 use arrow_flight::{IpcMessage, SchemaAsIpc};
+use bytes::{Buf, Bytes};
 use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::session_state::SessionStateBuilder;
@@ -60,7 +62,6 @@ use modelardb_types::types::ErrorBound;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use sqlparser::ast::Statement;
-use tonic::codegen::Bytes;
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
@@ -335,6 +336,33 @@ pub fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
 pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
     let ipc_message = IpcMessage(schema_bytes.into());
     Schema::try_from(ipc_message).map_err(|error| error.into())
+}
+
+/// Convert a [`RecordBatch`] to a [`Vec<u8>`].
+pub fn try_convert_record_batch_to_bytes(record_batch: &RecordBatch) -> Result<Vec<u8>> {
+    let options = IpcWriteOptions::default();
+    let mut writer = StreamWriter::try_new_with_options(vec![], &record_batch.schema(), options)?;
+
+    writer.write(&record_batch)?;
+    writer.into_inner().map_err(|error| error.into())
+}
+
+/// Return [`RecordBatch`] if `record_batch_bytes` can be converted to an Apache Arrow record batch,
+/// otherwise [`ModelarDbStorageError`].
+pub fn try_convert_bytes_to_record_batch(
+    record_batch_bytes: Vec<u8>,
+    schema: &SchemaRef,
+) -> Result<RecordBatch> {
+    let bytes: Bytes = record_batch_bytes.into();
+    let mut reader = StreamReader::try_new(bytes.reader(), None)?;
+
+    let mut record_batches = vec![];
+    while let Some(maybe_record_batch) = reader.next() {
+        let record_batch = maybe_record_batch?;
+        record_batches.push(record_batch);
+    }
+
+    concat_batches(schema, &record_batches).map_err(|error| error.into())
 }
 
 /// Return a [`RecordBatch`] constructed from the metadata of a normal table with the name
