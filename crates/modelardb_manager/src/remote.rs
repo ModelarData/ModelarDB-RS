@@ -103,7 +103,7 @@ impl FlightServiceHandler {
             .table_metadata_manager;
 
         let schema = if table_metadata_manager
-            .is_normal_table(&table_name)
+            .is_normal_table(table_name)
             .await
             .map_err(error_to_status_internal)?
         {
@@ -111,7 +111,7 @@ impl FlightServiceHandler {
                 .context
                 .remote_data_folder
                 .delta_lake
-                .delta_table(&table_name)
+                .delta_table(table_name)
                 .await
                 .map_err(error_to_status_internal)?;
 
@@ -123,12 +123,12 @@ impl FlightServiceHandler {
 
             Arc::new(schema)
         } else if table_metadata_manager
-            .is_model_table(&table_name)
+            .is_model_table(table_name)
             .await
             .map_err(error_to_status_internal)?
         {
             let model_table_metadata = table_metadata_manager
-                .model_table_metadata_for_model_table(&table_name)
+                .model_table_metadata_for_model_table(table_name)
                 .await
                 .map_err(error_to_status_internal)?;
 
@@ -424,7 +424,7 @@ impl FlightService for FlightServiceHandler {
         let flight_descriptor = request.into_inner();
         let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
 
-        let schema = self.table_schema(&table_name).await?;
+        let schema = self.table_schema(table_name).await?;
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);

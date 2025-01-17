@@ -343,7 +343,7 @@ pub fn try_convert_record_batch_to_bytes(record_batch: &RecordBatch) -> Result<V
     let options = IpcWriteOptions::default();
     let mut writer = StreamWriter::try_new_with_options(vec![], &record_batch.schema(), options)?;
 
-    writer.write(&record_batch)?;
+    writer.write(record_batch)?;
     writer.into_inner().map_err(|error| error.into())
 }
 
@@ -354,10 +354,10 @@ pub fn try_convert_bytes_to_record_batch(
     schema: &SchemaRef,
 ) -> Result<RecordBatch> {
     let bytes: Bytes = record_batch_bytes.into();
-    let mut reader = StreamReader::try_new(bytes.reader(), None)?;
+    let reader = StreamReader::try_new(bytes.reader(), None)?;
 
     let mut record_batches = vec![];
-    while let Some(maybe_record_batch) = reader.next() {
+    for maybe_record_batch in reader {
         let record_batch = maybe_record_batch?;
         record_batches.push(record_batch);
     }
@@ -372,7 +372,7 @@ pub fn normal_table_metadata_record_batch(
     table_name: &str,
     schema: &Schema,
 ) -> Result<RecordBatch> {
-    let query_schema_bytes = try_convert_schema_to_bytes(&schema)?;
+    let query_schema_bytes = try_convert_schema_to_bytes(schema)?;
 
     let error_bounds_field = Arc::new(Field::new("item", DataType::Float32, true));
     let generated_columns_field = Arc::new(Field::new("item", DataType::Utf8, true));
@@ -473,6 +473,7 @@ fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn
 /// `(normal_table_metadata, model_table_metadata)`. `normal_table_metadata` is a vector of tuples
 /// containing the table name and schema of the normal tables. If the schema of the record batch
 /// is invalid or the table metadata could not be extracted, return [`ModelarDbStorageError`].
+#[allow(clippy::type_complexity)]
 pub fn table_metadata_from_record_batch(
     record_batch: &RecordBatch,
 ) -> Result<(Vec<(String, Schema)>, Vec<ModelTableMetadata>)> {

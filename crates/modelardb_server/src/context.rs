@@ -76,7 +76,7 @@ impl Context {
     /// batch, the record batch could not be parsed, or the tables could not be created.
     pub(crate) async fn create_tables_from_bytes(&self, bytes: Vec<u8>) -> Result<()> {
         let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
-            bytes.into(),
+            bytes,
             &CREATE_TABLE_SCHEMA.0.clone(),
         )?;
 

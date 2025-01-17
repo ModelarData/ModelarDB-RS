@@ -224,7 +224,7 @@ impl GeneratedColumn {
     /// is not valid or refers to columns that are not in the [`DFSchema`],
     /// a [`ModelarDbStorageError`] is returned.
     pub fn try_from_sql_expr(sql_expr: &str, df_schema: &DFSchema) -> Result<Self> {
-        let expr = tokenize_and_parse_sql_expression(&sql_expr, &df_schema)?;
+        let expr = tokenize_and_parse_sql_expression(sql_expr, df_schema)?;
 
         let source_columns: StdResult<Vec<usize>, DataFusionError> = expr
             .column_refs()

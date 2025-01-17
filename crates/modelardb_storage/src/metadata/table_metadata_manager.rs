@@ -686,7 +686,7 @@ impl TableMetadataManager {
             // If generated_column_expr is null, it is saved as an empty string in the column values.
             if !generated_column_expr.is_empty() {
                 let generated_column =
-                    GeneratedColumn::try_from_sql_expr(generated_column_expr, &df_schema)?;
+                    GeneratedColumn::try_from_sql_expr(generated_column_expr, df_schema)?;
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
             }
