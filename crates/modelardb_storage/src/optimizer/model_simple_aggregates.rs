@@ -793,7 +793,7 @@ mod tests {
             .unwrap();
 
         table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 

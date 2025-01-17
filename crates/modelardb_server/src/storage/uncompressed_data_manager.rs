@@ -807,9 +807,7 @@ mod tests {
         let _ = if let ModelarDbStatement::CreateModelTable(model_table_metadata) =
             modelardb_statement
         {
-            context
-                .create_model_table(model_table_metadata, test::MODEL_TABLE_SQL)
-                .await
+            context.create_model_table(model_table_metadata).await
         } else {
             panic!("Expected CreateModelTable.");
         };
@@ -1455,7 +1453,7 @@ mod tests {
 
         local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 

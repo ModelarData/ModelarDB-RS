@@ -84,11 +84,11 @@ impl Context {
             modelardb_storage::table_metadata_from_record_batch(&record_batch)?;
 
         for (table_name, schema) in normal_table_metadata {
-            self.create_normal_table(table_name, schema, "").await?;
+            self.create_normal_table(table_name, schema).await?;
         }
 
         for metadata in model_table_metadata {
-            self.create_model_table(Arc::new(metadata), "").await?;
+            self.create_model_table(Arc::new(metadata)).await?;
         }
 
         Ok(())
@@ -96,15 +96,9 @@ impl Context {
 
     /// Create a normal table based on `name` and `schema` created from `sql`. Returns
     /// [`ModelarDbServerError`] if the table could not be created.
-    pub(crate) async fn create_normal_table(
-        &self,
-        name: String,
-        schema: Schema,
-        sql: &str,
-    ) -> Result<()> {
+    pub(crate) async fn create_normal_table(&self, name: String, schema: Schema) -> Result<()> {
         self.check_if_table_exists(&name).await?;
-        self.register_and_save_normal_table(&name, sql, schema)
-            .await?;
+        self.register_and_save_normal_table(&name, schema).await?;
 
         Ok(())
     }
@@ -112,12 +106,7 @@ impl Context {
     /// Create a normal table, register it with Apache DataFusion, and save it to the Delta Lake. If
     /// the normal table exists, cannot be registered with Apache DataFusion, or cannot be saved to
     /// the Delta Lake, return [`ModelarDbServerError`] error.
-    async fn register_and_save_normal_table(
-        &self,
-        table_name: &str,
-        sql: &str,
-        schema: Schema,
-    ) -> Result<()> {
+    async fn register_and_save_normal_table(&self, table_name: &str, schema: Schema) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
@@ -132,7 +121,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .save_normal_table_metadata(table_name, sql)
+            .save_normal_table_metadata(table_name)
             .await?;
 
         info!("Created normal table '{}'.", table_name);
@@ -145,11 +134,10 @@ impl Context {
     pub(crate) async fn create_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
-        sql: &str,
     ) -> Result<()> {
         self.check_if_table_exists(&model_table_metadata.name)
             .await?;
-        self.register_and_save_model_table(model_table_metadata, sql)
+        self.register_and_save_model_table(model_table_metadata)
             .await?;
 
         Ok(())
@@ -161,7 +149,6 @@ impl Context {
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
-        sql: &str,
     ) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
@@ -187,7 +174,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, sql)
+            .save_model_table_metadata(&model_table_metadata)
             .await?;
 
         // Register the metadata table needed for querying the model table if it is not already
@@ -908,10 +895,10 @@ mod tests {
     async fn parse_and_create_table(context: &Context, sql: &str) -> Result<()> {
         match parser::tokenize_and_parse_sql_statement(sql)? {
             ModelarDbStatement::CreateNormalTable { name, schema } => {
-                context.create_normal_table(name, schema, sql).await
+                context.create_normal_table(name, schema).await
             }
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
-                context.create_model_table(model_table_metadata, sql).await
+                context.create_model_table(model_table_metadata).await
             }
             _ => unreachable!("Expected CreateNormalTable or CreateModelTable."),
         }

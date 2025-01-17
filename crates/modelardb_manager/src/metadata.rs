@@ -378,7 +378,7 @@ mod tests {
 
         metadata_manager
             .table_metadata_manager
-            .save_normal_table_metadata(test::NORMAL_TABLE_NAME, test::NORMAL_TABLE_SQL)
+            .save_normal_table_metadata(test::NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -396,7 +396,7 @@ mod tests {
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 
@@ -422,14 +422,14 @@ mod tests {
 
         metadata_manager
             .table_metadata_manager
-            .save_normal_table_metadata(test::NORMAL_TABLE_NAME, test::NORMAL_TABLE_SQL)
+            .save_normal_table_metadata(test::NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 

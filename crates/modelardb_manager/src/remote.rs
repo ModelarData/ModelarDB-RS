@@ -171,7 +171,6 @@ impl FlightServiceHandler {
         &self,
         table_name: &str,
         schema: &Schema,
-        sql: &str,
     ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context
@@ -186,7 +185,7 @@ impl FlightServiceHandler {
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_normal_table_metadata(table_name, sql)
+            .save_normal_table_metadata(table_name)
             .await
             .map_err(error_to_status_internal)?;
 
@@ -214,7 +213,6 @@ impl FlightServiceHandler {
     async fn save_and_create_cluster_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
-        sql: &str,
     ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context
@@ -229,7 +227,7 @@ impl FlightServiceHandler {
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, sql)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .map_err(error_to_status_internal)?;
 
@@ -459,13 +457,13 @@ impl FlightService for FlightServiceHandler {
         match modelardb_statement {
             ModelarDbStatement::CreateNormalTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
-                self.save_and_create_cluster_normal_table(&name, &schema, &sql)
+                self.save_and_create_cluster_normal_table(&name, &schema)
                     .await?;
             }
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                 self.check_if_table_exists(&model_table_metadata.name)
                     .await?;
-                self.save_and_create_cluster_model_table(model_table_metadata, &sql)
+                self.save_and_create_cluster_model_table(model_table_metadata)
                     .await?;
             }
             ModelarDbStatement::TruncateTable(table_names) => {
@@ -550,13 +548,13 @@ impl FlightService for FlightServiceHandler {
 
             for (table_name, schema) in normal_table_metadata {
                 self.check_if_table_exists(&table_name).await?;
-                self.save_and_create_cluster_normal_table(&table_name, &schema, "")
+                self.save_and_create_cluster_normal_table(&table_name, &schema)
                     .await?;
             }
 
             for metadata in model_table_metadata {
                 self.check_if_table_exists(&metadata.name).await?;
-                self.save_and_create_cluster_model_table(Arc::new(metadata), "")
+                self.save_and_create_cluster_model_table(Arc::new(metadata))
                     .await?;
             }
 

@@ -96,7 +96,9 @@ impl Manager {
         };
 
         let message = do_action_and_extract_result(&self.flight_client, action).await?;
-        context.create_tables_from_bytes(message.body.into()).await?;
+        context
+            .create_tables_from_bytes(message.body.into())
+            .await?;
 
         Ok(())
     }
