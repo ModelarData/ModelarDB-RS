@@ -191,39 +191,12 @@ impl MetadataManager {
 
         Ok(nodes)
     }
-
-    /// Retrieve all rows of `column` from both the normal_table_metadata and model_table_metadata
-    /// tables. If the column could not be retrieved, either because it does not exist or because
-    /// it could not be converted to a string, return
-    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
-    pub async fn table_metadata_column(&self, column: &str) -> Result<Vec<String>> {
-        // Retrieve the column from both tables containing table metadata.
-        let sql = format!("SELECT {column} FROM normal_table_metadata");
-        let normal_table_metadata_batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let sql = format!("SELECT {column} FROM model_table_metadata");
-        let model_table_metadata_batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let normal_table_metadata_column =
-            modelardb_types::array!(normal_table_metadata_batch, 0, StringArray);
-        let model_table_metadata_column =
-            modelardb_types::array!(model_table_metadata_batch, 0, StringArray);
-
-        // unwrap() is safe because normal_table_metadata and model_table_metadata does not have
-        // nullable columns.
-        Ok(normal_table_metadata_column
-            .iter()
-            .chain(model_table_metadata_column.iter())
-            .map(|column_value| column_value.unwrap().to_owned())
-            .collect())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use modelardb_storage::test;
     use tempfile::TempDir;
 
     // Tests for MetadataManager.
@@ -347,45 +320,6 @@ mod tests {
         let nodes = metadata_manager.nodes().await.unwrap();
 
         assert_eq!(nodes, vec![node_2, node_1]);
-    }
-
-    #[tokio::test]
-    async fn test_table_metadata_column() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
-
-        metadata_manager
-            .table_metadata_manager
-            .save_normal_table_metadata(test::NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
-
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
-            .await
-            .unwrap();
-
-        let table_names = metadata_manager
-            .table_metadata_column("table_name")
-            .await
-            .unwrap();
-
-        assert_eq!(
-            table_names,
-            vec![test::NORMAL_TABLE_NAME, &model_table_metadata.name]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_table_metadata_column_for_invalid_column() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
-
-        let result = metadata_manager
-            .table_metadata_column("invalid_column")
-            .await;
-
-        assert!(result.is_err());
     }
 
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {

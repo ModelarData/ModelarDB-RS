@@ -149,7 +149,8 @@ impl FlightServiceHandler {
             .context
             .remote_data_folder
             .metadata_manager
-            .table_metadata_column("table_name")
+            .table_metadata_manager
+            .table_names()
             .await
             .map_err(error_to_status_internal)?;
 
@@ -354,7 +355,8 @@ impl FlightService for FlightServiceHandler {
             .context
             .remote_data_folder
             .metadata_manager
-            .table_metadata_column("table_name")
+            .table_metadata_manager
+            .table_names()
             .await
             .map_err(error_to_status_internal)?;
 
@@ -573,7 +575,8 @@ impl FlightService for FlightServiceHandler {
                 .context
                 .remote_data_folder
                 .metadata_manager
-                .table_metadata_column("table_name")
+                .table_metadata_manager
+                .table_names()
                 .await
                 .map_err(error_to_status_internal)?;
 
