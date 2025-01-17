@@ -319,7 +319,7 @@ mod test {
         ModelTableMetadata::try_new(
             test::MODEL_TABLE_NAME.to_owned(),
             Arc::new(query_schema),
-            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap()],
+            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO)?],
             vec![None],
         )
     }

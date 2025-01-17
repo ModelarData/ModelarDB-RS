@@ -636,7 +636,7 @@ impl TableMetadataManager {
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
         let mut column_to_error_bound =
-            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(); query_schema_columns];
+            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO)?; query_schema_columns];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
         let error_bound_value_array = modelardb_types::array!(batch, 1, Float32Array);
@@ -647,13 +647,11 @@ impl TableMetadataManager {
             let error_bound_value = error_bound_value_array.value(row_index);
             let error_bound_is_relative = error_bound_is_relative_array.value(row_index);
 
-            // unwrap() is safe as the error bounds are checked before they are stored.
             let error_bound = if error_bound_is_relative {
                 ErrorBound::try_new_relative(error_bound_value)
             } else {
                 ErrorBound::try_new_absolute(error_bound_value)
-            }
-            .unwrap();
+            }?;
 
             column_to_error_bound[error_bound_index as usize] = error_bound;
         }

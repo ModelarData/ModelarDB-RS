@@ -400,8 +400,7 @@ pub fn model_table_metadata_record_batch(
     // lossless error bounds are added for each generated column.
     let mut error_bounds_all = Vec::with_capacity(model_table_metadata.query_schema.fields().len());
 
-    // unwrap() is safe as zero is always a legal absolute error bound.
-    let lossless = ErrorBound::try_new_absolute(0.0).unwrap();
+    let lossless = ErrorBound::try_new_absolute(0.0)?;
 
     for field in model_table_metadata.query_schema.fields() {
         if let Ok(field_index) = model_table_metadata.schema.index_of(field.name()) {
