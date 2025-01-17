@@ -23,6 +23,7 @@ use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
+use modelardb_types::schemas::CREATE_TABLE_SCHEMA;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -68,6 +69,29 @@ impl Context {
             session_context,
             storage_engine,
         })
+    }
+
+    /// Convert the bytes to a record batch and create tables using the metadata in the record
+    /// batch. Returns [`ModelarDbServerError`] if the bytes could not be converted to a record
+    /// batch, the record batch could not be parsed, or the tables could not be created.
+    pub(crate) async fn create_tables_from_bytes(&self, bytes: Vec<u8>) -> Result<()> {
+        let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
+            bytes.into(),
+            &CREATE_TABLE_SCHEMA.0.clone(),
+        )?;
+
+        let (normal_table_metadata, model_table_metadata) =
+            modelardb_storage::table_metadata_from_record_batch(&record_batch)?;
+
+        for (table_name, schema) in normal_table_metadata {
+            self.create_normal_table(table_name, schema, "").await?;
+        }
+
+        for metadata in model_table_metadata {
+            self.create_model_table(Arc::new(metadata), "").await?;
+        }
+
+        Ok(())
     }
 
     /// Create a normal table based on `name` and `schema` created from `sql`. Returns
