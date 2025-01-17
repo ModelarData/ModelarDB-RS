@@ -49,7 +49,7 @@ use modelardb_common::{arguments, remote};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::functions;
-use modelardb_types::schemas::{CONFIGURATION_SCHEMA, CREATE_TABLE_SCHEMA, METRIC_SCHEMA};
+use modelardb_types::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_types::types::TimestampBuilder;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
@@ -615,30 +615,10 @@ impl FlightService for FlightServiceHandler {
         if action.r#type == "CreateTables" {
             self.validate_request(request.metadata()).await?;
 
-            // Extract the record batch from the action body.
-            let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
-                action.body.clone().into(),
-                &CREATE_TABLE_SCHEMA.0.clone(),
-            )
-            .map_err(error_to_status_invalid_argument)?;
-
-            let (normal_table_metadata, model_table_metadata) =
-                modelardb_storage::table_metadata_from_record_batch(&record_batch)
-                    .map_err(error_to_status_invalid_argument)?;
-
-            for (table_name, schema) in normal_table_metadata {
-                self.context
-                    .create_normal_table(table_name, schema, "")
-                    .await
-                    .map_err(error_to_status_invalid_argument)?;
-            }
-
-            for metadata in model_table_metadata {
-                self.context
-                    .create_model_table(Arc::new(metadata), "")
-                    .await
-                    .map_err(error_to_status_invalid_argument)?;
-            }
+            self.context
+                .create_tables_from_bytes(action.body.clone().into())
+                .await
+                .map_err(error_to_status_invalid_argument)?;
 
             // Confirm the tables were created.
             Ok(Response::new(Box::pin(stream::empty())))
