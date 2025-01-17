@@ -174,10 +174,7 @@ impl TableMetadataManager {
             .delta_lake
             .create_metadata_table(
                 "normal_table_metadata",
-                &Schema::new(vec![
-                    Field::new("table_name", DataType::Utf8, false),
-                    Field::new("sql", DataType::Utf8, false),
-                ]),
+                &Schema::new(vec![Field::new("table_name", DataType::Utf8, false)]),
             )
             .await?;
 
@@ -191,7 +188,6 @@ impl TableMetadataManager {
                 &Schema::new(vec![
                     Field::new("table_name", DataType::Utf8, false),
                     Field::new("query_schema", DataType::Binary, false),
-                    Field::new("sql", DataType::Utf8, false),
                 ]),
             )
             .await?;
@@ -311,18 +307,14 @@ impl TableMetadataManager {
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
     }
 
-    /// Save the created normal table to the metadata Delta Lake. This consists of adding a row to the
-    /// `normal_table_metadata` table with the `name` of the table and the `sql` used to create the
-    /// table. If the normal table metadata was saved, return [`Ok`], otherwise
-    /// return [`ModelarDbStorageError`].
-    pub async fn save_normal_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
+    /// Save the created normal table to the metadata Delta Lake. This consists of adding a row to
+    /// the `normal_table_metadata` table with the `name` of the table. If the normal table metadata
+    /// was saved, return [`Ok`], otherwise return [`ModelarDbStorageError`].
+    pub async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
         self.delta_lake
             .write_columns_to_metadata_table(
                 "normal_table_metadata",
-                vec![
-                    Arc::new(StringArray::from(vec![name])),
-                    Arc::new(StringArray::from(vec![sql])),
-                ],
+                vec![Arc::new(StringArray::from(vec![name]))],
             )
             .await?;
 
@@ -335,7 +327,6 @@ impl TableMetadataManager {
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
-        sql: &str,
     ) -> Result<()> {
         // Create and register a table_name_tags table to save the 54-bit tag hashes when ingesting data.
         let mut table_name_tags_columns = vec![Field::new("hash", DataType::Int64, false)];
@@ -367,7 +358,6 @@ impl TableMetadataManager {
                 vec![
                     Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
                     Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
-                    Arc::new(StringArray::from(vec![sql])),
                 ],
             )
             .await?;
@@ -946,13 +936,13 @@ mod tests {
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(metadata_manager
             .session_context
-            .sql("SELECT table_name, sql FROM normal_table_metadata")
+            .sql("SELECT table_name FROM normal_table_metadata")
             .await
             .is_ok());
 
         assert!(metadata_manager
             .session_context
-            .sql("SELECT table_name, query_schema, sql FROM model_table_metadata")
+            .sql("SELECT table_name, query_schema FROM model_table_metadata")
             .await
             .is_ok());
 
@@ -1065,7 +1055,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
         // Retrieve the normal table from the metadata Delta Lake.
-        let sql = "SELECT table_name, sql FROM normal_table_metadata ORDER BY table_name";
+        let sql = "SELECT table_name FROM normal_table_metadata ORDER BY table_name";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
@@ -1073,13 +1063,6 @@ mod tests {
         assert_eq!(
             **batch.column(0),
             StringArray::from(vec!["normal_table_1", "normal_table_2"])
-        );
-        assert_eq!(
-            **batch.column(1),
-            StringArray::from(vec![
-                "CREATE TABLE normal_table_1",
-                "CREATE TABLE normal_table_2"
-            ])
         );
     }
 
@@ -1092,7 +1075,7 @@ mod tests {
         assert!(metadata_manager.session_context.sql(&sql).await.is_ok());
 
         // Check that a row has been added to the model_table_metadata table.
-        let sql = "SELECT table_name, query_schema, sql FROM model_table_metadata";
+        let sql = "SELECT table_name, query_schema FROM model_table_metadata";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
@@ -1107,10 +1090,6 @@ mod tests {
                 &test::model_table_metadata().query_schema
             )
             .unwrap()])
-        );
-        assert_eq!(
-            **batch.column(2),
-            StringArray::from(vec![test::MODEL_TABLE_SQL])
         );
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
@@ -1289,12 +1268,12 @@ mod tests {
             .unwrap();
 
         metadata_manager
-            .save_normal_table_metadata("normal_table_1", "CREATE TABLE normal_table_1")
+            .save_normal_table_metadata("normal_table_1")
             .await
             .unwrap();
 
         metadata_manager
-            .save_normal_table_metadata("normal_table_2", "CREATE TABLE normal_table_2")
+            .save_normal_table_metadata("normal_table_2")
             .await
             .unwrap();
 
@@ -1400,11 +1379,8 @@ mod tests {
         )
         .unwrap();
 
-        let sql = "CREATE MODEL TABLE generated_columns_table(timestamp TIMESTAMP,
-        field_1 FIELD, field_2 FIELD, tag TAG, generated_column_1 GENERATED AS field_1 + 1,
-        generated_column_2 GENERATED AS field_1 + field_2)";
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, sql)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 
@@ -1644,7 +1620,7 @@ mod tests {
         // Save a model table to the metadata Delta Lake.
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 
