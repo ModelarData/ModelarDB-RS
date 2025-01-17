@@ -2945,7 +2945,6 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "arrow-flight",
- "bytes",
  "deltalake",
  "futures",
  "log",
