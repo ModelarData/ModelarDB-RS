@@ -278,6 +278,18 @@ impl TableMetadataManager {
             .contains(&table_name.to_owned()))
     }
 
+    /// Return the name of each table currently in the metadata Delta Lake. If the table names
+    /// cannot be retrieved, [`ModelarDbStorageError`] is returned.
+    pub async fn table_names(&self) -> Result<Vec<String>> {
+        let normal_table_names = self.normal_table_names().await?;
+        let model_table_names = self.model_table_names().await?;
+
+        let mut table_names = normal_table_names;
+        table_names.extend(model_table_names);
+
+        Ok(table_names)
+    }
+
     /// Return the name of each normal table currently in the metadata Delta Lake. Note that this
     /// does not include model tables. If the normal table names cannot be retrieved,
     /// [`ModelarDbStorageError`] is returned.
@@ -1032,6 +1044,23 @@ mod tests {
             .is_model_table("normal_table_1")
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_table_names() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata)
+            .await
+            .unwrap();
+
+        let table_names = metadata_manager.table_names().await.unwrap();
+        assert_eq!(
+            table_names,
+            vec!["normal_table_2", "normal_table_1", test::MODEL_TABLE_NAME]
+        );
     }
 
     #[tokio::test]
