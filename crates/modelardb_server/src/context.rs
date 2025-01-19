@@ -84,11 +84,11 @@ impl Context {
             modelardb_storage::table_metadata_from_record_batch(&record_batch)?;
 
         for (table_name, schema) in normal_table_metadata {
-            self.create_normal_table(table_name, schema).await?;
+            self.create_normal_table(&table_name, &schema).await?;
         }
 
         for metadata in model_table_metadata {
-            self.create_model_table(Arc::new(metadata)).await?;
+            self.create_model_table(&metadata).await?;
         }
 
         Ok(())
@@ -96,9 +96,9 @@ impl Context {
 
     /// Create a normal table with `name` and `schema`. Returns [`ModelarDbServerError`] if the
     /// table could not be created.
-    pub(crate) async fn create_normal_table(&self, name: String, schema: Schema) -> Result<()> {
-        self.check_if_table_exists(&name).await?;
-        self.register_and_save_normal_table(&name, schema).await?;
+    pub(crate) async fn create_normal_table(&self, name: &str, schema: &Schema) -> Result<()> {
+        self.check_if_table_exists(name).await?;
+        self.register_and_save_normal_table(name, schema).await?;
 
         Ok(())
     }
@@ -106,12 +106,16 @@ impl Context {
     /// Create a normal table, register it with Apache DataFusion, and save it to the Delta Lake. If
     /// the normal table exists, cannot be registered with Apache DataFusion, or cannot be saved to
     /// the Delta Lake, return [`ModelarDbServerError`] error.
-    async fn register_and_save_normal_table(&self, table_name: &str, schema: Schema) -> Result<()> {
+    async fn register_and_save_normal_table(
+        &self,
+        table_name: &str,
+        schema: &Schema,
+    ) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
             .delta_lake
-            .create_normal_table(table_name, &schema)
+            .create_normal_table(table_name, schema)
             .await?;
 
         // Register the normal table with Apache DataFusion.
@@ -133,7 +137,7 @@ impl Context {
     /// model table could not be created.
     pub(crate) async fn create_model_table(
         &self,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: &ModelTableMetadata,
     ) -> Result<()> {
         self.check_if_table_exists(&model_table_metadata.name)
             .await?;
@@ -148,7 +152,7 @@ impl Context {
     /// the Delta Lake, return [`ModelarDbServerError`] error.
     async fn register_and_save_model_table(
         &self,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: &ModelTableMetadata,
     ) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
@@ -165,7 +169,7 @@ impl Context {
 
         // Register the model table with Apache DataFusion.
         self.register_model_table(
-            model_table_metadata.clone(),
+            Arc::new(model_table_metadata.clone()),
             query_folder_table_metadata_manager.clone(),
         )
         .await?;
@@ -174,7 +178,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(model_table_metadata)
             .await?;
 
         // Register the metadata table needed for querying the model table if it is not already

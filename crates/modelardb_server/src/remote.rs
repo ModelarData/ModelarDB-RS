@@ -445,7 +445,7 @@ impl FlightService for FlightServiceHandler {
                 self.validate_request(request.metadata()).await?;
 
                 self.context
-                    .create_normal_table(name, schema)
+                    .create_normal_table(&name, &schema)
                     .await
                     .map_err(error_to_status_invalid_argument)?;
 
@@ -455,7 +455,7 @@ impl FlightService for FlightServiceHandler {
                 self.validate_request(request.metadata()).await?;
 
                 self.context
-                    .create_model_table(model_table_metadata)
+                    .create_model_table(&model_table_metadata)
                     .await
                     .map_err(error_to_status_invalid_argument)?;
 
