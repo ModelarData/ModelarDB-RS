@@ -1348,12 +1348,34 @@ fn test_can_create_tables() {
         .block_on(async { test_context.client.do_action(Request::new(action)).await })
         .unwrap();
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    retrieved_table_names.sort();
     assert_eq!(
         retrieved_table_names,
         vec![
-            modelardb_storage::test::NORMAL_TABLE_NAME.to_owned(),
             modelardb_storage::test::MODEL_TABLE_NAME.to_owned(),
+            modelardb_storage::test::NORMAL_TABLE_NAME.to_owned(),
         ]
     );
+}
+
+#[test]
+fn test_cannot_create_tables_with_invalid_record_batch() {
+    let mut test_context = TestContext::new();
+
+    let invalid_record_batch = modelardb_storage::test::normal_table_record_batch();
+
+    let invalid_record_batch_bytes =
+        modelardb_storage::try_convert_record_batch_to_bytes(&invalid_record_batch).unwrap();
+
+    let action = Action {
+        r#type: "CreateTables".to_owned(),
+        body: invalid_record_batch_bytes.into(),
+    };
+
+    let response = test_context
+        .runtime
+        .block_on(async { test_context.client.do_action(Request::new(action)).await });
+
+    assert!(response.is_err());
 }
