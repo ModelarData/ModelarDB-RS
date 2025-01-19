@@ -56,7 +56,7 @@ use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use futures::StreamExt;
 use modelardb_types::schemas::{
-    CREATE_TABLE_SCHEMA, DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA,
+    DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA, TABLE_METADATA_SCHEMA,
 };
 use modelardb_types::types::ErrorBound;
 use object_store::path::Path;
@@ -378,7 +378,7 @@ pub fn normal_table_metadata_record_batch(
     let generated_columns_field = Arc::new(Field::new("item", DataType::Utf8, true));
 
     RecordBatch::try_new(
-        CREATE_TABLE_SCHEMA.0.clone(),
+        TABLE_METADATA_SCHEMA.0.clone(),
         vec![
             Arc::new(StringArray::from(vec!["normal"])),
             Arc::new(StringArray::from(vec![table_name])),
@@ -416,7 +416,7 @@ pub fn model_table_metadata_record_batch(
         generated_columns_to_list_array(model_table_metadata.generated_columns.clone());
 
     RecordBatch::try_new(
-        CREATE_TABLE_SCHEMA.0.clone(),
+        TABLE_METADATA_SCHEMA.0.clone(),
         vec![
             Arc::new(StringArray::from(vec!["model"])),
             Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
@@ -477,7 +477,7 @@ fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn
 pub fn table_metadata_from_record_batch(
     record_batch: &RecordBatch,
 ) -> Result<(Vec<(String, Schema)>, Vec<ModelTableMetadata>)> {
-    if record_batch.schema() != CREATE_TABLE_SCHEMA.0 {
+    if record_batch.schema() != TABLE_METADATA_SCHEMA.0 {
         return Err(ModelarDbStorageError::InvalidArgument(
             "Record batch does not contain the expected table data.".to_owned(),
         ));
@@ -867,7 +867,7 @@ mod tests {
         columns[0] = Arc::new(StringArray::from(vec!["invalid"]));
 
         let invalid_table_record_batch =
-            RecordBatch::try_new(CREATE_TABLE_SCHEMA.0.clone(), columns).unwrap();
+            RecordBatch::try_new(TABLE_METADATA_SCHEMA.0.clone(), columns).unwrap();
 
         let result = table_metadata_from_record_batch(&invalid_table_record_batch);
 

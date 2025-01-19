@@ -22,7 +22,7 @@ use arrow::compute::concat_batches;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
 use modelardb_types::functions;
-use modelardb_types::schemas::{COMPRESSED_SCHEMA, CREATE_TABLE_SCHEMA};
+use modelardb_types::schemas::{COMPRESSED_SCHEMA, TABLE_METADATA_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -51,7 +51,7 @@ pub fn table_metadata_record_batch() -> RecordBatch {
     let model_table_record_batch = model_table_metadata_record_batch(&metadata).unwrap();
 
     concat_batches(
-        &CREATE_TABLE_SCHEMA.0,
+        &TABLE_METADATA_SCHEMA.0,
         &vec![normal_table_record_batch, model_table_record_batch],
     )
     .unwrap()

@@ -23,7 +23,7 @@ use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_types::schemas::CREATE_TABLE_SCHEMA;
+use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -77,7 +77,7 @@ impl Context {
     pub(crate) async fn create_tables_from_bytes(&self, bytes: Vec<u8>) -> Result<()> {
         let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
             bytes,
-            &CREATE_TABLE_SCHEMA.0.clone(),
+            &TABLE_METADATA_SCHEMA.0.clone(),
         )?;
 
         let (normal_table_metadata, model_table_metadata) =
@@ -94,8 +94,8 @@ impl Context {
         Ok(())
     }
 
-    /// Create a normal table based on `name` and `schema` created from `sql`. Returns
-    /// [`ModelarDbServerError`] if the table could not be created.
+    /// Create a normal table with `name` and `schema`. Returns [`ModelarDbServerError`] if the
+    /// table could not be created.
     pub(crate) async fn create_normal_table(&self, name: String, schema: Schema) -> Result<()> {
         self.check_if_table_exists(&name).await?;
         self.register_and_save_normal_table(&name, schema).await?;
@@ -129,8 +129,8 @@ impl Context {
         Ok(())
     }
 
-    /// Create a model table based on `model_table_metadata` created from `sql`. Returns
-    /// [`ModelarDbServerError`] if the model table could not be created.
+    /// Create a model table with `model_table_metadata`. Returns [`ModelarDbServerError`] if the
+    /// model table could not be created.
     pub(crate) async fn create_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,

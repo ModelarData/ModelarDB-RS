@@ -67,7 +67,7 @@ pub struct QuerySchema(pub arrow::datatypes::SchemaRef);
 pub struct ConfigurationSchema(pub arrow::datatypes::SchemaRef);
 
 #[derive(Clone)]
-pub struct CreateTableSchema(pub arrow::datatypes::SchemaRef);
+pub struct TableMetadataSchema(pub arrow::datatypes::SchemaRef);
 
 /// Absolute or relative per-value error bound.
 #[derive(Debug, Copy, Clone, PartialEq)]

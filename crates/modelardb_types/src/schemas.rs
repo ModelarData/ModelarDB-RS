@@ -22,7 +22,7 @@ use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use crate::types::{
     ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
-    CreateTableSchema, MetricSchema, QueryCompressedSchema, QuerySchema, UncompressedSchema,
+    MetricSchema, QueryCompressedSchema, QuerySchema, TableMetadataSchema, UncompressedSchema,
 };
 
 /// Name of the column used to partition the compressed segments.
@@ -129,9 +129,9 @@ pub static CONFIGURATION_SCHEMA: LazyLock<ConfigurationSchema> = LazyLock::new(|
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for creating tables using
-/// table data.
-pub static CREATE_TABLE_SCHEMA: LazyLock<CreateTableSchema> = LazyLock::new(|| {
-    CreateTableSchema(Arc::new(Schema::new(vec![
+/// table metadata.
+pub static TABLE_METADATA_SCHEMA: LazyLock<TableMetadataSchema> = LazyLock::new(|| {
+    TableMetadataSchema(Arc::new(Schema::new(vec![
         Field::new("type", DataType::Utf8, false),
         Field::new("name", DataType::Utf8, false),
         Field::new("schema", DataType::Binary, false),

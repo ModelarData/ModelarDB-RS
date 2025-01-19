@@ -1347,7 +1347,6 @@ fn test_cannot_create_tables_with_invalid_record_batch() {
     let mut test_context = TestContext::new();
 
     let invalid_record_batch = modelardb_storage::test::normal_table_record_batch();
-
     let invalid_record_batch_bytes =
         modelardb_storage::try_convert_record_batch_to_bytes(&invalid_record_batch).unwrap();
 

@@ -40,7 +40,7 @@ use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
-use modelardb_types::schemas::CREATE_TABLE_SCHEMA;
+use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -540,7 +540,7 @@ impl FlightService for FlightServiceHandler {
             // Extract the record batch from the action body.
             let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
                 action.body.into(),
-                &CREATE_TABLE_SCHEMA.0.clone(),
+                &TABLE_METADATA_SCHEMA.0.clone(),
             )
             .map_err(error_to_status_invalid_argument)?;
 
@@ -623,7 +623,7 @@ impl FlightService for FlightServiceHandler {
                 }
 
                 let record_batch =
-                    compute::concat_batches(&CREATE_TABLE_SCHEMA.0.clone(), &record_batches)
+                    compute::concat_batches(&TABLE_METADATA_SCHEMA.0.clone(), &record_batches)
                         .map_err(error_to_status_internal)?;
 
                 let record_batch_bytes =
@@ -734,9 +734,10 @@ impl FlightService for FlightServiceHandler {
 
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
-            description: "Return the metadata required to create all normal tables and model tables \
-            currently in the manager's database schema."
-                .to_owned(),
+            description:
+                "Return the metadata required to create all normal tables and model tables \
+                 currently in the manager's database schema."
+                    .to_owned(),
         };
 
         let register_node_action = ActionType {
