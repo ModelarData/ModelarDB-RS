@@ -449,8 +449,6 @@ impl Context {
 mod tests {
     use super::*;
 
-    use modelardb_storage::parser;
-    use modelardb_storage::parser::ModelarDbStatement;
     use modelardb_storage::test;
     use tempfile::TempDir;
 
@@ -483,11 +481,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_parse_and_create_normal_table() {
+    async fn test_create_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -517,25 +516,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_parse_and_create_existing_normal_table() {
+    async fn test_create_existing_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        assert!(context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .is_ok());
 
-        assert!(parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        assert!(context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
-            .is_err())
+            .is_err());
     }
 
     #[tokio::test]
-    async fn test_parse_and_create_model_table() {
+    async fn test_create_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -561,17 +563,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_parse_and_create_existing_model_table() {
+    async fn test_create_existing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        assert!(context
+            .create_model_table(&test::model_table_metadata())
             .await
             .is_ok());
 
-        assert!(parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        assert!(context
+            .create_model_table(&test::model_table_metadata())
             .await
-            .is_err())
+            .is_err());
     }
 
     #[tokio::test]
@@ -582,7 +586,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -601,7 +606,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -617,7 +623,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -652,7 +659,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -695,7 +703,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -741,7 +750,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -796,7 +806,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -814,7 +825,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -841,7 +853,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -867,7 +880,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -877,18 +891,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(schema, test::model_table_metadata().schema)
-    }
-
-    async fn parse_and_create_table(context: &Context, sql: &str) -> Result<()> {
-        match parser::tokenize_and_parse_sql_statement(sql)? {
-            ModelarDbStatement::CreateNormalTable { name, schema } => {
-                context.create_normal_table(name, schema).await
-            }
-            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
-                context.create_model_table(model_table_metadata).await
-            }
-            _ => unreachable!("Expected CreateNormalTable or CreateModelTable."),
-        }
     }
 
     #[tokio::test]

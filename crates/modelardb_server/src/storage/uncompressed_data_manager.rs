@@ -807,7 +807,7 @@ mod tests {
         let _ = if let ModelarDbStatement::CreateModelTable(model_table_metadata) =
             modelardb_statement
         {
-            context.create_model_table(model_table_metadata).await
+            context.create_model_table(&model_table_metadata).await
         } else {
             panic!("Expected CreateModelTable.");
         };
