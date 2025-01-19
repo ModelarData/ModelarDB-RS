@@ -428,7 +428,7 @@ pub fn model_table_metadata_record_batch(
     .map_err(|error| error.into())
 }
 
-/// Convert a list of [`ErrorBounds`](ErrorBound) to a [`ListArray`] that can be sent to ModelarDB.
+/// Convert a list of [`ErrorBounds`](ErrorBound) to a [`ListArray`].
 fn error_bounds_to_list_array(error_bounds: Vec<ErrorBound>) -> ListArray {
     let mut error_bounds_builder = ListBuilder::new(Float32Builder::new());
 
@@ -448,8 +448,7 @@ fn error_bounds_to_list_array(error_bounds: Vec<ErrorBound>) -> ListArray {
     error_bounds_builder.finish()
 }
 
-/// Convert a list of optional [`GeneratedColumns`](GeneratedColumn) to a [`ListArray`] that can be
-/// sent to ModelarDB.
+/// Convert a list of optional [`GeneratedColumns`](GeneratedColumn) to a [`ListArray`].
 fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn>>) -> ListArray {
     let mut generated_columns_builder = ListBuilder::new(StringBuilder::new());
 
@@ -479,7 +478,7 @@ pub fn table_metadata_from_record_batch(
 ) -> Result<(Vec<(String, Schema)>, Vec<ModelTableMetadata>)> {
     if record_batch.schema() != TABLE_METADATA_SCHEMA.0 {
         return Err(ModelarDbStorageError::InvalidArgument(
-            "Record batch does not contain the expected table data.".to_owned(),
+            "Record batch does not contain the expected table metadata.".to_owned(),
         ));
     }
 
@@ -851,7 +850,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid Argument Error: Record batch does not contain the expected table data."
+            "Invalid Argument Error: Record batch does not contain the expected table metadata."
         );
     }
 
