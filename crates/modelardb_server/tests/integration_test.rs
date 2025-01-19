@@ -35,7 +35,6 @@ use datafusion::arrow::array::{
     Array, Float64Array, ListArray, StringArray, UInt32Array, UInt64Array,
 };
 use datafusion::arrow::compute;
-use datafusion::arrow::compute::concat_batches;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
 use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::reader::StreamReader;
@@ -44,8 +43,6 @@ use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
 use modelardb_common::test;
 use modelardb_common::test::data_generation;
-use modelardb_storage::{model_table_metadata_record_batch, normal_table_metadata_record_batch};
-use modelardb_types::schemas::CREATE_TABLE_SCHEMA;
 use modelardb_types::types::ErrorBound;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use tempfile::TempDir;
@@ -1320,21 +1317,7 @@ fn test_can_get_node_type() {
 fn test_can_create_tables() {
     let mut test_context = TestContext::new();
 
-    let normal_table_record_batch = normal_table_metadata_record_batch(
-        modelardb_storage::test::NORMAL_TABLE_NAME,
-        &modelardb_storage::test::normal_table_schema(),
-    )
-    .unwrap();
-
-    let metadata = modelardb_storage::test::model_table_metadata();
-    let model_table_record_batch = model_table_metadata_record_batch(&metadata).unwrap();
-
-    let table_record_batch = concat_batches(
-        &CREATE_TABLE_SCHEMA.0,
-        &vec![normal_table_record_batch, model_table_record_batch],
-    )
-    .unwrap();
-
+    let table_record_batch = modelardb_storage::test::table_metadata_record_batch();
     let table_record_batch_bytes =
         modelardb_storage::try_convert_record_batch_to_bytes(&table_record_batch).unwrap();
 

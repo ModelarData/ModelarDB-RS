@@ -445,12 +445,9 @@ impl Context {
 mod tests {
     use super::*;
 
-    use datafusion::arrow::compute::concat_batches;
+    use modelardb_storage::parser;
     use modelardb_storage::parser::ModelarDbStatement;
     use modelardb_storage::test;
-    use modelardb_storage::{
-        model_table_metadata_record_batch, normal_table_metadata_record_batch, parser,
-    };
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
@@ -460,21 +457,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        let normal_table_record_batch = normal_table_metadata_record_batch(
-            test::NORMAL_TABLE_NAME,
-            &test::normal_table_schema(),
-        )
-        .unwrap();
-
-        let metadata = test::model_table_metadata();
-        let model_table_record_batch = model_table_metadata_record_batch(&metadata).unwrap();
-
-        let table_record_batch = concat_batches(
-            &CREATE_TABLE_SCHEMA.0,
-            &vec![normal_table_record_batch, model_table_record_batch],
-        )
-        .unwrap();
-
+        let table_record_batch = test::table_metadata_record_batch();
         let table_record_batch_bytes =
             modelardb_storage::try_convert_record_batch_to_bytes(&table_record_batch).unwrap();
 

@@ -829,20 +829,7 @@ mod tests {
     // Tests for table_metadata_from_record_batch().
     #[test]
     fn test_table_metadata_from_record_batch() {
-        let normal_table_record_batch = normal_table_metadata_record_batch(
-            test::NORMAL_TABLE_NAME,
-            &test::normal_table_schema(),
-        )
-        .unwrap();
-
-        let metadata = test::model_table_metadata();
-        let model_table_record_batch = model_table_metadata_record_batch(&metadata).unwrap();
-
-        let table_record_batch = concat_batches(
-            &CREATE_TABLE_SCHEMA.0,
-            &vec![normal_table_record_batch, model_table_record_batch],
-        )
-        .unwrap();
+        let table_record_batch = test::table_metadata_record_batch();
 
         let (normal_table_metadata, model_table_metadata) =
             table_metadata_from_record_batch(&table_record_batch).unwrap();
@@ -851,8 +838,9 @@ mod tests {
         assert_eq!(normal_table_metadata[0].0, test::NORMAL_TABLE_NAME);
         assert_eq!(normal_table_metadata[0].1, test::normal_table_schema());
 
+        let metadata = test::model_table_metadata();
         assert_eq!(model_table_metadata.len(), 1);
-        assert_eq!(model_table_metadata[0].name, test::MODEL_TABLE_NAME);
+        assert_eq!(model_table_metadata[0].name, metadata.name);
         assert_eq!(model_table_metadata[0].query_schema, metadata.query_schema);
     }
 
