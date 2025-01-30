@@ -511,10 +511,11 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the [`RecordBatch`] in the action body. The tables
-    /// are created for each node in the cluster of nodes controlled by the manager. The [`RecordBatch`]
-    /// should have the fields `is_model_table`, `name`, `schema`, `error_bounds` and `generated_columns`.
-    /// `error_bounds` and `generated_columns` should be null if `is_model_table` is `false`.
+    /// * `CreateTables`: Create the tables given in the [`RecordBatch`](arrow::record_batch::RecordBatch)
+    /// in the action body. The tables are created for each node in the cluster of nodes controlled
+    /// by the manager. The [`RecordBatch`](arrow::record_batch::RecordBatch) should have the fields
+    /// `is_model_table`, `name`, `schema`, `error_bounds` and `generated_columns`. `error_bounds`
+    /// and `generated_columns` should be null if `is_model_table` is `false`.
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the metadata required
     /// to create the normal tables and model tables that are missing in the list. The list of table
     /// names is also checked to make sure all given tables actually exist.
@@ -612,8 +613,10 @@ impl FlightService for FlightServiceHandler {
                             .await
                             .map_err(error_to_status_internal)?;
 
-                        modelardb_storage::model_table_metadata_to_record_batch(&model_table_metadata)
-                            .map_err(error_to_status_internal)?
+                        modelardb_storage::model_table_metadata_to_record_batch(
+                            &model_table_metadata,
+                        )
+                        .map_err(error_to_status_internal)?
                     };
 
                     record_batches.push(record_batch);
