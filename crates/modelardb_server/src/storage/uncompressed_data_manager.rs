@@ -953,7 +953,7 @@ mod tests {
         );
     }
 
-    /// Create a record batch with data that resembles uncompressed data with a single tag and two
+    /// Create a [`RecordBatch`] with data that resembles uncompressed data with a single tag and two
     /// field columns. The returned data has `row_count` rows, with a different tag for each row.
     /// Also create model table metadata for a model table that matches the created data.
     fn uncompressed_data(row_count: usize, schema: SchemaRef) -> RecordBatch {

@@ -347,7 +347,7 @@ pub fn try_convert_record_batch_to_bytes(record_batch: &RecordBatch) -> Result<V
     writer.into_inner().map_err(|error| error.into())
 }
 
-/// Return [`RecordBatch`] if `record_batch_bytes` can be converted to an Apache Arrow record batch,
+/// Return [`RecordBatch`] if `record_batch_bytes` can be converted to an Apache Arrow [`RecordBatch`],
 /// otherwise [`ModelarDbStorageError`].
 pub fn try_convert_bytes_to_record_batch(
     record_batch_bytes: Vec<u8>,
@@ -367,8 +367,8 @@ pub fn try_convert_bytes_to_record_batch(
 
 /// Return a [`RecordBatch`] constructed from the metadata of a normal table with the name
 /// `table_name` and the schema `schema`. If the schema could not be converted to bytes or the
-/// record batch could not be created, return [`ModelarDbStorageError`].
-pub fn normal_table_metadata_record_batch(
+/// [`RecordBatch`] could not be created, return [`ModelarDbStorageError`].
+pub fn normal_table_metadata_to_record_batch(
     table_name: &str,
     schema: &Schema,
 ) -> Result<RecordBatch> {
@@ -391,9 +391,9 @@ pub fn normal_table_metadata_record_batch(
 }
 
 /// Return a [`RecordBatch`] constructed from the metadata in `model_table_metadata`. If the schema
-/// could not be converted to bytes or the record batch could not be created, return
+/// could not be converted to bytes or the [`RecordBatch`] could not be created, return
 /// [`ModelarDbStorageError`].
-pub fn model_table_metadata_record_batch(
+pub fn model_table_metadata_to_record_batch(
     model_table_metadata: &ModelTableMetadata,
 ) -> Result<RecordBatch> {
     // Since the model table metadata does not include error bounds for the generated columns,
@@ -470,7 +470,7 @@ fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn
 
 /// Extract the table metadata from `record_batch` and return the table metadata as a tuple of
 /// `(normal_table_metadata, model_table_metadata)`. `normal_table_metadata` is a vector of tuples
-/// containing the table name and schema of the normal tables. If the schema of the record batch
+/// containing the table name and schema of the normal tables. If the schema of the [`RecordBatch`]
 /// is invalid or the table metadata could not be extracted, return [`ModelarDbStorageError`].
 #[allow(clippy::type_complexity)]
 pub fn table_metadata_from_record_batch(
@@ -772,12 +772,12 @@ mod tests {
         );
     }
 
-    // Tests for normal_table_metadata_record_batch() and model_table_metadata_record_batch().
+    // Tests for normal_table_metadata_to_record_batch() and model_table_metadata_to_record_batch().
     #[test]
-    fn test_normal_table_metadata_record_batch() {
+    fn test_normal_table_metadata_to_record_batch() {
         let schema = test::normal_table_schema();
         let record_batch =
-            normal_table_metadata_record_batch(test::NORMAL_TABLE_NAME, &schema).unwrap();
+            normal_table_metadata_to_record_batch(test::NORMAL_TABLE_NAME, &schema).unwrap();
 
         assert_eq!(**record_batch.column(0), StringArray::from(vec!["normal"]));
         assert_eq!(
@@ -791,9 +791,9 @@ mod tests {
     }
 
     #[test]
-    fn test_model_table_metadata_record_batch() {
+    fn test_model_table_metadata_to_record_batch() {
         let model_table_metadata = test::model_table_metadata();
-        let record_batch = model_table_metadata_record_batch(&model_table_metadata).unwrap();
+        let record_batch = model_table_metadata_to_record_batch(&model_table_metadata).unwrap();
 
         assert_eq!(**record_batch.column(0), StringArray::from(vec!["model"]));
         assert_eq!(
@@ -856,7 +856,7 @@ mod tests {
 
     #[test]
     fn test_table_metadata_from_record_batch_with_invalid_table_type() {
-        let table_record_batch = normal_table_metadata_record_batch(
+        let table_record_batch = normal_table_metadata_to_record_batch(
             test::NORMAL_TABLE_NAME,
             &test::normal_table_schema(),
         )

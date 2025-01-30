@@ -23,6 +23,7 @@ use arrow_flight::{Action, Ticket};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::info;
+use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::ServerMode;
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::Request;
@@ -146,12 +147,18 @@ impl Cluster {
         record_batch: &RecordBatch,
         key: &MetadataValue<Ascii>,
     ) -> Result<()> {
-        let action = Action {
-            r#type: "CreateTables".to_owned(),
-            body: modelardb_storage::try_convert_record_batch_to_bytes(record_batch)?.into(),
-        };
+        if record_batch.schema() == TABLE_METADATA_SCHEMA.0 {
+            let action = Action {
+                r#type: "CreateTables".to_owned(),
+                body: modelardb_storage::try_convert_record_batch_to_bytes(record_batch)?.into(),
+            };
 
-        self.cluster_do_action(action, key).await
+            self.cluster_do_action(action, key).await
+        } else {
+            Err(ModelarDbManagerError::InvalidArgument(
+                "Record batch does not contain the expected table metadata.".to_owned(),
+            ))
+        }
     }
 
     /// For each node in the cluster, execute the given `sql` statement with the given `key` as
@@ -174,9 +181,9 @@ impl Cluster {
         Ok(())
     }
 
-    /// Connect to the Apache Arrow flight server given by `url` and execute the given `sql`
+    /// Connect to the Apache Arrow Flight server given by `url` and execute the given `sql`
     /// statement with the given `key` as metadata. If the statement was successfully executed,
-    /// return the url of the node, otherwise return [`ModelarDbManagerError`].
+    /// return the url of the node to simplify logging, otherwise return [`ModelarDbManagerError`].
     async fn connect_and_do_get(
         &self,
         url: &str,
@@ -219,9 +226,9 @@ impl Cluster {
         Ok(())
     }
 
-    /// Connect to the Apache Arrow flight server given by `url` and make a request to do `action`
+    /// Connect to the Apache Arrow Flight server given by `url` and make a request to do `action`
     /// with the given `key` as metadata. If the action was successfully executed, return the url
-    /// of the node, otherwise return [`ModelarDbManagerError`].
+    /// of the node to simplify logging, otherwise return [`ModelarDbManagerError`].
     async fn connect_and_do_action(
         &self,
         url: &str,

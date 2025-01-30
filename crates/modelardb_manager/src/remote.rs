@@ -102,7 +102,7 @@ impl FlightServiceHandler {
             .metadata_manager
             .table_metadata_manager;
 
-        let schema = if table_metadata_manager
+        if table_metadata_manager
             .is_normal_table(table_name)
             .await
             .map_err(error_to_status_internal)?
@@ -121,7 +121,7 @@ impl FlightServiceHandler {
                 .try_into()
                 .map_err(error_to_status_internal)?;
 
-            Arc::new(schema)
+            Ok(Arc::new(schema))
         } else if table_metadata_manager
             .is_model_table(table_name)
             .await
@@ -132,14 +132,12 @@ impl FlightServiceHandler {
                 .await
                 .map_err(error_to_status_internal)?;
 
-            model_table_metadata.query_schema
+            Ok(model_table_metadata.query_schema)
         } else {
-            return Err(Status::invalid_argument(format!(
+            Err(Status::invalid_argument(format!(
                 "Table with name '{table_name}' does not exist.",
-            )));
-        };
-
-        Ok(schema)
+            )))
+        }
     }
 
     /// Return [`Ok`] if a table named `table_name` does not exist already in the metadata
@@ -192,7 +190,7 @@ impl FlightServiceHandler {
 
         // Register and save the table to each node in the cluster.
         let record_batch =
-            modelardb_storage::normal_table_metadata_record_batch(table_name, schema)
+            modelardb_storage::normal_table_metadata_to_record_batch(table_name, schema)
                 .map_err(error_to_status_internal)?;
 
         self.context
@@ -234,7 +232,7 @@ impl FlightServiceHandler {
 
         // Register and save the model table to each node in the cluster.
         let record_batch =
-            modelardb_storage::model_table_metadata_record_batch(&model_table_metadata)
+            modelardb_storage::model_table_metadata_to_record_batch(&model_table_metadata)
                 .map_err(error_to_status_internal)?;
 
         self.context
@@ -513,8 +511,8 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the record batch in the action body. The tables
-    /// are created for each node in the cluster of nodes controlled by the manager. The record batch
+    /// * `CreateTables`: Create the tables given in the [`RecordBatch`] in the action body. The tables
+    /// are created for each node in the cluster of nodes controlled by the manager. The [`RecordBatch`]
     /// should have the fields `type`, `name`, `schema`, `error_bounds` and `generated_columns`.
     /// `type` can be either `normal` or `model` and `error_bounds` and `generated_columns` should
     /// be null if type is `normal`.
@@ -607,7 +605,7 @@ impl FlightService for FlightServiceHandler {
                         .map_err(error_to_status_internal)?
                     {
                         let schema = self.table_schema(table).await?;
-                        modelardb_storage::normal_table_metadata_record_batch(table, &schema)
+                        modelardb_storage::normal_table_metadata_to_record_batch(table, &schema)
                             .map_err(error_to_status_internal)?
                     } else {
                         let model_table_metadata = table_metadata_manager
@@ -615,7 +613,7 @@ impl FlightService for FlightServiceHandler {
                             .await
                             .map_err(error_to_status_internal)?;
 
-                        modelardb_storage::model_table_metadata_record_batch(&model_table_metadata)
+                        modelardb_storage::model_table_metadata_to_record_batch(&model_table_metadata)
                             .map_err(error_to_status_internal)?
                     };
 

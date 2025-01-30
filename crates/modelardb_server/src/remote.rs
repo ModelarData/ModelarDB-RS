@@ -227,7 +227,7 @@ async fn send_flight_data(
         .map_err(error_to_status_internal)
 }
 
-/// Write the record batch to a stream within a gRPC response.
+/// Write the [`RecordBatch`] to a stream within a gRPC response.
 fn send_record_batch(
     batch: &RecordBatch,
 ) -> StdResult<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
@@ -578,10 +578,10 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the record batch in the action body. The record
-    /// batch should have the fields `type`, `name`, `schema`, `error_bounds` and `generated_columns`.
-    /// `type` can be either `normal` or `model` and `error_bounds` and `generated_columns` should
-    /// be null if type is `normal`.
+    /// * `CreateTables`: Create the tables given in the [`RecordBatch`] in the action body. The
+    /// [`RecordBatch`] should have the fields `type`, `name`, `schema`, `error_bounds` and
+    /// `generated_columns`. `type` can be either `normal` or `model` and `error_bounds` and
+    /// `generated_columns` should be null if type is `normal`.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.

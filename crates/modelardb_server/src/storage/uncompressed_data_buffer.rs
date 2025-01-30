@@ -165,10 +165,11 @@ impl UncompressedInMemoryDataBuffer {
             columns.push(compute::take(&value.finish(), &sorted_indices, None)?);
         }
 
-        Ok(RecordBatch::try_new(
+        RecordBatch::try_new(
             self.model_table_metadata.uncompressed_schema.clone(),
             columns,
-        )?)
+        )
+        .map_err(|error| error.into())
     }
 
     /// Return the tag hash that identifies the time series the buffer stores data points from.

@@ -71,9 +71,12 @@ impl Context {
         })
     }
 
-    /// Convert the bytes to a record batch and create tables using the metadata in the record
-    /// batch. Returns [`ModelarDbServerError`] if the bytes could not be converted to a record
-    /// batch, the record batch could not be parsed, or the tables could not be created.
+    /// Convert the bytes to a [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) and
+    /// create tables using the metadata in the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch).
+    /// Returns [`ModelarDbServerError`] if the bytes could not be converted to a
+    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch), the
+    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) could not be parsed, or the
+    /// tables could not be created.
     pub(crate) async fn create_tables_from_bytes(&self, bytes: Vec<u8>) -> Result<()> {
         let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
             bytes,
@@ -454,6 +457,7 @@ mod tests {
 
     use crate::data_folders::DataFolder;
 
+    // Tests for Context.
     #[tokio::test]
     async fn test_create_tables_from_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
