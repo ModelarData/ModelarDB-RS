@@ -424,7 +424,7 @@ impl TableProvider for ModelTable {
         let object_store_url = log_store.object_store_url();
         state
             .runtime_env()
-            .register_object_store(object_store_url.as_ref(), log_store.object_store());
+            .register_object_store(object_store_url.as_ref(), log_store.object_store(None));
 
         // Ensures a projection is always present for looking up the columns to return.
         let mut projection: Vec<usize> = if let Some(projection) = projection {
