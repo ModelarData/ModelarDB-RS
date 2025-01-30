@@ -579,9 +579,9 @@ impl FlightService for FlightServiceHandler {
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `CreateTables`: Create the tables given in the [`RecordBatch`] in the action body. The
-    /// [`RecordBatch`] should have the fields `type`, `name`, `schema`, `error_bounds` and
-    /// `generated_columns`. `type` can be either `normal` or `model` and `error_bounds` and
-    /// `generated_columns` should be null if type is `normal`.
+    /// [`RecordBatch`] should have the fields `is_model_table`, `name`, `schema`, `error_bounds` and
+    /// `generated_columns`. `error_bounds` and `generated_columns` should be null if `is_model_table`
+    /// is `false`.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.

@@ -28,8 +28,8 @@ use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, Float32Array, Float32Builder, Int64Array, ListArray, ListBuilder,
-    RecordBatch, StringArray, StringBuilder, UInt64Array,
+    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float32Builder, Int64Array,
+    ListArray, ListBuilder, RecordBatch, StringArray, StringBuilder, UInt64Array,
 };
 use arrow::compute;
 use arrow::compute::concat_batches;
@@ -380,7 +380,7 @@ pub fn normal_table_metadata_to_record_batch(
     RecordBatch::try_new(
         TABLE_METADATA_SCHEMA.0.clone(),
         vec![
-            Arc::new(StringArray::from(vec!["normal"])),
+            Arc::new(BooleanArray::from(vec![false])),
             Arc::new(StringArray::from(vec![table_name])),
             Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
             Arc::new(ListArray::new_null(error_bounds_field, 1)),
@@ -418,7 +418,7 @@ pub fn model_table_metadata_to_record_batch(
     RecordBatch::try_new(
         TABLE_METADATA_SCHEMA.0.clone(),
         vec![
-            Arc::new(StringArray::from(vec!["model"])),
+            Arc::new(BooleanArray::from(vec![true])),
             Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
             Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
             Arc::new(error_bounds_array),
@@ -485,41 +485,35 @@ pub fn table_metadata_from_record_batch(
     let mut normal_table_metadata = Vec::new();
     let mut model_table_metadata = Vec::new();
 
-    let type_array = modelardb_types::array!(record_batch, 0, StringArray);
+    let is_model_table_array = modelardb_types::array!(record_batch, 0, BooleanArray);
     let name_array = modelardb_types::array!(record_batch, 1, StringArray);
     let schema_array = modelardb_types::array!(record_batch, 2, BinaryArray);
     let error_bounds_array = modelardb_types::array!(record_batch, 3, ListArray);
     let generated_columns_array = modelardb_types::array!(record_batch, 4, ListArray);
 
     for row_index in 0..record_batch.num_rows() {
-        let table_type = type_array.value(row_index);
+        let is_model_table = is_model_table_array.value(row_index);
         let table_name = name_array.value(row_index).to_owned();
         let schema = try_convert_bytes_to_schema(schema_array.value(row_index).to_vec())?;
 
-        match table_type {
-            "normal" => normal_table_metadata.push((table_name, schema)),
-            "model" => {
-                let error_bounds = array_to_error_bounds(error_bounds_array.value(row_index))?;
+        if is_model_table {
+            let error_bounds = array_to_error_bounds(error_bounds_array.value(row_index))?;
 
-                let generated_columns = array_to_generated_columns(
-                    generated_columns_array.value(row_index),
-                    &schema.clone().to_dfschema()?,
-                )?;
+            let generated_columns = array_to_generated_columns(
+                generated_columns_array.value(row_index),
+                &schema.clone().to_dfschema()?,
+            )?;
 
-                let metadata = ModelTableMetadata::try_new(
-                    table_name,
-                    Arc::new(schema),
-                    error_bounds,
-                    generated_columns,
-                )?;
+            let metadata = ModelTableMetadata::try_new(
+                table_name,
+                Arc::new(schema),
+                error_bounds,
+                generated_columns,
+            )?;
 
-                model_table_metadata.push(metadata);
-            }
-            _ => {
-                return Err(ModelarDbStorageError::InvalidArgument(format!(
-                    "Table type '{table_type}' is not supported.",
-                )));
-            }
+            model_table_metadata.push(metadata);
+        } else {
+            normal_table_metadata.push((table_name, schema));
         }
     }
 
@@ -779,7 +773,7 @@ mod tests {
         let record_batch =
             normal_table_metadata_to_record_batch(test::NORMAL_TABLE_NAME, &schema).unwrap();
 
-        assert_eq!(**record_batch.column(0), StringArray::from(vec!["normal"]));
+        assert_eq!(**record_batch.column(0), BooleanArray::from(vec![false]));
         assert_eq!(
             **record_batch.column(1),
             StringArray::from(vec![test::NORMAL_TABLE_NAME])
@@ -795,7 +789,7 @@ mod tests {
         let model_table_metadata = test::model_table_metadata();
         let record_batch = model_table_metadata_to_record_batch(&model_table_metadata).unwrap();
 
-        assert_eq!(**record_batch.column(0), StringArray::from(vec!["model"]));
+        assert_eq!(**record_batch.column(0), BooleanArray::from(vec![true]));
         assert_eq!(
             **record_batch.column(1),
             StringArray::from(vec![test::MODEL_TABLE_NAME])
@@ -851,28 +845,6 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "Invalid Argument Error: Record batch does not contain the expected table metadata."
-        );
-    }
-
-    #[test]
-    fn test_table_metadata_from_record_batch_with_invalid_table_type() {
-        let table_record_batch = normal_table_metadata_to_record_batch(
-            test::NORMAL_TABLE_NAME,
-            &test::normal_table_schema(),
-        )
-        .unwrap();
-
-        let mut columns = table_record_batch.columns().to_vec();
-        columns[0] = Arc::new(StringArray::from(vec!["invalid"]));
-
-        let invalid_table_record_batch =
-            RecordBatch::try_new(TABLE_METADATA_SCHEMA.0.clone(), columns).unwrap();
-
-        let result = table_metadata_from_record_batch(&invalid_table_record_batch);
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid Argument Error: Table type 'invalid' is not supported."
         );
     }
 }
