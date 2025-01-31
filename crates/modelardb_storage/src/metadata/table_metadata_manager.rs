@@ -382,10 +382,10 @@ impl TableMetadataManager {
             .enumerate()
         {
             if model_table_metadata.is_field(query_schema_index) {
-                let generated_column_expr = if let Some(generated_column) =
+                let maybe_generated_column_expr = if let Some(generated_column) =
                     &model_table_metadata.generated_columns[query_schema_index]
                 {
-                    generated_column.original_expr.clone()
+                    Some(generated_column.original_expr.clone())
                 } else {
                     None
                 };
@@ -412,7 +412,7 @@ impl TableMetadataManager {
                             Arc::new(Int16Array::from(vec![query_schema_index as i16])),
                             Arc::new(Float32Array::from(vec![error_bound_value])),
                             Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                            Arc::new(StringArray::from(vec![generated_column_expr])),
+                            Arc::new(StringArray::from(vec![maybe_generated_column_expr])),
                         ],
                     )
                     .await?;

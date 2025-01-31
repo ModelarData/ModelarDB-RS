@@ -979,7 +979,7 @@ fn extract_generation_exprs_for_all_columns(
                 // Lake, it is not stored in ModelTableMetadata as it not used for during query
                 // execution.
                 let sql_expr = generation_expr.as_ref().unwrap();
-                let original_expr = Some(sql_expr.to_string());
+                let original_expr = sql_expr.to_string();
 
                 // Ensure that the parsed sqlparser expression can be converted to a logical Apache
                 // Arrow DataFusion expression within the context of schema to check it for errors.
