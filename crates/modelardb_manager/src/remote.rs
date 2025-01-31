@@ -24,8 +24,8 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arrow::compute;
 use arrow::datatypes::Schema;
-use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
@@ -36,9 +36,11 @@ use arrow_flight::{
 use futures::{stream, Stream};
 use modelardb_common::arguments;
 use modelardb_common::remote;
+use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
+use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -91,6 +93,53 @@ impl FlightServiceHandler {
         Self { context }
     }
 
+    /// Return the schema of the table with the name `table_name`. If the table does not exist or
+    /// the schema cannot be retrieved, return [`Status`].
+    async fn table_schema(&self, table_name: &str) -> StdResult<Arc<Schema>, Status> {
+        let table_metadata_manager = &self
+            .context
+            .remote_data_folder
+            .metadata_manager
+            .table_metadata_manager;
+
+        if table_metadata_manager
+            .is_normal_table(table_name)
+            .await
+            .map_err(error_to_status_internal)?
+        {
+            let delta_table = self
+                .context
+                .remote_data_folder
+                .delta_lake
+                .delta_table(table_name)
+                .await
+                .map_err(error_to_status_internal)?;
+
+            let schema = delta_table
+                .get_schema()
+                .map_err(error_to_status_internal)?
+                .try_into()
+                .map_err(error_to_status_internal)?;
+
+            Ok(Arc::new(schema))
+        } else if table_metadata_manager
+            .is_model_table(table_name)
+            .await
+            .map_err(error_to_status_internal)?
+        {
+            let model_table_metadata = table_metadata_manager
+                .model_table_metadata_for_model_table(table_name)
+                .await
+                .map_err(error_to_status_internal)?;
+
+            Ok(model_table_metadata.query_schema)
+        } else {
+            Err(Status::invalid_argument(format!(
+                "Table with name '{table_name}' does not exist.",
+            )))
+        }
+    }
+
     /// Return [`Ok`] if a table named `table_name` does not exist already in the metadata
     /// database, otherwise return [`Status`].
     async fn check_if_table_exists(&self, table_name: &str) -> StdResult<(), Status> {
@@ -98,9 +147,10 @@ impl FlightServiceHandler {
             .context
             .remote_data_folder
             .metadata_manager
-            .table_metadata_column("table_name")
+            .table_metadata_manager
+            .table_names()
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         if existing_tables
             .iter()
@@ -120,7 +170,6 @@ impl FlightServiceHandler {
         &self,
         table_name: &str,
         schema: &Schema,
-        sql: &str,
     ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context
@@ -128,25 +177,29 @@ impl FlightServiceHandler {
             .delta_lake
             .create_normal_table(table_name, schema)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Persist the new normal table to the metadata Delta Lake.
         self.context
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_normal_table_metadata(table_name, sql)
+            .save_normal_table_metadata(table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Register and save the table to each node in the cluster.
+        let record_batch =
+            modelardb_storage::normal_table_metadata_to_record_batch(table_name, schema)
+                .map_err(error_to_status_internal)?;
+
         self.context
             .cluster
             .read()
             .await
-            .cluster_do_get(sql, &self.context.key)
+            .create_tables(&record_batch, &self.context.key)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         info!("Created normal table '{}'.", table_name);
 
@@ -159,7 +212,6 @@ impl FlightServiceHandler {
     async fn save_and_create_cluster_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
-        sql: &str,
     ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context
@@ -167,25 +219,29 @@ impl FlightServiceHandler {
             .delta_lake
             .create_model_table(&model_table_metadata.name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Persist the new model table to the metadata Delta Lake.
         self.context
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, sql)
+            .save_model_table_metadata(&model_table_metadata)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Register and save the model table to each node in the cluster.
+        let record_batch =
+            modelardb_storage::model_table_metadata_to_record_batch(&model_table_metadata)
+                .map_err(error_to_status_internal)?;
+
         self.context
             .cluster
             .read()
             .await
-            .cluster_do_get(sql, &self.context.key)
+            .create_tables(&record_batch, &self.context.key)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
 
@@ -204,7 +260,7 @@ impl FlightServiceHandler {
             .table_metadata_manager
             .drop_table_metadata(table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Drop the table from the remote data folder data Delta lake.
         self.context
@@ -212,7 +268,7 @@ impl FlightServiceHandler {
             .delta_lake
             .drop_table(table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Drop the table from the nodes controlled by the manager.
         self.context
@@ -221,7 +277,7 @@ impl FlightServiceHandler {
             .await
             .cluster_do_get(&format!("DROP TABLE {table_name}"), &self.context.key)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         Ok(())
     }
@@ -238,7 +294,7 @@ impl FlightServiceHandler {
             .table_metadata_manager
             .truncate_table_metadata(table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Truncate the table in the remote data folder data Delta lake.
         self.context
@@ -246,7 +302,7 @@ impl FlightServiceHandler {
             .delta_lake
             .truncate_table(table_name)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         // Truncate the table in the nodes controlled by the manager.
         self.context
@@ -255,7 +311,7 @@ impl FlightServiceHandler {
             .await
             .cluster_do_get(&format!("TRUNCATE TABLE {table_name}"), &self.context.key)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         Ok(())
     }
@@ -297,9 +353,10 @@ impl FlightService for FlightServiceHandler {
             .context
             .remote_data_folder
             .metadata_manager
-            .table_metadata_column("table_name")
+            .table_metadata_manager
+            .table_names()
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(error_to_status_internal)?;
 
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info = FlightInfo::new().with_descriptor(flight_descriptor);
@@ -319,7 +376,7 @@ impl FlightService for FlightServiceHandler {
 
         // Extract the query.
         let query = str::from_utf8(&flight_descriptor.cmd)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .map_err(error_to_status_invalid_argument)?
             .to_owned();
 
         // Retrieve the cloud node that should execute the given query.
@@ -365,43 +422,11 @@ impl FlightService for FlightServiceHandler {
         let flight_descriptor = request.into_inner();
         let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
 
-        let table_sql = self
-            .context
-            .remote_data_folder
-            .metadata_manager
-            .table_sql(table_name)
-            .await
-            .map_err(|error| {
-                Status::not_found(format!(
-                    "Table with name '{table_name}' does not exist: {error}",
-                ))
-            })?;
-
-        // Parse the SQL and perform semantic checks to extract the schema from the statement.
-        let modelardb_statement = parser::tokenize_and_parse_sql_statement(table_sql.as_str())
-            .map_err(|error| Status::internal(error.to_string()))?;
-
-        let schema = match modelardb_statement {
-            ModelarDbStatement::CreateNormalTable { schema, .. } => Arc::new(schema),
-            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
-                model_table_metadata.schema.clone()
-            }
-            // .. is not used so a compile error is raised if a new ModelarDbStatement is added.
-            ModelarDbStatement::Statement(_)
-            | ModelarDbStatement::IncludeSelect(..)
-            | ModelarDbStatement::DropTable(_)
-            | ModelarDbStatement::TruncateTable(_) => {
-                return Err(Status::internal(
-                    "Expected CreateNormalTable or CreateModelTable.",
-                ));
-            }
-        };
+        let schema = self.table_schema(table_name).await?;
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let schema_result = schema_as_ipc
-            .try_into()
-            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
+        let schema_result = schema_as_ipc.try_into().map_err(error_to_status_internal)?;
 
         Ok(Response::new(schema_result))
     }
@@ -417,14 +442,14 @@ impl FlightService for FlightServiceHandler {
 
         // Extract the query.
         let sql = str::from_utf8(&ticket.ticket)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .map_err(error_to_status_invalid_argument)?
             .to_owned();
 
         // Parse the query.
         info!("Received SQL: '{}'.", sql);
 
         let modelardb_statement = parser::tokenize_and_parse_sql_statement(&sql)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(error_to_status_invalid_argument)?;
 
         // Execute the statement.
         info!("Executing SQL: '{}'.", sql);
@@ -432,13 +457,13 @@ impl FlightService for FlightServiceHandler {
         match modelardb_statement {
             ModelarDbStatement::CreateNormalTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
-                self.save_and_create_cluster_normal_table(&name, &schema, &sql)
+                self.save_and_create_cluster_normal_table(&name, &schema)
                     .await?;
             }
             ModelarDbStatement::CreateModelTable(model_table_metadata) => {
                 self.check_if_table_exists(&model_table_metadata.name)
                     .await?;
-                self.save_and_create_cluster_model_table(model_table_metadata, &sql)
+                self.save_and_create_cluster_model_table(model_table_metadata)
                     .await?;
             }
             ModelarDbStatement::TruncateTable(table_names) => {
@@ -486,7 +511,12 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
+    /// * `CreateTables`: Create the tables given in the [`RecordBatch`](arrow::record_batch::RecordBatch)
+    /// in the action body. The tables are created for each node in the cluster of nodes controlled
+    /// by the manager. The [`RecordBatch`](arrow::record_batch::RecordBatch) should have the fields
+    /// `is_model_table`, `name`, `schema`, `error_bounds` and `generated_columns`. `error_bounds`
+    /// and `generated_columns` should be null if `is_model_table` is `false`.
+    /// * `InitializeDatabase`: Given a list of existing table names, respond with the metadata required
     /// to create the normal tables and model tables that are missing in the list. The list of table
     /// names is also checked to make sure all given tables actually exist.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
@@ -504,10 +534,36 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "InitializeDatabase" {
+        if action.r#type == "CreateTables" {
+            // Extract the record batch from the action body.
+            let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
+                action.body.into(),
+                &TABLE_METADATA_SCHEMA.0.clone(),
+            )
+            .map_err(error_to_status_invalid_argument)?;
+
+            let (normal_table_metadata, model_table_metadata) =
+                modelardb_storage::table_metadata_from_record_batch(&record_batch)
+                    .map_err(error_to_status_invalid_argument)?;
+
+            for (table_name, schema) in normal_table_metadata {
+                self.check_if_table_exists(&table_name).await?;
+                self.save_and_create_cluster_normal_table(&table_name, &schema)
+                    .await?;
+            }
+
+            for metadata in model_table_metadata {
+                self.check_if_table_exists(&metadata.name).await?;
+                self.save_and_create_cluster_model_table(Arc::new(metadata))
+                    .await?;
+            }
+
+            // Confirm the tables were created.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "InitializeDatabase" {
             // Extract the list of comma seperated tables that already exist in the node.
             let node_tables: Vec<&str> = str::from_utf8(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?
+                .map_err(error_to_status_invalid_argument)?
                 .split(',')
                 .filter(|table| !table.is_empty())
                 .collect();
@@ -517,9 +573,10 @@ impl FlightService for FlightServiceHandler {
                 .context
                 .remote_data_folder
                 .metadata_manager
-                .table_metadata_column("table_name")
+                .table_metadata_manager
+                .table_names()
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Check that all the node's tables exist in the cluster's database schema already.
             let invalid_node_tables: Vec<&str> = node_tables
@@ -529,31 +586,54 @@ impl FlightService for FlightServiceHandler {
                 .collect();
 
             if invalid_node_tables.is_empty() {
-                // For each table that does not already exist in the node, retrieve the SQL
-                // required to create it.
+                // For each table that does not already exist in the node, retrieve the table metadata.
                 let missing_cluster_tables = cluster_tables
                     .iter()
                     .filter(|table| !node_tables.contains(&table.as_str()));
 
-                let mut table_sql_queries: Vec<String> = vec![];
+                let table_metadata_manager = &self
+                    .context
+                    .remote_data_folder
+                    .metadata_manager
+                    .table_metadata_manager;
 
+                let mut record_batches = vec![];
                 for table in missing_cluster_tables {
-                    table_sql_queries.push(
-                        self.context
-                            .remote_data_folder
-                            .metadata_manager
-                            .table_sql(table)
+                    let record_batch = if table_metadata_manager
+                        .is_normal_table(table)
+                        .await
+                        .map_err(error_to_status_internal)?
+                    {
+                        let schema = self.table_schema(table).await?;
+                        modelardb_storage::normal_table_metadata_to_record_batch(table, &schema)
+                            .map_err(error_to_status_internal)?
+                    } else {
+                        let model_table_metadata = table_metadata_manager
+                            .model_table_metadata_for_model_table(table)
                             .await
-                            .map_err(|error| Status::internal(error.to_string()))?,
-                    )
+                            .map_err(error_to_status_internal)?;
+
+                        modelardb_storage::model_table_metadata_to_record_batch(
+                            &model_table_metadata,
+                        )
+                        .map_err(error_to_status_internal)?
+                    };
+
+                    record_batches.push(record_batch);
                 }
 
-                let response_body = table_sql_queries.join(";").as_bytes().to_vec();
+                let record_batch =
+                    compute::concat_batches(&TABLE_METADATA_SCHEMA.0.clone(), &record_batches)
+                        .map_err(error_to_status_internal)?;
 
-                // Return the SQL for the tables that need to be created in the requesting node.
+                let record_batch_bytes =
+                    modelardb_storage::try_convert_record_batch_to_bytes(&record_batch)
+                        .map_err(error_to_status_internal)?;
+
+                // Return the metadata for the tables that need to be created in the requesting node.
                 Ok(Response::new(Box::pin(stream::once(async {
                     Ok(FlightResult {
-                        body: response_body.into(),
+                        body: record_batch_bytes.into(),
                     })
                 }))))
             } else {
@@ -565,12 +645,12 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let (url, offset_data) = arguments::decode_argument(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
             let (mode, _offset_data) = arguments::decode_argument(offset_data)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
 
-            let server_mode = ServerMode::from_str(mode)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            let server_mode =
+                ServerMode::from_str(mode).map_err(error_to_status_invalid_argument)?;
             let node = Node::new(url.to_string(), server_mode.clone());
 
             // Use the cluster to register the node in memory. This returns an error if the node is
@@ -580,7 +660,7 @@ impl FlightService for FlightServiceHandler {
                 .write()
                 .await
                 .register_node(node.clone())
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Use the metadata manager to persist the node to the metadata Delta Lake. Note that if
             // this fails, the metadata Delta Lake and the cluster will be out of sync until the
@@ -590,7 +670,7 @@ impl FlightService for FlightServiceHandler {
                 .metadata_manager
                 .save_node(node)
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // unwrap() is safe since the key cannot contain invalid characters.
             let mut response_body = arguments::encode_argument(self.context.key.to_str().unwrap());
@@ -606,7 +686,7 @@ impl FlightService for FlightServiceHandler {
             }))))
         } else if action.r#type == "RemoveNode" {
             let (url, _offset_data) = arguments::decode_argument(&action.body)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                .map_err(error_to_status_invalid_argument)?;
 
             // Remove the node with the given url from the metadata Delta Lake.
             self.context
@@ -614,7 +694,7 @@ impl FlightService for FlightServiceHandler {
                 .metadata_manager
                 .remove_node(url)
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Remove the node with the given url from the cluster and kill it. Note that if this fails,
             // the cluster and metadata Delta Lake will be out of sync until the manager is restarted.
@@ -624,7 +704,7 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .remove_node(url, &self.context.key)
                 .await
-                .map_err(|error| Status::internal(error.to_string()))?;
+                .map_err(error_to_status_internal)?;
 
             // Confirm the node was removed.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -646,11 +726,18 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
+        let create_tables_action = ActionType {
+            r#type: "CreateTables".to_owned(),
+            description: "Create the tables given in the record batch in the action body."
+                .to_owned(),
+        };
+
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
-            description: "Return the SQL required to create all normal tables and model tables \
-            currently in the manager's database schema."
-                .to_owned(),
+            description:
+                "Return the metadata required to create all normal tables and model tables \
+                 currently in the manager's database schema."
+                    .to_owned(),
         };
 
         let register_node_action = ActionType {
@@ -670,6 +757,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
+            Ok(create_tables_action),
             Ok(initialize_database_action),
             Ok(register_node_action),
             Ok(remove_node_action),

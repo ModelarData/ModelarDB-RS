@@ -16,13 +16,17 @@
 //! Implementation of the type containing the metadata required to read from and
 //! write to a model table.
 
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
+use datafusion::common::DFSchema;
+use datafusion::error::DataFusionError;
 use datafusion::logical_expr::expr::Expr;
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 
 use crate::error::{ModelarDbStorageError, Result};
+use crate::parser::tokenize_and_parse_sql_expression;
 
 /// Metadata required to ingest data into a model table and query a model table.
 #[derive(Debug, Clone)]
@@ -215,11 +219,34 @@ pub struct GeneratedColumn {
     pub original_expr: Option<String>,
 }
 
+impl GeneratedColumn {
+    /// Create a [`GeneratedColumn`] from a SQL expression and a [`DFSchema`]. If the SQL expression
+    /// is not valid or refers to columns that are not in the [`DFSchema`],
+    /// a [`ModelarDbStorageError`] is returned.
+    pub fn try_from_sql_expr(sql_expr: &str, df_schema: &DFSchema) -> Result<Self> {
+        let expr = tokenize_and_parse_sql_expression(sql_expr, df_schema)?;
+
+        let source_columns: StdResult<Vec<usize>, DataFusionError> = expr
+            .column_refs()
+            .iter()
+            .map(|column| df_schema.index_of_column(column))
+            .collect();
+
+        Ok(Self {
+            expr,
+            source_columns: source_columns?,
+            original_expr: Some(sql_expr.to_owned()),
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::common::ToDFSchema;
+    use datafusion::logical_expr::col;
     use datafusion::logical_expr::expr::WildcardOptions;
     use modelardb_common::test::ERROR_BOUND_ZERO;
 
@@ -444,5 +471,42 @@ mod test {
         assert!(!model_table_metadata.is_tag(1));
         assert!(!model_table_metadata.is_tag(2));
         assert!(model_table_metadata.is_tag(3));
+    }
+
+    // Tests for GeneratedColumn.
+    #[test]
+    fn test_can_create_generated_column() {
+        let schema = Schema::new(vec![
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("field_2", ArrowValue::DATA_TYPE, false),
+            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let sql_expr = "field_1 + field_2";
+        let expected_generated_column = GeneratedColumn {
+            expr: col("field_1") + col("field_2"),
+            source_columns: vec![0, 1],
+            original_expr: Some(sql_expr.to_owned()),
+        };
+
+        let df_schema = schema.to_dfschema().unwrap();
+        let mut result = GeneratedColumn::try_from_sql_expr(sql_expr, &df_schema).unwrap();
+
+        // Sort the source columns to ensure the order is consistent.
+        result.source_columns.sort();
+        assert_eq!(expected_generated_column, result);
+    }
+
+    #[test]
+    fn test_cannot_create_generated_column_with_invalid_sql_expr() {
+        let schema = Schema::new(vec![
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let df_schema = schema.to_dfschema().unwrap();
+        let result = GeneratedColumn::try_from_sql_expr("field_1 + field_2", &df_schema);
+
+        assert!(result.is_err());
     }
 }

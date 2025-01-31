@@ -18,7 +18,6 @@
 //! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
 use std::collections::HashMap;
-use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::result::Result as StdResult;
@@ -36,9 +35,7 @@ use datafusion::arrow::array::{
     ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
 };
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::ipc::writer::{
-    DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
-};
+use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
@@ -47,6 +44,7 @@ use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStrea
 use deltalake::arrow::datatypes::Schema;
 use futures::stream::{self, BoxStream, SelectAll};
 use futures::StreamExt;
+use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_common::{arguments, remote};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser::{self, ModelarDbStatement};
@@ -229,17 +227,12 @@ async fn send_flight_data(
         .map_err(error_to_status_internal)
 }
 
-/// Write the schema and corresponding record batch to a stream within a gRPC response.
+/// Write the [`RecordBatch`] to a stream within a gRPC response.
 fn send_record_batch(
-    schema: SchemaRef,
-    batch: RecordBatch,
+    batch: &RecordBatch,
 ) -> StdResult<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
-    let options = IpcWriteOptions::default();
-    let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options)
+    let batch_bytes = modelardb_storage::try_convert_record_batch_to_bytes(batch)
         .map_err(error_to_status_internal)?;
-
-    writer.write(&batch).map_err(error_to_status_internal)?;
-    let batch_bytes = writer.into_inner().map_err(error_to_status_internal)?;
 
     Ok(Response::new(Box::pin(stream::once(async {
         Ok(FlightResult {
@@ -252,18 +245,6 @@ fn send_record_batch(
 /// command has been successfully executed but did not produce any rows to return.
 fn empty_record_batch_stream() -> SendableRecordBatchStream {
     Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
-}
-
-/// Convert an `error` to a [`Status`] with [`tonic::Code::InvalidArgument`] as the code and `error`
-/// converted to a [`String`] as the message.
-fn error_to_status_invalid_argument(error: impl Error) -> Status {
-    Status::invalid_argument(error.to_string())
-}
-
-/// Convert an `error` to a [`Status`] with [`tonic::Code::Internal`] as the code and `error`
-/// converted to a [`String`] as the message.
-fn error_to_status_internal(error: impl Error) -> Status {
-    Status::internal(error.to_string())
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -464,7 +445,7 @@ impl FlightService for FlightServiceHandler {
                 self.validate_request(request.metadata()).await?;
 
                 self.context
-                    .create_normal_table(name, schema, &sql)
+                    .create_normal_table(&name, &schema)
                     .await
                     .map_err(error_to_status_invalid_argument)?;
 
@@ -474,7 +455,7 @@ impl FlightService for FlightServiceHandler {
                 self.validate_request(request.metadata()).await?;
 
                 self.context
-                    .create_model_table(model_table_metadata, &sql)
+                    .create_model_table(&model_table_metadata)
                     .await
                     .map_err(error_to_status_invalid_argument)?;
 
@@ -597,6 +578,10 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
+    /// * `CreateTables`: Create the tables given in the [`RecordBatch`] in the action body. The
+    /// [`RecordBatch`] should have the fields `is_model_table`, `name`, `schema`, `error_bounds` and
+    /// `generated_columns`. `error_bounds` and `generated_columns` should be null if `is_model_table`
+    /// is `false`.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -627,7 +612,17 @@ impl FlightService for FlightServiceHandler {
         let action = request.get_ref();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "FlushMemory" {
+        if action.r#type == "CreateTables" {
+            self.validate_request(request.metadata()).await?;
+
+            self.context
+                .create_tables_from_bytes(action.body.clone().into())
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+
+            // Confirm the tables were created.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "FlushMemory" {
             self.context
                 .storage_engine
                 .write()
@@ -701,7 +696,7 @@ impl FlightService for FlightServiceHandler {
             )
             .unwrap();
 
-            send_record_batch(schema.0, batch)
+            send_record_batch(&batch)
         } else if action.r#type == "GetConfiguration" {
             // Extract the configuration data from the configuration manager.
             let configuration_manager = self.context.configuration_manager.read().await;
@@ -740,7 +735,7 @@ impl FlightService for FlightServiceHandler {
             )
             .unwrap();
 
-            send_record_batch(schema.0, batch)
+            send_record_batch(&batch)
         } else if action.r#type == "UpdateConfiguration" {
             let (setting, offset_data) =
                 arguments::decode_argument(&action.body).map_err(error_to_status_internal)?;
@@ -828,6 +823,12 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
+        let create_tables_action = ActionType {
+            r#type: "CreateTables".to_owned(),
+            description: "Create the tables given in the record batch in the action body."
+                .to_owned(),
+        };
+
         let flush_memory_action = ActionType {
             r#type: "FlushMemory".to_owned(),
             description: "Flush the uncompressed data to disk by compressing and saving the data."
@@ -874,6 +875,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
+            Ok(create_tables_action),
             Ok(flush_memory_action),
             Ok(flush_node_action),
             Ok(kill_node_action),

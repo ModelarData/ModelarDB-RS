@@ -17,11 +17,13 @@
 
 use std::collections::VecDeque;
 
+use arrow::record_batch::RecordBatch;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Ticket};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::info;
+use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::ServerMode;
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::Request;
@@ -137,6 +139,28 @@ impl Cluster {
         }
     }
 
+    /// Create tables on each node in the cluster with the given `record_batch` and `key` as metadata.
+    /// If the tables were successfully created on each node, return [`Ok`], otherwise return
+    /// [`ModelarDbManagerError`].
+    pub async fn create_tables(
+        &self,
+        record_batch: &RecordBatch,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<()> {
+        if record_batch.schema() == TABLE_METADATA_SCHEMA.0 {
+            let action = Action {
+                r#type: "CreateTables".to_owned(),
+                body: modelardb_storage::try_convert_record_batch_to_bytes(record_batch)?.into(),
+            };
+
+            self.cluster_do_action(action, key).await
+        } else {
+            Err(ModelarDbManagerError::InvalidArgument(
+                "Record batch does not contain the expected table metadata.".to_owned(),
+            ))
+        }
+    }
+
     /// For each node in the cluster, execute the given `sql` statement with the given `key` as
     /// metadata. If the statement was successfully executed for each node, return [`Ok`], otherwise
     /// return [`ModelarDbManagerError`].
@@ -157,9 +181,9 @@ impl Cluster {
         Ok(())
     }
 
-    /// Connect to the Apache Arrow flight server given by `url` and execute the given `sql`
+    /// Connect to the Apache Arrow Flight server given by `url` and execute the given `sql`
     /// statement with the given `key` as metadata. If the statement was successfully executed,
-    /// return the url of the node, otherwise return [`ModelarDbManagerError`].
+    /// return the url of the node to simplify logging, otherwise return [`ModelarDbManagerError`].
     async fn connect_and_do_get(
         &self,
         url: &str,
@@ -173,6 +197,51 @@ impl Cluster {
         request.metadata_mut().insert("x-manager-key", key.clone());
 
         flight_client.do_get(request).await?;
+
+        Ok(url.to_owned())
+    }
+
+    /// For each node in the cluster, execute the given `action` with the given `key` as metadata.
+    /// If the action was successfully executed for each node, return [`Ok`], otherwise return
+    /// [`ModelarDbManagerError`].
+    pub async fn cluster_do_action(
+        &self,
+        action: Action,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<()> {
+        let mut action_futures: FuturesUnordered<_> = self
+            .nodes
+            .iter()
+            .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
+            .collect();
+
+        // Run the futures concurrently and log when the action has been executed on each node.
+        while let Some(result) = action_futures.next().await {
+            info!(
+                "Executed action `{}` on node with url '{}'.",
+                action.r#type, result?
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Connect to the Apache Arrow Flight server given by `url` and make a request to do `action`
+    /// with the given `key` as metadata. If the action was successfully executed, return the url
+    /// of the node to simplify logging, otherwise return [`ModelarDbManagerError`].
+    async fn connect_and_do_action(
+        &self,
+        url: &str,
+        action: Action,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<String> {
+        let mut flight_client = FlightServiceClient::connect(url.to_owned()).await?;
+
+        // Add the key to the request metadata to indicate that the request is from the manager.
+        let mut request = Request::new(action);
+        request.metadata_mut().insert("x-manager-key", key.clone());
+
+        flight_client.do_action(request).await?;
 
         Ok(url.to_owned())
     }

@@ -19,7 +19,6 @@
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
-use std::mem;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
@@ -28,8 +27,6 @@ use arrow::array::{
     StringArray,
 };
 use arrow::datatypes::{DataType, Field, Schema};
-use arrow::ipc::writer::IpcWriteOptions;
-use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, ToDFSchema};
@@ -42,7 +39,10 @@ use modelardb_types::types::ErrorBound;
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::{parser, register_metadata_table, sql_and_concat};
+use crate::{
+    register_metadata_table, sql_and_concat, try_convert_bytes_to_schema,
+    try_convert_schema_to_bytes,
+};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -174,10 +174,7 @@ impl TableMetadataManager {
             .delta_lake
             .create_metadata_table(
                 "normal_table_metadata",
-                &Schema::new(vec![
-                    Field::new("table_name", DataType::Utf8, false),
-                    Field::new("sql", DataType::Utf8, false),
-                ]),
+                &Schema::new(vec![Field::new("table_name", DataType::Utf8, false)]),
             )
             .await?;
 
@@ -191,7 +188,6 @@ impl TableMetadataManager {
                 &Schema::new(vec![
                     Field::new("table_name", DataType::Utf8, false),
                     Field::new("query_schema", DataType::Binary, false),
-                    Field::new("sql", DataType::Utf8, false),
                 ]),
             )
             .await?;
@@ -217,8 +213,8 @@ impl TableMetadataManager {
         )?;
 
         // Create and register the model_table_field_columns table if it does not exist. Note that
-        // column_index will only use a maximum of 10 bits. generated_column_* is NULL if the fields
-        // are stored as segments.
+        // column_index will only use a maximum of 10 bits. generated_column_expr is NULL if the
+        // fields are stored as segments.
         let delta_table = self
             .delta_lake
             .create_metadata_table(
@@ -230,7 +226,6 @@ impl TableMetadataManager {
                     Field::new("error_bound_value", DataType::Float32, false),
                     Field::new("error_bound_is_relative", DataType::Boolean, false),
                     Field::new("generated_column_expr", DataType::Utf8, true),
-                    Field::new("generated_column_sources", DataType::Binary, true),
                 ]),
             )
             .await?;
@@ -283,6 +278,18 @@ impl TableMetadataManager {
             .contains(&table_name.to_owned()))
     }
 
+    /// Return the name of each table currently in the metadata Delta Lake. If the table names
+    /// cannot be retrieved, [`ModelarDbStorageError`] is returned.
+    pub async fn table_names(&self) -> Result<Vec<String>> {
+        let normal_table_names = self.normal_table_names().await?;
+        let model_table_names = self.model_table_names().await?;
+
+        let mut table_names = normal_table_names;
+        table_names.extend(model_table_names);
+
+        Ok(table_names)
+    }
+
     /// Return the name of each normal table currently in the metadata Delta Lake. Note that this
     /// does not include model tables. If the normal table names cannot be retrieved,
     /// [`ModelarDbStorageError`] is returned.
@@ -312,18 +319,14 @@ impl TableMetadataManager {
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
     }
 
-    /// Save the created normal table to the metadata Delta Lake. This consists of adding a row to the
-    /// `normal_table_metadata` table with the `name` of the table and the `sql` used to create the
-    /// table. If the normal table metadata was saved, return [`Ok`], otherwise
-    /// return [`ModelarDbStorageError`].
-    pub async fn save_normal_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
+    /// Save the created normal table to the metadata Delta Lake. This consists of adding a row to
+    /// the `normal_table_metadata` table with the `name` of the table. If the normal table metadata
+    /// was saved, return [`Ok`], otherwise return [`ModelarDbStorageError`].
+    pub async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
         self.delta_lake
             .write_columns_to_metadata_table(
                 "normal_table_metadata",
-                vec![
-                    Arc::new(StringArray::from(vec![name])),
-                    Arc::new(StringArray::from(vec![sql])),
-                ],
+                vec![Arc::new(StringArray::from(vec![name]))],
             )
             .await?;
 
@@ -336,7 +339,6 @@ impl TableMetadataManager {
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
-        sql: &str,
     ) -> Result<()> {
         // Create and register a table_name_tags table to save the 54-bit tag hashes when ingesting data.
         let mut table_name_tags_columns = vec![Field::new("hash", DataType::Int64, false)];
@@ -368,7 +370,6 @@ impl TableMetadataManager {
                 vec![
                     Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
                     Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
-                    Arc::new(StringArray::from(vec![sql])),
                 ],
             )
             .await?;
@@ -381,19 +382,13 @@ impl TableMetadataManager {
             .enumerate()
         {
             if model_table_metadata.is_field(query_schema_index) {
-                let (generated_column_expr, generated_column_sources) =
-                    if let Some(generated_column) =
-                        &model_table_metadata.generated_columns[query_schema_index]
-                    {
-                        (
-                            generated_column.original_expr.clone(),
-                            Some(convert_slice_usize_to_vec_u8(
-                                &generated_column.source_columns,
-                            )),
-                        )
-                    } else {
-                        (None, None)
-                    };
+                let generated_column_expr = if let Some(generated_column) =
+                    &model_table_metadata.generated_columns[query_schema_index]
+                {
+                    generated_column.original_expr.clone()
+                } else {
+                    None
+                };
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of model tables.
@@ -418,9 +413,6 @@ impl TableMetadataManager {
                             Arc::new(Float32Array::from(vec![error_bound_value])),
                             Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
                             Arc::new(StringArray::from(vec![generated_column_expr])),
-                            Arc::new(BinaryArray::from_opt_vec(vec![
-                                generated_column_sources.as_deref()
-                            ])),
                         ],
                     )
                     .await?;
@@ -646,7 +638,7 @@ impl TableMetadataManager {
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
         let mut column_to_error_bound =
-            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(); query_schema_columns];
+            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO)?; query_schema_columns];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
         let error_bound_value_array = modelardb_types::array!(batch, 1, Float32Array);
@@ -657,13 +649,11 @@ impl TableMetadataManager {
             let error_bound_value = error_bound_value_array.value(row_index);
             let error_bound_is_relative = error_bound_is_relative_array.value(row_index);
 
-            // unwrap() is safe as the error bounds are checked before they are stored.
             let error_bound = if error_bound_is_relative {
                 ErrorBound::try_new_relative(error_bound_value)
             } else {
                 ErrorBound::try_new_absolute(error_bound_value)
-            }
-            .unwrap();
+            }?;
 
             column_to_error_bound[error_bound_index as usize] = error_bound;
         }
@@ -679,7 +669,7 @@ impl TableMetadataManager {
         df_schema: &DFSchema,
     ) -> Result<Vec<Option<GeneratedColumn>>> {
         let sql = format!(
-            "SELECT column_index, generated_column_expr, generated_column_sources
+            "SELECT column_index, generated_column_expr
              FROM model_table_field_columns
              WHERE table_name = '{table_name}'
              ORDER BY column_index"
@@ -690,23 +680,15 @@ impl TableMetadataManager {
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
         let generated_column_expr_array = modelardb_types::array!(batch, 1, StringArray);
-        let generated_column_sources_array = modelardb_types::array!(batch, 2, BinaryArray);
 
         for row_index in 0..batch.num_rows() {
             let generated_column_index = column_index_array.value(row_index);
             let generated_column_expr = generated_column_expr_array.value(row_index);
-            let generated_column_sources = generated_column_sources_array.value(row_index);
 
             // If generated_column_expr is null, it is saved as an empty string in the column values.
             if !generated_column_expr.is_empty() {
-                let expr =
-                    parser::tokenize_and_parse_sql_expression(generated_column_expr, df_schema)?;
-
-                let generated_column = GeneratedColumn {
-                    expr,
-                    source_columns: try_convert_slice_u8_to_vec_usize(generated_column_sources)?,
-                    original_expr: Some(generated_column_expr.to_owned()),
-                };
+                let generated_column =
+                    GeneratedColumn::try_from_sql_expr(generated_column_expr, df_schema)?;
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
             }
@@ -942,44 +924,6 @@ impl TableMetadataManager {
     }
 }
 
-/// Convert a [`Schema`] to [`Vec<u8>`].
-fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
-    let options = IpcWriteOptions::default();
-    let schema_as_ipc = SchemaAsIpc::new(schema, &options);
-
-    let ipc_message: IpcMessage = schema_as_ipc.try_into()?;
-
-    Ok(ipc_message.0.to_vec())
-}
-
-/// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-/// [`ModelarDbStorageError`].
-fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
-    let ipc_message = IpcMessage(schema_bytes.into());
-    Schema::try_from(ipc_message).map_err(|error| error.into())
-}
-
-/// Convert a [`&[usize]`] to a [`Vec<u8>`].
-fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
-    usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-/// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
-/// [`mem::size_of::<usize>()`], otherwise [`ModelarDbStorageError`] is returned.
-fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
-    if bytes.len() % mem::size_of::<usize>() != 0 {
-        Err(ModelarDbStorageError::InvalidArgument(
-            "Bytes is not a vector of usizes.".to_owned(),
-        ))
-    } else {
-        // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
-        Ok(bytes
-            .chunks(mem::size_of::<usize>())
-            .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
-            .collect())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -989,7 +933,6 @@ mod tests {
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue};
-    use proptest::{collection, num, prop_assert_eq, proptest};
     use tempfile::TempDir;
 
     use crate::test;
@@ -1005,13 +948,13 @@ mod tests {
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(metadata_manager
             .session_context
-            .sql("SELECT table_name, sql FROM normal_table_metadata")
+            .sql("SELECT table_name FROM normal_table_metadata")
             .await
             .is_ok());
 
         assert!(metadata_manager
             .session_context
-            .sql("SELECT table_name, query_schema, sql FROM model_table_metadata")
+            .sql("SELECT table_name, query_schema FROM model_table_metadata")
             .await
             .is_ok());
 
@@ -1024,7 +967,7 @@ mod tests {
         assert!(metadata_manager
             .session_context
             .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                  generated_column_expr, generated_column_sources FROM model_table_field_columns")
+                  generated_column_expr FROM model_table_field_columns")
             .await
             .is_ok());
     }
@@ -1104,6 +1047,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_table_names() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata)
+            .await
+            .unwrap();
+
+        let table_names = metadata_manager.table_names().await.unwrap();
+        assert_eq!(
+            table_names,
+            vec!["normal_table_2", "normal_table_1", test::MODEL_TABLE_NAME]
+        );
+    }
+
+    #[tokio::test]
     async fn test_normal_table_names() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
@@ -1124,7 +1084,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
         // Retrieve the normal table from the metadata Delta Lake.
-        let sql = "SELECT table_name, sql FROM normal_table_metadata ORDER BY table_name";
+        let sql = "SELECT table_name FROM normal_table_metadata ORDER BY table_name";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
@@ -1132,13 +1092,6 @@ mod tests {
         assert_eq!(
             **batch.column(0),
             StringArray::from(vec!["normal_table_1", "normal_table_2"])
-        );
-        assert_eq!(
-            **batch.column(1),
-            StringArray::from(vec![
-                "CREATE TABLE normal_table_1",
-                "CREATE TABLE normal_table_2"
-            ])
         );
     }
 
@@ -1151,7 +1104,7 @@ mod tests {
         assert!(metadata_manager.session_context.sql(&sql).await.is_ok());
 
         // Check that a row has been added to the model_table_metadata table.
-        let sql = "SELECT table_name, query_schema, sql FROM model_table_metadata";
+        let sql = "SELECT table_name, query_schema FROM model_table_metadata";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
@@ -1167,14 +1120,10 @@ mod tests {
             )
             .unwrap()])
         );
-        assert_eq!(
-            **batch.column(2),
-            StringArray::from(vec![test::MODEL_TABLE_SQL])
-        );
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
         let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                   generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name";
+                   generated_column_expr FROM model_table_field_columns ORDER BY column_name";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
@@ -1194,7 +1143,6 @@ mod tests {
             **batch.column(5),
             StringArray::from(vec![None, None] as Vec<Option<&str>>)
         );
-        assert_eq!(**batch.column(6), BinaryArray::from(vec![None, None]));
     }
 
     #[tokio::test]
@@ -1349,12 +1297,12 @@ mod tests {
             .unwrap();
 
         metadata_manager
-            .save_normal_table_metadata("normal_table_1", "CREATE TABLE normal_table_1")
+            .save_normal_table_metadata("normal_table_1")
             .await
             .unwrap();
 
         metadata_manager
-            .save_normal_table_metadata("normal_table_2", "CREATE TABLE normal_table_2")
+            .save_normal_table_metadata("normal_table_2")
             .await
             .unwrap();
 
@@ -1460,11 +1408,8 @@ mod tests {
         )
         .unwrap();
 
-        let sql = "CREATE MODEL TABLE generated_columns_table(timestamp TIMESTAMP,
-        field_1 FIELD, field_2 FIELD, tag TAG, generated_column_1 GENERATED AS field_1 + 1,
-        generated_column_2 GENERATED AS field_1 + field_2)";
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, sql)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 
@@ -1474,7 +1419,19 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(generated_columns, expected_generated_columns);
+        assert_eq!(
+            generated_columns[0..generated_columns.len() - 1],
+            expected_generated_columns[0..expected_generated_columns.len() - 1]
+        );
+
+        // Sort the source columns to ensure the order is consistent.
+        let mut last_generated_column = generated_columns.last().unwrap().clone().unwrap();
+        last_generated_column.source_columns.sort();
+
+        assert_eq!(
+            &Some(last_generated_column),
+            expected_generated_columns.last().unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1692,40 +1649,10 @@ mod tests {
         // Save a model table to the metadata Delta Lake.
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 
         (temp_dir, metadata_manager)
-    }
-
-    // Tests for conversion functions.
-    #[test]
-    fn test_invalid_bytes_to_schema() {
-        assert!(try_convert_bytes_to_schema(vec!(1, 2, 4, 8)).is_err());
-    }
-
-    #[test]
-    fn test_schema_to_bytes_and_bytes_to_schema() {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("field_2", ArrowValue::DATA_TYPE, false),
-        ]));
-
-        // Serialize the schema to bytes.
-        let bytes = try_convert_schema_to_bytes(&schema).unwrap();
-
-        // Deserialize the bytes to the schema.
-        let bytes_schema = try_convert_bytes_to_schema(bytes).unwrap();
-        assert_eq!(*schema, bytes_schema);
-    }
-
-    proptest! {
-        #[test]
-        fn test_slice_usize_to_vec_u8_and_slice_u8_to_vec_usize(values in collection::vec(num::usize::ANY, 0..50)) {
-            let bytes = convert_slice_usize_to_vec_u8(&values);
-            let usizes = try_convert_slice_u8_to_vec_usize(&bytes).unwrap();
-            prop_assert_eq!(values, usizes);
-        }
     }
 }

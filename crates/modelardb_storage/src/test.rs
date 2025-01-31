@@ -18,13 +18,15 @@
 use std::sync::Arc;
 
 use arrow::array::{BinaryArray, Float32Array, RecordBatch, UInt16Array, UInt64Array, UInt8Array};
+use arrow::compute::concat_batches;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
 use modelardb_types::functions;
-use modelardb_types::schemas::COMPRESSED_SCHEMA;
+use modelardb_types::schemas::{COMPRESSED_SCHEMA, TABLE_METADATA_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::{model_table_metadata_to_record_batch, normal_table_metadata_to_record_batch};
 
 /// SQL to create a normal table with a timestamp column and two floating point columns.
 pub const NORMAL_TABLE_SQL: &str =
@@ -39,6 +41,21 @@ pub const MODEL_TABLE_SQL: &str =
 
 /// Name of the model table used in tests.
 pub const MODEL_TABLE_NAME: &str = "model_table";
+
+/// Return a [`RecordBatch`] containing metadata for a normal table and a model table.
+pub fn table_metadata_record_batch() -> RecordBatch {
+    let normal_table_record_batch =
+        normal_table_metadata_to_record_batch(NORMAL_TABLE_NAME, &normal_table_schema()).unwrap();
+
+    let metadata = model_table_metadata();
+    let model_table_record_batch = model_table_metadata_to_record_batch(&metadata).unwrap();
+
+    concat_batches(
+        &TABLE_METADATA_SCHEMA.0,
+        &vec![normal_table_record_batch, model_table_record_batch],
+    )
+    .unwrap()
+}
 
 /// Return a [`Schema`] for a normal table with a timestamp column and two floating point columns.
 pub fn normal_table_schema() -> Schema {

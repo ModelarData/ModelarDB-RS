@@ -23,6 +23,7 @@ use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
+use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -70,17 +71,37 @@ impl Context {
         })
     }
 
-    /// Create a normal table based on `name` and `schema` created from `sql`. Returns
-    /// [`ModelarDbServerError`] if the table could not be created.
-    pub(crate) async fn create_normal_table(
-        &self,
-        name: String,
-        schema: Schema,
-        sql: &str,
-    ) -> Result<()> {
-        self.check_if_table_exists(&name).await?;
-        self.register_and_save_normal_table(&name, sql, schema)
-            .await?;
+    /// Convert the bytes to a [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) and
+    /// create tables using the metadata in the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch).
+    /// Returns [`ModelarDbServerError`] if the bytes could not be converted to a
+    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch), the
+    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) could not be parsed, or the
+    /// tables could not be created.
+    pub(crate) async fn create_tables_from_bytes(&self, bytes: Vec<u8>) -> Result<()> {
+        let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
+            bytes,
+            &TABLE_METADATA_SCHEMA.0.clone(),
+        )?;
+
+        let (normal_table_metadata, model_table_metadata) =
+            modelardb_storage::table_metadata_from_record_batch(&record_batch)?;
+
+        for (table_name, schema) in normal_table_metadata {
+            self.create_normal_table(&table_name, &schema).await?;
+        }
+
+        for metadata in model_table_metadata {
+            self.create_model_table(&metadata).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Create a normal table with `name` and `schema`. Returns [`ModelarDbServerError`] if the
+    /// table could not be created.
+    pub(crate) async fn create_normal_table(&self, name: &str, schema: &Schema) -> Result<()> {
+        self.check_if_table_exists(name).await?;
+        self.register_and_save_normal_table(name, schema).await?;
 
         Ok(())
     }
@@ -91,14 +112,13 @@ impl Context {
     async fn register_and_save_normal_table(
         &self,
         table_name: &str,
-        sql: &str,
-        schema: Schema,
+        schema: &Schema,
     ) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
             .delta_lake
-            .create_normal_table(table_name, &schema)
+            .create_normal_table(table_name, schema)
             .await?;
 
         // Register the normal table with Apache DataFusion.
@@ -108,7 +128,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .save_normal_table_metadata(table_name, sql)
+            .save_normal_table_metadata(table_name)
             .await?;
 
         info!("Created normal table '{}'.", table_name);
@@ -116,16 +136,15 @@ impl Context {
         Ok(())
     }
 
-    /// Create a model table based on `model_table_metadata` created from `sql`. Returns
-    /// [`ModelarDbServerError`] if the model table could not be created.
+    /// Create a model table with `model_table_metadata`. Returns [`ModelarDbServerError`] if the
+    /// model table could not be created.
     pub(crate) async fn create_model_table(
         &self,
-        model_table_metadata: Arc<ModelTableMetadata>,
-        sql: &str,
+        model_table_metadata: &ModelTableMetadata,
     ) -> Result<()> {
         self.check_if_table_exists(&model_table_metadata.name)
             .await?;
-        self.register_and_save_model_table(model_table_metadata, sql)
+        self.register_and_save_model_table(model_table_metadata)
             .await?;
 
         Ok(())
@@ -136,8 +155,7 @@ impl Context {
     /// the Delta Lake, return [`ModelarDbServerError`] error.
     async fn register_and_save_model_table(
         &self,
-        model_table_metadata: Arc<ModelTableMetadata>,
-        sql: &str,
+        model_table_metadata: &ModelTableMetadata,
     ) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
@@ -154,7 +172,7 @@ impl Context {
 
         // Register the model table with Apache DataFusion.
         self.register_model_table(
-            model_table_metadata.clone(),
+            Arc::new(model_table_metadata.clone()),
             query_folder_table_metadata_manager.clone(),
         )
         .await?;
@@ -163,7 +181,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, sql)
+            .save_model_table_metadata(model_table_metadata)
             .await?;
 
         // Register the metadata table needed for querying the model table if it is not already
@@ -434,19 +452,45 @@ impl Context {
 mod tests {
     use super::*;
 
-    use modelardb_storage::parser;
-    use modelardb_storage::parser::ModelarDbStatement;
     use modelardb_storage::test;
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
 
+    // Tests for Context.
     #[tokio::test]
-    async fn test_parse_and_create_normal_table() {
+    async fn test_create_tables_from_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        let table_record_batch = test::table_metadata_record_batch();
+        let table_record_batch_bytes =
+            modelardb_storage::try_convert_record_batch_to_bytes(&table_record_batch).unwrap();
+
+        context
+            .create_tables_from_bytes(table_record_batch_bytes)
+            .await
+            .unwrap();
+
+        // Both a normal table and a model table should be created.
+        assert!(context
+            .check_if_table_exists(test::NORMAL_TABLE_NAME)
+            .await
+            .is_err());
+
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_normal_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -476,25 +520,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_parse_and_create_existing_normal_table() {
+    async fn test_create_existing_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        assert!(context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .is_ok());
 
-        assert!(parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        assert!(context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
-            .is_err())
+            .is_err());
     }
 
     #[tokio::test]
-    async fn test_parse_and_create_model_table() {
+    async fn test_create_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -520,17 +567,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_parse_and_create_existing_model_table() {
+    async fn test_create_existing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        assert!(context
+            .create_model_table(&test::model_table_metadata())
             .await
             .is_ok());
 
-        assert!(parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        assert!(context
+            .create_model_table(&test::model_table_metadata())
             .await
-            .is_err())
+            .is_err());
     }
 
     #[tokio::test]
@@ -541,7 +590,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -560,7 +610,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -576,7 +627,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -611,7 +663,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -654,7 +707,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -700,7 +754,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -755,7 +810,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -773,7 +829,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::NORMAL_TABLE_SQL)
+        context
+            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
             .await
             .unwrap();
 
@@ -800,7 +857,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -826,7 +884,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        parse_and_create_table(&context, test::MODEL_TABLE_SQL)
+        context
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -836,18 +895,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(schema, test::model_table_metadata().schema)
-    }
-
-    async fn parse_and_create_table(context: &Context, sql: &str) -> Result<()> {
-        match parser::tokenize_and_parse_sql_statement(sql)? {
-            ModelarDbStatement::CreateNormalTable { name, schema } => {
-                context.create_normal_table(name, schema, sql).await
-            }
-            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
-                context.create_model_table(model_table_metadata, sql).await
-            }
-            _ => unreachable!("Expected CreateNormalTable or CreateModelTable."),
-        }
     }
 
     #[tokio::test]

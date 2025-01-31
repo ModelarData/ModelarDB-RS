@@ -807,9 +807,7 @@ mod tests {
         let _ = if let ModelarDbStatement::CreateModelTable(model_table_metadata) =
             modelardb_statement
         {
-            context
-                .create_model_table(model_table_metadata, test::MODEL_TABLE_SQL)
-                .await
+            context.create_model_table(&model_table_metadata).await
         } else {
             panic!("Expected CreateModelTable.");
         };
@@ -955,7 +953,7 @@ mod tests {
         );
     }
 
-    /// Create a record batch with data that resembles uncompressed data with a single tag and two
+    /// Create a [`RecordBatch`] with data that resembles uncompressed data with a single tag and two
     /// field columns. The returned data has `row_count` rows, with a different tag for each row.
     /// Also create model table metadata for a model table that matches the created data.
     fn uncompressed_data(row_count: usize, schema: SchemaRef) -> RecordBatch {
@@ -1455,7 +1453,7 @@ mod tests {
 
         local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 

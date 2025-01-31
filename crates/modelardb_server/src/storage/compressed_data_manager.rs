@@ -617,7 +617,7 @@ mod tests {
         let model_table_metadata = test::model_table_metadata();
         local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 

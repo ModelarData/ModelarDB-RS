@@ -25,6 +25,7 @@ use datafusion::error::DataFusionError;
 use datafusion::parquet::errors::ParquetError;
 use deltalake::errors::DeltaTableError;
 use modelardb_common::error::ModelarDbCommonError;
+use modelardb_types::error::ModelarDbTypesError;
 use object_store::path::Error as ObjectStorePathError;
 use object_store::Error as ObjectStoreError;
 use sqlparser::parser::ParserError;
@@ -51,6 +52,8 @@ pub enum ModelarDbStorageError {
     ObjectStorePath(ObjectStorePathError),
     /// Error returned by modelardb_common.
     ModelarDbCommon(ModelarDbCommonError),
+    /// Error returned by modelardb_types.
+    ModelarDbTypes(ModelarDbTypesError),
     /// Error returned by Apache Parquet.
     Parquet(ParquetError),
     /// Error returned by sqlparser.
@@ -68,6 +71,7 @@ impl Display for ModelarDbStorageError {
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
+            Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::Parquet(reason) => write!(f, "Parquet Error: {reason}"),
             Self::Parser(reason) => write!(f, "Parser Error: {reason}"),
         }
@@ -86,6 +90,7 @@ impl Error for ModelarDbStorageError {
             Self::ObjectStore(reason) => Some(reason),
             Self::ObjectStorePath(reason) => Some(reason),
             Self::ModelarDbCommon(reason) => Some(reason),
+            Self::ModelarDbTypes(reason) => Some(reason),
             Self::Parquet(reason) => Some(reason),
             Self::Parser(reason) => Some(reason),
         }
@@ -131,6 +136,12 @@ impl From<ObjectStorePathError> for ModelarDbStorageError {
 impl From<ModelarDbCommonError> for ModelarDbStorageError {
     fn from(error: ModelarDbCommonError) -> Self {
         Self::ModelarDbCommon(error)
+    }
+}
+
+impl From<ModelarDbTypesError> for ModelarDbStorageError {
+    fn from(error: ModelarDbTypesError) -> Self {
+        Self::ModelarDbTypes(error)
     }
 }
 

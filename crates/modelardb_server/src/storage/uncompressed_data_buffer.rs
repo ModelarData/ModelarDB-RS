@@ -157,21 +157,19 @@ impl UncompressedInMemoryDataBuffer {
 
         // lexsort() is not used as it is unclear in what order it sorts multiple arrays, instead a
         // combination of sort_to_indices() and take(), like how lexsort() is implemented, is used.
-        // unwrap() is safe as timestamps has a supported type and sorted_indices are within bounds.
-        let sorted_indices = compute::sort_to_indices(&timestamps, None, None).unwrap();
+        let sorted_indices = compute::sort_to_indices(&timestamps, None, None)?;
 
         let mut columns = Vec::with_capacity(1 + self.values.len());
-        columns.push(compute::take(&timestamps, &sorted_indices, None).unwrap());
+        columns.push(compute::take(&timestamps, &sorted_indices, None)?);
         for value in &mut self.values {
-            columns.push(compute::take(&value.finish(), &sorted_indices, None).unwrap());
+            columns.push(compute::take(&value.finish(), &sorted_indices, None)?);
         }
 
-        // unwrap() is safe as uncompressed_schema only contains timestamps and values.
-        Ok(RecordBatch::try_new(
+        RecordBatch::try_new(
             self.model_table_metadata.uncompressed_schema.clone(),
             columns,
         )
-        .unwrap())
+        .map_err(|error| error.into())
     }
 
     /// Return the tag hash that identifies the time series the buffer stores data points from.

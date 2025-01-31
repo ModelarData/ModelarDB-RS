@@ -31,7 +31,7 @@ use modelardb_types::types::ServerMode;
 use uuid::Uuid;
 
 use crate::cluster::Node;
-use crate::error::{ModelarDbManagerError, Result};
+use crate::error::Result;
 
 /// Stores the metadata required for reading from and writing to the normal tables and model tables
 /// and persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
@@ -48,7 +48,8 @@ pub struct MetadataManager {
 impl MetadataManager {
     /// Create a new [`MetadataManager`] that saves the metadata to a remote object store given by
     /// `connection_info` and initialize the metadata tables. If `connection_info` could not be
-    /// parsed or the metadata tables could not be created, return [`ModelarDbManagerError`].
+    /// parsed or the metadata tables could not be created, return
+    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<MetadataManager> {
         let session_context = Arc::new(SessionContext::new());
 
@@ -77,7 +78,7 @@ impl MetadataManager {
     /// * The `nodes` table contains metadata for each node that is controlled by the manager.
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return
-    /// [`ModelarDbManagerError`].
+    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     async fn create_and_register_manager_metadata_delta_lake_tables(&self) -> Result<()> {
         // Create and register the manager_metadata table if it does not exist.
         let delta_table = self
@@ -109,7 +110,7 @@ impl MetadataManager {
 
     /// Retrieve the key for the manager from the `manager_metadata` table. If a key does not
     /// already exist, create one and save it to the Delta Lake. If a key could not be retrieved
-    /// or created, return [`ModelarDbManagerError`].
+    /// or created, return [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     pub async fn manager_key(&self) -> Result<Uuid> {
         let sql = "SELECT key FROM manager_metadata";
         let batch = sql_and_concat(&self.session_context, sql).await?;
@@ -137,7 +138,7 @@ impl MetadataManager {
     }
 
     /// Save the node to the metadata Delta Lake and return [`Ok`]. If the node could not be saved,
-    /// return [`ModelarDbManagerError`].
+    /// return [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     pub async fn save_node(&self, node: Node) -> Result<()> {
         self.delta_lake
             .write_columns_to_metadata_table(
@@ -153,7 +154,8 @@ impl MetadataManager {
     }
 
     /// Remove the row in the `nodes` table that corresponds to the node with `url` and return
-    /// [`Ok`]. If the row could not be removed, return [`ModelarDbManagerError`].
+    /// [`Ok`]. If the row could not be removed, return
+    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     pub async fn remove_node(&self, url: &str) -> Result<()> {
         let delta_ops = self.delta_lake.metadata_delta_ops("nodes").await?;
 
@@ -166,8 +168,8 @@ impl MetadataManager {
     }
 
     /// Return the nodes currently controlled by the manager that have been persisted to the
-    /// metadata Delta Lake. If the nodes could not be retrieved, [`ModelarDbManagerError`] is
-    /// returned.
+    /// metadata Delta Lake. If the nodes could not be retrieved,
+    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError) is returned.
     pub async fn nodes(&self) -> Result<Vec<Node>> {
         let mut nodes: Vec<Node> = vec![];
 
@@ -189,64 +191,12 @@ impl MetadataManager {
 
         Ok(nodes)
     }
-
-    /// Return the SQL query used to create the table with the name `table_name`. If a table with
-    /// that name does not exist, return [`ModelarDbManagerError`].
-    pub async fn table_sql(&self, table_name: &str) -> Result<String> {
-        let sql =
-            format!("SELECT sql FROM normal_table_metadata WHERE table_name = '{table_name}'");
-        let batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let table_sql = modelardb_types::array!(batch, 0, StringArray);
-        if table_sql.is_empty() {
-            let sql =
-                format!("SELECT sql FROM model_table_metadata WHERE table_name = '{table_name}'");
-            let batch = sql_and_concat(&self.session_context, &sql).await?;
-
-            let model_table_sql = modelardb_types::array!(batch, 0, StringArray);
-            if model_table_sql.is_empty() {
-                Err(ModelarDbManagerError::InvalidArgument(format!(
-                    "No normal table or model table with the name '{table_name}' exists."
-                )))
-            } else {
-                Ok(model_table_sql.value(0).to_owned())
-            }
-        } else {
-            Ok(table_sql.value(0).to_owned())
-        }
-    }
-
-    /// Retrieve all rows of `column` from both the normal_table_metadata and model_table_metadata
-    /// tables. If the column could not be retrieved, either because it does not exist or because
-    /// it could not be converted to a string, return [`ModelarDbManagerError`].
-    pub async fn table_metadata_column(&self, column: &str) -> Result<Vec<String>> {
-        // Retrieve the column from both tables containing table metadata.
-        let sql = format!("SELECT {column} FROM normal_table_metadata");
-        let normal_table_metadata_batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let sql = format!("SELECT {column} FROM model_table_metadata");
-        let model_table_metadata_batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let normal_table_metadata_column =
-            modelardb_types::array!(normal_table_metadata_batch, 0, StringArray);
-        let model_table_metadata_column =
-            modelardb_types::array!(model_table_metadata_batch, 0, StringArray);
-
-        // unwrap() is safe because normal_table_metadata and model_table_metadata does not have
-        // nullable columns.
-        Ok(normal_table_metadata_column
-            .iter()
-            .chain(model_table_metadata_column.iter())
-            .map(|column_value| column_value.unwrap().to_owned())
-            .collect())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use modelardb_storage::test;
     use tempfile::TempDir;
 
     // Tests for MetadataManager.
@@ -370,95 +320,6 @@ mod tests {
         let nodes = metadata_manager.nodes().await.unwrap();
 
         assert_eq!(nodes, vec![node_2, node_1]);
-    }
-
-    #[tokio::test]
-    async fn test_table_sql_for_normal_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
-
-        metadata_manager
-            .table_metadata_manager
-            .save_normal_table_metadata(test::NORMAL_TABLE_NAME, test::NORMAL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        let sql = metadata_manager
-            .table_sql(test::NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
-        assert_eq!(sql, test::NORMAL_TABLE_SQL);
-    }
-
-    #[tokio::test]
-    async fn test_table_sql_for_model_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
-
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        let sql = metadata_manager
-            .table_sql(&model_table_metadata.name)
-            .await
-            .unwrap();
-
-        assert_eq!(sql, test::MODEL_TABLE_SQL);
-    }
-
-    #[tokio::test]
-    async fn test_table_sql_for_missing_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
-
-        let result = metadata_manager.table_sql("missing_table").await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_table_metadata_column() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
-
-        metadata_manager
-            .table_metadata_manager
-            .save_normal_table_metadata(test::NORMAL_TABLE_NAME, test::NORMAL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        let table_names = metadata_manager
-            .table_metadata_column("table_name")
-            .await
-            .unwrap();
-
-        let table_sql = metadata_manager.table_metadata_column("sql").await.unwrap();
-
-        assert_eq!(
-            table_names,
-            vec![test::NORMAL_TABLE_NAME, &model_table_metadata.name]
-        );
-        assert_eq!(
-            table_sql,
-            vec![test::NORMAL_TABLE_SQL, test::MODEL_TABLE_SQL]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_table_metadata_column_for_invalid_column() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
-
-        let result = metadata_manager
-            .table_metadata_column("invalid_column")
-            .await;
-
-        assert!(result.is_err());
     }
 
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
