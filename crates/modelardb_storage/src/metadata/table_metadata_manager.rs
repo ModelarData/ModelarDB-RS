@@ -1388,13 +1388,13 @@ mod tests {
         let plus_one_column = Some(GeneratedColumn {
             expr: col("field_1") + Literal(Int64(Some(1))),
             source_columns: vec![1],
-            original_expr: Some("field_1 + 1".to_owned()),
+            original_expr: "field_1 + 1".to_owned(),
         });
 
         let addition_column = Some(GeneratedColumn {
             expr: col("field_1") + col("field_2"),
             source_columns: vec![1, 2],
-            original_expr: Some("field_1 + field_2".to_owned()),
+            original_expr: "field_1 + field_2".to_owned(),
         });
 
         let expected_generated_columns =
