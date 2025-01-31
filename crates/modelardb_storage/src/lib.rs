@@ -454,7 +454,8 @@ fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn
 
     for generated_column in generated_columns {
         if let Some(generated_column) = generated_column {
-            generated_columns_builder.values().append_value(generated_column.original_expr);
+            let sql_expr = generated_column.original_expr;
+            generated_columns_builder.values().append_value(sql_expr);
         } else {
             generated_columns_builder.values().append_null();
         }

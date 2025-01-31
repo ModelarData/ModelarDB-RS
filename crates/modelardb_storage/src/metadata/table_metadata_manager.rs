@@ -382,13 +382,10 @@ impl TableMetadataManager {
             .enumerate()
         {
             if model_table_metadata.is_field(query_schema_index) {
-                let maybe_generated_column_expr = if let Some(generated_column) =
-                    &model_table_metadata.generated_columns[query_schema_index]
-                {
-                    Some(generated_column.original_expr.clone())
-                } else {
-                    None
-                };
+                let maybe_generated_column_expr = model_table_metadata.generated_columns
+                    [query_schema_index]
+                    .as_ref()
+                    .map(|generated_column| generated_column.original_expr.clone());
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of model tables.
