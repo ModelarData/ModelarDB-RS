@@ -13,8 +13,10 @@
  * limitations under the License.
  */
 
-/// Cast an [`Array`](arrow::array::Array) or [`ArrayRef`](arrow::array::ArrayRef) to its actual or
-/// panic:
+/// Convert the result of an expression to [`Any`](std::any::Any) using the `as_any()` method and
+/// then cast it to a concrete type using the `downcast_ref()` method. Panics if the cast fails. For
+/// example, cast an [`Array`](arrow::array::Array) or [`ArrayRef`](arrow::array::ArrayRef) to its
+/// actual type or panic:
 ///
 /// ```
 /// # use std::sync::Arc;
@@ -28,11 +30,11 @@
 ///
 /// # Panics
 ///
-/// Panics if `array` cannot be cast to `type`.
+/// Panics if the result of `expr` cannot be cast to `type`.
 #[macro_export]
 macro_rules! cast {
-    ($array:expr, $type:ident) => {
-        $array.as_any().downcast_ref::<$type>().unwrap()
+    ($expr:expr, $type:ident) => {
+        $expr.as_any().downcast_ref::<$type>().unwrap()
     };
 }
 
