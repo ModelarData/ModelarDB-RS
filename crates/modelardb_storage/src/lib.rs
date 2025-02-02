@@ -523,12 +523,7 @@ pub fn table_metadata_from_record_batch(
 /// Parse the error bound values in `error_bounds_array` into a list of [`ErrorBounds`](ErrorBound).
 /// Returns [`ModelarDbServerError`] if an error bound value is invalid.
 fn array_to_error_bounds(error_bounds_array: ArrayRef) -> Result<Vec<ErrorBound>> {
-    // unwrap() is safe since error bound values are always f32.
-    let value_array = error_bounds_array
-        .as_any()
-        .downcast_ref::<Float32Array>()
-        .unwrap();
-
+    let value_array = modelardb_types::cast!(error_bounds_array, Float32Array);
     let mut error_bounds = Vec::with_capacity(value_array.len());
     for value in value_array.iter().flatten() {
         if value < 0.0 {
@@ -548,12 +543,7 @@ fn array_to_generated_columns(
     generated_columns_array: ArrayRef,
     df_schema: &DFSchema,
 ) -> Result<Vec<Option<GeneratedColumn>>> {
-    // unwrap() is safe since generated column expressions are always strings.
-    let expr_array = generated_columns_array
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
-
+    let expr_array = modelardb_types::cast!(generated_columns_array, StringArray);
     let mut generated_columns = Vec::with_capacity(expr_array.len());
     for maybe_expr in expr_array.iter() {
         if let Some(expr) = maybe_expr {
@@ -803,18 +793,12 @@ mod tests {
         );
 
         let error_bounds_array = modelardb_types::array!(record_batch, 3, ListArray).value(0);
-        let value_array = error_bounds_array
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap();
+        let value_array = modelardb_types::cast!(error_bounds_array, Float32Array);
 
         assert_eq!(value_array, &Float32Array::from(vec![0.0, 1.0, -5.0, -0.0]));
 
         let generated_columns_array = modelardb_types::array!(record_batch, 4, ListArray).value(0);
-        let expr_array = generated_columns_array
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
+        let expr_array = modelardb_types::cast!(generated_columns_array, StringArray);
 
         assert_eq!(expr_array, &StringArray::new_null(4));
     }

@@ -804,25 +804,13 @@ fn test_can_collect_metrics() {
 
     // The used_ingested_memory metric should record when data is received and ingested.
     let ingested_buffer_size = test::INGESTED_BUFFER_SIZE as u32;
-    assert_eq!(
-        values_array
-            .value(0)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .unwrap()
-            .values(),
+    assert_eq!(modelardb_types::cast!(values_array.value(0), UInt32Array).values(),
         &[ingested_buffer_size, 0]
     );
 
     // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
     let uncompressed_buffer_size = UNCOMPRESSED_BUFFER_SIZE as u32;
-    assert_eq!(
-        values_array
-            .value(1)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .unwrap()
-            .values(),
+    assert_eq!(modelardb_types::cast!(values_array.value(1), UInt32Array).values(),
         &[uncompressed_buffer_size, 0]
     );
 
@@ -831,13 +819,7 @@ fn test_can_collect_metrics() {
     assert_eq!(values_array.value(2).len(), 2);
 
     // The ingested_data_points metric should record the single request to ingest data points.
-    assert_eq!(
-        values_array
-            .value(3)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .unwrap()
-            .values(),
+    assert_eq!(modelardb_types::cast!(values_array.value(3), UInt32Array).values(),
         &[TIME_SERIES_TEST_LENGTH as u32]
     );
 

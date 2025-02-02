@@ -212,24 +212,21 @@ impl UncompressedDataManager {
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table_metadata.timestamp_column_index;
-        let timestamp_column_array: &TimestampArray = data_points
-            .column(timestamp_index)
-            .as_any()
-            .downcast_ref()
-            .unwrap();
+        let timestamp_column_array: &TimestampArray =
+            modelardb_types::array!(data_points, timestamp_index, TimestampArray);
 
         // Prepare the tag columns for iteration.
         let tag_column_arrays: Vec<&StringArray> = model_table_metadata
             .tag_column_indices
             .iter()
-            .map(|index| data_points.column(*index).as_any().downcast_ref().unwrap())
+            .map(|index| modelardb_types::array!(data_points, *index, StringArray))
             .collect();
 
         // Prepare the field columns for iteration.
         let field_column_arrays: Vec<&ValueArray> = model_table_metadata
             .field_column_indices
             .iter()
-            .map(|index| data_points.column(*index).as_any().downcast_ref().unwrap())
+            .map(|index| modelardb_types::array!(data_points, *index, ValueArray))
             .collect();
 
         // For each data point, compute a hash from the tags and pass the fields to the storage
