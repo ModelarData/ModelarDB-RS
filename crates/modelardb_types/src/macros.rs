@@ -13,8 +13,31 @@
  * limitations under the License.
  */
 
-/// Extract an [`array`](arrow::array::Array) from a slice of
-/// `ArrayRef` and cast it to the specified type or panic with `msg`:
+/// Cast an [`Array`](arrow::array::Array) or [`ArrayRef`](arrow::array::ArrayRef) to its actual or
+/// panic:
+///
+/// ```
+/// # use std::sync::Arc;
+/// #
+/// # use arrow::array::ArrayRef;
+/// # use modelardb_types::types::{Timestamp, TimestampArray};
+/// #
+/// # let array_ref: ArrayRef = Arc::new(TimestampArray::from(Vec::<Timestamp>::new()));
+/// let timestamp_array = modelardb_types::cast!(array_ref,  TimestampArray);
+/// ```
+///
+/// # Panics
+///
+/// Panics if `array` cannot be cast to `type`.
+#[macro_export]
+macro_rules! cast {
+    ($array:expr, $type:ident) => {
+        $array.as_any().downcast_ref::<$type>().unwrap()
+    };
+}
+
+/// Extract an [`array`](arrow::array::Array) from a slice of `ArrayRef` and cast it to the
+/// specified type or panic:
 ///
 /// ```
 /// # use std::sync::Arc;
@@ -32,16 +55,16 @@
 ///
 /// # Panics
 ///
-/// Panics with `message` if `index` is not in `values` or if it cannot be cast to `type`.
+/// Panics if `index` is not in `values` or if the array cannot be cast to `type`.
 #[macro_export]
 macro_rules! value {
-    ($values:ident, $index:expr, $type:ident) => {
-        $values[$index].as_any().downcast_ref::<$type>().unwrap()
+    ($values:expr, $index:expr, $type:ident) => {
+        $crate::cast!($values[$index], $type)
     };
 }
 
 /// Extract an [`array`](arrow::array::Array) from a
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) and cast it to the specified type:
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) and cast it to the specified type or panic:
 ///
 /// ```
 /// # use std::sync::Arc;
@@ -62,21 +85,17 @@ macro_rules! value {
 ///
 /// # Panics
 ///
-/// Panics if `column` is not in `batch` or if it cannot be cast to `type`.
+/// Panics if `index` is not in `batch` or if the array cannot be cast to `type`.
 #[macro_export]
 macro_rules! array {
     ($batch:ident, $column:expr, $type:ident) => {
-        $batch
-            .column($column)
-            .as_any()
-            .downcast_ref::<$type>()
-            .unwrap()
+        $crate::cast!($batch.column($column), $type)
     };
 }
 
 /// Extract the [`arrays`](arrow::array::Array) required to execute queries against a model table
 /// from a [`RecordBatch`](arrow::record_batch::RecordBatch), cast them to the required type, and
-/// assign the resulting arrays to the specified variables:
+/// assign the resulting arrays to the specified variables. Panics if any of these steps fail:
 ///
 /// ```
 /// # use std::sync::Arc;
