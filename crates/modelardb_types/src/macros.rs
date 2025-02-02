@@ -25,7 +25,7 @@
 /// # use modelardb_types::types::{Timestamp, TimestampArray};
 /// #
 /// # let array_ref: ArrayRef = Arc::new(TimestampArray::from(Vec::<Timestamp>::new()));
-/// let timestamp_array = modelardb_types::cast!(array_ref,  TimestampArray);
+/// let timestamp_array = modelardb_types::cast!(array_ref, TimestampArray);
 /// ```
 ///
 /// # Panics
@@ -90,8 +90,8 @@ macro_rules! value {
 /// Panics if `index` is not in `batch` or if the array cannot be cast to `type`.
 #[macro_export]
 macro_rules! array {
-    ($batch:ident, $column:expr, $type:ident) => {
-        $crate::cast!($batch.column($column), $type)
+    ($batch:expr, $index:expr, $type:ident) => {
+        $crate::cast!($batch.column($index), $type)
     };
 }
 
