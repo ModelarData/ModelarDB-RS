@@ -212,18 +212,18 @@ impl UncompressedDataManager {
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table_metadata.timestamp_column_index;
-        let timestamp_column_array: &TimestampArray =
+        let timestamp_column_array =
             modelardb_types::array!(data_points, timestamp_index, TimestampArray);
 
         // Prepare the tag columns for iteration.
-        let tag_column_arrays: Vec<&StringArray> = model_table_metadata
+        let tag_column_arrays: Vec<_> = model_table_metadata
             .tag_column_indices
             .iter()
             .map(|index| modelardb_types::array!(data_points, *index, StringArray))
             .collect();
 
         // Prepare the field columns for iteration.
-        let field_column_arrays: Vec<&ValueArray> = model_table_metadata
+        let field_column_arrays: Vec<_> = model_table_metadata
             .field_column_indices
             .iter()
             .map(|index| modelardb_types::array!(data_points, *index, ValueArray))
