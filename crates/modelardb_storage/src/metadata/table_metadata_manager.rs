@@ -382,13 +382,10 @@ impl TableMetadataManager {
             .enumerate()
         {
             if model_table_metadata.is_field(query_schema_index) {
-                let generated_column_expr = if let Some(generated_column) =
-                    &model_table_metadata.generated_columns[query_schema_index]
-                {
-                    generated_column.original_expr.clone()
-                } else {
-                    None
-                };
+                let maybe_generated_column_expr = model_table_metadata.generated_columns
+                    [query_schema_index]
+                    .as_ref()
+                    .map(|generated_column| generated_column.original_expr.clone());
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of model tables.
@@ -412,7 +409,7 @@ impl TableMetadataManager {
                             Arc::new(Int16Array::from(vec![query_schema_index as i16])),
                             Arc::new(Float32Array::from(vec![error_bound_value])),
                             Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                            Arc::new(StringArray::from(vec![generated_column_expr])),
+                            Arc::new(StringArray::from(vec![maybe_generated_column_expr])),
                         ],
                     )
                     .await?;
@@ -1388,13 +1385,13 @@ mod tests {
         let plus_one_column = Some(GeneratedColumn {
             expr: col("field_1") + Literal(Int64(Some(1))),
             source_columns: vec![1],
-            original_expr: Some("field_1 + 1".to_owned()),
+            original_expr: "field_1 + 1".to_owned(),
         });
 
         let addition_column = Some(GeneratedColumn {
             expr: col("field_1") + col("field_2"),
             source_columns: vec![1, 2],
-            original_expr: Some("field_1 + field_2".to_owned()),
+            original_expr: "field_1 + field_2".to_owned(),
         });
 
         let expected_generated_columns =

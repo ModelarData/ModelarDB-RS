@@ -216,7 +216,7 @@ pub struct GeneratedColumn {
     pub source_columns: Vec<usize>,
     /// Original representation of `expr`. It is copied from the SQL statement, so it can be stored
     /// in the metadata Delta Lake as `expr` does not implement serialization and deserialization.
-    pub original_expr: Option<String>,
+    pub original_expr: String,
 }
 
 impl GeneratedColumn {
@@ -235,7 +235,7 @@ impl GeneratedColumn {
         Ok(Self {
             expr,
             source_columns: source_columns?,
-            original_expr: Some(sql_expr.to_owned()),
+            original_expr: sql_expr.to_owned(),
         })
     }
 }
@@ -371,7 +371,7 @@ mod test {
                 options: wild_card_options.clone(),
             },
             source_columns: vec![],
-            original_expr: None,
+            original_expr: "".to_owned(),
         });
 
         generated_columns[6] = Some(GeneratedColumn {
@@ -380,7 +380,7 @@ mod test {
                 options: wild_card_options,
             },
             source_columns: vec![5],
-            original_expr: None,
+            original_expr: "".to_owned(),
         });
 
         let result = ModelTableMetadata::try_new(
@@ -486,7 +486,7 @@ mod test {
         let expected_generated_column = GeneratedColumn {
             expr: col("field_1") + col("field_2"),
             source_columns: vec![0, 1],
-            original_expr: Some(sql_expr.to_owned()),
+            original_expr: sql_expr.to_owned(),
         };
 
         let df_schema = schema.to_dfschema().unwrap();
