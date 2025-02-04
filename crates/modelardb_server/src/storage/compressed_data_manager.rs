@@ -129,8 +129,8 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Insert the `compressed_segments` into the in-memory compressed data buffer for the model table
-    /// with `table_name`. If `compressed_segments` is saved successfully, return [`Ok`], otherwise
+    /// Insert `compressed_segment_batch` into the in-memory [`CompressedDataBuffer`] for the model
+    /// table. If `compressed_segment_batch` is inserted successfully, return [`Ok`], otherwise
     /// return [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn insert_compressed_segments(
         &self,
