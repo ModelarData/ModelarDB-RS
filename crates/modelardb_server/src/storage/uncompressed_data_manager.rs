@@ -199,7 +199,7 @@ impl UncompressedDataManager {
             .collect();
 
         // For each data point, compute a hash from the tags and pass the fields to the storage
-        // engine so they can be added to the appropriate [`UncompressedDataBuffer`].
+        // engine so they can be added to the appropriate UncompressedDataBuffer.
         for (index, timestamp) in timestamp_column_array.iter().enumerate() {
             let tag_values: Vec<String> = tag_column_arrays
                 .iter()

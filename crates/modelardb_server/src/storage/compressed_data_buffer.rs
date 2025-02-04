@@ -23,8 +23,8 @@ use modelardb_types::schemas::COMPRESSED_SCHEMA;
 
 use crate::error::{ModelarDbServerError, Result};
 
-/// Compressed segments representing data points from a column in a model table as one
-/// [`RecordBatch`].
+/// Batch of compressed segments that were compressed together and are ready to be inserted into a
+/// [`CompressedDataBuffer`] for a model table.
 #[derive(Clone, Debug)]
 pub(super) struct CompressedSegmentBatch {
     /// Metadata of the model table to insert the data points into.
