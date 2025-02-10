@@ -106,7 +106,6 @@ impl StorageEngine {
 
         // Create shared metrics.
         let used_disk_space_metric = Arc::new(Mutex::new(Metric::new()));
-        let used_multivariate_memory_metric = Arc::new(Mutex::new(Metric::new()));
 
         // Create threads and shared channels.
         let mut join_handles = vec![];
@@ -118,7 +117,6 @@ impl StorageEngine {
             data_folders.maybe_remote_data_folder.clone(),
             memory_pool.clone(),
             channels.clone(),
-            used_multivariate_memory_metric.clone(),
             used_disk_space_metric.clone(),
         ));
 

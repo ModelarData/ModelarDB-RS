@@ -68,8 +68,6 @@ pub(super) struct UncompressedDataManager {
     channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the used ingested memory in bytes, updated every time the used memory changes.
-    pub(super) used_ingested_memory_metric: Arc<Mutex<Metric>>,
     /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
     pub(super) ingested_data_points_metric: Mutex<Metric>,
     /// Metric for the total used disk space in bytes, updated every time uncompressed data is spilled.
@@ -82,7 +80,6 @@ impl UncompressedDataManager {
         maybe_remote_data_folder: Option<DataFolder>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
-        used_ingested_memory_metric: Arc<Mutex<Metric>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Self {
         Self {
@@ -93,7 +90,6 @@ impl UncompressedDataManager {
             uncompressed_on_disk_data_buffers: DashMap::new(),
             channels,
             memory_pool,
-            used_ingested_memory_metric,
             ingested_data_points_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
         }
@@ -270,12 +266,6 @@ impl UncompressedDataManager {
         // buffers required for any of the data points in the current batch are never finished.
         let current_batch_index = self.current_batch_index.fetch_add(1, Ordering::Relaxed);
         self.finish_unused_buffers(current_batch_index).await?;
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_ingested_memory_metric
-            .lock()
-            .unwrap()
-            .append(-(data_points.get_array_memory_size() as isize), true);
 
         // Return the memory used by the data points to the pool right before they are de-allocated.
         self.memory_pool
@@ -743,8 +733,7 @@ mod tests {
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
         UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
-    use modelardb_storage::parser::ModelarDbStatement;
-    use modelardb_storage::{parser, test};
+    use modelardb_storage::test;
     use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
@@ -775,19 +764,14 @@ mod tests {
         );
 
         // Create a model table in the context.
-        let modelardb_statement =
-            parser::tokenize_and_parse_sql_statement(test::MODEL_TABLE_SQL).unwrap();
-        let _ = if let ModelarDbStatement::CreateModelTable(model_table_metadata) =
-            modelardb_statement
-        {
-            context.create_model_table(&model_table_metadata).await
-        } else {
-            panic!("Expected CreateModelTable.");
-        };
+        let model_table_metadata = Arc::new(test::model_table_metadata());
+        context
+            .create_model_table(&model_table_metadata)
+            .await
+            .unwrap();
 
         // Ingest a single data point and sleep to allow the ingestion thread to finish.
         let mut storage_engine = context.storage_engine.write().await;
-        let model_table_metadata = Arc::new(test::model_table_metadata());
         let data = uncompressed_data(1, model_table_metadata.schema.clone());
 
         storage_engine
@@ -818,14 +802,12 @@ mod tests {
             .await;
 
         assert_eq!(spilled_buffers.len(), 0);
+
         assert_eq!(
             storage_engine
                 .compressed_data_manager
-                .used_compressed_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
+                .compressed_data_buffers
+                .len(),
             1
         );
     }
@@ -895,12 +877,6 @@ mod tests {
             .memory_pool
             .remaining_ingested_memory_in_bytes();
 
-        data_manager
-            .used_ingested_memory_metric
-            .lock()
-            .unwrap()
-            .append(data.get_array_memory_size() as isize, true);
-
         let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
@@ -913,16 +889,6 @@ mod tests {
                 .memory_pool
                 .remaining_ingested_memory_in_bytes(),
             ingested_memory_before + (data_size as isize)
-        );
-
-        assert_eq!(
-            data_manager
-                .used_ingested_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            2
         );
     }
 
@@ -1432,7 +1398,6 @@ mod tests {
             None,
             memory_pool,
             channels,
-            Arc::new(Mutex::new(Metric::new())),
             Arc::new(Mutex::new(Metric::new())),
         );
 

@@ -43,7 +43,7 @@ pub(super) struct CompressedDataManager {
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the model table the compressed segments represents data points for so the Apache Parquet
     /// files can be partitioned by table.
-    compressed_data_buffers: DashMap<String, CompressedDataBuffer>,
+    pub(super) compressed_data_buffers: DashMap<String, CompressedDataBuffer>,
     /// FIFO queue of model table names referring to [`CompressedDataBuffers`](CompressedDataBuffer)
     /// that can be saved to persistent storage.
     compressed_queue: SegQueue<String>,
