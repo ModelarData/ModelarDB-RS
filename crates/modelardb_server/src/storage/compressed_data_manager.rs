@@ -51,8 +51,6 @@ pub(super) struct CompressedDataManager {
     channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
-    pub(super) used_compressed_memory_metric: Mutex<Metric>,
     /// Metric for the total used disk space in bytes, updated every time a new compressed file is
     /// saved to disk.
     pub(super) used_disk_space_metric: Arc<Mutex<Metric>>,
@@ -73,7 +71,6 @@ impl CompressedDataManager {
             compressed_queue: SegQueue::new(),
             channels,
             memory_pool,
-            used_compressed_memory_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
         }
     }
@@ -175,14 +172,8 @@ impl CompressedDataManager {
             segment_size
         }?;
 
-        // Update the remaining memory for compressed data and record the change.
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_compressed_memory_metric
-            .lock()
-            .unwrap()
-            .append(segments_size as isize, true);
-
-        // If the reserved memory limit is exceeded, save compressed data to disk.
+        // Update the remaining memory for compressed data. If the reserved memory limit is
+        // exceeded, save compressed data to disk.
         while !self
             .memory_pool
             .try_reserve_compressed_memory(segments_size)
@@ -274,12 +265,6 @@ impl CompressedDataManager {
                 .increase_table_size(table_name, compressed_data_buffer_size_in_bytes)
                 .await?;
         }
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_compressed_memory_metric
-            .lock()
-            .unwrap()
-            .append(-(compressed_data_buffer_size_in_bytes as isize), true);
 
         // Update the remaining memory for compressed data.
         self.memory_pool
@@ -467,15 +452,6 @@ mod tests {
                     .memory_pool
                     .remaining_compressed_memory_in_bytes()
         );
-        assert_eq!(
-            data_manager
-                .used_compressed_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            1
-        );
     }
 
     #[tokio::test]
@@ -512,15 +488,6 @@ mod tests {
             -1 < data_manager
                 .memory_pool
                 .remaining_compressed_memory_in_bytes()
-        );
-        assert_eq!(
-            data_manager
-                .used_compressed_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            2
         );
         assert_eq!(
             data_manager
