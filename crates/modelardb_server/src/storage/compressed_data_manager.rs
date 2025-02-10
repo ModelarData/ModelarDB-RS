@@ -16,7 +16,7 @@
 //! Support for managing all compressed data that is inserted into the
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
@@ -31,7 +31,6 @@ use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSeg
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
 use crate::storage::types::{Channels, MemoryPool};
-use crate::storage::Metric;
 
 /// Stores data points compressed as segments containing metadata and models in memory to batch the
 /// compressed segments before saving them to Apache Parquet files.
@@ -51,9 +50,6 @@ pub(super) struct CompressedDataManager {
     channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the total used disk space in bytes, updated every time a new compressed file is
-    /// saved to disk.
-    pub(super) used_disk_space_metric: Arc<Mutex<Metric>>,
 }
 
 impl CompressedDataManager {
@@ -62,7 +58,6 @@ impl CompressedDataManager {
         local_data_folder: DataFolder,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
-        used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Self {
         Self {
             data_transfer,
@@ -71,7 +66,6 @@ impl CompressedDataManager {
             compressed_queue: SegQueue::new(),
             channels,
             memory_pool,
-            used_disk_space_metric,
         }
     }
 
@@ -251,12 +245,6 @@ impl CompressedDataManager {
             .write_compressed_segments_to_model_table(table_name, compressed_segments)
             .await?;
 
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_disk_space_metric
-            .lock()
-            .unwrap()
-            .append(compressed_data_buffer_size_in_bytes as isize, true);
-
         // Inform the data transfer component about the new data if a remote data folder was
         // provided. If the total size of the data related to table_name have reached the transfer
         // threshold, all of the data is transferred to the remote object store.
@@ -307,7 +295,6 @@ mod tests {
     use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_storage::test;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
-    use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
     const COLUMN_INDEX: u16 = 1;
@@ -489,15 +476,6 @@ mod tests {
                 .memory_pool
                 .remaining_compressed_memory_in_bytes()
         );
-        assert_eq!(
-            data_manager
-                .used_disk_space_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            1
-        );
     }
 
     // Tests for adjust_compressed_remaining_memory_in_bytes().
@@ -595,7 +573,6 @@ mod tests {
                 local_data_folder,
                 channels,
                 memory_pool,
-                Arc::new(Mutex::new(Metric::new())),
             ),
         )
     }
