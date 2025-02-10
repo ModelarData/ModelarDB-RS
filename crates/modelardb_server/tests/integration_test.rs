@@ -32,7 +32,7 @@ use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
 use bytes::{Buf, Bytes};
 use datafusion::arrow::array::{
-    Array, Float64Array, ListArray, StringArray, UInt32Array, UInt64Array,
+    Array, Float64Array, StringArray, UInt64Array,
 };
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
@@ -41,7 +41,6 @@ use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
-use modelardb_common::test;
 use modelardb_common::test::data_generation;
 use modelardb_types::types::ErrorBound;
 use sysinfo::{Pid, ProcessesToUpdate, System};
@@ -70,9 +69,6 @@ const TIME_SERIES_TEST_LENGTH: usize = 5000;
 /// Minimum length of each segment in a time series generated for integration tests. The maximum
 /// length is `2 * SEGMENT_TEST_MINIMUM_LENGTH`.
 const SEGMENT_TEST_MINIMUM_LENGTH: usize = 50;
-
-/// Expected size of the uncompressed data buffers produced in the integration tests.
-const UNCOMPRESSED_BUFFER_SIZE: usize = 1835008;
 
 /// The different types of tables used in the integration tests.
 enum TableType {
@@ -767,7 +763,6 @@ fn test_can_list_actions() {
     assert_eq!(
         actions,
         vec![
-            "CollectMetrics",
             "CreateTables",
             "FlushMemory",
             "FlushNode",
@@ -777,55 +772,6 @@ fn test_can_list_actions() {
             "UpdateConfiguration",
         ]
     );
-}
-
-#[test]
-fn test_can_collect_metrics() {
-    let mut test_context = TestContext::new();
-
-    // Ingest data points and flush the edge to populate all currently collected metrics.
-    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
-
-    // Collect the metrics.
-    let metrics = test_context.retrieve_action_record_batch("CollectMetrics");
-
-    // Check that all metrics are present in the response.
-    let metrics_array = modelardb_types::array!(metrics, 0, StringArray);
-
-    assert_eq!(metrics_array.value(0), "used_ingested_memory");
-    assert_eq!(metrics_array.value(1), "used_uncompressed_memory");
-    assert_eq!(metrics_array.value(2), "used_compressed_memory");
-    assert_eq!(metrics_array.value(3), "ingested_data_points");
-    assert_eq!(metrics_array.value(4), "used_disk_space");
-
-    // Check that the metrics are populated when ingesting and flushing.
-    let values_array = modelardb_types::array!(metrics, 2, ListArray);
-
-    // The used_ingested_memory metric should record when data is received and ingested.
-    let ingested_buffer_size = test::INGESTED_BUFFER_SIZE as u32;
-    assert_eq!(modelardb_types::cast!(values_array.value(0), UInt32Array).values(),
-        &[ingested_buffer_size, 0]
-    );
-
-    // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
-    let uncompressed_buffer_size = UNCOMPRESSED_BUFFER_SIZE as u32;
-    assert_eq!(modelardb_types::cast!(values_array.value(1), UInt32Array).values(),
-        &[uncompressed_buffer_size, 0]
-    );
-
-    // The amount of bytes used for compressed memory changes depending on the compression, so we
-    // can only check that the metric is populated when compressing and when flushing.
-    assert_eq!(values_array.value(2).len(), 2);
-
-    // The ingested_data_points metric should record the single request to ingest data points.
-    assert_eq!(modelardb_types::cast!(values_array.value(3), UInt32Array).values(),
-        &[TIME_SERIES_TEST_LENGTH as u32]
-    );
-
-    // The amount of bytes used for disk space changes depending on the compression, so we
-    // can only check that the metric is populated when initializing and when flushing.
-    assert_eq!(values_array.value(4).len(), 3);
 }
 
 #[test]

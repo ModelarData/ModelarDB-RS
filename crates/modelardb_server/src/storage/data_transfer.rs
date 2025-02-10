@@ -282,7 +282,6 @@ mod tests {
     use super::*;
 
     use modelardb_storage::test;
-    use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
     const EXPECTED_MODEL_TABLE_FILE_SIZE: usize = 2080;

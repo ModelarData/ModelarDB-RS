@@ -47,7 +47,7 @@ pub type ArrowValue = arrow::datatypes::Float32Type;
 pub type ValueBuilder = arrow::array::PrimitiveBuilder<ArrowValue>;
 pub type ValueArray = arrow::array::PrimitiveArray<ArrowValue>;
 
-// Types used for the schema of uncompressed data, compressed data, and metrics.
+// Types used for the schema of uncompressed data, compressed data, the configuration, and table metadata.
 #[derive(Clone)]
 pub struct UncompressedSchema(pub arrow::datatypes::SchemaRef);
 
