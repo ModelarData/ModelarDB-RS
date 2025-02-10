@@ -327,14 +327,6 @@ impl StorageEngine {
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
             (
-                MetricType::UsedUncompressedMemory,
-                self.uncompressed_data_manager
-                    .used_uncompressed_memory_metric
-                    .lock()
-                    .unwrap()
-                    .finish(),
-            ),
-            (
                 MetricType::UsedCompressedMemory,
                 self.compressed_data_manager
                     .used_compressed_memory_metric

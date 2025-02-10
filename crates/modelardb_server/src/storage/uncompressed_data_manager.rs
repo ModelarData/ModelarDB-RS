@@ -70,8 +70,6 @@ pub(super) struct UncompressedDataManager {
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used ingested memory in bytes, updated every time the used memory changes.
     pub(super) used_ingested_memory_metric: Arc<Mutex<Metric>>,
-    /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
-    pub(super) used_uncompressed_memory_metric: Mutex<Metric>,
     /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
     pub(super) ingested_data_points_metric: Mutex<Metric>,
     /// Metric for the total used disk space in bytes, updated every time uncompressed data is spilled.
@@ -96,7 +94,6 @@ impl UncompressedDataManager {
             channels,
             memory_pool,
             used_ingested_memory_metric,
-            used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
         }
@@ -345,15 +342,6 @@ impl UncompressedDataManager {
                 )
                 .await?;
 
-            // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-            let memory_to_reserve = uncompressed_data_buffer::compute_memory_size(
-                model_table_metadata.field_column_indices.len(),
-            );
-            self.used_uncompressed_memory_metric
-                .lock()
-                .unwrap()
-                .append(memory_to_reserve as isize, true);
-
             // Two ifs are needed until if-let chains is implemented in Rust stable, see eRFC 2497.
             if let Some(tag_hash_buffer) = self.uncompressed_on_disk_data_buffers.get(&tag_hash) {
                 let uncompressed_on_disk_data_buffer = tag_hash_buffer.value();
@@ -497,13 +485,6 @@ impl UncompressedDataManager {
             }
         };
 
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        let freed_memory = uncompressed_in_memory_data_buffer.memory_size();
-        self.used_uncompressed_memory_metric
-            .lock()
-            .unwrap()
-            .append(-(freed_memory as isize), true);
-
         // Record the used disk space of the spilled finished buffer.
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         let disk_size = uncompressed_on_disk_data_buffer.disk_size().await;
@@ -516,6 +497,7 @@ impl UncompressedDataManager {
             .insert(tag_hash, uncompressed_on_disk_data_buffer);
 
         // Add the size of the in-memory data buffer back to the remaining reserved bytes.
+        let freed_memory = uncompressed_in_memory_data_buffer.memory_size();
         self.memory_pool
             .adjust_uncompressed_memory(freed_memory as isize);
 
@@ -713,12 +695,6 @@ impl UncompressedDataManager {
                 model_table_metadata.clone(),
                 compressed_segments,
             )))?;
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_uncompressed_memory_metric
-            .lock()
-            .unwrap()
-            .append(-(memory_use as isize), true);
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_disk_space_metric
@@ -1245,15 +1221,6 @@ mod tests {
                     .memory_pool
                     .remaining_uncompressed_memory_in_bytes()
         );
-        assert_eq!(
-            data_manager
-                .used_uncompressed_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            1
-        );
     }
 
     #[test]
@@ -1286,15 +1253,6 @@ mod tests {
                 < data_manager
                     .memory_pool
                     .remaining_uncompressed_memory_in_bytes()
-        );
-        assert_eq!(
-            data_manager
-                .used_uncompressed_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            2
         );
     }
 
