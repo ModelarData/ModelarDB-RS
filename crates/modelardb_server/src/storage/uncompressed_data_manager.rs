@@ -19,7 +19,7 @@
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use datafusion::arrow::array::StringArray;
@@ -41,7 +41,7 @@ use crate::storage::uncompressed_data_buffer::{
     self, IngestedDataBuffer, UncompressedDataBuffer, UncompressedInMemoryDataBuffer,
     UncompressedOnDiskDataBuffer,
 };
-use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
+use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When an uncompressed data buffer is finished the data is made available for compression.
@@ -68,8 +68,6 @@ pub(super) struct UncompressedDataManager {
     channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the total used disk space in bytes, updated every time uncompressed data is spilled.
-    pub(super) used_disk_space_metric: Arc<Mutex<Metric>>,
 }
 
 impl UncompressedDataManager {
@@ -78,7 +76,6 @@ impl UncompressedDataManager {
         maybe_remote_data_folder: Option<DataFolder>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
-        used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Self {
         Self {
             local_data_folder,
@@ -88,18 +85,16 @@ impl UncompressedDataManager {
             uncompressed_on_disk_data_buffers: DashMap::new(),
             channels,
             memory_pool,
-            used_disk_space_metric,
         }
     }
 
     /// Add references to the [`UncompressedDataBuffers`](UncompressedDataBuffer) currently on disk
     /// to [`UncompressedDataManager`] which immediately will start compressing them.
     pub(super) async fn initialize(&self, context: &Context) -> Result<()> {
-        let mut initial_disk_space = 0;
         let local_data_folder = self.local_data_folder.delta_lake.object_store();
-
         let mut spilled_buffers =
             local_data_folder.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)));
+
         while let Some(maybe_spilled_buffer) = spilled_buffers.next().await {
             let spilled_buffer = maybe_spilled_buffer?;
             let path_parts: Vec<PathPart> = spilled_buffer.location.parts().collect();
@@ -130,19 +125,10 @@ impl UncompressedDataManager {
                 file_name,
             )?;
 
-            initial_disk_space += buffer.disk_size().await;
-
             self.channels
                 .uncompressed_data_sender
                 .send(Message::Data(UncompressedDataBuffer::OnDisk(buffer)))?;
         }
-
-        // Record the used disk space of the uncompressed data buffers currently on disk.
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_disk_space_metric
-            .lock()
-            .unwrap()
-            .append(initial_disk_space as isize, true);
 
         Ok(())
     }
@@ -326,15 +312,7 @@ impl UncompressedDataManager {
             if let Some(tag_hash_buffer) = self.uncompressed_on_disk_data_buffers.get(&tag_hash) {
                 let uncompressed_on_disk_data_buffer = tag_hash_buffer.value();
 
-                // Reading the buffer into memory deletes the on-disk buffer's file on disk and
-                // read_apache_parquet() cannot take self as an argument due to how it is used.
-                // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-                let disk_size = uncompressed_on_disk_data_buffer.disk_size().await;
-                self.used_disk_space_metric
-                    .lock()
-                    .unwrap()
-                    .append(-(disk_size as isize), true);
-
+                // Reading the buffer into memory deletes the on-disk buffer's file on disk.
                 let mut uncompressed_in_memory_data_buffer = uncompressed_on_disk_data_buffer
                     .read_from_apache_parquet(current_batch_index)
                     .await?;
@@ -464,14 +442,6 @@ impl UncompressedDataManager {
                 return Err(error);
             }
         };
-
-        // Record the used disk space of the spilled finished buffer.
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        let disk_size = uncompressed_on_disk_data_buffer.disk_size().await;
-        self.used_disk_space_metric
-            .lock()
-            .unwrap()
-            .append(disk_size as isize, true);
 
         self.uncompressed_on_disk_data_buffers
             .insert(tag_hash, uncompressed_on_disk_data_buffer);
@@ -622,11 +592,10 @@ impl UncompressedDataManager {
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<()> {
-        let (memory_use, disk_use, maybe_data_points, tag_hash, model_table_metadata) =
+        let (memory_use, maybe_data_points, tag_hash, model_table_metadata) =
             match uncompressed_data_buffer {
                 UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
                     uncompressed_in_memory_data_buffer.memory_size(),
-                    0,
                     uncompressed_in_memory_data_buffer.record_batch().await,
                     uncompressed_in_memory_data_buffer.tag_hash(),
                     uncompressed_in_memory_data_buffer
@@ -635,7 +604,6 @@ impl UncompressedDataManager {
                 ),
                 UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
                     0,
-                    uncompressed_on_disk_data_buffer.disk_size().await,
                     uncompressed_on_disk_data_buffer.record_batch().await,
                     uncompressed_on_disk_data_buffer.tag_hash(),
                     uncompressed_on_disk_data_buffer
@@ -675,12 +643,6 @@ impl UncompressedDataManager {
                 model_table_metadata.clone(),
                 compressed_segments,
             )))?;
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_disk_space_metric
-            .lock()
-            .unwrap()
-            .append(-(disk_use as isize), true);
 
         // Add the size of the uncompressed buffer back to the remaining reserved bytes.
         self.memory_pool
@@ -1369,7 +1331,6 @@ mod tests {
             None,
             memory_pool,
             channels,
-            Arc::new(Mutex::new(Metric::new())),
         );
 
         (uncompressed_data_manager, Arc::new(model_table_metadata))
