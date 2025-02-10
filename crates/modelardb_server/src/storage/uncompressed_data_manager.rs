@@ -1325,13 +1325,8 @@ mod tests {
 
         let channels = Arc::new(Channels::new());
 
-        // UncompressedDataManager::try_new() lookup the error bounds for each tag hash.
-        let uncompressed_data_manager = UncompressedDataManager::new(
-            local_data_folder,
-            None,
-            memory_pool,
-            channels,
-        );
+        let uncompressed_data_manager =
+            UncompressedDataManager::new(local_data_folder, None, memory_pool, channels);
 
         (uncompressed_data_manager, Arc::new(model_table_metadata))
     }

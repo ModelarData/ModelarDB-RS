@@ -31,9 +31,7 @@ use std::time::Duration;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
 use bytes::{Buf, Bytes};
-use datafusion::arrow::array::{
-    Array, Float64Array, StringArray, UInt64Array,
-};
+use datafusion::arrow::array::{Array, Float64Array, StringArray, UInt64Array};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
 use datafusion::arrow::ipc::convert;
