@@ -325,16 +325,6 @@ impl UncompressedOnDiskDataBuffer {
         &self.model_table_metadata
     }
 
-    /// Return the total size of the Apache Parquet file containing the uncompressed data buffer.
-    pub(super) async fn disk_size(&self) -> usize {
-        // unwrap() is safe since the path is created internally.
-        self.local_data_folder
-            .head(&self.file_path)
-            .await
-            .unwrap()
-            .size
-    }
-
     /// Return [`true`] if all the data points in the [`UncompressedOnDiskDataBuffer`] are from
     /// [`RecordBatches`](`RecordBatch`) that are [`RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED`] older
     /// than the [`RecordBatch`] with index `current_batch_index` ingested by the current process.
@@ -656,14 +646,6 @@ mod tests {
         let spilled_buffers = runtime.block_on(object_store.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER))).collect::<Vec<_>>());
         assert_eq!(spilled_buffers.len(), 0);
     }
-    }
-
-    #[tokio::test]
-    async fn test_get_on_disk_data_buffer_disk_size() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
-
-        assert_eq!(uncompressed_on_disk_buffer.disk_size().await, 4009)
     }
 
     #[tokio::test]
