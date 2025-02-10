@@ -68,8 +68,6 @@ pub(super) struct UncompressedDataManager {
     channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
-    pub(super) ingested_data_points_metric: Mutex<Metric>,
     /// Metric for the total used disk space in bytes, updated every time uncompressed data is spilled.
     pub(super) used_disk_space_metric: Arc<Mutex<Metric>>,
 }
@@ -90,7 +88,6 @@ impl UncompressedDataManager {
             uncompressed_on_disk_data_buffers: DashMap::new(),
             channels,
             memory_pool,
-            ingested_data_points_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
         }
     }
@@ -195,13 +192,6 @@ impl UncompressedDataManager {
 
         // Read the current batch index as it may be updated in parallel.
         let current_batch_index = self.current_batch_index.load(Ordering::Relaxed);
-
-        // Record the amount of ingested data points.
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.ingested_data_points_metric
-            .lock()
-            .unwrap()
-            .append(data_points.num_rows() as isize, false);
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table_metadata.timestamp_column_index;
@@ -737,7 +727,6 @@ mod tests {
     use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
-    use ringbuf::traits::observer::Observer;
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
 
@@ -827,15 +816,6 @@ mod tests {
 
         // Only a single data buffer is created despite the inserted data containing two field columns.
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
-        assert_eq!(
-            data_manager
-                .ingested_data_points_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            1
-        );
     }
 
     #[tokio::test]
@@ -853,15 +833,6 @@ mod tests {
 
         // Since the tag is different for the two data points, two data buffers should be created.
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 2);
-        assert_eq!(
-            data_manager
-                .ingested_data_points_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            1
-        );
     }
 
     #[tokio::test]
