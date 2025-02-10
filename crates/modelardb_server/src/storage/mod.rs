@@ -80,8 +80,6 @@ pub struct StorageEngine {
     compressed_data_manager: Arc<CompressedDataManager>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the used multivariate memory in bytes, updated every time the used memory changes.
-    used_multivariate_memory_metric: Arc<Mutex<Metric>>,
     /// Threads used for ingestion, compression, and writing.
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
@@ -206,7 +204,6 @@ impl StorageEngine {
             uncompressed_data_manager,
             compressed_data_manager,
             memory_pool,
-            used_multivariate_memory_metric,
             join_handles,
             channels,
         };
@@ -274,12 +271,6 @@ impl StorageEngine {
         self.memory_pool
             .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size());
 
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_multivariate_memory_metric.lock().unwrap().append(
-            multivariate_data_points.get_array_memory_size() as isize,
-            true,
-        );
-
         self.channels
             .ingested_data_sender
             .send(Message::Data(IngestedDataBuffer::new(
@@ -335,13 +326,6 @@ impl StorageEngine {
     ) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
-            (
-                MetricType::UsedIngestedMemory,
-                self.used_multivariate_memory_metric
-                    .lock()
-                    .unwrap()
-                    .finish(),
-            ),
             (
                 MetricType::UsedUncompressedMemory,
                 self.uncompressed_data_manager

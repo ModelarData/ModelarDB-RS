@@ -263,7 +263,6 @@ impl Channels {
 
 /// The different types of metrics that are collected in the storage engine.
 pub enum MetricType {
-    UsedIngestedMemory,
     UsedUncompressedMemory,
     UsedCompressedMemory,
     IngestedDataPoints,
@@ -273,7 +272,6 @@ pub enum MetricType {
 impl Display for MetricType {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
-            Self::UsedIngestedMemory => write!(f, "used_ingested_memory"),
             Self::UsedUncompressedMemory => write!(f, "used_uncompressed_memory"),
             Self::UsedCompressedMemory => write!(f, "used_compressed_memory"),
             Self::IngestedDataPoints => write!(f, "ingested_data_points"),
