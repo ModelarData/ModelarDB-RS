@@ -161,8 +161,6 @@ impl TableMetadataManager {
     /// and model table metadata and register them with the Apache DataFusion session context.
     /// * The `normal_table_metadata` table contains the metadata for normal tables.
     /// * The `model_table_metadata` table contains the main metadata for model tables.
-    /// * The `model_table_hash_table_name` contains a mapping from each tag hash to the name of the
-    ///   model table that contains the time series with that tag hash.
     /// * The `model_table_field_columns` table contains the name, index, error bound value, whether
     ///   error bound is relative, and generation expression of the field columns in each model table.
     ///
@@ -193,24 +191,6 @@ impl TableMetadataManager {
             .await?;
 
         register_metadata_table(&self.session_context, "model_table_metadata", delta_table)?;
-
-        // Create and register the model_table_hash_table_name table if it does not exist.
-        let delta_table = self
-            .delta_lake
-            .create_metadata_table(
-                "model_table_hash_table_name",
-                &Schema::new(vec![
-                    Field::new("hash", DataType::Int64, false),
-                    Field::new("table_name", DataType::Utf8, false),
-                ]),
-            )
-            .await?;
-
-        register_metadata_table(
-            &self.session_context,
-            "model_table_hash_table_name",
-            delta_table,
-        )?;
 
         // Create and register the model_table_field_columns table if it does not exist. Note that
         // column_index will only use a maximum of 10 bits. generated_column_expr is NULL if the
@@ -454,8 +434,8 @@ impl TableMetadataManager {
     /// Drop the metadata for the model table with `table_name` from the metadata Delta Lake.
     /// This includes dropping the tags table for the model table, deleting a row from the
     /// `model_table_metadata` table, deleting a row from the `model_table_field_columns` table for
-    /// each field column, and deleting the tag metadata from the `model_table_hash_table_name` table
-    /// and the tag cache. If the metadata could not be dropped, [`ModelarDbStorageError`] is returned.
+    /// each field column, and deleting the tag metadata from the tag cache. If the metadata could
+    /// not be dropped, [`ModelarDbStorageError`] is returned.
     async fn drop_model_table_metadata(&self, table_name: &str) -> Result<()> {
         // Drop and deregister the model_table_name_tags table.
         let tags_table_name = format!("{table_name}_tags");
@@ -506,8 +486,8 @@ impl TableMetadataManager {
 
     /// Truncate the metadata for the model table with `table_name` from the metadata Delta Lake.
     /// This includes truncating the tags table for the model table and deleting the tag metadata
-    /// from the `model_table_hash_table_name` table and the tag cache. If the metadata could not
-    /// be truncated, [`ModelarDbStorageError`] is returned.
+    /// from the tag cache. If the metadata could not be truncated, [`ModelarDbStorageError`] is
+    /// returned.
     async fn truncate_model_table_metadata(&self, table_name: &str) -> Result<()> {
         // Truncate the model_table_name_tags table.
         self.delta_lake
@@ -522,18 +502,9 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Delete the tag hash metadata for the model table with `table_name` from the
-    /// `model_table_hash_table_name` table and the tag cache. If the metadata could not be deleted,
-    /// [`ModelarDbStorageError`] is returned.
+    /// Delete the tag hash metadata for the model table with `table_name` from the tag cache. If
+    /// the metadata could not be deleted, [`ModelarDbStorageError`] is returned.
     async fn delete_tag_hash_metadata(&self, table_name: &str) -> Result<()> {
-        // Delete the tag metadata from the model_table_hash_table_name table.
-        self.delta_lake
-            .metadata_delta_ops("model_table_hash_table_name")
-            .await?
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
-
         // Delete the tag metadata from the tag cache. The table name is always the last part of
         // the cache key.
         self.tag_value_hashes
@@ -696,11 +667,10 @@ impl TableMetadataManager {
 
     /// Return the tag hash for the given list of tag values either by retrieving it from a cache
     /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
-    /// hash is not in the cache, it is saved to the cache, persisted to the `model_table_tags`
-    /// table if it does not already contain it, and persisted to the `model_table_hash_table_name`
+    /// hash is not in the cache, it is saved to the cache and persisted to the `model_table_tags`
     /// table if it does not already contain it. If the hash was saved to the metadata Delta Lake,
-    /// also return [`true`]. If the `model_table_tags` or the `model_table_hash_table_name` table
-    /// cannot be accessed, [`ModelarDbStorageError`] is returned.
+    /// also return [`true`]. If the `model_table_tags` table cannot be accessed,
+    /// [`ModelarDbStorageError`] is returned.
     pub async fn lookup_or_compute_tag_hash(
         &self,
         model_table_metadata: &ModelTableMetadata,
@@ -743,10 +713,9 @@ impl TableMetadataManager {
     }
 
     /// Save the given tag hash metadata to the `model_table_tags` table if it does not already
-    /// contain it, and to the `model_table_hash_table_name` table if it does not already contain it.
-    /// If the tables did not contain the tag hash, meaning it is a new tag combination, return
-    /// [`true`]. If the metadata cannot be inserted into either `model_table_tags` or
-    /// `model_table_hash_table_name`, [`ModelarDbStorageError`] is returned.
+    /// contain it. If the table did not contain the tag hash, meaning it is a new tag combination,
+    /// return [`true`]. If the metadata cannot be inserted into `model_table_tags`,
+    /// [`ModelarDbStorageError`] is returned.
     pub async fn save_tag_hash_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
@@ -798,39 +767,7 @@ impl TableMetadataManager {
             })?
             .await?;
 
-        // Save the tag hash metadata in the model_table_hash_table_name table if it does not
-        // already contain it.
-        let source = self
-            .metadata_table_data_frame(
-                "model_table_hash_table_name",
-                vec![
-                    Arc::new(Int64Array::from(vec![signed_tag_hash])),
-                    Arc::new(StringArray::from(vec![table_name])),
-                ],
-            )
-            .await?;
-
-        let delta_ops = self
-            .delta_lake
-            .metadata_delta_ops("model_table_hash_table_name")
-            .await?;
-
-        // Merge the tag hash metadata in the source DataFrame into the model_table_hash_table_name
-        // table. For each hash, if the hash is not already in the target table, insert the hash and
-        // the table name from the source DataFrame.
-        let (_table, insert_into_hash_table_name_metrics) = delta_ops
-            .merge(source, col("target.hash").eq(col("source.hash")))
-            .with_source_alias("source")
-            .with_target_alias("target")
-            .when_not_matched_insert(|insert| {
-                insert
-                    .set("hash", col("source.hash"))
-                    .set("table_name", col("source.table_name"))
-            })?
-            .await?;
-
-        Ok(insert_into_tags_metrics.num_target_rows_inserted > 0
-            || insert_into_hash_table_name_metrics.num_target_rows_inserted > 0)
+        Ok(insert_into_tags_metrics.num_target_rows_inserted > 0)
     }
 
     /// Return a [`DataFrame`] with the given `rows` for the metadata table with the given
@@ -848,30 +785,6 @@ impl TableMetadataManager {
         let batch = RecordBatch::try_new(TableProvider::schema(&table), rows)?;
 
         Ok(self.session_context.read_batch(batch)?)
-    }
-
-    /// Return the name of the model table that contains the time series with `tag_hash`. Returns a
-    /// [`ModelarDbStorageError`] if the necessary data cannot be retrieved from the metadata Delta
-    /// Lake.
-    pub async fn tag_hash_to_model_table_name(&self, tag_hash: u64) -> Result<String> {
-        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
-
-        let sql = format!(
-            "SELECT table_name
-             FROM model_table_hash_table_name
-             WHERE hash = '{signed_tag_hash}'
-             LIMIT 1"
-        );
-        let batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let table_names = modelardb_types::array!(batch, 0, StringArray);
-        if table_names.is_empty() {
-            Err(ModelarDbStorageError::InvalidArgument(format!(
-                "No model table contains a time series with tag hash '{tag_hash}'."
-            )))
-        } else {
-            Ok(table_names.value(0).to_owned())
-        }
     }
 
     /// Return a mapping from tag hashes to the tags in the columns with the names in
@@ -952,12 +865,6 @@ mod tests {
         assert!(metadata_manager
             .session_context
             .sql("SELECT table_name, query_schema FROM model_table_metadata")
-            .await
-            .is_ok());
-
-        assert!(metadata_manager
-            .session_context
-            .sql("SELECT hash, table_name FROM model_table_hash_table_name")
             .await
             .is_ok());
 
@@ -1199,14 +1106,6 @@ mod tests {
 
         assert_eq!(batch.num_rows(), 0);
 
-        // Verify that the tag metadata was deleted from the model_table_hash_table_name table.
-        let sql = "SELECT table_name FROM model_table_hash_table_name";
-        let batch = sql_and_concat(&metadata_manager.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(batch.num_rows(), 0);
-
         // Verify that the tag cache was cleared.
         assert!(metadata_manager.tag_value_hashes.is_empty());
     }
@@ -1260,14 +1159,6 @@ mod tests {
         // Verify that the tags table was truncated.
         let sql = format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME);
         let batch = sql_and_concat(&metadata_manager.session_context, &sql)
-            .await
-            .unwrap();
-
-        assert_eq!(batch.num_rows(), 0);
-
-        // Verify that the tag metadata was deleted from the model_table_hash_table_name table.
-        let sql = "SELECT table_name FROM model_table_hash_table_name";
-        let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
 
@@ -1465,24 +1356,6 @@ mod tests {
             ])
         );
         assert_eq!(**batch.column(1), StringArray::from(vec!["tag2", "tag1"]));
-
-        // The tag hashes should be saved in the model_table_hash_table_name table.
-        let sql = "SELECT hash, table_name FROM model_table_hash_table_name";
-        let batch = sql_and_concat(&metadata_manager.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            **batch.column(0),
-            Int64Array::from(vec![
-                i64::from_ne_bytes(tag_hash_2.to_ne_bytes()),
-                i64::from_ne_bytes(tag_hash_1.to_ne_bytes()),
-            ])
-        );
-        assert_eq!(
-            **batch.column(1),
-            StringArray::from(vec![test::MODEL_TABLE_NAME, test::MODEL_TABLE_NAME])
-        );
     }
 
     #[tokio::test]
@@ -1538,44 +1411,6 @@ mod tests {
             .unwrap();
 
         assert!(batch.column(0).is_empty());
-
-        let sql = "SELECT hash FROM model_table_hash_table_name";
-        let batch = sql_and_concat(&metadata_manager.session_context, sql)
-            .await
-            .unwrap();
-
-        assert!(batch.column(0).is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_tag_hash_to_model_table_name() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-
-        let model_table_metadata = test::model_table_metadata();
-        let (tag_hash, _tag_hash_is_saved) = metadata_manager
-            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
-            .await
-            .unwrap();
-
-        let table_name = metadata_manager
-            .tag_hash_to_model_table_name(tag_hash)
-            .await
-            .unwrap();
-
-        assert_eq!(table_name, test::MODEL_TABLE_NAME);
-    }
-
-    #[tokio::test]
-    async fn test_invalid_tag_hash_to_model_table_name() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
-            .await
-            .unwrap();
-
-        assert!(metadata_manager
-            .tag_hash_to_model_table_name(0)
-            .await
-            .is_err());
     }
 
     #[tokio::test]
