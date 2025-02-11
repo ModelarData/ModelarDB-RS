@@ -256,10 +256,11 @@ impl UncompressedOnDiskDataBuffer {
     ) -> Result<Self> {
         // Create a path that uses the first timestamp as the filename.
         let timestamps = modelardb_types::array!(data_points, 0, TimestampArray);
-        let file_path = Path::from(format!(
-            "{UNCOMPRESSED_DATA_FOLDER}/{tag_hash}/{}.parquet",
-            timestamps.value(0)
-        ));
+        let file_path = spilled_buffer_file_path(
+            &model_table_metadata.name,
+            tag_hash,
+            &format!("{}.parquet", timestamps.value(0)),
+        );
 
         modelardb_storage::write_record_batch_to_apache_parquet_file(
             &file_path,
@@ -288,7 +289,7 @@ impl UncompressedOnDiskDataBuffer {
         local_data_folder: Arc<dyn ObjectStore>,
         file_name: &str,
     ) -> Result<Self> {
-        let file_path = Path::from(format!("{UNCOMPRESSED_DATA_FOLDER}/{tag_hash}/{file_name}"));
+        let file_path = spilled_buffer_file_path(&model_table_metadata.name, tag_hash, file_name);
 
         Ok(Self {
             tag_hash,
@@ -375,6 +376,14 @@ impl Debug for UncompressedOnDiskDataBuffer {
             self.tag_hash, self.file_path
         )
     }
+}
+
+/// Return the [`Path`] for a spilled buffer for the time series with `tag_hash` in the table with
+/// `table_name`.
+fn spilled_buffer_file_path(table_name: &str, tag_hash: u64, file_name: &str) -> Path {
+    Path::from(format!(
+        "{UNCOMPRESSED_DATA_FOLDER}/{table_name}/{tag_hash}/{file_name}",
+    ))
 }
 
 #[cfg(test)]
@@ -555,9 +564,10 @@ mod tests {
             .await
             .unwrap();
 
-        let uncompressed_path = temp_dir
-            .path()
-            .join(format!("{UNCOMPRESSED_DATA_FOLDER}/1"));
+        let uncompressed_path = temp_dir.path().join(format!(
+            "{UNCOMPRESSED_DATA_FOLDER}/{}/1",
+            test::MODEL_TABLE_NAME
+        ));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 
@@ -579,9 +589,10 @@ mod tests {
             .await
             .unwrap();
 
-        let uncompressed_path = temp_dir
-            .path()
-            .join(format!("{UNCOMPRESSED_DATA_FOLDER}/1"));
+        let uncompressed_path = temp_dir.path().join(format!(
+            "{UNCOMPRESSED_DATA_FOLDER}/{}/1",
+            test::MODEL_TABLE_NAME
+        ));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 
@@ -594,6 +605,7 @@ mod tests {
         let spilled_buffer_path = temp_dir
             .path()
             .join(UNCOMPRESSED_DATA_FOLDER)
+            .join(test::MODEL_TABLE_NAME)
             .join("1")
             .join("1234567890123.parquet");
         assert!(spilled_buffer_path.exists());
@@ -603,11 +615,6 @@ mod tests {
         assert_eq!(data.num_columns(), 3);
         assert_eq!(data.num_rows(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
 
-        let spilled_buffer_path = temp_dir
-            .path()
-            .join(UNCOMPRESSED_DATA_FOLDER)
-            .join("1")
-            .join("1234567890123.parquet");
         assert!(!spilled_buffer_path.exists());
     }
 
