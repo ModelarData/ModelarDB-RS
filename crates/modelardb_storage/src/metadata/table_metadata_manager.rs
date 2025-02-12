@@ -379,7 +379,6 @@ impl TableMetadataManager {
                         (0.0, false)
                     };
 
-                // query_schema_index is simply cast as a model table contains at most 1024 columns.
                 self.delta_lake
                     .write_columns_to_metadata_table(
                         "model_table_field_columns",

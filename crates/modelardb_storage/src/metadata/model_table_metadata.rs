@@ -60,7 +60,6 @@ impl ModelTableMetadata {
     /// * The number of error bounds does not match the number of columns.
     /// * The number of potentially generated columns does not match the number of columns.
     /// * A generated column includes another generated column in its expression.
-    /// * There are more than 1024 columns.
     /// * The `query_schema` does not include a single timestamp column.
     /// * The `query_schema` does not include at least one stored field column.
     pub fn try_new(
@@ -93,14 +92,6 @@ impl ModelTableMetadata {
                     ));
                 }
             }
-        }
-
-        // If there are more than 1024 columns, return an error. This limitation is necessary since
-        // 10 bits are used to identify the column index of the data in the 64-bit univariate id.
-        if query_schema.fields.len() > 1024 {
-            return Err(ModelarDbStorageError::InvalidArgument(
-                "There cannot be more than 1024 columns in the model table.".to_owned(),
-            ));
         }
 
         // Remove the generated field columns from the query schema and the error bounds as these
