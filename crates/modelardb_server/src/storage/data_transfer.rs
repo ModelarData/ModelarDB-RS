@@ -17,7 +17,7 @@
 //! is managed here until it is of a sufficient size to be transferred efficiently.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -29,7 +29,6 @@ use tracing::debug;
 
 use crate::data_folders::DataFolder;
 use crate::error::Result;
-use crate::storage::Metric;
 
 // TODO: Handle the case where a connection can not be established when transferring data.
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid
@@ -51,8 +50,6 @@ pub struct DataTransfer {
     transfer_scheduler_handle: Option<TaskJoinHandle<()>>,
     /// Tables that have been dropped and should not be transferred to the remote data folder.
     dropped_tables: HashSet<String>,
-    /// Metric for the total used disk space in bytes, updated when data is transferred.
-    pub used_disk_space_metric: Arc<Mutex<Metric>>,
 }
 
 impl DataTransfer {
@@ -64,19 +61,11 @@ impl DataTransfer {
         local_data_folder: DataFolder,
         remote_data_folder: DataFolder,
         transfer_batch_size_in_bytes: Option<usize>,
-        used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self> {
-        let mut table_names = local_data_folder
+        let table_names = local_data_folder
             .table_metadata_manager
-            .normal_table_names()
+            .table_names()
             .await?;
-
-        table_names.append(
-            &mut local_data_folder
-                .table_metadata_manager
-                .model_table_names()
-                .await?,
-        );
 
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
@@ -102,18 +91,7 @@ impl DataTransfer {
             transfer_batch_size_in_bytes,
             transfer_scheduler_handle: None,
             dropped_tables: HashSet::new(),
-            used_disk_space_metric,
         };
-
-        // Record the initial used disk space.
-        let initial_disk_space: usize = table_size_in_bytes.iter().map(|kv| *kv.value()).sum();
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        data_transfer
-            .used_disk_space_metric
-            .lock()
-            .unwrap()
-            .append(initial_disk_space as isize, true);
 
         // Check if data should be transferred immediately.
         for table_name_size_in_bytes in table_size_in_bytes.iter() {
@@ -293,12 +271,6 @@ impl DataTransfer {
         // Remove the transferred data from the in-memory tracking of compressed files.
         *self.table_size_in_bytes.get_mut(table_name).unwrap() -= current_size_in_bytes;
 
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_disk_space_metric
-            .lock()
-            .unwrap()
-            .append(-(current_size_in_bytes as isize), true);
-
         debug!("Transferred {current_size_in_bytes} bytes to the remote table '{table_name}'.");
 
         Ok(())
@@ -310,7 +282,6 @@ mod tests {
     use super::*;
 
     use modelardb_storage::test;
-    use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
     const EXPECTED_MODEL_TABLE_FILE_SIZE: usize = 2080;
@@ -338,16 +309,6 @@ mod tests {
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
             model_table_files_size
-        );
-
-        assert_eq!(
-            data_transfer
-                .used_disk_space_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            1
         );
     }
 
@@ -599,7 +560,6 @@ mod tests {
             local_data_folder,
             remote_data_folder,
             Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 3 - 1),
-            Arc::new(Mutex::new(Metric::new())),
         )
         .await
         .unwrap();

@@ -22,7 +22,7 @@ use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use crate::types::{
     ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
-    MetricSchema, QueryCompressedSchema, QuerySchema, TableMetadataSchema, UncompressedSchema,
+    QueryCompressedSchema, QuerySchema, TableMetadataSchema, UncompressedSchema,
 };
 
 /// Name of the column used to partition the compressed segments.
@@ -88,27 +88,6 @@ pub static COMPRESSED_METADATA_SIZE_IN_BYTES: LazyLock<usize> = LazyLock::new(||
         .iter()
         .map(|field| field.data_type().primitive_width().unwrap_or(0))
         .sum()
-});
-
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for internally collected metrics.
-pub static METRIC_SCHEMA: LazyLock<MetricSchema> = LazyLock::new(|| {
-    MetricSchema(Arc::new(Schema::new(vec![
-        Field::new("metric", DataType::Utf8, false),
-        Field::new(
-            "timestamps",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                ArrowTimestamp::DATA_TYPE,
-                true,
-            ))),
-            false,
-        ),
-        Field::new(
-            "values",
-            DataType::List(Arc::new(Field::new("item", DataType::UInt32, true))),
-            false,
-        ),
-    ])))
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used internally during query processing.

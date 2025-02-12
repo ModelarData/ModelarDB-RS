@@ -30,13 +30,11 @@ mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
 use std::env;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 use std::thread::{self, JoinHandle};
 
-use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_types::types::TimestampArray;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::error;
@@ -47,7 +45,7 @@ use crate::data_folders::DataFolders;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
+use crate::storage::types::{Channels, MemoryPool, Message};
 use crate::storage::uncompressed_data_buffer::IngestedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 
@@ -80,8 +78,6 @@ pub struct StorageEngine {
     compressed_data_manager: Arc<CompressedDataManager>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the used multivariate memory in bytes, updated every time the used memory changes.
-    used_multivariate_memory_metric: Arc<Mutex<Metric>>,
     /// Threads used for ingestion, compression, and writing.
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
@@ -106,10 +102,6 @@ impl StorageEngine {
             configuration_manager.compressed_reserved_memory_in_bytes(),
         ));
 
-        // Create shared metrics.
-        let used_disk_space_metric = Arc::new(Mutex::new(Metric::new()));
-        let used_multivariate_memory_metric = Arc::new(Mutex::new(Metric::new()));
-
         // Create threads and shared channels.
         let mut join_handles = vec![];
         let channels = Arc::new(Channels::new());
@@ -120,8 +112,6 @@ impl StorageEngine {
             data_folders.maybe_remote_data_folder.clone(),
             memory_pool.clone(),
             channels.clone(),
-            used_multivariate_memory_metric.clone(),
-            used_disk_space_metric.clone(),
         ));
 
         {
@@ -167,7 +157,6 @@ impl StorageEngine {
                 data_folders.local_data_folder.clone(),
                 remote_data_folder,
                 configuration_manager.transfer_batch_size_in_bytes(),
-                used_disk_space_metric.clone(),
             )
             .await?;
 
@@ -182,7 +171,6 @@ impl StorageEngine {
             data_folders.local_data_folder,
             channels.clone(),
             memory_pool.clone(),
-            used_disk_space_metric,
         ));
 
         {
@@ -206,7 +194,6 @@ impl StorageEngine {
             uncompressed_data_manager,
             compressed_data_manager,
             memory_pool,
-            used_multivariate_memory_metric,
             join_handles,
             channels,
         };
@@ -274,12 +261,6 @@ impl StorageEngine {
         self.memory_pool
             .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size());
 
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_multivariate_memory_metric.lock().unwrap().append(
-            multivariate_data_points.get_array_memory_size() as isize,
-            true,
-        );
-
         self.channels
             .ingested_data_sender
             .send(Message::Data(IngestedDataBuffer::new(
@@ -326,55 +307,6 @@ impl StorageEngine {
             .for_each(|join_handle: JoinHandle<()>| join_handle.join().unwrap());
 
         Ok(())
-    }
-
-    /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
-    /// data points over time. The metrics are returned in tuples with the format (metric_type, (timestamps, values)).
-    pub(super) async fn collect_metrics(
-        &mut self,
-    ) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        vec![
-            (
-                MetricType::UsedIngestedMemory,
-                self.used_multivariate_memory_metric
-                    .lock()
-                    .unwrap()
-                    .finish(),
-            ),
-            (
-                MetricType::UsedUncompressedMemory,
-                self.uncompressed_data_manager
-                    .used_uncompressed_memory_metric
-                    .lock()
-                    .unwrap()
-                    .finish(),
-            ),
-            (
-                MetricType::UsedCompressedMemory,
-                self.compressed_data_manager
-                    .used_compressed_memory_metric
-                    .lock()
-                    .unwrap()
-                    .finish(),
-            ),
-            (
-                MetricType::IngestedDataPoints,
-                self.uncompressed_data_manager
-                    .ingested_data_points_metric
-                    .lock()
-                    .unwrap()
-                    .finish(),
-            ),
-            (
-                MetricType::UsedDiskSpace,
-                self.compressed_data_manager
-                    .used_disk_space_metric
-                    .lock()
-                    .unwrap()
-                    .finish(),
-            ),
-        ]
     }
 
     /// Change the amount of memory for multivariate data in bytes according to `value_change`.

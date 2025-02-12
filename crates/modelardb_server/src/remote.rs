@@ -31,9 +31,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
-use datafusion::arrow::array::{
-    ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
-};
+use datafusion::arrow::array::{ArrayRef, StringArray, UInt64Array};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -49,8 +47,7 @@ use modelardb_common::{arguments, remote};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::functions;
-use modelardb_types::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
-use modelardb_types::types::TimestampBuilder;
+use modelardb_types::schemas::CONFIGURATION_SCHEMA;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -593,10 +590,6 @@ impl FlightService for FlightServiceHandler {
     /// then flushes all compressed data to the remote object store, and finally kills the process
     /// that is running the server. Note that since the process is killed, a conventional response
     /// cannot be returned.
-    /// * `CollectMetrics`: Collect internal metrics describing the amount of memory used for
-    /// uncompressed and compressed data, disk space used, and the number of data points ingested
-    /// over time. Note that the metrics are cleared when collected, thus only the metrics
-    /// recorded since the last call to `CollectMetrics` are returned.
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
     /// configuration is returned in a single [`RecordBatch`].
     /// * `UpdateConfiguration`: Update a single setting in the configuration. Each argument in the
@@ -662,41 +655,6 @@ impl FlightService for FlightServiceHandler {
             // Since the process is killed, a conventional response cannot be given. If the action
             // returns a "Stream removed" message, the edge was successfully flushed and killed.
             std::process::exit(0);
-        } else if action.r#type == "CollectMetrics" {
-            let mut storage_engine = self.context.storage_engine.write().await;
-            let metrics = storage_engine.collect_metrics().await;
-
-            // Extract the data from the metrics and insert it into Apache Arrow array builders.
-            let mut metric_builder = StringBuilder::new();
-            let mut timestamps_builder = ListBuilder::new(TimestampBuilder::new());
-            let mut values_builder = ListBuilder::new(UInt32Builder::new());
-
-            for (metric_name, (timestamps, values)) in metrics.iter() {
-                metric_builder.append_value(metric_name.to_string());
-
-                timestamps_builder
-                    .values()
-                    .append_slice(timestamps.values());
-                timestamps_builder.append(true);
-
-                values_builder.values().append_slice(values.values());
-                values_builder.append(true);
-            }
-
-            let schema = METRIC_SCHEMA.clone();
-
-            // Finish the builders and create the record batch containing the metrics.
-            let batch = RecordBatch::try_new(
-                schema.0.clone(),
-                vec![
-                    Arc::new(metric_builder.finish()),
-                    Arc::new(timestamps_builder.finish()),
-                    Arc::new(values_builder.finish()),
-                ],
-            )
-            .unwrap();
-
-            send_record_batch(&batch)
         } else if action.r#type == "GetConfiguration" {
             // Extract the configuration data from the configuration manager.
             let configuration_manager = self.context.configuration_manager.read().await;
@@ -850,15 +808,6 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let collect_metrics_action = ActionType {
-            r#type: "CollectMetrics".to_owned(),
-            description: "Collect internal metrics describing the amount of memory used for \
-                          multivariate data, uncompressed data, compressed data, used disk space, \
-                          and ingested data points over time. The metrics are cleared when \
-                          collected."
-                .to_owned(),
-        };
-
         let get_configuration_action = ActionType {
             r#type: "GetConfiguration".to_owned(),
             description: "Get the current server configuration.".to_owned(),
@@ -879,7 +828,6 @@ impl FlightService for FlightServiceHandler {
             Ok(flush_memory_action),
             Ok(flush_node_action),
             Ok(kill_node_action),
-            Ok(collect_metrics_action),
             Ok(get_configuration_action),
             Ok(update_configuration_action),
             Ok(node_type_action),

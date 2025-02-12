@@ -19,7 +19,7 @@
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use datafusion::arrow::array::StringArray;
@@ -41,7 +41,7 @@ use crate::storage::uncompressed_data_buffer::{
     self, IngestedDataBuffer, UncompressedDataBuffer, UncompressedInMemoryDataBuffer,
     UncompressedOnDiskDataBuffer,
 };
-use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
+use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When an uncompressed data buffer is finished the data is made available for compression.
@@ -68,14 +68,6 @@ pub(super) struct UncompressedDataManager {
     channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the used ingested memory in bytes, updated every time the used memory changes.
-    pub(super) used_ingested_memory_metric: Arc<Mutex<Metric>>,
-    /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
-    pub(super) used_uncompressed_memory_metric: Mutex<Metric>,
-    /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
-    pub(super) ingested_data_points_metric: Mutex<Metric>,
-    /// Metric for the total used disk space in bytes, updated every time uncompressed data is spilled.
-    pub(super) used_disk_space_metric: Arc<Mutex<Metric>>,
 }
 
 impl UncompressedDataManager {
@@ -84,8 +76,6 @@ impl UncompressedDataManager {
         maybe_remote_data_folder: Option<DataFolder>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
-        used_ingested_memory_metric: Arc<Mutex<Metric>>,
-        used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Self {
         Self {
             local_data_folder,
@@ -95,21 +85,16 @@ impl UncompressedDataManager {
             uncompressed_on_disk_data_buffers: DashMap::new(),
             channels,
             memory_pool,
-            used_ingested_memory_metric,
-            used_uncompressed_memory_metric: Mutex::new(Metric::new()),
-            ingested_data_points_metric: Mutex::new(Metric::new()),
-            used_disk_space_metric,
         }
     }
 
     /// Add references to the [`UncompressedDataBuffers`](UncompressedDataBuffer) currently on disk
     /// to [`UncompressedDataManager`] which immediately will start compressing them.
     pub(super) async fn initialize(&self, context: &Context) -> Result<()> {
-        let mut initial_disk_space = 0;
         let local_data_folder = self.local_data_folder.delta_lake.object_store();
-
         let mut spilled_buffers =
             local_data_folder.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)));
+
         while let Some(maybe_spilled_buffer) = spilled_buffers.next().await {
             let spilled_buffer = maybe_spilled_buffer?;
             let path_parts: Vec<PathPart> = spilled_buffer.location.parts().collect();
@@ -140,19 +125,10 @@ impl UncompressedDataManager {
                 file_name,
             )?;
 
-            initial_disk_space += buffer.disk_size().await;
-
             self.channels
                 .uncompressed_data_sender
                 .send(Message::Data(UncompressedDataBuffer::OnDisk(buffer)))?;
         }
-
-        // Record the used disk space of the uncompressed data buffers currently on disk.
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_disk_space_metric
-            .lock()
-            .unwrap()
-            .append(initial_disk_space as isize, true);
 
         Ok(())
     }
@@ -202,13 +178,6 @@ impl UncompressedDataManager {
 
         // Read the current batch index as it may be updated in parallel.
         let current_batch_index = self.current_batch_index.load(Ordering::Relaxed);
-
-        // Record the amount of ingested data points.
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.ingested_data_points_metric
-            .lock()
-            .unwrap()
-            .append(data_points.num_rows() as isize, false);
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table_metadata.timestamp_column_index;
@@ -273,12 +242,6 @@ impl UncompressedDataManager {
         // buffers required for any of the data points in the current batch are never finished.
         let current_batch_index = self.current_batch_index.fetch_add(1, Ordering::Relaxed);
         self.finish_unused_buffers(current_batch_index).await?;
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_ingested_memory_metric
-            .lock()
-            .unwrap()
-            .append(-(data_points.get_array_memory_size() as isize), true);
 
         // Return the memory used by the data points to the pool right before they are de-allocated.
         self.memory_pool
@@ -345,28 +308,11 @@ impl UncompressedDataManager {
                 )
                 .await?;
 
-            // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-            let memory_to_reserve = uncompressed_data_buffer::compute_memory_size(
-                model_table_metadata.field_column_indices.len(),
-            );
-            self.used_uncompressed_memory_metric
-                .lock()
-                .unwrap()
-                .append(memory_to_reserve as isize, true);
-
             // Two ifs are needed until if-let chains is implemented in Rust stable, see eRFC 2497.
             if let Some(tag_hash_buffer) = self.uncompressed_on_disk_data_buffers.get(&tag_hash) {
                 let uncompressed_on_disk_data_buffer = tag_hash_buffer.value();
 
-                // Reading the buffer into memory deletes the on-disk buffer's file on disk and
-                // read_apache_parquet() cannot take self as an argument due to how it is used.
-                // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-                let disk_size = uncompressed_on_disk_data_buffer.disk_size().await;
-                self.used_disk_space_metric
-                    .lock()
-                    .unwrap()
-                    .append(-(disk_size as isize), true);
-
+                // Reading the buffer into memory deletes the on-disk buffer's file on disk.
                 let mut uncompressed_in_memory_data_buffer = uncompressed_on_disk_data_buffer
                     .read_from_apache_parquet(current_batch_index)
                     .await?;
@@ -497,25 +443,11 @@ impl UncompressedDataManager {
             }
         };
 
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        let freed_memory = uncompressed_in_memory_data_buffer.memory_size();
-        self.used_uncompressed_memory_metric
-            .lock()
-            .unwrap()
-            .append(-(freed_memory as isize), true);
-
-        // Record the used disk space of the spilled finished buffer.
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        let disk_size = uncompressed_on_disk_data_buffer.disk_size().await;
-        self.used_disk_space_metric
-            .lock()
-            .unwrap()
-            .append(disk_size as isize, true);
-
         self.uncompressed_on_disk_data_buffers
             .insert(tag_hash, uncompressed_on_disk_data_buffer);
 
         // Add the size of the in-memory data buffer back to the remaining reserved bytes.
+        let freed_memory = uncompressed_in_memory_data_buffer.memory_size();
         self.memory_pool
             .adjust_uncompressed_memory(freed_memory as isize);
 
@@ -660,11 +592,10 @@ impl UncompressedDataManager {
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<()> {
-        let (memory_use, disk_use, maybe_data_points, tag_hash, model_table_metadata) =
+        let (memory_use, maybe_data_points, tag_hash, model_table_metadata) =
             match uncompressed_data_buffer {
                 UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
                     uncompressed_in_memory_data_buffer.memory_size(),
-                    0,
                     uncompressed_in_memory_data_buffer.record_batch().await,
                     uncompressed_in_memory_data_buffer.tag_hash(),
                     uncompressed_in_memory_data_buffer
@@ -673,7 +604,6 @@ impl UncompressedDataManager {
                 ),
                 UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
                     0,
-                    uncompressed_on_disk_data_buffer.disk_size().await,
                     uncompressed_on_disk_data_buffer.record_batch().await,
                     uncompressed_on_disk_data_buffer.tag_hash(),
                     uncompressed_on_disk_data_buffer
@@ -713,18 +643,6 @@ impl UncompressedDataManager {
                 model_table_metadata.clone(),
                 compressed_segments,
             )))?;
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_uncompressed_memory_metric
-            .lock()
-            .unwrap()
-            .append(-(memory_use as isize), true);
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_disk_space_metric
-            .lock()
-            .unwrap()
-            .append(-(disk_use as isize), true);
 
         // Add the size of the uncompressed buffer back to the remaining reserved bytes.
         self.memory_pool
@@ -767,12 +685,10 @@ mod tests {
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
         UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
-    use modelardb_storage::parser::ModelarDbStatement;
-    use modelardb_storage::{parser, test};
+    use modelardb_storage::test;
     use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
-    use ringbuf::traits::observer::Observer;
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
 
@@ -799,19 +715,14 @@ mod tests {
         );
 
         // Create a model table in the context.
-        let modelardb_statement =
-            parser::tokenize_and_parse_sql_statement(test::MODEL_TABLE_SQL).unwrap();
-        let _ = if let ModelarDbStatement::CreateModelTable(model_table_metadata) =
-            modelardb_statement
-        {
-            context.create_model_table(&model_table_metadata).await
-        } else {
-            panic!("Expected CreateModelTable.");
-        };
+        let model_table_metadata = Arc::new(test::model_table_metadata());
+        context
+            .create_model_table(&model_table_metadata)
+            .await
+            .unwrap();
 
         // Ingest a single data point and sleep to allow the ingestion thread to finish.
         let mut storage_engine = context.storage_engine.write().await;
-        let model_table_metadata = Arc::new(test::model_table_metadata());
         let data = uncompressed_data(1, model_table_metadata.schema.clone());
 
         storage_engine
@@ -842,14 +753,12 @@ mod tests {
             .await;
 
         assert_eq!(spilled_buffers.len(), 0);
+
         assert_eq!(
             storage_engine
                 .compressed_data_manager
-                .used_compressed_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
+                .compressed_data_buffers
+                .len(),
             1
         );
     }
@@ -869,15 +778,6 @@ mod tests {
 
         // Only a single data buffer is created despite the inserted data containing two field columns.
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
-        assert_eq!(
-            data_manager
-                .ingested_data_points_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            1
-        );
     }
 
     #[tokio::test]
@@ -895,15 +795,6 @@ mod tests {
 
         // Since the tag is different for the two data points, two data buffers should be created.
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 2);
-        assert_eq!(
-            data_manager
-                .ingested_data_points_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            1
-        );
     }
 
     #[tokio::test]
@@ -919,12 +810,6 @@ mod tests {
             .memory_pool
             .remaining_ingested_memory_in_bytes();
 
-        data_manager
-            .used_ingested_memory_metric
-            .lock()
-            .unwrap()
-            .append(data.get_array_memory_size() as isize, true);
-
         let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
@@ -937,16 +822,6 @@ mod tests {
                 .memory_pool
                 .remaining_ingested_memory_in_bytes(),
             ingested_memory_before + (data_size as isize)
-        );
-
-        assert_eq!(
-            data_manager
-                .used_ingested_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            2
         );
     }
 
@@ -1245,15 +1120,6 @@ mod tests {
                     .memory_pool
                     .remaining_uncompressed_memory_in_bytes()
         );
-        assert_eq!(
-            data_manager
-                .used_uncompressed_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            1
-        );
     }
 
     #[test]
@@ -1286,15 +1152,6 @@ mod tests {
                 < data_manager
                     .memory_pool
                     .remaining_uncompressed_memory_in_bytes()
-        );
-        assert_eq!(
-            data_manager
-                .used_uncompressed_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .occupied_len(),
-            2
         );
     }
 
@@ -1468,15 +1325,8 @@ mod tests {
 
         let channels = Arc::new(Channels::new());
 
-        // UncompressedDataManager::try_new() lookup the error bounds for each tag hash.
-        let uncompressed_data_manager = UncompressedDataManager::new(
-            local_data_folder,
-            None,
-            memory_pool,
-            channels,
-            Arc::new(Mutex::new(Metric::new())),
-            Arc::new(Mutex::new(Metric::new())),
-        );
+        let uncompressed_data_manager =
+            UncompressedDataManager::new(local_data_folder, None, memory_pool, channels);
 
         (uncompressed_data_manager, Arc::new(model_table_metadata))
     }
