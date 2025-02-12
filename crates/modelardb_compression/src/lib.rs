@@ -14,8 +14,8 @@
  */
 
 //! Compress batches of sorted data points to produce compressed segments containing metadata and
-//! models, merge compressed segments if possible within the error bound, compute aggregates
-//! directly from the segments, and reconstruct the data points for each compressed segment.
+//! models, compute aggregates directly from the segments, and reconstruct the data points for each
+//! compressed segment.
 
 #![allow(clippy::too_many_arguments)]
 
