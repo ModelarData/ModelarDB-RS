@@ -21,13 +21,11 @@
 
 mod compression;
 pub mod error;
-mod merge;
 mod models;
 mod types;
 
 // Re-export the few functions and types users are meant to use.
 pub use compression::try_compress;
-pub use merge::try_merge_segments;
 pub use models::grid;
 pub use models::is_value_within_error_bound;
 pub use models::len;
