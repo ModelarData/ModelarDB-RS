@@ -14,20 +14,18 @@
  */
 
 //! Compress batches of sorted data points to produce compressed segments containing metadata and
-//! models, merge compressed segments if possible within the error bound, compute aggregates
-//! directly from the segments, and reconstruct the data points for each compressed segment.
+//! models, compute aggregates directly from the segments, and reconstruct the data points for each
+//! compressed segment.
 
 #![allow(clippy::too_many_arguments)]
 
 mod compression;
 pub mod error;
-mod merge;
 mod models;
 mod types;
 
 // Re-export the few functions and types users are meant to use.
 pub use compression::try_compress;
-pub use merge::try_merge_segments;
 pub use models::grid;
 pub use models::is_value_within_error_bound;
 pub use models::len;

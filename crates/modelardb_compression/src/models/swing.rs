@@ -262,46 +262,6 @@ impl Swing {
     }
 }
 
-/// Return [`true`] if two time series segment whose values are represented by a model of type Swing
-/// can be merged. Currently, only segments whose models produce a new model with the exact same
-/// slope and intercept when merged can be merged as it is guaranteed to produce the same values.
-pub(crate) fn can_be_merged(
-    segment_one_start_time: Timestamp,
-    segment_one_end_time: Timestamp,
-    segment_one_first_value: f64,
-    segment_one_last_value: f64,
-    segment_two_start_time: Timestamp,
-    segment_two_end_time: Timestamp,
-    segment_two_first_value: f64,
-    segment_two_last_value: f64,
-) -> bool {
-    let (segment_one_slope, segment_one_intercept) = compute_slope_and_intercept(
-        segment_one_start_time,
-        segment_one_first_value,
-        segment_one_end_time,
-        segment_one_last_value,
-    );
-
-    let (segment_two_slope, segment_two_intercept) = compute_slope_and_intercept(
-        segment_two_start_time,
-        segment_two_first_value,
-        segment_two_end_time,
-        segment_two_last_value,
-    );
-
-    let (segment_merged_slope, segment_merged_intercept) = compute_slope_and_intercept(
-        segment_one_start_time,
-        segment_one_first_value,
-        segment_two_end_time,
-        segment_two_last_value,
-    );
-
-    segment_one_slope == segment_merged_slope
-        && segment_one_intercept == segment_merged_intercept
-        && segment_two_slope == segment_merged_slope
-        && segment_two_intercept == segment_merged_intercept
-}
-
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type Swing.
 pub fn sum(

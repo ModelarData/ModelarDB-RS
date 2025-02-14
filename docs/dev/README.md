@@ -34,9 +34,6 @@ of time series.
   - **Compression** - Compresses univariate time series within user-defined error bounds (possibly 0% error) and outputs
   compressed segments.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
-  - **Merge** - Merges compressed segments if possible within the error bound to further decrease the amount of storage
-  and bandwidth required. For example, if a time series has the same structure at the end of a batch of data points and
-  the start of the following batch of data points.
   - **Types** - Types used throughout the crate, e.g., for creating compressed segments and accumulating batches of
   them.
 - [modelardb_manager](/crates/modelardb_manager) - ModelarDB's manager in the form of the binary `modelardbm`.
