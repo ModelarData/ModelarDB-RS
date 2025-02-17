@@ -1301,12 +1301,6 @@ mod tests {
             .await
             .unwrap();
 
-        local_data_folder
-            .table_metadata_manager
-            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag".to_owned()])
-            .await
-            .unwrap();
-
         let memory_pool = Arc::new(MemoryPool::new(
             INGESTED_RESERVED_MEMORY_IN_BYTES,
             UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
