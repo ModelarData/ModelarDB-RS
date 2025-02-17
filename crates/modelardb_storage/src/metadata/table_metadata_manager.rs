@@ -202,29 +202,6 @@ impl TableMetadataManager {
             delta_table,
         )?;
 
-        // Register the model_table_name_tags table for each model table.
-        for model_table_name in self.model_table_names().await? {
-            self.register_tags_table(&model_table_name).await?;
-        }
-
-        Ok(())
-    }
-
-    /// Register the tags table for the model table with `model_table_name` if it is not already
-    /// registered. The tags table is required to be registered to allow querying a model table.
-    /// If the tags table could not be registered, [`ModelarDbStorageError`] is returned.
-    pub async fn register_tags_table(&self, model_table_name: &str) -> Result<()> {
-        let tags_table_name = format!("{}_tags", model_table_name);
-
-        let delta_table = self
-            .delta_lake
-            .metadata_delta_table(&tags_table_name)
-            .await?;
-
-        if !self.session_context.table_exist(&tags_table_name)? {
-            register_metadata_table(&self.session_context, &tags_table_name, delta_table)?;
-        }
-
         Ok(())
     }
 
@@ -299,33 +276,13 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Save the created model table to the metadata Delta Lake. This includes creating a tags table
-    /// for the model table, adding a row to the `model_table_metadata` table, and adding a row to
-    /// the `model_table_field_columns` table for each field column.
+    /// Save the created model table to the metadata Delta Lake. This includes adding a row to the
+    /// `model_table_metadata` table and adding a row to the `model_table_field_columns` table for
+    /// each field column.
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
     ) -> Result<()> {
-        // Create and register a table_name_tags table to save the 54-bit tag hashes when ingesting data.
-        let mut table_name_tags_columns = vec![Field::new("hash", DataType::Int64, false)];
-
-        // Add a column definition for each tag column in the query schema.
-        table_name_tags_columns.append(
-            &mut model_table_metadata
-                .tag_column_indices
-                .iter()
-                .map(|index| model_table_metadata.query_schema.field(*index).clone())
-                .collect::<Vec<Field>>(),
-        );
-
-        let tags_table_name = format!("{}_tags", model_table_metadata.name);
-        let delta_table = self
-            .delta_lake
-            .create_metadata_table(&tags_table_name, &Schema::new(table_name_tags_columns))
-            .await?;
-
-        register_metadata_table(&self.session_context, &tags_table_name, delta_table)?;
-
         // Convert the query schema to bytes, so it can be saved in the metadata Delta Lake.
         let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
 
@@ -417,19 +374,10 @@ impl TableMetadataManager {
     }
 
     /// Drop the metadata for the model table with `table_name` from the metadata Delta Lake.
-    /// This includes dropping the tags table for the model table, deleting a row from the
-    /// `model_table_metadata` table, and deleting a row from the `model_table_field_columns` table
-    /// for each field column. If the metadata could not be dropped, [`ModelarDbStorageError`] is
-    /// returned.
+    /// This includes deleting a row from the `model_table_metadata` table and deleting a row from
+    /// the `model_table_field_columns` table for each field column. If the metadata could not be
+    /// dropped, [`ModelarDbStorageError`] is returned.
     async fn drop_model_table_metadata(&self, table_name: &str) -> Result<()> {
-        // Drop and deregister the model_table_name_tags table.
-        let tags_table_name = format!("{table_name}_tags");
-        self.delta_lake
-            .drop_metadata_table(&tags_table_name)
-            .await?;
-
-        self.session_context.deregister_table(&tags_table_name)?;
-
         // Delete the table metadata from the model_table_metadata table.
         self.delta_lake
             .metadata_delta_ops("model_table_metadata")
@@ -676,44 +624,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_register_tags_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-        let session_context = &metadata_manager.session_context;
-
-        let tags_table_name = format!("{}_tags", test::MODEL_TABLE_NAME);
-        session_context.deregister_table(&tags_table_name).unwrap();
-        assert!(!session_context.table_exist(&tags_table_name).unwrap());
-
-        metadata_manager
-            .register_tags_table(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap();
-
-        assert!(session_context.table_exist(&tags_table_name).unwrap());
-
-        // If the table is already registered, it should not be registered again.
-        let result = metadata_manager
-            .register_tags_table(test::MODEL_TABLE_NAME)
-            .await;
-
-        assert!(result.is_ok());
-        assert!(session_context.table_exist(&tags_table_name).unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_register_missing_model_table_tags_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-
-        let result = metadata_manager.register_tags_table("missing_table").await;
-
-        assert!(result.is_err());
-        assert!(!metadata_manager
-            .session_context
-            .table_exist("missing_table_tags")
-            .unwrap());
-    }
-
-    #[tokio::test]
     async fn test_normal_table_is_normal_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
         assert!(metadata_manager
@@ -802,10 +712,6 @@ mod tests {
     async fn test_save_model_table_metadata() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        // Verify that the table was created and has the expected columns.
-        let sql = format!("SELECT hash, tag FROM {}_tags", test::MODEL_TABLE_NAME);
-        assert!(metadata_manager.session_context.sql(&sql).await.is_ok());
-
         // Check that a row has been added to the model_table_metadata table.
         let sql = "SELECT table_name, query_schema FROM model_table_metadata";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
@@ -874,14 +780,6 @@ mod tests {
             .drop_table_metadata(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
-
-        // Verify that the tags table was deleted from the Delta Lake.
-        let tags_table_name = format!("{}_tags", test::MODEL_TABLE_NAME);
-        assert!(!temp_dir
-            .path()
-            .join("metadata")
-            .join(tags_table_name)
-            .exists());
 
         // Verify that the model table was deleted from the model_table_metadata table.
         let sql = "SELECT table_name FROM model_table_metadata";
