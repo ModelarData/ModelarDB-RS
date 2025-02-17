@@ -16,6 +16,7 @@
 //! Support for managing all uncompressed data that is ingested into the
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
+use std::hash::{DefaultHasher, Hasher};
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -244,6 +245,8 @@ impl UncompressedDataManager {
         model_table_metadata: Arc<ModelTableMetadata>,
         current_batch_index: u64,
     ) -> Result<bool> {
+        let tag_hash = calculate_tag_hash(&model_table_metadata.name, &tag_values);
+
         debug!("Add data point at {timestamp} to uncompressed data buffer for {tag_hash}.");
 
         // Track if any buffers are spilled during ingestion so this information can be returned to
@@ -645,6 +648,18 @@ impl UncompressedDataManager {
 
         Ok(())
     }
+}
+
+/// Calculate a unique hash for a specific combination of `table_name` and `tag_values`. The hash
+/// can be used to identify a specific multivariate time series during ingestion.
+fn calculate_tag_hash(table_name: &str, tag_values: &[String]) -> u64 {
+    let mut hash_data = tag_values.to_vec();
+    hash_data.push(table_name.to_string());
+
+    let mut hasher = DefaultHasher::new();
+    hasher.write(hash_data.join(";").as_bytes());
+
+    hasher.finish()
 }
 
 #[cfg(test)]
