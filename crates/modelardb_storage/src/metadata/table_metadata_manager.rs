@@ -22,11 +22,9 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array,
-    StringArray,
+    Array, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, StringArray,
 };
 use arrow::datatypes::{DataType, Field, Schema};
-use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
 use datafusion::prelude::{col, SessionContext};
@@ -52,8 +50,6 @@ enum TableType {
 pub struct TableMetadataManager {
     /// Delta Lake with functionality to read and write to and from the metadata tables.
     delta_lake: DeltaLake,
-    /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
-    tag_value_hashes: DashMap<String, u64>,
     /// Session context used to query the metadata Delta Lake tables using Apache DataFusion.
     session_context: Arc<SessionContext>,
 }
@@ -68,7 +64,6 @@ impl TableMetadataManager {
     ) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::try_from_local_path(folder_path)?,
-            tag_value_hashes: DashMap::new(),
             session_context: maybe_session_context
                 .unwrap_or_else(|| Arc::new(SessionContext::new())),
         };
@@ -90,7 +85,6 @@ impl TableMetadataManager {
     ) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
-            tag_value_hashes: DashMap::new(),
             session_context: maybe_session_context
                 .unwrap_or_else(|| Arc::new(SessionContext::new())),
         };
@@ -118,7 +112,6 @@ impl TableMetadataManager {
                 access_key_id,
                 secret_access_key,
             )?,
-            tag_value_hashes: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
         };
 
@@ -143,7 +136,6 @@ impl TableMetadataManager {
                 access_key,
                 container_name,
             )?,
-            tag_value_hashes: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
         };
 
@@ -429,9 +421,9 @@ impl TableMetadataManager {
 
     /// Drop the metadata for the model table with `table_name` from the metadata Delta Lake.
     /// This includes dropping the tags table for the model table, deleting a row from the
-    /// `model_table_metadata` table, deleting a row from the `model_table_field_columns` table for
-    /// each field column, and deleting the tag metadata from the tag cache. If the metadata could
-    /// not be dropped, [`ModelarDbStorageError`] is returned.
+    /// `model_table_metadata` table, and deleting a row from the `model_table_field_columns` table
+    /// for each field column. If the metadata could not be dropped, [`ModelarDbStorageError`] is
+    /// returned.
     async fn drop_model_table_metadata(&self, table_name: &str) -> Result<()> {
         // Drop and deregister the model_table_name_tags table.
         let tags_table_name = format!("{table_name}_tags");
@@ -457,9 +449,6 @@ impl TableMetadataManager {
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
 
-        // Delete the tag hash metadata from the metadata Delta Lake and the tag cache.
-        self.delete_tag_hash_metadata(table_name).await?;
-
         Ok(())
     }
 
@@ -481,9 +470,8 @@ impl TableMetadataManager {
     }
 
     /// Truncate the metadata for the model table with `table_name` from the metadata Delta Lake.
-    /// This includes truncating the tags table for the model table and deleting the tag metadata
-    /// from the tag cache. If the metadata could not be truncated, [`ModelarDbStorageError`] is
-    /// returned.
+    /// This includes truncating the tags table for the model table. If the metadata could not be
+    /// truncated, [`ModelarDbStorageError`] is returned.
     async fn truncate_model_table_metadata(&self, table_name: &str) -> Result<()> {
         // Truncate the model_table_name_tags table.
         self.delta_lake
@@ -491,20 +479,6 @@ impl TableMetadataManager {
             .await?
             .delete()
             .await?;
-
-        // Delete the tag hash metadata from the metadata Delta Lake and the tag cache.
-        self.delete_tag_hash_metadata(table_name).await?;
-
-        Ok(())
-    }
-
-    /// Delete the tag hash metadata for the model table with `table_name` from the tag cache. If
-    /// the metadata could not be deleted, [`ModelarDbStorageError`] is returned.
-    async fn delete_tag_hash_metadata(&self, table_name: &str) -> Result<()> {
-        // Delete the tag metadata from the tag cache. The table name is always the last part of
-        // the cache key.
-        self.tag_value_hashes
-            .retain(|key, _| key.split(';').last() != Some(table_name));
 
         Ok(())
     }
@@ -973,9 +947,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(batch.num_rows(), 0);
-
-        // Verify that the tag cache was cleared.
-        assert!(metadata_manager.tag_value_hashes.is_empty());
     }
 
     #[tokio::test]
@@ -1025,9 +996,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(batch.num_rows(), 0);
-
-        // Verify that the tag cache was cleared.
-        assert!(metadata_manager.tag_value_hashes.is_empty());
     }
 
     #[tokio::test]
