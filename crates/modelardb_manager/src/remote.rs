@@ -282,19 +282,15 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Truncate the table in the metadata Delta Lake, the data Delta Lake, and in each node
-    /// controlled by the manager. If the table does not exist or the table cannot be truncated in
-    /// the remote data folder and in each node, return [`Status`].
+    /// Truncate the table in the data Delta Lake and in each node controlled by the manager. If the
+    /// table does not exist or the table cannot be truncated in the remote data folder and in each
+    /// node, return [`Status`].
     async fn truncate_cluster_table(&self, table_name: &str) -> StdResult<(), Status> {
-        // Truncate the table in the remote data folder metadata Delta Lake. This will return an
-        // error if the table does not exist.
-        self.context
-            .remote_data_folder
-            .metadata_manager
-            .table_metadata_manager
-            .truncate_table_metadata(table_name)
-            .await
-            .map_err(error_to_status_internal)?;
+        if self.check_if_table_exists(table_name).await.is_ok() {
+            return Err(Status::invalid_argument(format!(
+                "Table with name '{table_name}' does not exist.",
+            )));
+        }
 
         // Truncate the table in the remote data folder data Delta lake.
         self.context
