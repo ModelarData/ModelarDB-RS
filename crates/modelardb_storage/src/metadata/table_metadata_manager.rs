@@ -17,13 +17,10 @@
 //! and the manager metadata Delta Lake. Note that the entire server metadata Delta Lake can be accessed
 //! through this metadata manager, while it only supports a subset of the manager metadata Delta Lake.
 
-use std::collections::HashMap;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use arrow::array::{
-    Array, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, StringArray,
-};
+use arrow::array::{Array, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
@@ -634,52 +631,6 @@ impl TableMetadataManager {
 
         Ok(generated_columns)
     }
-
-    /// Return a mapping from tag hashes to the tags in the columns with the names in
-    /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
-    /// Returns a [`ModelarDbStorageError`] if the necessary data cannot be retrieved from the
-    /// metadata Delta Lake.
-    pub async fn mapping_from_hash_to_tags(
-        &self,
-        model_table_name: &str,
-        tag_column_names: &[&str],
-    ) -> Result<HashMap<u64, Vec<String>>> {
-        // Return an empty HashMap if no tag column names are passed to keep the signature simple.
-        if tag_column_names.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        let sql = format!(
-            "SELECT hash, {} FROM {model_table_name}_tags",
-            tag_column_names.join(","),
-        );
-        let batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let hash_array = modelardb_types::array!(batch, 0, Int64Array);
-
-        // For each tag column, get the corresponding column array.
-        let tag_arrays: Vec<&StringArray> = tag_column_names
-            .iter()
-            .enumerate()
-            .map(|(index, _tag_column)| modelardb_types::array!(batch, index + 1, StringArray))
-            .collect();
-
-        let mut hash_to_tags = HashMap::new();
-        for row_index in 0..batch.num_rows() {
-            let signed_tag_hash = hash_array.value(row_index);
-            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
-
-            // For each tag array, add the row index value to the tags for this tag hash.
-            let tags: Vec<String> = tag_arrays
-                .iter()
-                .map(|tag_array| tag_array.value(row_index).to_owned())
-                .collect();
-
-            hash_to_tags.insert(tag_hash, tags);
-        }
-
-        Ok(hash_to_tags)
-    }
 }
 
 #[cfg(test)]
@@ -1150,28 +1101,6 @@ mod tests {
             &Some(last_generated_column),
             expected_generated_columns.last().unwrap()
         );
-    }
-
-    #[tokio::test]
-    async fn test_mapping_from_hash_to_tags_with_missing_model_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-
-        let result = metadata_manager
-            .mapping_from_hash_to_tags("missing_table", &["tag"])
-            .await;
-
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_mapping_from_hash_to_tags_with_invalid_tag_column() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-
-        let result = metadata_manager
-            .mapping_from_hash_to_tags(test::MODEL_TABLE_NAME, &["invalid_tag"])
-            .await;
-
-        assert!(result.is_err());
     }
 
     async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
