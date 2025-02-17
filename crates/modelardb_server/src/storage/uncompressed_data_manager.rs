@@ -48,8 +48,6 @@ use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 pub(super) struct UncompressedDataManager {
     /// Folder for storing metadata and data in Apache Parquet files on the local file system.
     pub local_data_folder: DataFolder,
-    /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
-    pub maybe_remote_data_folder: Option<DataFolder>,
     /// Counter incremented for each [`RecordBatch`](datafusion::arrow::array::RecordBatch) of data
     /// points ingested. The value is assigned to buffers that are created or updated and is used to
     /// flush buffers that are no longer used.
@@ -73,13 +71,11 @@ pub(super) struct UncompressedDataManager {
 impl UncompressedDataManager {
     pub(super) fn new(
         local_data_folder: DataFolder,
-        maybe_remote_data_folder: Option<DataFolder>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
     ) -> Self {
         Self {
             local_data_folder,
-            maybe_remote_data_folder,
             current_batch_index: AtomicU64::new(0),
             uncompressed_in_memory_data_buffers: DashMap::new(),
             uncompressed_on_disk_data_buffers: DashMap::new(),
@@ -203,30 +199,12 @@ impl UncompressedDataManager {
                 .map(|array| array.value(index).to_string())
                 .collect();
 
-            let (tag_hash, tag_hash_is_saved) = self
-                .local_data_folder
-                .table_metadata_manager
-                .lookup_or_compute_tag_hash(&model_table_metadata, &tag_values)
-                .await?;
-
-            // If the server was started with a manager, transfer the tag hash metadata if it was
-            // saved to the server metadata Delta Lake. We purposely transfer tag metadata before the
-            // associated files for convenience. This does not cause problems when querying.
-            if let Some(remote_data_folder) = &self.maybe_remote_data_folder {
-                if tag_hash_is_saved {
-                    remote_data_folder
-                        .table_metadata_manager
-                        .save_tag_hash_metadata(&model_table_metadata, tag_hash, &tag_values)
-                        .await?;
-                }
-            }
-
             let mut values = field_column_arrays.iter().map(|array| array.value(index));
 
             // unwrap() is safe to use since the timestamps array cannot contain null values.
             buffers_are_spilled |= self
                 .insert_data_point(
-                    tag_hash,
+                    tag_values,
                     timestamp.unwrap(),
                     &mut values,
                     model_table_metadata.clone(),
@@ -252,15 +230,15 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Insert a single data point into the in-memory buffer for `tag_hash` if one exists. If the
-    /// buffer has been spilled, read it back into memory. If no buffer exists for `tag_hash`,
-    /// allocate a new buffer that will be compressed within the error bound in
-    /// `model_table_metadata`. Returns [`true`] if a buffer was spilled, [`false`] if not, and
-    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the error bound cannot be
-    /// retrieved from the metadata Delta Lake.
+    /// Insert a single data point into the in-memory buffer with the tag hash that corresponds to
+    /// `tag_values` if one exists. If the buffer has been spilled, read it back into memory. If no
+    /// buffer exists for the tag hash, allocate a new buffer that will be compressed within the
+    /// error bound in `model_table_metadata`. Returns [`true`] if a buffer was spilled, [`false`]
+    /// if not, and [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the error bound
+    /// cannot be retrieved from the metadata Delta Lake.
     async fn insert_data_point(
         &self,
-        tag_hash: u64,
+        tag_values: Vec<String>,
         timestamp: Timestamp,
         values: &mut dyn Iterator<Item = Value>,
         model_table_metadata: Arc<ModelTableMetadata>,
@@ -1323,7 +1301,7 @@ mod tests {
         let channels = Arc::new(Channels::new());
 
         let uncompressed_data_manager =
-            UncompressedDataManager::new(local_data_folder, None, memory_pool, channels);
+            UncompressedDataManager::new(local_data_folder, memory_pool, channels);
 
         (uncompressed_data_manager, Arc::new(model_table_metadata))
     }
