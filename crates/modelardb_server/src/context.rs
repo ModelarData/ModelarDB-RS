@@ -329,8 +329,8 @@ impl Context {
     }
 
     /// Delete all data from the table with `table_name` if it exists. The table data is deleted
-    /// from the storage engine, metadata Delta Lake, and data Delta Lake. If the table does not
-    /// exist or if it could not be truncated, [`ModelarDbServerError`] is returned.
+    /// from the storage engine and data Delta Lake. If the table does not exist or if it could not
+    /// be truncated, [`ModelarDbServerError`] is returned.
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
         // Deleting the table from the storage engine does not require the table to exist, so the
         // table is checked first.
@@ -341,13 +341,6 @@ impl Context {
         }
 
         self.drop_table_from_storage_engine(table_name).await?;
-
-        // Delete the table metadata from the metadata Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .table_metadata_manager
-            .truncate_table_metadata(table_name)
-            .await?;
 
         // Delete the table data from the data Delta Lake.
         self.data_folders

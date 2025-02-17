@@ -397,37 +397,6 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Depending on the type of the table with `table_name`, truncate either the normal table
-    /// metadata or the model table metadata from the metadata Delta Lake. Note that if truncating
-    /// the metadata of a normal table, the metadata Delta Lake is unaffected, but it is allowed to
-    /// keep the interface consistent. If the table does not exist or the metadata could not be
-    /// truncated, [`ModelarDbStorageError`] is returned.
-    pub async fn truncate_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self.is_normal_table(table_name).await? {
-            Ok(())
-        } else if self.is_model_table(table_name).await? {
-            self.truncate_model_table_metadata(table_name).await
-        } else {
-            Err(ModelarDbStorageError::InvalidArgument(format!(
-                "Table with name '{table_name}' does not exist."
-            )))
-        }
-    }
-
-    /// Truncate the metadata for the model table with `table_name` from the metadata Delta Lake.
-    /// This includes truncating the tags table for the model table. If the metadata could not be
-    /// truncated, [`ModelarDbStorageError`] is returned.
-    async fn truncate_model_table_metadata(&self, table_name: &str) -> Result<()> {
-        // Truncate the model_table_name_tags table.
-        self.delta_lake
-            .metadata_delta_ops(&format!("{table_name}_tags"))
-            .await?
-            .delete()
-            .await?;
-
-        Ok(())
-    }
-
     /// Return the [`ModelTableMetadata`] of each model table currently in the metadata Delta Lake.
     /// If the [`ModelTableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is returned.
     pub async fn model_table_metadata(&self) -> Result<Vec<Arc<ModelTableMetadata>>> {
@@ -804,55 +773,6 @@ mod tests {
 
         assert!(metadata_manager
             .drop_table_metadata("missing_table")
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
-    async fn test_truncate_normal_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
-
-        metadata_manager
-            .truncate_table_metadata("normal_table_1")
-            .await
-            .unwrap();
-
-        // Verify that the metadata Delta Lake was left unchanged.
-        let sql = "SELECT table_name FROM normal_table_metadata";
-        let batch = sql_and_concat(&metadata_manager.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            **batch.column(0),
-            StringArray::from(vec!["normal_table_2", "normal_table_1"])
-        );
-    }
-
-    #[tokio::test]
-    async fn test_truncate_model_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-
-        metadata_manager
-            .truncate_table_metadata(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap();
-
-        // Verify that the tags table was truncated.
-        let sql = format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME);
-        let batch = sql_and_concat(&metadata_manager.session_context, &sql)
-            .await
-            .unwrap();
-
-        assert_eq!(batch.num_rows(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_truncate_table_metadata_for_missing_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
-
-        assert!(metadata_manager
-            .truncate_table_metadata("missing_table")
             .await
             .is_err());
     }
