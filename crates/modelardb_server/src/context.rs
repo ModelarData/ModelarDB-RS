@@ -184,13 +184,6 @@ impl Context {
             .save_model_table_metadata(model_table_metadata)
             .await?;
 
-        // Register the metadata table needed for querying the model table if it is not already
-        // registered. The tags table is already registered if the query data folder and local data
-        // folder is the same.
-        query_folder_table_metadata_manager
-            .register_tags_table(&model_table_metadata.name)
-            .await?;
-
         info!("Created model table '{}'.", model_table_metadata.name);
 
         Ok(())
