@@ -43,8 +43,6 @@ pub struct ModelTableMetadata {
     pub tag_column_indices: Vec<usize>,
     /// Error bounds of the columns in `schema`. It can only be non-zero for field columns.
     pub error_bounds: Vec<ErrorBound>,
-    /// Schema of the data that can be compressed in the model table.
-    pub uncompressed_schema: Arc<Schema>,
     /// Schema of the data that can be read from the model table.
     pub query_schema: Arc<Schema>,
     /// Projection that changes `query_schema` to `schema`.
@@ -114,14 +112,6 @@ impl ModelTableMetadata {
                 query_schema.clone()
             };
 
-        // Schema containing timestamps and stored field columns for use by uncompressed buffers.
-        let uncompressed_schema = Arc::new(schema_without_generated.project(
-            &compute_indices_of_columns_without_data_type(
-                &schema_without_generated,
-                DataType::Utf8,
-            ),
-        )?);
-
         // A model table must only contain one stored timestamp column, one or more stored field
         // columns, zero or more generated field columns, and zero or more stored tag columns.
         let timestamp_column_indices = compute_indices_of_columns_with_data_type(
@@ -156,7 +146,6 @@ impl ModelTableMetadata {
             field_column_indices,
             tag_column_indices,
             error_bounds: error_bounds_without_generated,
-            uncompressed_schema,
             query_schema,
             query_schema_to_schema: field_indices_without_generated,
             generated_columns,
@@ -184,17 +173,6 @@ fn compute_indices_of_columns_with_data_type(schema: &Schema, data_type: DataTyp
     let fields = schema.fields();
     (0..fields.len())
         .filter(|index| *fields[*index].data_type() == data_type)
-        .collect()
-}
-
-/// Compute the indices of all columns in `schema` without `data_type`.
-fn compute_indices_of_columns_without_data_type(
-    schema: &Schema,
-    data_type: DataType,
-) -> Vec<usize> {
-    let fields = schema.fields();
-    (0..fields.len())
-        .filter(|index| *fields[*index].data_type() != data_type)
         .collect()
 }
 
