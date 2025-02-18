@@ -19,11 +19,13 @@
 use std::result::Result as StdResult;
 use std::sync::Arc;
 
+use arrow::array::StringArray;
+use arrow::record_batch::RecordBatch;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
 use datafusion::common::DFSchema;
 use datafusion::error::DataFusionError;
 use datafusion::logical_expr::expr::Expr;
-use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
+use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::parser::tokenize_and_parse_sql_expression;
@@ -165,6 +167,44 @@ impl ModelTableMetadata {
     /// Return `true` if the column at `index` is a tag column.
     pub fn is_tag(&self, index: usize) -> bool {
         self.tag_column_indices.contains(&index)
+    }
+
+    /// Return the column arrays for the timestamp, field, and tag columns in `record_batch`. If
+    /// `record_batch` does not contain the required columns, return [`ModelarDbStorageError`].
+    pub fn column_arrays<'a>(
+        &self,
+        record_batch: &'a RecordBatch,
+    ) -> Result<(
+        &'a TimestampArray,
+        Vec<&'a ValueArray>,
+        Vec<&'a StringArray>,
+    )> {
+        if record_batch.schema() != self.schema {
+            return Err(ModelarDbStorageError::InvalidArgument(
+                "The record batch does not match the schema of the model table.".to_owned(),
+            ));
+        }
+
+        let timestamp_column_array =
+            modelardb_types::array!(record_batch, self.timestamp_column_index, TimestampArray);
+
+        let field_column_arrays: Vec<_> = self
+            .field_column_indices
+            .iter()
+            .map(|index| modelardb_types::array!(record_batch, *index, ValueArray))
+            .collect();
+
+        let tag_column_arrays: Vec<_> = self
+            .tag_column_indices
+            .iter()
+            .map(|index| modelardb_types::array!(record_batch, *index, StringArray))
+            .collect();
+
+        Ok((
+            timestamp_column_array,
+            field_column_arrays,
+            tag_column_arrays,
+        ))
     }
 }
 
@@ -440,6 +480,45 @@ mod test {
         assert!(!model_table_metadata.is_tag(1));
         assert!(!model_table_metadata.is_tag(2));
         assert!(model_table_metadata.is_tag(3));
+    }
+
+    #[test]
+    fn test_column_arrays() {
+        let model_table_metadata = test::model_table_metadata();
+        let record_batch = test::uncompressed_model_table_record_batch(1);
+
+        let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
+            model_table_metadata.column_arrays(&record_batch).unwrap();
+
+        assert_eq!(
+            modelardb_types::array!(record_batch, 0, TimestampArray),
+            timestamp_column_array
+        );
+        assert_eq!(
+            modelardb_types::array!(record_batch, 1, ValueArray),
+            field_column_arrays[0]
+        );
+        assert_eq!(
+            modelardb_types::array!(record_batch, 2, ValueArray),
+            field_column_arrays[1]
+        );
+        assert_eq!(
+            modelardb_types::array!(record_batch, 3, StringArray),
+            tag_column_arrays[0]
+        );
+    }
+
+    #[test]
+    fn test_column_arrays_with_invalid_schema() {
+        let model_table_metadata = test::model_table_metadata();
+        let record_batch = test::normal_table_record_batch();
+
+        let result = model_table_metadata.column_arrays(&record_batch);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid argument: The record batch does not match the schema of the model table."
+        );
     }
 
     // Tests for GeneratedColumn.
