@@ -22,7 +22,7 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::mem;
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Array, ArrayBuilder};
+use datafusion::arrow::array::{Array, ArrayBuilder, StringArray};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
@@ -82,11 +82,14 @@ pub(super) struct UncompressedInMemoryDataBuffer {
     timestamps: TimestampBuilder,
     /// Builders for each stored field that float values are appended to.
     values: Vec<ValueBuilder>,
+    /// The tag values for the time series the buffer stores data points for.
+    tag_values: Vec<String>,
 }
 
 impl UncompressedInMemoryDataBuffer {
     pub(super) fn new(
         tag_hash: u64,
+        tag_values: Vec<String>,
         model_table_metadata: Arc<ModelTableMetadata>,
         current_batch_index: u64,
     ) -> Self {
@@ -101,6 +104,7 @@ impl UncompressedInMemoryDataBuffer {
             updated_by_batch_index: current_batch_index,
             timestamps,
             values,
+            tag_values,
         }
     }
 
@@ -153,23 +157,40 @@ impl UncompressedInMemoryDataBuffer {
 
     /// Finish the array builders and return the data in a [`RecordBatch`] sorted by time.
     pub(super) async fn record_batch(&mut self) -> Result<RecordBatch> {
+        let buffer_length = self.len();
         let timestamps = self.timestamps.finish();
 
         // lexsort() is not used as it is unclear in what order it sorts multiple arrays, instead a
         // combination of sort_to_indices() and take(), like how lexsort() is implemented, is used.
         let sorted_indices = compute::sort_to_indices(&timestamps, None, None)?;
 
-        let mut columns = Vec::with_capacity(1 + self.values.len());
-        columns.push(compute::take(&timestamps, &sorted_indices, None)?);
-        for value in &mut self.values {
-            columns.push(compute::take(&value.finish(), &sorted_indices, None)?);
+        let mut field_column_index = 0;
+        let mut tag_column_index = 0;
+        let mut columns = Vec::with_capacity(self.model_table_metadata.schema.fields().len());
+
+        // Iterate over the column indices in the schema and add the sorted data to the columns.
+        for column_index in 0..self.model_table_metadata.schema.fields().len() {
+            if self.model_table_metadata.is_timestamp(column_index) {
+                columns.push(compute::take(&timestamps, &sorted_indices, None)?);
+            } else if self.model_table_metadata.is_tag(column_index) {
+                // The tag value is the same for each data point so it is not sorted.
+                let tag_value = self.tag_values[tag_column_index].clone();
+                let tag_array: StringArray = std::iter::repeat(Some(tag_value))
+                    .take(buffer_length)
+                    .collect();
+                columns.push(Arc::new(tag_array));
+
+                tag_column_index += 1;
+            } else {
+                let values = &self.values[field_column_index].finish();
+                columns.push(compute::take(&values, &sorted_indices, None)?);
+
+                field_column_index += 1;
+            }
         }
 
-        RecordBatch::try_new(
-            self.model_table_metadata.uncompressed_schema.clone(),
-            columns,
-        )
-        .map_err(|error| error.into())
+        RecordBatch::try_new(self.model_table_metadata.schema.clone(), columns)
+            .map_err(|error| error.into())
     }
 
     /// Return the tag hash that identifies the time series the buffer stores data points from.
@@ -255,7 +276,8 @@ impl UncompressedOnDiskDataBuffer {
         data_points: RecordBatch,
     ) -> Result<Self> {
         // Create a path that uses the first timestamp as the filename.
-        let timestamps = modelardb_types::array!(data_points, 0, TimestampArray);
+        let timestamp_index = model_table_metadata.timestamp_column_index;
+        let timestamps = modelardb_types::array!(data_points, timestamp_index, TimestampArray);
         let file_path = spilled_buffer_file_path(
             &model_table_metadata.name,
             tag_hash,
@@ -343,13 +365,32 @@ impl UncompressedOnDiskDataBuffer {
     ) -> Result<UncompressedInMemoryDataBuffer> {
         let data_points = self.record_batch().await?;
 
-        let timestamp_column_array = modelardb_types::array!(data_points, 0, TimestampArray);
-        let field_column_arrays: Vec<_> = (1..data_points.num_columns())
-            .map(|index| modelardb_types::array!(data_points, index, ValueArray))
+        let timestamp_index = self.model_table_metadata.timestamp_column_index;
+        let timestamp_column_array =
+            modelardb_types::array!(data_points, timestamp_index, TimestampArray);
+
+        let field_column_arrays: Vec<_> = self
+            .model_table_metadata
+            .field_column_indices
+            .iter()
+            .map(|index| modelardb_types::array!(data_points, *index, ValueArray))
+            .collect();
+
+        let tag_column_arrays: Vec<_> = self
+            .model_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| modelardb_types::array!(data_points, *index, StringArray))
+            .collect();
+
+        let tag_values: Vec<String> = tag_column_arrays
+            .iter()
+            .map(|array| array.value(0).to_string())
             .collect();
 
         let mut in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             self.tag_hash,
+            tag_values,
             self.model_table_metadata.clone(),
             current_batch_index,
         );

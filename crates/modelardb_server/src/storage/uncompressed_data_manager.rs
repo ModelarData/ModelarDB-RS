@@ -313,6 +313,7 @@ impl UncompressedDataManager {
 
                 let mut uncompressed_in_memory_data_buffer = UncompressedInMemoryDataBuffer::new(
                     tag_hash,
+                    tag_values,
                     model_table_metadata,
                     current_batch_index,
                 );
@@ -591,16 +592,16 @@ impl UncompressedDataManager {
             };
 
         let data_points = maybe_data_points?;
-        let uncompressed_timestamps = modelardb_types::array!(data_points, 0, TimestampArray);
+        let timestamp_index = model_table_metadata.timestamp_column_index;
+        let uncompressed_timestamps =
+            modelardb_types::array!(data_points, timestamp_index, TimestampArray);
 
         let compressed_segments = model_table_metadata
             .field_column_indices
             .iter()
-            .enumerate()
-            .map(|(value_index, field_column_index)| {
-                // One is added to value_index as the first array contains the timestamps.
+            .map(|field_column_index| {
                 let uncompressed_values =
-                    modelardb_types::array!(data_points, value_index + 1, ValueArray);
+                    modelardb_types::array!(data_points, *field_column_index, ValueArray);
                 let univariate_id = tag_hash | (*field_column_index as u64);
                 let error_bound = model_table_metadata.error_bounds[*field_column_index];
 
