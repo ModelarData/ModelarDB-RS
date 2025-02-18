@@ -17,13 +17,17 @@
 
 use std::sync::Arc;
 
-use arrow::array::{BinaryArray, Float32Array, RecordBatch, UInt16Array, UInt64Array, UInt8Array};
+use arrow::array::{
+    BinaryArray, Float32Array, RecordBatch, StringArray, UInt16Array, UInt64Array, UInt8Array,
+};
 use arrow::compute::concat_batches;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
 use modelardb_types::functions;
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, TABLE_METADATA_SCHEMA};
-use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
+use modelardb_types::types::{
+    ArrowTimestamp, ArrowValue, ErrorBound, Timestamp, TimestampArray, Value, ValueArray,
+};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::{model_table_metadata_to_record_batch, normal_table_metadata_to_record_batch};
@@ -112,6 +116,25 @@ pub fn model_table_metadata() -> ModelTableMetadata {
 /// column, a timestamp column, and two field columns.
 pub fn model_table_metadata_arc() -> Arc<ModelTableMetadata> {
     Arc::new(model_table_metadata())
+}
+
+/// Create a [`RecordBatch`] with data that resembles uncompressed data with a single tag and two
+/// field columns. The returned data has `row_count` rows, with a different tag for each row.
+pub fn uncompressed_model_table_record_batch(row_count: usize) -> RecordBatch {
+    let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
+    let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
+    let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
+
+    RecordBatch::try_new(
+        model_table_metadata().schema.clone(),
+        vec![
+            Arc::new(TimestampArray::from(timestamps)),
+            Arc::new(ValueArray::from(values.clone())),
+            Arc::new(ValueArray::from(values)),
+            Arc::new(StringArray::from(tags)),
+        ],
+    )
+    .unwrap()
 }
 
 /// Return a [`RecordBatch`] containing three compressed segments.
