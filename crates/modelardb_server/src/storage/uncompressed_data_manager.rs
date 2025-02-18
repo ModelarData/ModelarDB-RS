@@ -670,7 +670,6 @@ mod tests {
     use std::sync::Arc;
 
     use datafusion::arrow::array::StringBuilder;
-    use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
     use modelardb_common::test::{
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
@@ -714,7 +713,7 @@ mod tests {
 
         // Ingest a single data point and sleep to allow the ingestion thread to finish.
         let mut storage_engine = context.storage_engine.write().await;
-        let data = uncompressed_data(1, model_table_metadata.schema.clone());
+        let data = test::uncompressed_model_table_record_batch(1);
 
         storage_engine
             .insert_data_points(model_table_metadata, data)
@@ -759,7 +758,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
-        let data = uncompressed_data(1, model_table_metadata.schema.clone());
+        let data = test::uncompressed_model_table_record_batch(1);
         let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
@@ -776,7 +775,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
-        let data = uncompressed_data(2, model_table_metadata.schema.clone());
+        let data = test::uncompressed_model_table_record_batch(2);
         let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
@@ -793,7 +792,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
-        let data = uncompressed_data(2, model_table_metadata.schema.clone());
+        let data = test::uncompressed_model_table_record_batch(2);
         let data_size = data.get_array_memory_size();
 
         // Simulate StorageEngine decrementing ingested memory when receiving ingested data.
@@ -814,26 +813,6 @@ mod tests {
                 .remaining_ingested_memory_in_bytes(),
             ingested_memory_before + (data_size as isize)
         );
-    }
-
-    /// Create a [`RecordBatch`] with data that resembles uncompressed data with a single tag and two
-    /// field columns. The returned data has `row_count` rows, with a different tag for each row.
-    /// Also create model table metadata for a model table that matches the created data.
-    fn uncompressed_data(row_count: usize, schema: SchemaRef) -> RecordBatch {
-        let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
-        let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
-        let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
-
-        RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(TimestampArray::from(timestamps)),
-                Arc::new(ValueArray::from(values.clone())),
-                Arc::new(ValueArray::from(values)),
-                Arc::new(StringArray::from(tags)),
-            ],
-        )
-        .unwrap()
     }
 
     #[tokio::test]
