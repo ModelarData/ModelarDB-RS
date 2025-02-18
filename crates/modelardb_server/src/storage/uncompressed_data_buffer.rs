@@ -27,7 +27,7 @@ use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_types::types::{
-    Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
+    Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
 };
 use object_store::path::Path;
 use object_store::ObjectStore;
@@ -365,23 +365,8 @@ impl UncompressedOnDiskDataBuffer {
     ) -> Result<UncompressedInMemoryDataBuffer> {
         let data_points = self.record_batch().await?;
 
-        let timestamp_index = self.model_table_metadata.timestamp_column_index;
-        let timestamp_column_array =
-            modelardb_types::array!(data_points, timestamp_index, TimestampArray);
-
-        let field_column_arrays: Vec<_> = self
-            .model_table_metadata
-            .field_column_indices
-            .iter()
-            .map(|index| modelardb_types::array!(data_points, *index, ValueArray))
-            .collect();
-
-        let tag_column_arrays: Vec<_> = self
-            .model_table_metadata
-            .tag_column_indices
-            .iter()
-            .map(|index| modelardb_types::array!(data_points, *index, StringArray))
-            .collect();
+        let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
+            self.model_table_metadata.column_arrays(&data_points)?;
 
         let tag_values: Vec<String> = tag_column_arrays
             .iter()

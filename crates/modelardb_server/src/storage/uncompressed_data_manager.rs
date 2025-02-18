@@ -23,10 +23,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use datafusion::arrow::array::StringArray;
 use futures::StreamExt;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};
+use modelardb_types::types::{Timestamp, Value, ValueArray};
 use object_store::path::{Path, PathPart};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
@@ -173,24 +172,9 @@ impl UncompressedDataManager {
         // Read the current batch index as it may be updated in parallel.
         let current_batch_index = self.current_batch_index.load(Ordering::Relaxed);
 
-        // Prepare the timestamp column for iteration.
-        let timestamp_index = model_table_metadata.timestamp_column_index;
-        let timestamp_column_array =
-            modelardb_types::array!(data_points, timestamp_index, TimestampArray);
-
-        // Prepare the tag columns for iteration.
-        let tag_column_arrays: Vec<_> = model_table_metadata
-            .tag_column_indices
-            .iter()
-            .map(|index| modelardb_types::array!(data_points, *index, StringArray))
-            .collect();
-
-        // Prepare the field columns for iteration.
-        let field_column_arrays: Vec<_> = model_table_metadata
-            .field_column_indices
-            .iter()
-            .map(|index| modelardb_types::array!(data_points, *index, ValueArray))
-            .collect();
+        // Prepare the columns for iteration.
+        let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
+            model_table_metadata.column_arrays(&data_points)?;
 
         // For each data point, compute a hash from the tags and pass the fields to the storage
         // engine so they can be added to the appropriate UncompressedDataBuffer.
@@ -592,9 +576,8 @@ impl UncompressedDataManager {
             };
 
         let data_points = maybe_data_points?;
-        let timestamp_index = model_table_metadata.timestamp_column_index;
-        let uncompressed_timestamps =
-            modelardb_types::array!(data_points, timestamp_index, TimestampArray);
+        let (uncompressed_timestamps, _field_column_arrays, _tag_column_arrays) =
+            model_table_metadata.column_arrays(&data_points)?;
 
         let compressed_segments = model_table_metadata
             .field_column_indices
