@@ -660,7 +660,7 @@ mod tests {
     };
     use modelardb_storage::test;
     use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
-    use modelardb_types::types::{TimestampBuilder, ValueBuilder};
+    use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
@@ -668,7 +668,8 @@ mod tests {
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
     use crate::{ClusterMode, DataFolders};
 
-    const TAG_HASH: u64 = 9674644176454356993;
+    const TAG_VALUE: &str = "tag";
+    const TAG_HASH: u64 = 15537859409877038916;
 
     // Tests for UncompressedDataManager.
     #[tokio::test]
@@ -803,7 +804,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_VALUE).await;
 
         assert!(data_manager
             .uncompressed_in_memory_data_buffers
@@ -823,11 +824,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_VALUE).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_VALUE).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
@@ -849,7 +850,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (mut data_manager, model_table_metadata) = create_managers(&temp_dir).await;
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_VALUE).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
@@ -857,7 +858,7 @@ mod tests {
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 0);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 1);
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_VALUE).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
@@ -890,9 +891,9 @@ mod tests {
         field_2.append_slice(&[50.0, 100.0, 150.0]);
 
         let mut tag = StringBuilder::new();
-        tag.append_value("A");
-        tag.append_value("A");
-        tag.append_value("A");
+        tag.append_value(TAG_VALUE);
+        tag.append_value(TAG_VALUE);
+        tag.append_value(TAG_VALUE);
 
         let data = RecordBatch::try_new(
             model_table_metadata.schema.clone(),
@@ -916,7 +917,7 @@ mod tests {
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&11395701956291516416)
+                .get(&TAG_HASH)
                 .unwrap()
                 .len(),
             3
@@ -945,7 +946,7 @@ mod tests {
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             &model_table_metadata,
-            TAG_HASH,
+            TAG_VALUE,
         )
         .await;
 
@@ -965,7 +966,7 @@ mod tests {
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
             &mut data_manager,
             &model_table_metadata,
-            TAG_HASH,
+            TAG_VALUE,
         )
         .await;
 
@@ -1014,7 +1015,7 @@ mod tests {
                 1,
                 &mut data_manager,
                 &model_table_metadata.clone(),
-                tag_hash as u64,
+                &tag_hash.to_string(),
             )
             .await;
         }
@@ -1034,7 +1035,7 @@ mod tests {
         );
 
         // If there is enough memory to hold n full buffers, n + 1 are needed to spill a buffer.
-        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_VALUE).await;
 
         // One of the buffers should be spilled due to the memory limit being exceeded.
         assert_eq!(
@@ -1065,7 +1066,7 @@ mod tests {
             .memory_pool
             .remaining_uncompressed_memory_in_bytes();
 
-        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_VALUE).await;
 
         assert!(
             reserved_memory
@@ -1086,7 +1087,7 @@ mod tests {
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             &model_table_metadata,
-            TAG_HASH,
+            TAG_VALUE,
         ));
 
         let remaining_memory = data_manager
@@ -1194,7 +1195,7 @@ mod tests {
             1,
             &mut data_manager,
             &model_table_metadata.clone(),
-            TAG_HASH,
+            TAG_VALUE,
         )
         .await;
 
@@ -1218,7 +1219,13 @@ mod tests {
         );
 
         // Insert data that should force the existing data to now be spilled.
-        insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_HASH + 1).await;
+        insert_data_points(
+            1,
+            &mut data_manager,
+            &model_table_metadata,
+            &format!("{TAG_VALUE}_2"),
+        )
+        .await;
 
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 1);
@@ -1229,7 +1236,7 @@ mod tests {
         count: usize,
         data_manager: &mut UncompressedDataManager,
         model_table_metadata: &Arc<ModelTableMetadata>,
-        tag_hash: u64,
+        tag_value: &str,
     ) {
         let values: &[Value] = &[37.0, 73.0];
         let current_batch_index = 0;
@@ -1237,7 +1244,7 @@ mod tests {
         for i in 0..count {
             data_manager
                 .insert_data_point(
-                    tag_hash,
+                    vec![tag_value.to_owned()],
                     i as i64,
                     &mut values.iter().copied(),
                     model_table_metadata.clone(),
