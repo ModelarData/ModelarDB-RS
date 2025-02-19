@@ -191,11 +191,6 @@ impl UncompressedInMemoryDataBuffer {
             .map_err(|error| error.into())
     }
 
-    /// Return the tag hash that identifies the time series the buffer stores data points from.
-    pub(super) fn tag_hash(&self) -> u64 {
-        self.tag_hash
-    }
-
     /// Return the metadata for the model table the buffer stores data points for.
     pub(super) fn model_table_metadata(&self) -> &Arc<ModelTableMetadata> {
         &self.model_table_metadata
@@ -334,11 +329,6 @@ impl UncompressedOnDiskDataBuffer {
         self.local_data_folder.delete(&self.file_path).await?;
 
         Ok(data_points)
-    }
-
-    /// Return the tag hash that identifies the time series the buffer stores data points from.
-    pub(super) fn tag_hash(&self) -> u64 {
-        self.tag_hash
     }
 
     /// Return the metadata for the model table the buffer stores data points for.
