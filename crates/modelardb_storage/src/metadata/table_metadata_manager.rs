@@ -743,7 +743,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_model_table_metadata() {
-        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         metadata_manager
             .drop_table_metadata(test::MODEL_TABLE_NAME)
