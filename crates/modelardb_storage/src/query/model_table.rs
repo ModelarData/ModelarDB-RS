@@ -42,7 +42,7 @@ use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFile;
 use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
-use modelardb_types::schemas::{DISK_QUERY_COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
+use modelardb_types::schemas::{QUERY_COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -324,9 +324,9 @@ fn new_apache_parquet_exec(
     let log_store = delta_table.log_store();
     let file_scan_config = FileScanConfig {
         object_store_url: log_store.object_store_url(),
-        file_schema: DISK_QUERY_COMPRESSED_SCHEMA.0.clone(),
+        file_schema: QUERY_COMPRESSED_SCHEMA.0.clone(),
         file_groups: vec![partitioned_files],
-        statistics: Statistics::new_unknown(&DISK_QUERY_COMPRESSED_SCHEMA.0),
+        statistics: Statistics::new_unknown(&QUERY_COMPRESSED_SCHEMA.0),
         projection: None,
         limit: maybe_limit,
         table_partition_cols: vec![],
@@ -501,7 +501,7 @@ impl TableProvider for ModelTable {
 
         let maybe_physical_parquet_filters = maybe_convert_logical_expr_to_physical_expr(
             maybe_rewritten_parquet_filters.as_ref(),
-            DISK_QUERY_COMPRESSED_SCHEMA.0.clone(),
+            QUERY_COMPRESSED_SCHEMA.0.clone(),
         )?;
 
         let maybe_physical_grid_filters = maybe_convert_logical_expr_to_physical_expr(
