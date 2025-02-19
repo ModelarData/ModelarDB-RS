@@ -39,10 +39,7 @@ use object_store::ObjectStore;
 use url::Url;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::{
-    apache_parquet_writer_properties, maybe_univariate_ids_uint64_to_int64, METADATA_FOLDER,
-    TABLE_FOLDER,
-};
+use crate::{apache_parquet_writer_properties, METADATA_FOLDER, TABLE_FOLDER};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
 pub struct DeltaLake {
@@ -447,9 +444,6 @@ impl DeltaLake {
         table_name: &str,
         mut compressed_segments: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
-        // Reinterpret univariate_ids from uint64 to int64 if necessary to fix #187 as a stopgap until #197.
-        maybe_univariate_ids_uint64_to_int64(&mut compressed_segments);
-
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
             SortingColumn::new(0, false, false),

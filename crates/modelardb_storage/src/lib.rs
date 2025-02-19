@@ -28,8 +28,8 @@ use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float32Builder, Int64Array,
-    ListArray, ListBuilder, RecordBatch, StringArray, StringBuilder, UInt64Array,
+    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float32Builder,
+    ListArray, ListBuilder, RecordBatch, StringArray, StringBuilder,
 };
 use arrow::compute;
 use arrow::compute::concat_batches;
@@ -55,9 +55,7 @@ use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use futures::StreamExt;
-use modelardb_types::schemas::{
-    DISK_COMPRESSED_SCHEMA, QUERY_COMPRESSED_SCHEMA, TABLE_METADATA_SCHEMA,
-};
+use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::ErrorBound;
 use object_store::path::Path;
 use object_store::ObjectStore;
@@ -184,48 +182,6 @@ pub async fn sql_and_concat(session_context: &SessionContext, sql: &str) -> Resu
     let record_batch = concat_batches(&schema.into(), &record_batches)?;
 
     Ok(record_batch)
-}
-
-/// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
-/// [`UInt64Array`] to [`Int64Array`] if the column is currently [`UInt64Array`], as the Delta Lake
-/// Protocol does not support unsigned integers. `compressed_segments` is modified in-place as
-/// `maybe_univariate_ids_uint64_to_int64()` is designed to be used by
-/// `write_compressed_segments_to_model_table()` which owns `compressed_segments`.
-pub(crate) fn maybe_univariate_ids_uint64_to_int64(compressed_segments: &mut Vec<RecordBatch>) {
-    for record_batch in compressed_segments {
-        // Only convert the univariate ids if they are stored as unsigned integers. The univariate
-        // ids can be stored as signed integers already if the compressed segments have been saved
-        // to disk previously.
-        if record_batch.schema().field(0).data_type() == &DataType::UInt64 {
-            let mut columns = record_batch.columns().to_vec();
-            let univariate_ids = modelardb_types::array!(record_batch, 0, UInt64Array);
-            let signed_univariate_ids: Int64Array =
-                univariate_ids.unary(|value| i64::from_ne_bytes(value.to_ne_bytes()));
-            columns[0] = Arc::new(signed_univariate_ids);
-
-            // unwrap() is safe as columns is constructed to match DISK_COMPRESSED_SCHEMA.
-            *record_batch =
-                RecordBatch::try_new(DISK_COMPRESSED_SCHEMA.0.clone(), columns).unwrap();
-        }
-    }
-}
-
-/// Reinterpret the bits used for univariate ids in `compressed_segments` to convert the column from
-/// [`Int64Array`] to [`UInt64Array`] as the Delta Lake Protocol does not support unsigned integers.
-/// Returns a new [`RecordBatch`] with the univariate ids stored in an [`UInt64Array`] as
-/// `univariate_ids_int64_to_uint64()` is designed to be used by
-/// [`futures::stream::Stream::poll_next()`] and
-/// [`datafusion::physical_plan::PhysicalExpr::evaluate()`] and
-/// [`datafusion::physical_plan::PhysicalExpr::evaluate()`] borrows `compressed_segments` immutably.
-pub fn univariate_ids_int64_to_uint64(compressed_segments: &RecordBatch) -> RecordBatch {
-    let mut columns = compressed_segments.columns().to_vec();
-    let signed_univariate_ids = modelardb_types::array!(compressed_segments, 0, Int64Array);
-    let univariate_ids: UInt64Array =
-        signed_univariate_ids.unary(|value| u64::from_ne_bytes(value.to_ne_bytes()));
-    columns[0] = Arc::new(univariate_ids);
-
-    // unwrap() is safe as columns is constructed to match QUERY_COMPRESSED_SCHEMA.
-    RecordBatch::try_new(QUERY_COMPRESSED_SCHEMA.0.clone(), columns).unwrap()
 }
 
 /// Read all rows from the Apache Parquet file at the location given by `file_path` in
@@ -561,32 +517,9 @@ mod tests {
     use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use modelardb_types::types::ArrowValue;
     use object_store::local::LocalFileSystem;
-    use proptest::num::u64 as ProptestUnivariateId;
-    use proptest::{prop_assert_eq, proptest};
     use tempfile::TempDir;
 
     use crate::test;
-
-    // Tests for maybe_univariate_ids_uint64_to_int64() and univariate_ids_int64_to_uint64().
-    proptest! {
-    #[test]
-    fn test_univariate_ids_uint64_to_int64_to_uint64(univariate_id in ProptestUnivariateId::ANY) {
-        let record_batch = test::compressed_segments_record_batch_with_time(univariate_id, 0, 0.0);
-        let mut expected_record_batch = record_batch.clone();
-        expected_record_batch.remove_column(10);
-
-        let mut record_batches = vec![record_batch.clone()];
-        maybe_univariate_ids_uint64_to_int64(&mut record_batches);
-
-        // maybe_univariate_ids_uint64_to_int64 should not panic when called twice.
-        maybe_univariate_ids_uint64_to_int64(&mut record_batches);
-
-        record_batches[0].remove_column(10);
-        let computed_record_batch = univariate_ids_int64_to_uint64(&record_batches[0]);
-
-        prop_assert_eq!(expected_record_batch, computed_record_batch);
-    }
-    }
 
     // Tests for read_record_batch_from_apache_parquet_file().
     #[tokio::test]
