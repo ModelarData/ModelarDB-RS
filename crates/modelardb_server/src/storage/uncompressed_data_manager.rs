@@ -555,23 +555,22 @@ impl UncompressedDataManager {
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<()> {
-        let (memory_use, maybe_data_points, model_table_metadata) =
-            match uncompressed_data_buffer {
-                UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
-                    uncompressed_in_memory_data_buffer.memory_size(),
-                    uncompressed_in_memory_data_buffer.record_batch().await,
-                    uncompressed_in_memory_data_buffer
-                        .model_table_metadata()
-                        .clone(),
-                ),
-                UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
-                    0,
-                    uncompressed_on_disk_data_buffer.record_batch().await,
-                    uncompressed_on_disk_data_buffer
-                        .model_table_metadata()
-                        .clone(),
-                ),
-            };
+        let (memory_use, maybe_data_points, model_table_metadata) = match uncompressed_data_buffer {
+            UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
+                uncompressed_in_memory_data_buffer.memory_size(),
+                uncompressed_in_memory_data_buffer.record_batch().await,
+                uncompressed_in_memory_data_buffer
+                    .model_table_metadata()
+                    .clone(),
+            ),
+            UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
+                0,
+                uncompressed_on_disk_data_buffer.record_batch().await,
+                uncompressed_on_disk_data_buffer
+                    .model_table_metadata()
+                    .clone(),
+            ),
+        };
 
         let data_points = maybe_data_points?;
         let (uncompressed_timestamps, field_column_arrays, tag_column_arrays) =
@@ -660,8 +659,7 @@ mod tests {
         UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
     use modelardb_storage::test;
-    use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
-    use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueBuilder};
+    use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
@@ -1120,15 +1118,7 @@ mod tests {
         let (data_manager, model_table_metadata) = runtime.block_on(create_managers(&temp_dir));
 
         // Add the spilled buffer.
-        let uncompressed_data = RecordBatch::try_new(
-            UNCOMPRESSED_SCHEMA.0.clone(),
-            vec![
-                Arc::new(TimestampArray::from(vec![0, 1, 2])),
-                Arc::new(ValueArray::from(vec![0.2, 0.5, 0.1])),
-            ],
-        )
-        .unwrap();
-
+        let uncompressed_data = test::uncompressed_model_table_record_batch(3);
         let spilled_buffer = runtime
             .block_on(UncompressedOnDiskDataBuffer::try_spill(
                 0,
