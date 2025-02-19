@@ -31,7 +31,7 @@ use deltalake::protocol::SaveMode;
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_common::arguments;
-use modelardb_types::schemas::{DISK_COMPRESSED_SCHEMA, FIELD_COLUMN};
+use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
@@ -288,13 +288,13 @@ impl DeltaLake {
         .await
     }
 
-    /// Create a Delta Lake table for a model table with `table_name` and [`DISK_COMPRESSED_SCHEMA`]
+    /// Create a Delta Lake table for a model table with `table_name` and [`COMPRESSED_SCHEMA`]
     /// if it does not already exist. Returns [`DeltaTable`] if the table could be created and
     /// [`ModelarDbStorageError`] if it could not.
     pub async fn create_model_table(&self, table_name: &str) -> Result<DeltaTable> {
         self.create_table(
             table_name,
-            &DISK_COMPRESSED_SCHEMA.0,
+            &COMPRESSED_SCHEMA.0,
             &[FIELD_COLUMN.to_owned()],
             self.location_of_compressed_table(table_name),
             SaveMode::ErrorIfExists,
