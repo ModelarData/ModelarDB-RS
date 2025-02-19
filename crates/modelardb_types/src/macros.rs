@@ -71,12 +71,17 @@ macro_rules! value {
 /// ```
 /// # use std::sync::Arc;
 /// #
+/// # use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
 /// # use arrow::record_batch::RecordBatch;
-/// # use modelardb_types::schemas::UNCOMPRESSED_SCHEMA;
-/// # use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};
+/// # use modelardb_types::types::{ArrowTimestamp, ArrowValue, Timestamp, TimestampArray, Value, ValueArray};
+/// #
+/// # let schema = Schema::new(vec![
+/// #     Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
+/// #     Field::new("values", ArrowValue::DATA_TYPE, false),
+/// # ]);
 /// #
 /// # let record_batch = RecordBatch::try_new(
-/// #     UNCOMPRESSED_SCHEMA.0.clone(),
+/// #     Arc::new(schema),
 /// #     vec![
 /// #         Arc::new(TimestampArray::from(Vec::<Timestamp>::new())),
 /// #         Arc::new(ValueArray::from(Vec::<Value>::new())),

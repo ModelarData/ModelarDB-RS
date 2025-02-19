@@ -22,19 +22,11 @@ use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use crate::types::{
     ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
-    QueryCompressedSchema, QuerySchema, TableMetadataSchema, UncompressedSchema,
+    QueryCompressedSchema, QuerySchema, TableMetadataSchema,
 };
 
 /// Name of the column used to partition the compressed segments.
 pub const FIELD_COLUMN: &str = "field_column";
-
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for uncompressed data buffers.
-pub static UNCOMPRESSED_SCHEMA: LazyLock<UncompressedSchema> = LazyLock::new(|| {
-    UncompressedSchema(Arc::new(Schema::new(vec![
-        Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("values", ArrowValue::DATA_TYPE, false),
-    ])))
-});
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments.
 pub static COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
