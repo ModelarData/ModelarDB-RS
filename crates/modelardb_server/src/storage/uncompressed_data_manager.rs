@@ -25,7 +25,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use futures::StreamExt;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_types::types::{Timestamp, Value, ValueArray};
+use modelardb_types::types::{Timestamp, Value};
 use object_store::path::{Path, PathPart};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
@@ -555,12 +555,11 @@ impl UncompressedDataManager {
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<()> {
-        let (memory_use, maybe_data_points, tag_hash, model_table_metadata) =
+        let (memory_use, maybe_data_points, model_table_metadata) =
             match uncompressed_data_buffer {
                 UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
                     uncompressed_in_memory_data_buffer.memory_size(),
                     uncompressed_in_memory_data_buffer.record_batch().await,
-                    uncompressed_in_memory_data_buffer.tag_hash(),
                     uncompressed_in_memory_data_buffer
                         .model_table_metadata()
                         .clone(),
@@ -568,7 +567,6 @@ impl UncompressedDataManager {
                 UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
                     0,
                     uncompressed_on_disk_data_buffer.record_batch().await,
-                    uncompressed_on_disk_data_buffer.tag_hash(),
                     uncompressed_on_disk_data_buffer
                         .model_table_metadata()
                         .clone(),
@@ -576,21 +574,24 @@ impl UncompressedDataManager {
             };
 
         let data_points = maybe_data_points?;
-        let (uncompressed_timestamps, _field_column_arrays, _tag_column_arrays) =
+        let (uncompressed_timestamps, field_column_arrays, tag_column_arrays) =
             model_table_metadata.column_arrays(&data_points)?;
 
-        let compressed_segments = model_table_metadata
-            .field_column_indices
+        let tag_values: Vec<String> = tag_column_arrays
             .iter()
-            .map(|field_column_index| {
-                let uncompressed_values =
-                    modelardb_types::array!(data_points, *field_column_index, ValueArray);
-                let univariate_id = tag_hash | (*field_column_index as u64);
+            .map(|array| array.value(0).to_string())
+            .collect();
+
+        let compressed_segments = field_column_arrays
+            .iter()
+            .zip(model_table_metadata.field_column_indices.iter())
+            .map(|(uncompressed_values, field_column_index)| {
                 let error_bound = model_table_metadata.error_bounds[*field_column_index];
 
                 // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
                 modelardb_compression::try_compress(
-                    univariate_id,
+                    tag_values.clone(),
+                    field_column_index,
                     error_bound,
                     uncompressed_timestamps,
                     uncompressed_values,
