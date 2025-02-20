@@ -155,7 +155,8 @@ impl CompressedDataManager {
             let model_table_name = model_table_name.to_owned();
             debug!("Creating compressed data buffer for table '{model_table_name}' as none exist.",);
 
-            let mut compressed_data_buffer = CompressedDataBuffer::new();
+            let mut compressed_data_buffer =
+                CompressedDataBuffer::new(compressed_segment_batch.model_table_metadata);
             let segment_size = compressed_data_buffer
                 .append_compressed_segments(compressed_segment_batch.compressed_segments);
 
@@ -609,16 +610,8 @@ mod tests {
         CompressedSegmentBatch::new(
             model_table_metadata,
             vec![
-                test::compressed_segments_record_batch_with_time(
-                    COLUMN_INDEX,
-                    time_ms,
-                    offset,
-                ),
-                test::compressed_segments_record_batch_with_time(
-                    COLUMN_INDEX + 1,
-                    time_ms,
-                    offset,
-                ),
+                test::compressed_segments_record_batch_with_time(COLUMN_INDEX, time_ms, offset),
+                test::compressed_segments_record_batch_with_time(COLUMN_INDEX + 1, time_ms, offset),
             ],
         )
     }
