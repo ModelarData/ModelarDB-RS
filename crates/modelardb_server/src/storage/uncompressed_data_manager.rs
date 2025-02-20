@@ -591,7 +591,7 @@ impl UncompressedDataManager {
                 modelardb_compression::try_compress(
                     model_table_metadata.compressed_schema.clone(),
                     tag_values.clone(),
-                    field_column_index,
+                    *field_column_index as u16,
                     error_bound,
                     uncompressed_timestamps,
                     uncompressed_values,

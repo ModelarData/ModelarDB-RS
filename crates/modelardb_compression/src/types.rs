@@ -515,8 +515,10 @@ mod tests {
     use super::*;
 
     use arrow::array::BinaryArray;
+    use arrow::datatypes::{DataType, Field};
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
+    use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampArray, ValueArray};
 
     use crate::compression;
@@ -813,10 +815,15 @@ mod tests {
         // Create a segment that represents its values using a model of the expected type and its
         // residuals using Gorilla, and then assert that the expected encoding is used for it.
         let residuals_end_index = uncompressed_timestamps.len() - 1;
-        let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(1);
+
+        let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
+        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
+        let compressed_schema = Arc::new(Schema::new(compressed_schema_fields));
+
+        let mut compressed_segment_batch_builder =
+            CompressedSegmentBatchBuilder::new(compressed_schema, vec!["tag".to_owned()], 0, 1);
 
         model.finish(
-            0,
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             residuals_end_index,
             &uncompressed_timestamps,
