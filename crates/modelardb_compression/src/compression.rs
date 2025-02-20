@@ -21,7 +21,6 @@ use std::sync::Arc;
 
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
-use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{ErrorBound, TimestampArray, ValueArray};
 
 use crate::error::{ModelarDbCompressionError, Result};
@@ -42,7 +41,7 @@ const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted according to
 /// `uncompressed_timestamps`. Returns [`ModelarDbCompressionError`] if `uncompressed_timestamps`
 /// and `uncompressed_values` have different lengths, otherwise the resulting compressed segments
-/// are returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`] schema.
+/// are returned as a [`RecordBatch`] with the [`compressed_schema`] schema.
 pub fn try_compress(
     compressed_schema: Arc<Schema>,
     tag_values: Vec<String>,
@@ -62,7 +61,7 @@ pub fn try_compress(
 
     // If there is no uncompressed data to compress, an empty [`RecordBatch`] can be returned.
     if uncompressed_timestamps.is_empty() {
-        return Ok(RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone()));
+        return Ok(RecordBatch::new_empty(compressed_schema));
     }
 
     // Enough memory for end_index compressed segments are allocated to never require reallocation
@@ -264,6 +263,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field};
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
+    use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
 
     use crate::{models, MODEL_TYPE_NAMES};
@@ -699,7 +699,7 @@ mod tests {
             compressed_record_batch,
         );
 
-        let model_type_ids = modelardb_types::array!(compressed_record_batch, 1, UInt8Array);
+        let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, UInt8Array);
         assert_eq!(model_type_ids.values(), expected_model_type_ids);
     }
 

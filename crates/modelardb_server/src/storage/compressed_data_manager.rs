@@ -610,12 +610,12 @@ mod tests {
             model_table_metadata,
             vec![
                 test::compressed_segments_record_batch_with_time(
-                    COLUMN_INDEX as u64,
+                    COLUMN_INDEX,
                     time_ms,
                     offset,
                 ),
                 test::compressed_segments_record_batch_with_time(
-                    (COLUMN_INDEX + 1) as u64,
+                    COLUMN_INDEX + 1,
                     time_ms,
                     offset,
                 ),

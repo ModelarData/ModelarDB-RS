@@ -834,9 +834,9 @@ mod tests {
         let batch = compressed_segment_batch_builder.finish();
         assert_eq!(1, batch.num_rows());
 
-        let segment_min_value = modelardb_types::array!(batch, 5, ValueArray).value(0);
-        let segment_max_value = modelardb_types::array!(batch, 6, ValueArray).value(0);
-        let segment_values = modelardb_types::array!(batch, 7, BinaryArray).value(0);
+        let segment_min_value = modelardb_types::array!(batch, 4, ValueArray).value(0);
+        let segment_max_value = modelardb_types::array!(batch, 5, ValueArray).value(0);
+        let segment_values = modelardb_types::array!(batch, 6, BinaryArray).value(0);
 
         assert_eq!(expected_segment_min_value, segment_min_value);
         assert_eq!(expected_segment_max_value, segment_max_value);
