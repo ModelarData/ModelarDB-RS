@@ -350,10 +350,14 @@ fn compute_slope_and_intercept(
 mod tests {
     use super::*;
 
-    use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
+    use std::sync::Arc;
+
+    use arrow::array::{BinaryArray, Float32Array, UInt8Array};
+    use arrow::datatypes::{DataType, Field, Schema};
     use modelardb_common::test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
     };
+    use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
     use proptest::num::f32 as ProptestValue;
     use proptest::strategy::Strategy;
@@ -856,7 +860,20 @@ mod tests {
             (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize),
         );
         let values = ValueArray::from_iter_values(values);
-        let segments = crate::try_compress(1, error_bound, &timestamps, &values).unwrap();
+
+        let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
+        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
+        let compressed_schema = Arc::new(Schema::new(compressed_schema_fields));
+
+        let segments = crate::try_compress(
+            compressed_schema,
+            vec!["tag".to_owned()],
+            0,
+            error_bound,
+            &timestamps,
+            &values,
+        )
+        .unwrap();
 
         // Extract the individual columns from the record batch.
         modelardb_types::arrays!(

@@ -46,7 +46,7 @@ const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 pub fn try_compress(
     compressed_schema: Arc<Schema>,
     tag_values: Vec<String>,
-    field_column_index: &usize,
+    field_column_index: u16,
     error_bound: ErrorBound,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
@@ -71,7 +71,7 @@ pub fn try_compress(
     let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(
         compressed_schema,
         tag_values,
-        *field_column_index as u16,
+        field_column_index,
         end_index,
     );
 
@@ -261,13 +261,14 @@ mod tests {
     use super::*;
 
     use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, UInt64Builder, UInt8Array};
+    use arrow::datatypes::{DataType, Field};
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
 
     use crate::{models, MODEL_TYPE_NAMES};
 
-    const UNIVARIATE_ID: u64 = 1;
+    const TAG_VALUE: &str = "tag";
     const ADD_NOISE_RANGE: Option<Range<f32>> = Some(1.0..1.05);
     const TRY_COMPRESS_TEST_LENGTH: usize = 50;
 
@@ -275,7 +276,9 @@ mod tests {
     #[test]
     fn test_try_compress_empty_time_series_within_absolute_error_bound_zero() {
         let compressed_record_batch = try_compress(
-            UNIVARIATE_ID,
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             &TimestampBuilder::new().finish(),
             &ValueBuilder::new().finish(),
@@ -287,7 +290,9 @@ mod tests {
     #[test]
     fn test_try_compress_empty_time_series_within_relative_error_bound_zero() {
         let compressed_record_batch = try_compress(
-            UNIVARIATE_ID,
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             &TimestampBuilder::new().finish(),
             &ValueBuilder::new().finish(),
@@ -507,7 +512,9 @@ mod tests {
             data_generation::generate_values(uncompressed_timestamps.values(), values_structure);
 
         let compressed_record_batch = try_compress(
-            1,
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
             error_bound,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -655,7 +662,9 @@ mod tests {
         assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
 
         let compressed_record_batch = try_compress(
-            UNIVARIATE_ID,
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
             error_bound,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -869,7 +878,9 @@ mod tests {
             );
 
         let compressed_record_batch = try_compress(
-            UNIVARIATE_ID,
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
             error_bound,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -960,10 +971,15 @@ mod tests {
         let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
         let uncompressed_timestamps = TimestampArray::from_iter_values((100..=500).step_by(100));
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
-        let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(1);
+
+        let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
+            1,
+        );
 
         compress_and_store_residuals_in_a_separate_segment(
-            0,
             error_bound,
             0,
             uncompressed_timestamps.len() - 1,
@@ -997,5 +1013,12 @@ mod tests {
         assert_eq!(8, values.value(0).len());
         assert!(residuals.value(0).is_empty());
         assert!(errors.value(0).is_nan());
+    }
+
+    pub fn compressed_schema() -> Arc<Schema> {
+        let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
+        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
+
+        Arc::new(Schema::new(compressed_schema_fields))
     }
 }
