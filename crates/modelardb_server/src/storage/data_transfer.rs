@@ -284,7 +284,7 @@ mod tests {
     use modelardb_storage::test;
     use tempfile::{self, TempDir};
 
-    const EXPECTED_MODEL_TABLE_FILE_SIZE: usize = 2080;
+    const EXPECTED_MODEL_TABLE_FILE_SIZE: usize = 2038;
 
     // Tests for data transfer component.
     #[tokio::test]
