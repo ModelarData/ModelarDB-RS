@@ -39,6 +39,7 @@ use object_store::ObjectStore;
 use url::Url;
 
 use crate::error::{ModelarDbStorageError, Result};
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::{apache_parquet_writer_properties, METADATA_FOLDER, TABLE_FOLDER};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
@@ -288,15 +289,18 @@ impl DeltaLake {
         .await
     }
 
-    /// Create a Delta Lake table for a model table with `table_name` and [`COMPRESSED_SCHEMA`]
-    /// if it does not already exist. Returns [`DeltaTable`] if the table could be created and
+    /// Create a Delta Lake table for a model table with `model_table_metadata` if it does not
+    /// already exist. Returns [`DeltaTable`] if the table could be created and
     /// [`ModelarDbStorageError`] if it could not.
-    pub async fn create_model_table(&self, table_name: &str) -> Result<DeltaTable> {
+    pub async fn create_model_table(
+        &self,
+        model_table_metadata: &ModelTableMetadata,
+    ) -> Result<DeltaTable> {
         self.create_table(
-            table_name,
-            &COMPRESSED_SCHEMA.0,
+            &model_table_metadata.name,
+            &model_table_metadata.compressed_schema,
             &[FIELD_COLUMN.to_owned()],
-            self.location_of_compressed_table(table_name),
+            self.location_of_compressed_table(&model_table_metadata.name),
             SaveMode::ErrorIfExists,
         )
         .await

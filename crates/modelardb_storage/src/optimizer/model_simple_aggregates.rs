@@ -788,7 +788,7 @@ mod tests {
         let model_table_metadata = test::model_table_metadata_arc();
 
         let delta_table = delta_lake
-            .create_model_table(&model_table_metadata.name)
+            .create_model_table(&model_table_metadata)
             .await
             .unwrap();
 

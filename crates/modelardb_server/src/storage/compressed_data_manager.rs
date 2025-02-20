@@ -390,7 +390,7 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_model_table(test::MODEL_TABLE_NAME)
+            .create_model_table(&test::model_table_metadata())
             .await
             .unwrap();
 
@@ -450,7 +450,7 @@ mod tests {
         let segments = compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .create_model_table(segments.model_table_name())
+            .create_model_table(&segments.model_table_metadata)
             .await
             .unwrap();
 
@@ -506,7 +506,7 @@ mod tests {
         let segments = compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .create_model_table(segments.model_table_name())
+            .create_model_table(&segments.model_table_metadata)
             .await
             .unwrap();
         data_manager
