@@ -444,14 +444,20 @@ impl DeltaLake {
         table_name: &str,
         compressed_segments: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
-        // Specify that the file must be sorted by univariate_id and then by start_time.
-        let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
-        ]);
+        // Specify that the file must be sorted by the tag columns and then by start_time.
+        let mut sorting_columns = Vec::new();
+        let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
+        let compressed_schema_len = compressed_segments[0].schema().fields().len();
+
+        // Compressed segments have the tag columns at the end of the schema.
+        for tag_column_index in base_compressed_schema_len..compressed_schema_len {
+            sorting_columns.push(SortingColumn::new(tag_column_index as i32, false, false));
+        }
+
+        sorting_columns.push(SortingColumn::new(1, false, false));
 
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
-        let writer_properties = apache_parquet_writer_properties(sorting_columns);
+        let writer_properties = apache_parquet_writer_properties(Some(sorting_columns));
 
         self.write_record_batches_to_table(
             self.delta_table(table_name).await?,
