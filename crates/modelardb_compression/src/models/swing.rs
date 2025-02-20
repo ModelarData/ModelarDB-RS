@@ -861,7 +861,6 @@ mod tests {
         // Extract the individual columns from the record batch.
         modelardb_types::arrays!(
             segments,
-            _univariate_id_array,
             model_type_id_array,
             start_time_array,
             end_time_array,

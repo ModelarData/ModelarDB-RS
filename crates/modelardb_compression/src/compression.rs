@@ -17,6 +17,9 @@
 //! using the model types in [`models`] to produce compressed segments containing metadata and
 //! models.
 
+use std::sync::Arc;
+
+use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{ErrorBound, TimestampArray, ValueArray};
@@ -41,7 +44,9 @@ const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 /// and `uncompressed_values` have different lengths, otherwise the resulting compressed segments
 /// are returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`] schema.
 pub fn try_compress(
-    univariate_id: u64,
+    compressed_schema: Arc<Schema>,
+    tag_values: Vec<String>,
+    field_column_index: &usize,
     error_bound: ErrorBound,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
@@ -63,7 +68,12 @@ pub fn try_compress(
     // Enough memory for end_index compressed segments are allocated to never require reallocation
     // as one compressed segment is created per data point in the absolute worst case.
     let end_index = uncompressed_timestamps.len();
-    let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(end_index);
+    let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(
+        compressed_schema,
+        tag_values,
+        *field_column_index as u16,
+        end_index,
+    );
 
     // Compress the uncompressed timestamps and uncompressed values.
     let mut current_start_index = 0;
@@ -84,7 +94,6 @@ pub fn try_compress(
             // Flush the previous model and any residual value if either exists.
             if current_start_index > 0 {
                 store_compressed_segments_with_model_and_or_residuals(
-                    univariate_id,
                     error_bound,
                     previous_model,
                     current_start_index - 1,
@@ -109,7 +118,6 @@ pub fn try_compress(
     }
 
     store_compressed_segments_with_model_and_or_residuals(
-        univariate_id,
         error_bound,
         previous_model,
         end_index - 1,
@@ -155,7 +163,6 @@ pub(crate) fn fit_next_model(
 /// - One compressed segment that stores residuals as a single model if `maybe_model` is
 ///   [`None`].
 fn store_compressed_segments_with_model_and_or_residuals(
-    univariate_id: u64,
     error_bound: ErrorBound,
     maybe_model: Option<CompressedSegmentBuilder>,
     residuals_end_index: usize,
@@ -168,7 +175,6 @@ fn store_compressed_segments_with_model_and_or_residuals(
         if (residuals_end_index - model.end_index) <= RESIDUAL_VALUES_MAX_LENGTH.into() {
             // Few or no residuals exists so the model and any residuals are put into one segment.
             model.finish(
-                univariate_id,
                 error_bound,
                 residuals_end_index,
                 uncompressed_timestamps,
@@ -180,7 +186,6 @@ fn store_compressed_segments_with_model_and_or_residuals(
             let model_end_index = model.end_index;
 
             model.finish(
-                univariate_id,
                 error_bound,
                 model_end_index, // No residuals are stored.
                 uncompressed_timestamps,
@@ -189,7 +194,6 @@ fn store_compressed_segments_with_model_and_or_residuals(
             );
 
             compress_and_store_residuals_in_a_separate_segment(
-                univariate_id,
                 error_bound,
                 model_end_index + 1,
                 residuals_end_index,
@@ -202,7 +206,6 @@ fn store_compressed_segments_with_model_and_or_residuals(
         // The residuals are stored as a separate segment as the first sub-sequence of values in
         // `uncompressed_values` are residuals, thus the residuals must be stored in a segment.
         compress_and_store_residuals_in_a_separate_segment(
-            univariate_id,
             error_bound,
             0,
             residuals_end_index,
@@ -213,12 +216,10 @@ fn store_compressed_segments_with_model_and_or_residuals(
     }
 }
 
-/// For the time series with `univariate_id`, compress the values from `start_index` to and
-/// including `end_index` in `uncompressed_values` using [`Gorilla`] and store the resulting model
-/// with the corresponding timestamps from `uncompressed_timestamps` as a segment in
-/// `compressed_segment_batch_builder`.
+/// Compress the values from `start_index` to and including `end_index` in `uncompressed_values`
+/// using [`Gorilla`] and store the resulting model with the corresponding timestamps from
+/// `uncompressed_timestamps` as a segment in `compressed_segment_batch_builder`.
 fn compress_and_store_residuals_in_a_separate_segment(
-    univariate_id: u64,
     error_bound: ErrorBound,
     start_index: usize,
     end_index: usize,
@@ -241,7 +242,6 @@ fn compress_and_store_residuals_in_a_separate_segment(
     let (values, min_value, max_value) = gorilla.model();
 
     compressed_segment_batch_builder.append_compressed_segment(
-        univariate_id,
         GORILLA_ID,
         start_time,
         end_time,
@@ -260,9 +260,7 @@ mod tests {
 
     use super::*;
 
-    use arrow::array::{
-        ArrayBuilder, BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array,
-    };
+    use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, UInt64Builder, UInt8Array};
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
@@ -977,7 +975,6 @@ mod tests {
         let compressed_record_batch = compressed_segment_batch_builder.finish();
         modelardb_types::arrays!(
             compressed_record_batch,
-            univariate_ids,
             model_type_ids,
             start_times,
             end_times,
@@ -990,7 +987,6 @@ mod tests {
         );
 
         assert_eq!(1, compressed_record_batch.num_rows());
-        assert_eq!(0, univariate_ids.value(0));
         assert_eq!(GORILLA_ID, model_type_ids.value(0));
         assert_eq!(100, start_times.value(0));
         assert_eq!(500, end_times.value(0));
