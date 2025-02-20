@@ -288,18 +288,15 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::array::{Array, Int8Array};
-    use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use modelardb_common::test::{
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, COMPRESSED_SEGMENTS_SIZE,
         INGESTED_RESERVED_MEMORY_IN_BYTES, UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
-    use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_storage::test;
-    use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use tempfile::{self, TempDir};
 
     const COLUMN_INDEX: u16 = 1;
-    const ERROR_BOUND_ZERO: f32 = 0.0;
 
     // Tests for insert_record_batch().
     #[tokio::test]
@@ -525,7 +522,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_compressed_memory_in_bytes(),
-            1437
+            1565
         );
 
         // There should no longer be any compressed data in memory.
@@ -588,27 +585,8 @@ mod tests {
     /// segments. The compressed segments time range is from `time_ms` to `time_ms` + 3, while the
     /// value range is from `offset` + 5.2 to `offset` + 34.2.
     fn compressed_segment_batch_with_time(time_ms: i64, offset: f32) -> CompressedSegmentBatch {
-        let query_schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("field_2", ArrowValue::DATA_TYPE, false),
-        ]));
-        let model_table_metadata = Arc::new(
-            ModelTableMetadata::try_new(
-                test::MODEL_TABLE_NAME.to_owned(),
-                query_schema,
-                vec![
-                    ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-                    ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-                    ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-                ],
-                vec![None, None, None],
-            )
-            .unwrap(),
-        );
-
         CompressedSegmentBatch::new(
-            model_table_metadata,
+            test::model_table_metadata_arc(),
             vec![
                 test::compressed_segments_record_batch_with_time(COLUMN_INDEX, time_ms, offset),
                 test::compressed_segments_record_batch_with_time(COLUMN_INDEX + 1, time_ms, offset),
