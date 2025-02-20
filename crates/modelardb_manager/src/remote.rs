@@ -217,7 +217,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .delta_lake
-            .create_model_table(&model_table_metadata.name)
+            .create_model_table(&model_table_metadata)
             .await
             .map_err(error_to_status_internal)?;
 

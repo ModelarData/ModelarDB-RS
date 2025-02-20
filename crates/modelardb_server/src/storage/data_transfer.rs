@@ -484,7 +484,7 @@ mod tests {
         let model_table_metadata = test::model_table_metadata();
         local_data_folder
             .delta_lake
-            .create_model_table(&model_table_metadata.name)
+            .create_model_table(&model_table_metadata)
             .await
             .unwrap();
 
