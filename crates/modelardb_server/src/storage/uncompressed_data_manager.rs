@@ -589,6 +589,7 @@ impl UncompressedDataManager {
 
                 // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
                 modelardb_compression::try_compress(
+                    model_table_metadata.compressed_schema.clone(),
                     tag_values.clone(),
                     field_column_index,
                     error_bound,

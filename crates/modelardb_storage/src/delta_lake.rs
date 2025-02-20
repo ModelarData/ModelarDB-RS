@@ -442,7 +442,7 @@ impl DeltaLake {
     pub async fn write_compressed_segments_to_model_table(
         &self,
         table_name: &str,
-        mut compressed_segments: Vec<RecordBatch>,
+        compressed_segments: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![

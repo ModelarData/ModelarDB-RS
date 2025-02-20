@@ -18,10 +18,11 @@
 use std::debug_assert;
 use std::sync::Arc;
 
-use arrow::array::{BinaryBuilder, Float32Builder, UInt16Builder, UInt64Builder, UInt8Builder};
+use arrow::array::{
+    ArrayBuilder, ArrayRef, BinaryBuilder, Float32Builder, StringArray, UInt16Array, UInt8Builder,
+};
+use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
-use modelardb_types::functions;
-use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
@@ -194,7 +195,6 @@ impl CompressedSegmentBuilder {
     /// value in `uncompressed_value` after the last value represented by the model in this segment.
     pub(crate) fn finish(
         mut self,
-        univariate_id: u64,
         error_bound: ErrorBound,
         residuals_end_index: usize,
         uncompressed_timestamps: &TimestampArray,
@@ -253,7 +253,6 @@ impl CompressedSegmentBuilder {
         };
 
         compressed_segment_batch_builder.append_compressed_segment(
-            univariate_id,
             self.model_type_id,
             start_time,
             end_time,
@@ -401,8 +400,12 @@ impl CompressedSegmentBuilder {
 
 /// A batch of compressed segments being built.
 pub(crate) struct CompressedSegmentBatchBuilder {
-    /// Univariate id of each compressed segment in the batch.
-    univariate_ids: UInt64Builder,
+    /// Schema of the compressed segments in the batch.
+    compressed_schema: Arc<Schema>,
+    /// Tag values for the time series the compressed segments in the batch belong to.
+    tag_values: Vec<String>,
+    /// Index of the field column the compressed segments in the batch belong to.
+    field_column_index: u16,
     /// Model type id of each compressed segment in the batch.
     model_type_ids: UInt8Builder,
     /// First timestamp of each compressed segment in the batch.
@@ -426,14 +429,19 @@ pub(crate) struct CompressedSegmentBatchBuilder {
     residuals: BinaryBuilder,
     /// Actual error of each compressed segment in the batch.
     error: Float32Builder,
-    /// Field column of each compressed segment in the batch.
-    field_columns: UInt16Builder,
 }
 
 impl CompressedSegmentBatchBuilder {
-    pub(crate) fn new(capacity: usize) -> Self {
+    pub(crate) fn new(
+        compressed_schema: Arc<Schema>,
+        tag_values: Vec<String>,
+        field_column_index: u16,
+        capacity: usize,
+    ) -> Self {
         Self {
-            univariate_ids: UInt64Builder::with_capacity(capacity),
+            compressed_schema,
+            tag_values,
+            field_column_index,
             model_type_ids: UInt8Builder::with_capacity(capacity),
             start_times: TimestampBuilder::with_capacity(capacity),
             end_times: TimestampBuilder::with_capacity(capacity),
@@ -443,14 +451,12 @@ impl CompressedSegmentBatchBuilder {
             values: BinaryBuilder::with_capacity(capacity, capacity),
             residuals: BinaryBuilder::with_capacity(capacity, capacity),
             error: Float32Builder::with_capacity(capacity),
-            field_columns: UInt16Builder::with_capacity(capacity),
         }
     }
 
     /// Append a compressed segment to the builder.
     pub(crate) fn append_compressed_segment(
         &mut self,
-        univariate_id: u64,
         model_type_id: u8,
         start_time: Timestamp,
         end_time: Timestamp,
@@ -461,8 +467,6 @@ impl CompressedSegmentBatchBuilder {
         residuals: &[u8],
         error: f32,
     ) {
-        let field_column_index = functions::univariate_id_to_column_index(univariate_id);
-        self.univariate_ids.append_value(univariate_id);
         self.model_type_ids.append_value(model_type_id);
         self.start_times.append_value(start_time);
         self.end_times.append_value(end_time);
@@ -472,28 +476,37 @@ impl CompressedSegmentBatchBuilder {
         self.values.append_value(values);
         self.residuals.append_value(residuals);
         self.error.append_value(error);
-        self.field_columns.append_value(field_column_index);
     }
 
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
     pub(crate) fn finish(mut self) -> RecordBatch {
-        RecordBatch::try_new(
-            COMPRESSED_SCHEMA.0.clone(),
-            vec![
-                Arc::new(self.univariate_ids.finish()),
-                Arc::new(self.model_type_ids.finish()),
-                Arc::new(self.start_times.finish()),
-                Arc::new(self.end_times.finish()),
-                Arc::new(self.timestamps.finish()),
-                Arc::new(self.min_values.finish()),
-                Arc::new(self.max_values.finish()),
-                Arc::new(self.values.finish()),
-                Arc::new(self.residuals.finish()),
-                Arc::new(self.error.finish()),
-                Arc::new(self.field_columns.finish()),
-            ],
-        )
-        .unwrap()
+        let batch_length = self.model_type_ids.len();
+        let field_column_array: UInt16Array = std::iter::repeat(self.field_column_index)
+            .take(batch_length)
+            .collect();
+
+        let mut columns: Vec<ArrayRef> = vec![
+            Arc::new(self.model_type_ids.finish()),
+            Arc::new(self.start_times.finish()),
+            Arc::new(self.end_times.finish()),
+            Arc::new(self.timestamps.finish()),
+            Arc::new(self.min_values.finish()),
+            Arc::new(self.max_values.finish()),
+            Arc::new(self.values.finish()),
+            Arc::new(self.residuals.finish()),
+            Arc::new(self.error.finish()),
+            Arc::new(field_column_array),
+        ];
+
+        for tag_value in &self.tag_values {
+            let tag_array: StringArray = std::iter::repeat(Some(tag_value))
+                .take(batch_length)
+                .collect();
+
+            columns.push(Arc::new(tag_array));
+        }
+
+        RecordBatch::try_new(self.compressed_schema, columns).unwrap()
     }
 }
 
