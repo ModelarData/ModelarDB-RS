@@ -907,7 +907,6 @@ mod tests {
 
         modelardb_types::arrays!(
             compressed_record_batch,
-            univariate_ids,
             model_type_ids,
             start_times,
             end_times,
@@ -924,7 +923,7 @@ mod tests {
             let start_index = univariate_id_builder.len();
 
             models::grid(
-                univariate_ids.value(row_index),
+                0,
                 model_type_ids.value(row_index),
                 start_times.value(row_index),
                 end_times.value(row_index),

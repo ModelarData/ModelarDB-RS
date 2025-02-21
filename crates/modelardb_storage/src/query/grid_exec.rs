@@ -266,7 +266,6 @@ impl GridStream {
         // Retrieve the arrays from batch and cast them to their concrete type.
         modelardb_types::arrays!(
             batch,
-            univariate_ids,
             model_type_ids,
             start_times,
             end_times,
@@ -307,7 +306,7 @@ impl GridStream {
             let length_before = univariate_id_builder.len();
 
             modelardb_compression::grid(
-                univariate_ids.value(row_index),
+                0,
                 model_type_ids.value(row_index),
                 start_times.value(row_index),
                 end_times.value(row_index),
