@@ -42,7 +42,7 @@ use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFile;
 use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
-use modelardb_types::schemas::{QUERY_COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
+use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;

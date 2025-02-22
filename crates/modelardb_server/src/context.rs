@@ -161,7 +161,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .delta_lake
-            .create_model_table(&model_table_metadata)
+            .create_model_table(model_table_metadata)
             .await?;
 
         let query_folder_table_metadata_manager = self

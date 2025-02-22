@@ -28,8 +28,8 @@ use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float32Builder,
-    ListArray, ListBuilder, RecordBatch, StringArray, StringBuilder,
+    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float32Builder, ListArray,
+    ListBuilder, RecordBatch, StringArray, StringBuilder,
 };
 use arrow::compute;
 use arrow::compute::concat_batches;

@@ -106,7 +106,7 @@ impl UncompressedDataManager {
 
             // unwrap() is safe as data cannot be ingested into a model table that does not exist.
             let model_table_metadata = context
-                .model_table_metadata_from_default_database_schema(&table_name)
+                .model_table_metadata_from_default_database_schema(table_name)
                 .await?
                 .unwrap();
 
