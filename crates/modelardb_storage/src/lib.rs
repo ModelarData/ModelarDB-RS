@@ -63,7 +63,6 @@ use sqlparser::ast::Statement;
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::metadata::table_metadata_manager::TableMetadataManager;
 use crate::query::metadata_table::MetadataTable;
 use crate::query::model_table::ModelTable;
 use crate::query::normal_table::NormalTable;
@@ -121,19 +120,17 @@ pub fn register_normal_table(
     Ok(())
 }
 
-/// Register the model table stored in `delta_table` with `model_table_metadata` from
-/// `table_metadata_manager` and `data_sink` in `session_context`. If the model table could not be
-/// registered with Apache DataFusion, return [`ModelarDbStorageError`].
+/// Register the model table stored in `delta_table` with `model_table_metadata` and `data_sink` in
+/// `session_context`. If the model table could not be registered with Apache DataFusion, return
+/// [`ModelarDbStorageError`].
 pub fn register_model_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,
     model_table_metadata: Arc<ModelTableMetadata>,
-    table_metadata_manager: Arc<TableMetadataManager>,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
     let model_table = ModelTable::new(
         delta_table,
-        table_metadata_manager,
         model_table_metadata.clone(),
         data_sink,
     );

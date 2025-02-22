@@ -22,7 +22,6 @@ use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -164,18 +163,9 @@ impl Context {
             .create_model_table(model_table_metadata)
             .await?;
 
-        let query_folder_table_metadata_manager = self
-            .data_folders
-            .query_data_folder
-            .table_metadata_manager
-            .clone();
-
         // Register the model table with Apache DataFusion.
-        self.register_model_table(
-            Arc::new(model_table_metadata.clone()),
-            query_folder_table_metadata_manager.clone(),
-        )
-        .await?;
+        self.register_model_table(Arc::new(model_table_metadata.clone()))
+            .await?;
 
         // Persist the new model table to the metadata Delta Lake.
         self.data_folders
@@ -250,22 +240,19 @@ impl Context {
             .model_table_metadata()
             .await?;
 
-        let table_metadata_manager = &self.data_folders.query_data_folder.table_metadata_manager;
         for metadata in model_table_metadata {
-            self.register_model_table(metadata, table_metadata_manager.clone())
-                .await?;
+            self.register_model_table(metadata).await?;
         }
 
         Ok(())
     }
 
-    /// Register the model table with `model_table_metadata` from `table_metadata_manager` in Apache
-    /// DataFusion. If the model table does not exist or could not be registered with Apache
-    /// DataFusion, return [`ModelarDbServerError`].
+    /// Register the model table with `model_table_metadata` in Apache DataFusion. If the model
+    /// table does not exist or could not be registered with Apache DataFusion, return
+    /// [`ModelarDbServerError`].
     async fn register_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
-        table_metadata_manager: Arc<TableMetadataManager>,
     ) -> Result<()> {
         let delta_table = self
             .data_folders
@@ -283,7 +270,6 @@ impl Context {
             &self.session_context,
             delta_table,
             model_table_metadata.clone(),
-            table_metadata_manager,
             model_table_data_sink,
         )?;
 

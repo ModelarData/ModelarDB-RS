@@ -630,7 +630,6 @@ mod tests {
     use tonic::async_trait;
 
     use crate::delta_lake::DeltaLake;
-    use crate::metadata::table_metadata_manager::TableMetadataManager;
     use crate::optimizer;
     use crate::query::grid_exec::GridExec;
     use crate::query::model_table::ModelTable;
@@ -766,11 +765,6 @@ mod tests {
         // Setup access to data and metadata in data folder.
         let data_folder_path = temp_dir.path();
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path).unwrap();
-        let table_metadata_manager = Arc::new(
-            TableMetadataManager::try_from_path(data_folder_path, None)
-                .await
-                .unwrap(),
-        );
 
         // Setup access to Apache DataFusion.
         let mut session_state_builder = SessionStateBuilder::new().with_default_features();
@@ -792,16 +786,10 @@ mod tests {
             .await
             .unwrap();
 
-        table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
-            .await
-            .unwrap();
-
         let model_table_data_sink = Arc::new(NoOpDataSink {});
 
         let model_table = ModelTable::new(
             delta_table,
-            table_metadata_manager,
             model_table_metadata.clone(),
             model_table_data_sink,
         );

@@ -46,7 +46,6 @@ use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEM
 use modelardb_types::types::{ArrowTimestamp, ArrowValue};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::metadata::table_metadata_manager::TableMetadataManager;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
@@ -64,8 +63,6 @@ pub(crate) struct ModelTable {
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Where data should be written to.
     data_sink: Arc<dyn DataSink>,
-    /// Access to metadata related to tables.
-    table_metadata_manager: Arc<TableMetadataManager>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u16,
 }
@@ -73,7 +70,6 @@ pub(crate) struct ModelTable {
 impl ModelTable {
     pub(crate) fn new(
         delta_table: DeltaTable,
-        table_metadata_manager: Arc<TableMetadataManager>,
         model_table_metadata: Arc<ModelTableMetadata>,
         data_sink: Arc<dyn DataSink>,
     ) -> Arc<Self> {
@@ -96,7 +92,6 @@ impl ModelTable {
             delta_table,
             model_table_metadata,
             data_sink,
-            table_metadata_manager,
             fallback_field_column,
         })
     }
@@ -403,7 +398,7 @@ impl TableProvider for ModelTable {
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // Create shorthands for the metadata used during planning to improve readability.
-        let table_name = self.model_table_metadata.name.as_str();
+        let _table_name = self.model_table_metadata.name.as_str();
         let schema = &self.model_table_metadata.schema;
         let tag_column_indices = &self.model_table_metadata.tag_column_indices;
         let query_schema = &self.model_table_metadata.query_schema;
