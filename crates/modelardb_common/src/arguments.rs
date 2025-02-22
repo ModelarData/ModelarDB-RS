@@ -158,13 +158,23 @@ pub fn extract_azure_blob_storage_arguments(data: &[u8]) -> Result<(&str, &str, 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    use std::sync::{LazyLock, Mutex};
+
     use proptest::proptest;
+
+    /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
+    static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn test_s3_argument_to_connection_info() {
-        env::set_var("AWS_ENDPOINT", "test_endpoint");
-        env::set_var("AWS_ACCESS_KEY_ID", "test_access_key_id");
-        env::set_var("AWS_SECRET_ACCESS_KEY", "test_secret_access_key");
+        // env::set_var is safe to call in a single-threaded program.
+        unsafe {
+            let _mutex_guard = SET_VAR_LOCK.lock();
+            env::set_var("AWS_ENDPOINT", "test_endpoint");
+            env::set_var("AWS_ACCESS_KEY_ID", "test_access_key_id");
+            env::set_var("AWS_SECRET_ACCESS_KEY", "test_secret_access_key");
+        }
 
         let connection_info = argument_to_connection_info("s3://test_bucket_name").unwrap();
 
@@ -186,8 +196,12 @@ mod test {
 
     #[test]
     fn test_azureblobstorage_argument_to_connection_info() {
-        env::set_var("AZURE_STORAGE_ACCOUNT_NAME", "test_storage_account_name");
-        env::set_var("AZURE_STORAGE_ACCESS_KEY", "test_storage_access_key");
+        // env::set_var is safe to call in a single-threaded program.
+        unsafe {
+            let _mutex_guard = SET_VAR_LOCK.lock();
+            env::set_var("AZURE_STORAGE_ACCOUNT_NAME", "test_storage_account_name");
+            env::set_var("AZURE_STORAGE_ACCESS_KEY", "test_storage_access_key");
+        }
 
         let connection_info =
             argument_to_connection_info("azureblobstorage://test_container_name").unwrap();
