@@ -264,7 +264,7 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
     })
 }
 
-/// Convert `expr` to a [`Option<PhysicalExpr>`] with the types in `query_schema`.
+/// Convert `maybe_expr` to a [`PhysicalExpr`] with the types in `query_schema` if possible.
 fn maybe_convert_logical_expr_to_physical_expr(
     maybe_expr: Option<&Expr>,
     query_schema: SchemaRef,
@@ -342,8 +342,8 @@ fn new_apache_parquet_exec(
     Ok(Arc::new(apache_parquet_exec))
 }
 
-// Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
-// returned if the time the file was last modified cannot be read from `logical_file`.
+/// Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
+/// returned if the time the file was last modified cannot be read from `logical_file`.
 fn logical_file_to_partitioned_file(
     logical_file: &LogicalFile,
 ) -> DataFusionResult<PartitionedFile> {
@@ -398,7 +398,6 @@ impl TableProvider for ModelTable {
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // Create shorthands for the metadata used during planning to improve readability.
-        let _table_name = self.model_table_metadata.name.as_str();
         let schema = &self.model_table_metadata.schema;
         let tag_column_indices = &self.model_table_metadata.tag_column_indices;
         let query_schema = &self.model_table_metadata.query_schema;
@@ -487,8 +486,6 @@ impl TableProvider for ModelTable {
             }
         }
 
-        // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
-        // segments can be pruned by univariate_id in ParquetExec and hash_to_tags can be minimized.
         // Filters are not converted to PhysicalExpr in rewrite_and_combine_filters() to simplify
         // testing rewrite_and_combine_filters() as Expr can be compared while PhysicalExpr cannot.
         let (maybe_rewritten_parquet_filters, maybe_rewritten_grid_filters) =
