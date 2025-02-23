@@ -18,7 +18,7 @@
 //! and returns a physical query plan that produces all the data points required for the query.
 
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -501,9 +501,6 @@ impl TableProvider for ModelTable {
             GRID_SCHEMA.0.clone(),
         )?;
 
-        // TODO: Retrieve the tag values from the data instead.
-        let hash_to_tags: HashMap<u64, Vec<String>> = HashMap::new();
-
         if stored_field_columns_in_projection.is_empty() {
             stored_field_columns_in_projection.push(self.fallback_field_column);
         }
@@ -538,7 +535,6 @@ impl TableProvider for ModelTable {
         let sorted_join_exec = SortedJoinExec::new(
             schema_after_projection,
             stored_columns_in_projection,
-            Arc::new(hash_to_tags),
             field_column_execution_plans,
         );
 

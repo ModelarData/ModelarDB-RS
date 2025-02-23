@@ -21,13 +21,12 @@
 //! or more tag columns.
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
-use datafusion::arrow::array::{ArrayRef, StringBuilder, UInt64Array};
+use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -40,7 +39,6 @@ use datafusion::physical_plan::{
     PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-use modelardb_types::functions;
 
 use crate::query::QUERY_REQUIREMENT_DATA_POINT;
 
@@ -62,8 +60,6 @@ pub(crate) struct SortedJoinExec {
     schema: SchemaRef,
     /// Order of columns to return.
     return_order: Vec<SortedJoinColumnType>,
-    /// Mapping from tag hash to tags.
-    hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Execution plans to read batches of data points from.
     inputs: Vec<Arc<dyn ExecutionPlan>>,
     /// Properties about the plan used in query optimization.
@@ -76,7 +72,6 @@ impl SortedJoinExec {
     pub(crate) fn new(
         schema: SchemaRef,
         return_order: Vec<SortedJoinColumnType>,
-        hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Arc<Self> {
         // Specify that the record batches produced by the execution plan will have an unknown order
@@ -93,7 +88,6 @@ impl SortedJoinExec {
         Arc::new(SortedJoinExec {
             schema,
             return_order,
-            hash_to_tags,
             inputs,
             plan_properties,
             metrics: ExecutionPlanMetricsSet::new(),
@@ -139,7 +133,6 @@ impl ExecutionPlan for SortedJoinExec {
             Ok(SortedJoinExec::new(
                 self.schema.clone(),
                 self.return_order.clone(),
-                self.hash_to_tags.clone(),
                 children,
             ))
         } else {
@@ -165,7 +158,6 @@ impl ExecutionPlan for SortedJoinExec {
         Ok(Box::pin(SortedJoinStream::new(
             self.schema.clone(),
             self.return_order.clone(),
-            self.hash_to_tags.clone(),
             streams,
             BaselineMetrics::new(&self.metrics, partition),
         )))
@@ -208,8 +200,6 @@ struct SortedJoinStream {
     schema: SchemaRef,
     /// Order of columns to return.
     return_order: Vec<SortedJoinColumnType>,
-    /// Mapping from tag hash to tags.
-    hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Streams to read batches of data points from.
     inputs: Vec<SendableRecordBatchStream>,
     /// Current batch of data points to join from.
@@ -222,7 +212,6 @@ impl SortedJoinStream {
     fn new(
         schema: SchemaRef,
         return_order: Vec<SortedJoinColumnType>,
-        hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<SendableRecordBatchStream>,
         baseline_metrics: BaselineMetrics,
     ) -> Self {
@@ -232,7 +221,6 @@ impl SortedJoinStream {
         SortedJoinStream {
             schema,
             return_order,
-            hash_to_tags,
             inputs,
             batches,
             baseline_metrics,
@@ -289,32 +277,11 @@ impl SortedJoinStream {
     fn sorted_join(&self) -> Poll<Option<DataFusionResult<RecordBatch>>> {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
-        // Compute the requested tag columns, so they can be assigned to the batch by index.
+        // TODO: Compute the requested tag columns, so they can be assigned to the batch by index.
         // unwrap() is safe as a record batch is read from each input before this method is called.
         let batch = self.batches[0].as_ref().unwrap();
-        let univariate_ids = modelardb_types::array!(batch, 0, UInt64Array);
 
-        let mut tag_columns = if !self.hash_to_tags.is_empty() {
-            // unwrap() is safe as hash_to_tags is guaranteed not to be empty.
-            let tags = self.hash_to_tags.values().next().unwrap();
-            let capacity = univariate_ids.len();
-            let mut tag_columns: Vec<StringBuilder> = tags
-                .iter()
-                .map(|_vec| StringBuilder::with_capacity(capacity, capacity))
-                .collect();
-
-            for univariate_id in univariate_ids.values() {
-                let tag_hash = functions::univariate_id_to_tag_hash(*univariate_id);
-                let tags = &self.hash_to_tags[&tag_hash];
-                for (index, tag) in tags.iter().enumerate() {
-                    tag_columns[index].append_value(tag.clone());
-                }
-            }
-
-            tag_columns
-        } else {
-            vec![]
-        };
+        let mut tag_columns: Vec<StringBuilder> = vec![];
 
         // The batches and tags columns are already in the correct order, so they can be appended.
         let mut field_index = 0;
