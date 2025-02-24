@@ -159,7 +159,7 @@ impl ExecutionPlan for GridExec {
         partition: usize,
         task_context: Arc<TaskContext>,
     ) -> DataFusionResult<SendableRecordBatchStream> {
-        // Must be read before GridStream as task_context are moved into input.
+        // Must be read before GridStream as task_context is moved into input.
         let batch_size = task_context.session_config().batch_size();
         let grid_stream_metrics = GridStreamMetrics::new(&self.metrics, partition);
 
