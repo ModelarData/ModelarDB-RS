@@ -49,6 +49,7 @@ pub static COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
 pub static DISK_COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
     let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields().to_vec();
     compressed_schema_fields[0] = Arc::new(Field::new("univariate_id", DataType::Int64, false));
+    compressed_schema_fields[1] = Arc::new(Field::new("model_type_id", DataType::Int8, false));
     CompressedSchema(Arc::new(Schema::new(compressed_schema_fields)))
 });
 
@@ -75,6 +76,8 @@ pub static DISK_QUERY_COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::
     let mut query_compressed_schema_fields = QUERY_COMPRESSED_SCHEMA.0.fields().to_vec();
     query_compressed_schema_fields[0] =
         Arc::new(Field::new("univariate_id", DataType::Int64, false));
+    query_compressed_schema_fields[1] =
+        Arc::new(Field::new("model_type_id", DataType::Int8, false));
     CompressedSchema(Arc::new(Schema::new(query_compressed_schema_fields)))
 });
 

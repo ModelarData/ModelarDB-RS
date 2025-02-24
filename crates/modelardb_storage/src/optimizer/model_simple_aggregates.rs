@@ -22,7 +22,7 @@
 use std::mem;
 use std::sync::{Arc, LazyLock};
 
-use datafusion::arrow::array::{ArrayRef, BinaryArray, UInt8Array};
+use datafusion::arrow::array::{ArrayRef, BinaryArray, Int8Array};
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType};
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
@@ -470,7 +470,7 @@ struct ModelSumAccumulator {
 impl Accumulator for ModelSumAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
-        let model_type_ids = modelardb_types::value!(arrays, 1, UInt8Array);
+        let model_type_ids = modelardb_types::value!(arrays, 1, Int8Array);
         let start_times = modelardb_types::value!(arrays, 2, TimestampArray);
         let end_times = modelardb_types::value!(arrays, 3, TimestampArray);
         let timestamps = modelardb_types::value!(arrays, 4, BinaryArray);
@@ -490,7 +490,7 @@ impl Accumulator for ModelSumAccumulator {
             let residuals = residuals.value(row_index);
 
             self.sum += modelardb_compression::sum(
-                model_type_id,
+                model_type_id as u8,
                 start_time,
                 end_time,
                 timestamps,
@@ -542,7 +542,7 @@ struct ModelAvgAccumulator {
 impl Accumulator for ModelAvgAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
-        let model_type_ids = modelardb_types::value!(arrays, 1, UInt8Array);
+        let model_type_ids = modelardb_types::value!(arrays, 1, Int8Array);
         let start_times = modelardb_types::value!(arrays, 2, TimestampArray);
         let end_times = modelardb_types::value!(arrays, 3, TimestampArray);
         let timestamps = modelardb_types::value!(arrays, 4, BinaryArray);
@@ -562,7 +562,7 @@ impl Accumulator for ModelAvgAccumulator {
             let residuals = residuals.value(row_index);
 
             self.sum += modelardb_compression::sum(
-                model_type_id,
+                model_type_id as u8,
                 start_time,
                 end_time,
                 timestamps,

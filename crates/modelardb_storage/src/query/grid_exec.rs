@@ -50,7 +50,7 @@ use modelardb_types::schemas::GRID_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 
 use crate::query::{QUERY_ORDER_DATA_POINT, QUERY_REQUIREMENT_SEGMENT};
-use crate::univariate_ids_int64_to_uint64;
+use crate::maybe_signed_to_unsigned_integers;
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
 /// metadata and models. It is `pub(crate)` so the additional rules added to Apache DataFusion's
@@ -265,7 +265,7 @@ impl GridStream {
             .timer();
 
         // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
-        let batch = univariate_ids_int64_to_uint64(batch);
+        let batch = maybe_signed_to_unsigned_integers(batch);
 
         // Retrieve the arrays from batch and cast them to their concrete type.
         modelardb_types::arrays!(
