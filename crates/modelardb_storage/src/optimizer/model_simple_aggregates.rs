@@ -22,7 +22,8 @@
 use std::mem;
 use std::sync::{Arc, LazyLock};
 
-use datafusion::arrow::array::{ArrayRef, BinaryArray, UInt8Array};
+use arrow::array::UInt8Array;
+use datafusion::arrow::array::{ArrayRef, BinaryArray};
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType};
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
@@ -490,7 +491,7 @@ impl Accumulator for ModelSumAccumulator {
             let residuals = residuals.value(row_index);
 
             self.sum += modelardb_compression::sum(
-                model_type_id,
+                model_type_id as u8,
                 start_time,
                 end_time,
                 timestamps,
@@ -562,7 +563,7 @@ impl Accumulator for ModelAvgAccumulator {
             let residuals = residuals.value(row_index);
 
             self.sum += modelardb_compression::sum(
-                model_type_id,
+                model_type_id as u8,
                 start_time,
                 end_time,
                 timestamps,

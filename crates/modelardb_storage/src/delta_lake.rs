@@ -25,22 +25,25 @@ use arrow::datatypes::{DataType, Field, Schema};
 use datafusion::catalog::TableProvider;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
-use deltalake::kernel::StructField;
+use deltalake::delta_datafusion::DeltaDataChecker;
+use deltalake::kernel::{Action, StructField};
 use deltalake::operations::create::CreateBuilder;
-use deltalake::protocol::SaveMode;
+use deltalake::operations::transaction::{CommitBuilder, CommitProperties};
+use deltalake::operations::writer::{DeltaWriter, WriterConfig};
+use deltalake::protocol::{DeltaOperation, SaveMode};
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_common::arguments;
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
-use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
+use object_store::ObjectStore;
 use url::Url;
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties};
+use crate::{apache_parquet_writer_properties, METADATA_FOLDER, TABLE_FOLDER};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
 pub struct DeltaLake {
@@ -328,7 +331,7 @@ impl DeltaLake {
             // try_into(). To ensure values that are not supported by Delta Lake cannot be inserted
             // into the table, a table backed by Delta Lake cannot contain unsigned integers.
             match field.data_type() {
-                _ if is_model_table => {} // Exception for model_type_id and field_column.
+                DataType::UInt16 if is_model_table => {} // Exception for field_column.
                 DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
                     Err(DeltaTableError::SchemaMismatch {
                         msg: "Unsigned integers are not supported.".to_owned(),
@@ -407,14 +410,14 @@ impl DeltaLake {
         table_name: &str,
         columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable> {
-        let table = self.metadata_delta_table(table_name).await?;
+        let delta_table = self.metadata_delta_table(table_name).await?;
 
         // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
         // returns the Delta Lake schema instead of the Apache DataFusion schema.
-        let record_batch = RecordBatch::try_new(TableProvider::schema(&table), columns)?;
+        let record_batch = RecordBatch::try_new(TableProvider::schema(&delta_table), columns)?;
 
         self.write_record_batches_to_table(
-            table,
+            delta_table,
             vec![record_batch],
             vec![],
             WriterProperties::new(),
@@ -431,13 +434,9 @@ impl DeltaLake {
         record_batches: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
         let writer_properties = apache_parquet_writer_properties(None);
-        self.write_record_batches_to_table(
-            self.delta_table(table_name).await?,
-            record_batches,
-            vec![],
-            writer_properties,
-        )
-        .await
+        let delta_table = self.delta_table(table_name).await?;
+        self.write_record_batches_to_table(delta_table, record_batches, vec![], writer_properties)
+            .await
     }
 
     /// Write `compressed_segments` to a Delta Lake table for a model table with `table_name`.
@@ -463,8 +462,9 @@ impl DeltaLake {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
         let writer_properties = apache_parquet_writer_properties(Some(sorting_columns));
 
+        let delta_table = self.delta_table(table_name).await?;
         self.write_record_batches_to_table(
-            self.delta_table(table_name).await?,
+            delta_table,
             compressed_segments,
             partition_columns,
             writer_properties,
@@ -483,15 +483,15 @@ impl DeltaLake {
         partition_columns: Vec<String>,
         writer_properties: WriterProperties,
     ) -> Result<DeltaTable> {
-        let delta_table_ops: DeltaOps = delta_table.into();
-        let write_builder = delta_table_ops.write(record_batches);
+        let mut delta_lake_writer =
+            DeltaTableWriter::try_new(delta_table, partition_columns, writer_properties)?;
 
-        // Write the record batches to the Delta table.
-        write_builder
-            .with_partition_columns(partition_columns)
-            .with_writer_properties(writer_properties)
-            .await
-            .map_err(|error| error.into())
+        let result = delta_lake_writer.write(&record_batches).await;
+        if result.is_ok() {
+            delta_lake_writer.commit().await
+        } else {
+            delta_lake_writer.rollback().await
+        }
     }
 
     /// Return the location of the compressed model or normal table with `table_name`.
@@ -502,5 +502,107 @@ impl DeltaLake {
     /// Return the location of the metadata table with `table_name`.
     fn location_of_metadata_table(&self, table_name: &str) -> String {
         format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
+    }
+}
+
+/// Functionality for transactionally writing [`RecordBatches`](RecordBatch) to a Delta Table stored
+/// in a local folder or an object store.
+struct DeltaTableWriter {
+    delta_table: DeltaTable,
+    delta_data_checker: DeltaDataChecker,
+    delta_operation: DeltaOperation,
+    delta_writer: DeltaWriter,
+}
+
+impl DeltaTableWriter {
+    /// Create a new [`DeltaTableWriter`]. Returns a [`ModelarDbStorageError`] if the state of the
+    /// delta table cannot be loaded from `delta_table`.
+    fn try_new(
+        delta_table: DeltaTable,
+        partition_columns: Vec<String>,
+        writer_properties: WriterProperties,
+    ) -> Result<Self> {
+        // Checker for if record batches match the table’s invariants, constraints, and nullability.
+        let snapshot = delta_table.snapshot()?;
+        let delta_data_checker = DeltaDataChecker::new(snapshot);
+
+        let delta_operation = DeltaOperation::Write {
+            mode: SaveMode::Append,
+            partition_by: if partition_columns.is_empty() {
+                None
+            } else {
+                Some(partition_columns.clone())
+            },
+            predicate: None,
+        };
+
+        let object_store = delta_table.object_store();
+        let table_schema: Arc<Schema> = TableProvider::schema(&delta_table);
+        let num_indexed_cols = table_schema.fields.len() as i32;
+        let writer_config = WriterConfig::new(
+            table_schema,
+            partition_columns,
+            Some(writer_properties),
+            None,
+            None,
+            num_indexed_cols,
+            None,
+        );
+        let delta_writer = DeltaWriter::new(object_store, writer_config);
+
+        Ok(Self {
+            delta_table,
+            delta_data_checker,
+            delta_operation,
+            delta_writer,
+        })
+    }
+
+    /// Write `record_batches` to the delta table. Returns a [`ModelarDbStorageError`] if one of the
+    /// [`RecordBatches`](RecordBatch) does not match the schema of the delta table or if the
+    /// writing fails.
+    async fn write(&mut self, record_batches: &[RecordBatch]) -> Result<()> {
+        for batch in record_batches {
+            self.delta_data_checker.check_batch(batch).await?;
+            self.delta_writer.write(batch).await?;
+        }
+        Ok(())
+    }
+
+    /// Consume the [`DeltaLakeWriter`], finish the writing, and commit the files that has been
+    /// written to the log. Returns a [`ModelarDbStorageError`] if an error occurs when finishing
+    /// the writing, committing the files that has been written, or updating the [`DeltaTable`].
+    async fn commit(mut self) -> Result<DeltaTable> {
+        let actions = self
+            .delta_writer
+            .close()
+            .await?
+            .into_iter()
+            .map(Action::Add)
+            .collect();
+
+        let commit_properties = CommitProperties::default();
+        let table_data = self.delta_table.snapshot()?;
+        let log_store = self.delta_table.log_store();
+        let _finalized_commit = CommitBuilder::from(commit_properties)
+            .with_actions(actions)
+            .build(Some(table_data), log_store, self.delta_operation)
+            .await?;
+
+        // DeltaTable::new_with_state() is pub(crate).
+        self.delta_table.load().await?;
+        Ok(self.delta_table)
+    }
+
+    /// Consume the [`DeltaLakeWriter`], abort the writing, and delete all of the files that has
+    /// already been written. Returns a [`ModelarDbStorageError`] if an error occurs when aborting
+    /// the writing or deleting the files that has already been written.
+    async fn rollback(self) -> Result<DeltaTable> {
+        let object_store = self.delta_table.object_store();
+        for add in self.delta_writer.close().await? {
+            let path: Path = Path::from(add.path);
+            object_store.delete(&path).await?;
+        }
+        Ok(self.delta_table)
     }
 }
