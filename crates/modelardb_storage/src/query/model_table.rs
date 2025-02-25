@@ -39,7 +39,9 @@ use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::expressions::Column;
-use datafusion::physical_expr::{planner, LexOrdering, PhysicalSortExpr};
+use datafusion::physical_expr::{
+    planner, LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement,
+};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFile;
@@ -73,6 +75,8 @@ pub(crate) struct ModelTable {
     /// [`ParquetExec`] because the storage engine uses this sort order for each Apache Parquet file
     /// in this model table and these files are read sequentially by [`ParquetExec`].
     query_order_segment: LexOrdering,
+    /// The sort order that [`GridExec`] requires for the segments it receives as its input.
+    query_requirement_segment: LexRequirement,
 }
 
 impl ModelTable {
@@ -111,23 +115,32 @@ impl ModelTable {
             nulls_first: false,
         };
 
-        let mut physical_sort_exprs = vec![];
+        let mut segment_physical_sort_exprs = vec![];
         for index in &model_table_metadata.tag_column_indices {
             let tag_column_name = model_table_metadata.schema.field(*index).name();
 
             // unwrap() is safe as the tag columns are always present in the query compressed schema.
             let segment_index = query_compressed_schema.index_of(tag_column_name).unwrap();
 
-            physical_sort_exprs.push(PhysicalSortExpr {
+            segment_physical_sort_exprs.push(PhysicalSortExpr {
                 expr: Arc::new(Column::new(tag_column_name, segment_index)),
                 options: sort_options,
             });
-        };
+        }
 
-        physical_sort_exprs.push(PhysicalSortExpr {
+        segment_physical_sort_exprs.push(PhysicalSortExpr {
             expr: Arc::new(Column::new("start_time", 1)),
             options: sort_options,
         });
+
+        // The sort order that GridExec requires for the segments it receives as its input matches
+        // the sort order ParquetExec guarantees for the segments it produces.
+        let segment_physical_sort_requirements: Vec<PhysicalSortRequirement> =
+            segment_physical_sort_exprs
+                .clone()
+                .into_iter()
+                .map(|physical_sort_expr| physical_sort_expr.into())
+                .collect();
 
         Arc::new(ModelTable {
             delta_table,
@@ -135,7 +148,8 @@ impl ModelTable {
             data_sink,
             fallback_field_column,
             query_compressed_schema,
-            query_order_segment: LexOrdering::new(physical_sort_exprs),
+            query_order_segment: LexOrdering::new(segment_physical_sort_exprs),
+            query_requirement_segment: LexRequirement::new(segment_physical_sort_requirements),
         })
     }
 
