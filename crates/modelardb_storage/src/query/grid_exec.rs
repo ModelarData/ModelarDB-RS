@@ -23,7 +23,7 @@ use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
-
+use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt64Builder,
@@ -35,7 +35,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{EquivalenceProperties, LexRequirement};
+use datafusion::physical_expr::{EquivalenceProperties, LexOrdering, LexRequirement};
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet,
@@ -46,10 +46,7 @@ use datafusion::physical_plan::{
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
-use modelardb_types::schemas::GRID_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
-
-use crate::query::{QUERY_ORDER_DATA_POINT, QUERY_REQUIREMENT_SEGMENT};
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
 /// metadata and models. It is `pub(crate)` so the additional rules added to Apache DataFusion's
@@ -66,24 +63,29 @@ pub(crate) struct GridExec {
     input: Arc<dyn ExecutionPlan>,
     /// Properties about the plan used in query optimization.
     plan_properties: PlanProperties,
+    /// The sort order that [`GridExec`] requires for the segments it receives as its input.
+    query_requirement_segment: LexRequirement,
+    /// The sort order [`GridExec`] guarantees for the data points it produces.
+    query_order_data_point: LexOrdering,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
 
 impl GridExec {
     pub(super) fn new(
+        schema: Arc<Schema>,
         maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
         limit: Option<usize>,
         input: Arc<dyn ExecutionPlan>,
+        query_requirement_segment: LexRequirement,
+        query_order_data_point: LexOrdering,
     ) -> Arc<Self> {
-        let schema = GRID_SCHEMA.0.clone();
-
-        // The global order for the data points produced by the set of GridExec instances producing
+        // The sort order for the data points produced by the set of GridExec instances producing
         // input for a SortedJoinExec must be the same. This is needed because SortedJoinExec
-        // assumes the data it receives from all of its inputs uses the same global sort order.
+        // assumes the data it receives from all of its inputs uses the same sort order.
         let equivalence_properties = EquivalenceProperties::new_with_orderings(
             schema.clone(),
-            &[QUERY_ORDER_DATA_POINT.clone()],
+            &[query_order_data_point.clone()],
         );
 
         let plan_properties = PlanProperties::new(
@@ -99,6 +101,8 @@ impl GridExec {
             limit,
             input,
             plan_properties,
+            query_requirement_segment,
+            query_order_data_point,
             metrics: ExecutionPlanMetricsSet::new(),
         })
     }
@@ -140,9 +144,12 @@ impl ExecutionPlan for GridExec {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
             Ok(GridExec::new(
+                self.schema.clone(),
                 self.maybe_predicate.clone(),
                 self.limit,
                 children[0].clone(),
+                self.query_requirement_segment.clone(),
+                self.query_order_data_point.clone(),
             ))
         } else {
             Err(DataFusionError::Plan(format!(
@@ -186,9 +193,9 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Specify that [`GridExec`] requires that its input provides data that is sorted by
-    /// [`QUERY_REQUIREMENT_SEGMENT`].
+    /// `query_requirement_segment`.
     fn required_input_ordering(&self) -> Vec<Option<LexRequirement>> {
-        vec![Some(QUERY_REQUIREMENT_SEGMENT.clone())]
+        vec![Some(self.query_requirement_segment.clone())]
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.

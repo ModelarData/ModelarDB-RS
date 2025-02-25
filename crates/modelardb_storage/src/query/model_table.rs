@@ -626,7 +626,14 @@ impl TableProvider for ModelTable {
                 vec![LexOrdering::new(self.query_order_segment.to_vec())],
             )?;
 
-            let grid_exec = GridExec::new(maybe_physical_grid_filters.clone(), limit, parquet_exec);
+            let grid_exec = GridExec::new(
+                self.grid_schema.clone(),
+                maybe_physical_grid_filters.clone(),
+                limit,
+                parquet_exec,
+                self.query_requirement_segment.clone(),
+                self.query_order_data_point.clone(),
+            );
 
             field_column_execution_plans.push(grid_exec);
         }
