@@ -77,6 +77,14 @@ pub(crate) struct ModelTable {
     query_order_segment: LexOrdering,
     /// The sort order that [`GridExec`] requires for the segments it receives as its input.
     query_requirement_segment: LexRequirement,
+    /// Schema used internally during query processing.
+    grid_schema: Arc<Schema>,
+    /// The sort order [`GridExec`] guarantees for the data points it produces. It is guaranteed by
+    /// [`GridExec`] because it receives segments sorted by `query_order_segment` from [`ParquetExec`]
+    /// and because these segments cannot contain data points for overlapping time intervals.
+    query_order_data_point: LexOrdering,
+    /// The sort order that [`SortedJoinExec`] requires for the data points it receives as its input.
+    query_requirement_data_point: LexRequirement,
 }
 
 impl ModelTable {
@@ -115,6 +123,20 @@ impl ModelTable {
             Column::new("start_time", 1),
         );
 
+        // Add the tag columns to the base schema for data points.
+        let mut grid_schema_fields = GRID_SCHEMA.0.fields.clone().to_vec();
+        for index in &model_table_metadata.tag_column_indices {
+            grid_schema_fields.push(Arc::new(model_table_metadata.schema.field(*index).clone()));
+        }
+
+        let grid_schema = Arc::new(Schema::new(grid_schema_fields));
+
+        let (query_order_data_point, query_requirement_data_point) = query_order_and_requirement(
+            &model_table_metadata,
+            &grid_schema,
+            Column::new("timestamp", 0),
+        );
+
         Arc::new(ModelTable {
             delta_table,
             model_table_metadata,
@@ -123,6 +145,9 @@ impl ModelTable {
             query_compressed_schema,
             query_order_segment,
             query_requirement_segment,
+            grid_schema,
+            query_order_data_point,
+            query_requirement_data_point,
         })
     }
 
