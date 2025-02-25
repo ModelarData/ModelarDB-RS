@@ -54,8 +54,6 @@ use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
 
-use super::QUERY_ORDER_SEGMENT;
-
 /// A queryable representation of a model table which stores multivariate time series as segments
 /// containing metadata and models. [`ModelTable`] implements [`TableProvider`] so it can be
 /// registered with Apache DataFusion and the multivariate time series queried as multiple
@@ -394,6 +392,8 @@ fn new_apache_parquet_exec(
     partition_filters: &[PartitionFilter],
     maybe_limit: Option<usize>,
     maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
+    file_schema: SchemaRef,
+    output_ordering: Vec<LexOrdering>,
 ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
     // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
     let mut logical_files = delta_table
@@ -416,13 +416,13 @@ fn new_apache_parquet_exec(
     let log_store = delta_table.log_store();
     let file_scan_config = FileScanConfig {
         object_store_url: log_store.object_store_url(),
-        file_schema: QUERY_COMPRESSED_SCHEMA.0.clone(),
+        file_schema,
         file_groups: vec![partitioned_files],
         statistics: Statistics::new_unknown(&QUERY_COMPRESSED_SCHEMA.0),
         projection: None,
         limit: maybe_limit,
         table_partition_cols: vec![],
-        output_ordering: vec![LexOrdering::new(QUERY_ORDER_SEGMENT.to_vec())],
+        output_ordering,
     };
 
     let apache_parquet_exec_builder = if let Some(parquet_filters) = maybe_parquet_filters {
@@ -590,12 +590,12 @@ impl TableProvider for ModelTable {
 
         let maybe_physical_parquet_filters = maybe_convert_logical_expr_to_physical_expr(
             maybe_rewritten_parquet_filters.as_ref(),
-            QUERY_COMPRESSED_SCHEMA.0.clone(),
+            self.query_compressed_schema.clone(),
         )?;
 
         let maybe_physical_grid_filters = maybe_convert_logical_expr_to_physical_expr(
             maybe_rewritten_grid_filters.as_ref(),
-            GRID_SCHEMA.0.clone(),
+            self.grid_schema.clone(),
         )?;
 
         if stored_field_columns_in_projection.is_empty() {
@@ -622,6 +622,8 @@ impl TableProvider for ModelTable {
                 &partition_filters,
                 limit,
                 &maybe_physical_parquet_filters,
+                self.query_compressed_schema.clone(),
+                vec![LexOrdering::new(self.query_order_segment.to_vec())],
             )?;
 
             let grid_exec = GridExec::new(maybe_physical_grid_filters.clone(), limit, parquet_exec);
