@@ -40,8 +40,6 @@ use datafusion::physical_plan::{
 };
 use futures::stream::{Stream, StreamExt};
 
-use crate::query::QUERY_REQUIREMENT_DATA_POINT;
-
 /// The different types of columns supported by [`SortedJoinExec`], used for specifying the order in
 /// which the timestamp, field, and tag columns should be returned by [`SortedJoinStream`].
 #[derive(Debug, Clone)]
@@ -64,6 +62,8 @@ pub(crate) struct SortedJoinExec {
     inputs: Vec<Arc<dyn ExecutionPlan>>,
     /// Properties about the plan used in query optimization.
     plan_properties: PlanProperties,
+    /// The sort order that [`SortedJoinExec`] requires for the data points it receives as its input.
+    query_requirement_data_point: LexRequirement,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
@@ -73,9 +73,9 @@ impl SortedJoinExec {
         schema: SchemaRef,
         return_order: Vec<SortedJoinColumnType>,
         inputs: Vec<Arc<dyn ExecutionPlan>>,
+        query_requirement_data_point: LexRequirement,
     ) -> Arc<Self> {
-        // Specify that the record batches produced by the execution plan will have an unknown order
-        // as the output from SortedJoinExec does not include the univariate_id but instead tags.
+        // Specify that the record batches produced by the execution plan will have an unknown order.
         let equivalence_properties = EquivalenceProperties::new(schema.clone());
 
         let plan_properties = PlanProperties::new(
@@ -90,6 +90,7 @@ impl SortedJoinExec {
             return_order,
             inputs,
             plan_properties,
+            query_requirement_data_point,
             metrics: ExecutionPlanMetricsSet::new(),
         })
     }
@@ -134,6 +135,7 @@ impl ExecutionPlan for SortedJoinExec {
                 self.schema.clone(),
                 self.return_order.clone(),
                 children,
+                self.query_requirement_data_point.clone(),
             ))
         } else {
             Err(DataFusionError::Plan(format!(
@@ -176,9 +178,9 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Specify that [`SortedJoinStream`] requires that its inputs' provide data that is sorted by
-    /// [`QUERY_REQUIREMENT_DATA_POINT`].
+    /// `query_requirement_data_point`.
     fn required_input_ordering(&self) -> Vec<Option<LexRequirement>> {
-        vec![Some(QUERY_REQUIREMENT_DATA_POINT.clone()); self.inputs.len()]
+        vec![Some(self.query_requirement_data_point.clone()); self.inputs.len()]
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.
@@ -289,11 +291,11 @@ impl SortedJoinStream {
 
         for element in &self.return_order {
             match element {
-                SortedJoinColumnType::Timestamp => columns.push(batch.column(1).clone()),
+                SortedJoinColumnType::Timestamp => columns.push(batch.column(0).clone()),
                 SortedJoinColumnType::Field => {
                     // unwrap() is safe as a record batch has already been read from each input.
                     let batch = self.batches[field_index].as_ref().unwrap();
-                    columns.push(batch.column(2).clone());
+                    columns.push(batch.column(1).clone());
                     field_index += 1;
                 }
                 SortedJoinColumnType::Tag => {

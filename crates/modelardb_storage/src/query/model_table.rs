@@ -642,6 +642,7 @@ impl TableProvider for ModelTable {
             schema_after_projection,
             stored_columns_in_projection,
             field_column_execution_plans,
+            self.query_requirement_data_point.clone(),
         );
 
         // Only include GeneratedAsExec in the query plan if there are columns to generate.
