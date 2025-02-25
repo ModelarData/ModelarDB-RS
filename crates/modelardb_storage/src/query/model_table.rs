@@ -109,38 +109,11 @@ impl ModelTable {
 
         let query_compressed_schema = Arc::new(Schema::new(query_compressed_schema_fields));
 
-        // Segments are sorted by the tag columns and the start time.
-        let sort_options = SortOptions {
-            descending: false,
-            nulls_first: false,
-        };
-
-        let mut segment_physical_sort_exprs = vec![];
-        for index in &model_table_metadata.tag_column_indices {
-            let tag_column_name = model_table_metadata.schema.field(*index).name();
-
-            // unwrap() is safe as the tag columns are always present in the query compressed schema.
-            let segment_index = query_compressed_schema.index_of(tag_column_name).unwrap();
-
-            segment_physical_sort_exprs.push(PhysicalSortExpr {
-                expr: Arc::new(Column::new(tag_column_name, segment_index)),
-                options: sort_options,
-            });
-        }
-
-        segment_physical_sort_exprs.push(PhysicalSortExpr {
-            expr: Arc::new(Column::new("start_time", 1)),
-            options: sort_options,
-        });
-
-        // The sort order that GridExec requires for the segments it receives as its input matches
-        // the sort order ParquetExec guarantees for the segments it produces.
-        let segment_physical_sort_requirements: Vec<PhysicalSortRequirement> =
-            segment_physical_sort_exprs
-                .clone()
-                .into_iter()
-                .map(|physical_sort_expr| physical_sort_expr.into())
-                .collect();
+        let (query_order_segment, query_requirement_segment) = query_order_and_requirement(
+            &model_table_metadata,
+            &query_compressed_schema,
+            Column::new("start_time", 1),
+        );
 
         Arc::new(ModelTable {
             delta_table,
@@ -148,8 +121,8 @@ impl ModelTable {
             data_sink,
             fallback_field_column,
             query_compressed_schema,
-            query_order_segment: LexOrdering::new(segment_physical_sort_exprs),
-            query_requirement_segment: LexRequirement::new(segment_physical_sort_requirements),
+            query_order_segment,
+            query_requirement_segment,
         })
     }
 
