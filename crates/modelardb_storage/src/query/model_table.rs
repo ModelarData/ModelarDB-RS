@@ -65,6 +65,8 @@ pub(crate) struct ModelTable {
     data_sink: Arc<dyn DataSink>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u16,
+    /// Schema of the compressed segments stored on disk.
+    query_compressed_schema: Arc<Schema>,
 }
 
 impl ModelTable {
@@ -88,11 +90,21 @@ impl ModelTable {
                 .unwrap() as u16 // unwrap() is safe as all model tables contain at least one field.
         };
 
+        // Add the tag columns to the base schema for queryable compressed segments.
+        let mut query_compressed_schema_fields = QUERY_COMPRESSED_SCHEMA.0.fields.clone().to_vec();
+        for index in &model_table_metadata.tag_column_indices {
+            query_compressed_schema_fields
+                .push(Arc::new(model_table_metadata.schema.field(*index).clone()));
+        }
+
+        let query_compressed_schema = Arc::new(Schema::new(query_compressed_schema_fields));
+
         Arc::new(ModelTable {
             delta_table,
             model_table_metadata,
             data_sink,
             fallback_field_column,
+            query_compressed_schema,
         })
     }
 
