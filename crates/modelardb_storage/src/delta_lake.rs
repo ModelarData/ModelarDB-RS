@@ -40,6 +40,7 @@ use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use url::Url;
+use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -507,17 +508,23 @@ impl DeltaLake {
 
 /// Functionality for transactionally writing [`RecordBatches`](RecordBatch) to a Delta Table stored
 /// in a local folder or an object store.
-struct DeltaTableWriter {
+pub struct DeltaTableWriter {
+    /// Delta table that all of the record batches will be written to.
     delta_table: DeltaTable,
+    /// Checker that ensures all of the record batches match the table.
     delta_data_checker: DeltaDataChecker,
+    /// Write operation that will be committed to the delta table.
     delta_operation: DeltaOperation,
+    /// Unique identifier for this write operation to the delta table.
+    operation_id: Uuid,
+    /// Writes record batches to the delta table as Apache Parquet files.
     delta_writer: DeltaWriter,
 }
 
 impl DeltaTableWriter {
     /// Create a new [`DeltaTableWriter`]. Returns a [`ModelarDbStorageError`] if the state of the
     /// delta table cannot be loaded from `delta_table`.
-    fn try_new(
+    pub fn try_new(
         delta_table: DeltaTable,
         partition_columns: Vec<String>,
         writer_properties: WriterProperties,
@@ -526,6 +533,7 @@ impl DeltaTableWriter {
         let snapshot = delta_table.snapshot()?;
         let delta_data_checker = DeltaDataChecker::new(snapshot);
 
+        // Operation that will be committed.
         let delta_operation = DeltaOperation::Write {
             mode: SaveMode::Append,
             partition_by: if partition_columns.is_empty() {
@@ -536,7 +544,12 @@ impl DeltaTableWriter {
             predicate: None,
         };
 
-        let object_store = delta_table.object_store();
+        // A UUID version 4 as the operation id to is used to match the Operation trait in the
+        // deltalake crate as it is pub(trait) and thus cannot be used directly in DeltaTableWriter.
+       let operation_id = Uuid::new_v4();
+
+        // Writer that will write the record batches.
+        let object_store = delta_table.log_store().object_store(Some(operation_id));
         let table_schema: Arc<Schema> = TableProvider::schema(&delta_table);
         let num_indexed_cols = table_schema.fields.len() as i32;
         let writer_config = WriterConfig::new(
@@ -554,6 +567,7 @@ impl DeltaTableWriter {
             delta_table,
             delta_data_checker,
             delta_operation,
+            operation_id,
             delta_writer,
         })
     }
@@ -561,7 +575,7 @@ impl DeltaTableWriter {
     /// Write `record_batches` to the delta table. Returns a [`ModelarDbStorageError`] if one of the
     /// [`RecordBatches`](RecordBatch) does not match the schema of the delta table or if the
     /// writing fails.
-    async fn write(&mut self, record_batches: &[RecordBatch]) -> Result<()> {
+    pub async fn write(&mut self, record_batches: &[RecordBatch]) -> Result<()> {
         for batch in record_batches {
             self.delta_data_checker.check_batch(batch).await?;
             self.delta_writer.write(batch).await?;
@@ -572,7 +586,7 @@ impl DeltaTableWriter {
     /// Consume the [`DeltaLakeWriter`], finish the writing, and commit the files that has been
     /// written to the log. Returns a [`ModelarDbStorageError`] if an error occurs when finishing
     /// the writing, committing the files that has been written, or updating the [`DeltaTable`].
-    async fn commit(mut self) -> Result<DeltaTable> {
+    pub async fn commit(mut self) -> Result<DeltaTable> {
         let actions = self
             .delta_writer
             .close()
@@ -586,6 +600,7 @@ impl DeltaTableWriter {
         let log_store = self.delta_table.log_store();
         let _finalized_commit = CommitBuilder::from(commit_properties)
             .with_actions(actions)
+            .with_operation_id(self.operation_id)
             .build(Some(table_data), log_store, self.delta_operation)
             .await?;
 
@@ -596,8 +611,9 @@ impl DeltaTableWriter {
 
     /// Consume the [`DeltaLakeWriter`], abort the writing, and delete all of the files that has
     /// already been written. Returns a [`ModelarDbStorageError`] if an error occurs when aborting
-    /// the writing or deleting the files that has already been written.
-    async fn rollback(self) -> Result<DeltaTable> {
+    /// the writing or deleting the files that has already been written. Rollback is not called
+    /// automatically in drop() is not async and async_drop() is not yet a stable API.
+    pub async fn rollback(self) -> Result<DeltaTable> {
         let object_store = self.delta_table.object_store();
         for add in self.delta_writer.close().await? {
             let path: Path = Path::from(add.path);
