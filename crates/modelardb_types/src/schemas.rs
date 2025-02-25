@@ -21,8 +21,8 @@ use std::sync::LazyLock;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use crate::types::{
-    ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
-    QueryCompressedSchema, QuerySchema, TableMetadataSchema,
+    ArrowTimestamp, ArrowValue, CompressedSchema, ConfigurationSchema, QueryCompressedSchema,
+    QuerySchema, TableMetadataSchema,
 };
 
 /// Name of the column used to partition the compressed segments.
@@ -67,7 +67,6 @@ pub static COMPRESSED_METADATA_SIZE_IN_BYTES: LazyLock<usize> = LazyLock::new(||
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used internally during query processing.
 pub static GRID_SCHEMA: LazyLock<QuerySchema> = LazyLock::new(|| {
     QuerySchema(Arc::new(Schema::new(vec![
-        Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
         Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
         Field::new("value", ArrowValue::DATA_TYPE, false),
     ])))
