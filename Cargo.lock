@@ -1718,8 +1718,7 @@ dependencies = [
 [[package]]
 name = "deltalake"
 version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b4f6cf45636a1020edfc537d82524eb5c06578602442b23fc02717a44c193ec"
+source = "git+https://github.com/ModelarData/delta-rs?rev=1c5924931ba105305b0bae86795b639de43f9be3#1c5924931ba105305b0bae86795b639de43f9be3"
 dependencies = [
  "deltalake-aws",
  "deltalake-core",
@@ -1728,8 +1727,7 @@ dependencies = [
 [[package]]
 name = "deltalake-aws"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd5a819e95c40bd32b26e56a140bcf9b6bc2797b8c39fb761bed44f830a8265d"
+source = "git+https://github.com/ModelarData/delta-rs?rev=1c5924931ba105305b0bae86795b639de43f9be3#1c5924931ba105305b0bae86795b639de43f9be3"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1755,8 +1753,7 @@ dependencies = [
 [[package]]
 name = "deltalake-core"
 version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44bef195d284f2c188d79be36caadbe2e3d994238c68ca7d3d2bf3b9a777b124"
+source = "git+https://github.com/ModelarData/delta-rs?rev=1c5924931ba105305b0bae86795b639de43f9be3#1c5924931ba105305b0bae86795b639de43f9be3"
 dependencies = [
  "arrow",
  "arrow-arith",
