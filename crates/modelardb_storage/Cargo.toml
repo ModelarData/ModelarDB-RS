@@ -36,6 +36,7 @@ sqlparser.workspace = true
 tokio = { workspace = true }
 tonic.workspace = true
 url.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
