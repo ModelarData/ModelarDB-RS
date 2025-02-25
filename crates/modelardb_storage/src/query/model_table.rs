@@ -23,6 +23,7 @@ use std::fmt;
 use std::result::Result as StdResult;
 use std::sync::Arc;
 
+use arrow::compute::SortOptions;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
@@ -37,7 +38,8 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
-use datafusion::physical_expr::{planner, LexOrdering};
+use datafusion::physical_expr::expressions::Column;
+use datafusion::physical_expr::{planner, LexOrdering, PhysicalSortExpr};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFile;
@@ -67,6 +69,10 @@ pub(crate) struct ModelTable {
     fallback_field_column: u16,
     /// Schema of the compressed segments stored on disk.
     query_compressed_schema: Arc<Schema>,
+    /// The sort order [`ParquetExec`] guarantees for the segments it produces. It is guaranteed by
+    /// [`ParquetExec`] because the storage engine uses this sort order for each Apache Parquet file
+    /// in this model table and these files are read sequentially by [`ParquetExec`].
+    query_order_segment: LexOrdering,
 }
 
 impl ModelTable {
@@ -99,12 +105,37 @@ impl ModelTable {
 
         let query_compressed_schema = Arc::new(Schema::new(query_compressed_schema_fields));
 
+        // Segments are sorted by the tag columns and the start time.
+        let sort_options = SortOptions {
+            descending: false,
+            nulls_first: false,
+        };
+
+        let mut physical_sort_exprs = vec![];
+        for index in &model_table_metadata.tag_column_indices {
+            let tag_column_name = model_table_metadata.schema.field(*index).name();
+
+            // unwrap() is safe as the tag columns are always present in the query compressed schema.
+            let segment_index = query_compressed_schema.index_of(tag_column_name).unwrap();
+
+            physical_sort_exprs.push(PhysicalSortExpr {
+                expr: Arc::new(Column::new(tag_column_name, segment_index)),
+                options: sort_options,
+            });
+        };
+
+        physical_sort_exprs.push(PhysicalSortExpr {
+            expr: Arc::new(Column::new("start_time", 1)),
+            options: sort_options,
+        });
+
         Arc::new(ModelTable {
             delta_table,
             model_table_metadata,
             data_sink,
             fallback_field_column,
             query_compressed_schema,
+            query_order_segment: LexOrdering::new(physical_sort_exprs),
         })
     }
 
