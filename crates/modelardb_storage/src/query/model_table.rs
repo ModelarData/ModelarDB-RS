@@ -203,6 +203,48 @@ impl fmt::Debug for ModelTable {
     }
 }
 
+/// Return a [`LexOrdering`] and [`LexRequirement`] that sort by the tag columns from
+/// `model_table_metadata` in `schema` first and then by `time_column`.
+fn query_order_and_requirement(
+    model_table_metadata: &ModelTableMetadata,
+    schema: &Schema,
+    time_column: Column,
+) -> (LexOrdering, LexRequirement) {
+    let sort_options = SortOptions {
+        descending: false,
+        nulls_first: false,
+    };
+
+    let mut physical_sort_exprs = vec![];
+    for index in &model_table_metadata.tag_column_indices {
+        let tag_column_name = model_table_metadata.schema.field(*index).name();
+
+        // unwrap() is safe as the tag columns are always present in the schema.
+        let segment_index = schema.index_of(tag_column_name).unwrap();
+
+        physical_sort_exprs.push(PhysicalSortExpr {
+            expr: Arc::new(Column::new(tag_column_name, segment_index)),
+            options: sort_options,
+        });
+    }
+
+    physical_sort_exprs.push(PhysicalSortExpr {
+        expr: Arc::new(time_column),
+        options: sort_options,
+    });
+
+    let physical_sort_requirements: Vec<PhysicalSortRequirement> = physical_sort_exprs
+        .clone()
+        .into_iter()
+        .map(|physical_sort_expr| physical_sort_expr.into())
+        .collect();
+
+    (
+        LexOrdering::new(physical_sort_exprs),
+        LexRequirement::new(physical_sort_requirements),
+    )
+}
+
 /// Rewrite and combine the `filters` that are written in terms of the model table's query schema,
 /// to a filter that is written in terms of the schema used for compressed segments by the storage
 /// engine and a filter that is written in terms of the schema used for univariate time series by
