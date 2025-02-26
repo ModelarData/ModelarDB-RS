@@ -24,6 +24,7 @@ use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::compute::SortOptions;
+use arrow::datatypes::DataType::Utf8;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
@@ -551,9 +552,7 @@ impl TableProvider for ModelTable {
         let mut stored_columns_in_projection: Vec<SortedJoinColumnType> =
             Vec::with_capacity(projection.len());
         let mut stored_field_columns_in_projection: Vec<u16> =
-            Vec::with_capacity(query_schema.fields.len() - 1 - tag_column_indices.len());
-        let mut stored_tag_columns_in_projection: Vec<&str> =
-            Vec::with_capacity(tag_column_indices.len());
+            Vec::with_capacity(schema.fields.len() - 1 - tag_column_indices.len());
         let mut generated_columns_in_projection: Vec<ColumnToGenerate> =
             Vec::with_capacity(query_schema.fields.len() - schema.fields().len());
 
@@ -561,11 +560,10 @@ impl TableProvider for ModelTable {
             if *query_schema.field(*query_schema_index).data_type() == ArrowTimestamp::DATA_TYPE {
                 // Timestamp.
                 stored_columns_in_projection.push(SortedJoinColumnType::Timestamp);
-            } else if tag_column_indices.contains(query_schema_index) {
+            } else if *query_schema.field(*query_schema_index).data_type() == Utf8 {
                 // Tag.
-                stored_tag_columns_in_projection
-                    .push(query_schema.fields[*query_schema_index].name());
-                stored_columns_in_projection.push(SortedJoinColumnType::Tag);
+                let tag_column_name = query_schema.fields[*query_schema_index].name().clone();
+                stored_columns_in_projection.push(SortedJoinColumnType::Tag(tag_column_name));
             } else if let Some(generated_column) = &generated_columns[*query_schema_index] {
                 // Generated field.
                 let physical_expr = convert_logical_expr_to_physical_expr(
