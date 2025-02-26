@@ -923,7 +923,6 @@ mod tests {
             let start_index = univariate_id_builder.len();
 
             models::grid(
-                0,
                 model_type_ids.value(row_index),
                 start_times.value(row_index),
                 end_times.value(row_index),
@@ -932,7 +931,6 @@ mod tests {
                 max_values.value(row_index),
                 values.value(row_index),
                 residuals.value(row_index),
-                &mut univariate_id_builder,
                 &mut timestamp_builder,
                 &mut value_builder,
             );

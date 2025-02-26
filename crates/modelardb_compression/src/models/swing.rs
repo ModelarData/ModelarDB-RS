@@ -25,7 +25,7 @@
 
 use modelardb_types::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
 use modelardb_types::types::{
-    ErrorBound, Timestamp, TimestampBuilder, UnivariateIdBuilder, Value, ValueBuilder,
+    ErrorBound, Timestamp, TimestampBuilder, Value, ValueBuilder,
 };
 
 use super::timestamps;
@@ -880,12 +880,10 @@ mod tests {
         assert_eq!(model_type_id_array.value(0), SWING_ID);
 
         // Reconstruct all values from the segment.
-        let mut reconstructed_ids = UnivariateIdBuilder::with_capacity(timestamps.len());
         let mut reconstructed_timestamps = TimestampBuilder::with_capacity(timestamps.len());
         let mut reconstructed_values = ValueBuilder::with_capacity(timestamps.len());
 
         models::grid(
-            0,
             model_type_id_array.value(0),
             start_time_array.value(0),
             end_time_array.value(0),
@@ -894,7 +892,6 @@ mod tests {
             max_value_array.value(0),
             values_array.value(0),
             residuals_array.value(0),
-            &mut reconstructed_ids,
             &mut reconstructed_timestamps,
             &mut reconstructed_values,
         );
