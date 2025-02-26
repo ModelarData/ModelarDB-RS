@@ -416,9 +416,9 @@ fn new_apache_parquet_exec(
     let log_store = delta_table.log_store();
     let file_scan_config = FileScanConfig {
         object_store_url: log_store.object_store_url(),
-        file_schema,
+        file_schema: file_schema.clone(),
         file_groups: vec![partitioned_files],
-        statistics: Statistics::new_unknown(&QUERY_COMPRESSED_SCHEMA.0),
+        statistics: Statistics::new_unknown(&file_schema),
         projection: None,
         limit: maybe_limit,
         table_partition_cols: vec![],

@@ -24,6 +24,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
+use arrow::array::{StringArray, StringBuilder};
 use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
@@ -46,6 +47,7 @@ use datafusion::physical_plan::{
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
+use modelardb_types::schemas::QUERY_COMPRESSED_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
@@ -284,6 +286,11 @@ impl GridStream {
             _error_array
         );
 
+        let mut tag_arrays = vec![];
+        for tag_index in QUERY_COMPRESSED_SCHEMA.0.fields().len()..batch.num_columns() {
+            tag_arrays.push(modelardb_types::array!(batch, tag_index, StringArray));
+        }
+
         // Allocate builders with approximately enough capacity. The builders are allocated with
         // enough capacity for the remaining data points in the current batch and one data point
         // from each segment in the new batch as each segment contains at least one data point.
@@ -291,6 +298,14 @@ impl GridStream {
         let new_rows = batch.num_rows();
         let mut timestamp_builder = TimestampBuilder::with_capacity(current_rows + new_rows);
         let mut value_builder = ValueBuilder::with_capacity(current_rows + new_rows);
+
+        let mut tag_builders = vec![];
+        for _ in 0..tag_arrays.len() {
+            tag_builders.push(StringBuilder::with_capacity(
+                current_rows + new_rows,
+                current_rows + new_rows,
+            ));
+        }
 
         // Copy over the data points from the current batch to keep the resulting batch sorted.
         let current_batch = &self.current_batch; // Required as self cannot be passed to array!.
@@ -302,6 +317,13 @@ impl GridStream {
             &modelardb_types::array!(current_batch, 1, ValueArray).values()
                 [self.current_batch_offset..],
         );
+
+        for (index, tag_builder) in tag_builders.iter_mut().enumerate() {
+            let tag_array = modelardb_types::array!(current_batch, index + 2, StringArray);
+            for i in self.current_batch_offset..current_batch.num_rows() {
+                tag_builder.append_value(tag_array.value(i));
+            }
+        }
 
         // Reconstruct the data points from the compressed segments.
         for row_index in 0..new_rows {
@@ -320,18 +342,31 @@ impl GridStream {
                 &mut value_builder,
             );
 
+            let created_rows = value_builder.len() - length_before;
+
+            for (tag_builder, tag_array) in tag_builders.iter_mut().zip(&tag_arrays) {
+                let tag_value = tag_array.value(row_index);
+                for _ in 0..created_rows {
+                    tag_builder.append_value(tag_value);
+                }
+            }
+
             self.grid_stream_metrics.add(
                 model_type_ids.value(row_index),
-                value_builder.len() - length_before,
+                created_rows,
                 !residuals.value(row_index).is_empty(),
                 modelardb_compression::are_compressed_timestamps_regular(timestamps.values()),
             );
         }
 
-        let columns: Vec<ArrayRef> = vec![
+        let mut columns: Vec<ArrayRef> = vec![
             Arc::new(timestamp_builder.finish()),
             Arc::new(value_builder.finish()),
         ];
+
+        for mut tag_builder in tag_builders {
+            columns.push(Arc::new(tag_builder.finish()));
+        }
 
         // Update the current batch, unwrap() is safe as GridStream uses a static schema.
         // For simplicity, all data points are reconstructed and then pruned by time.
