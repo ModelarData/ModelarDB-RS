@@ -24,9 +24,7 @@
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
 use modelardb_types::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
-use modelardb_types::types::{
-    ErrorBound, Timestamp, TimestampBuilder, Value, ValueBuilder,
-};
+use modelardb_types::types::{ErrorBound, Timestamp, TimestampBuilder, Value, ValueBuilder};
 
 use super::timestamps;
 use crate::models;

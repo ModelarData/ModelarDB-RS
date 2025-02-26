@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! Implementation of [`ModelTableMetadata`](crate::ModelTableMetadata) which contains metadata
-//! required to interact with model tables and [`TableMetadataManager`](crate::TableMetadataManager)
+//! Implementation of [`ModelTableMetadata`](crate::ModelTableMetadata) which contains metadata required
+//! to interact with model tables and [`TableMetadataManager`](table_metadata_manager::TableMetadataManager)
 //! which provides functionality to access table related metadata in the metadata Delta Lake.
 
 pub mod model_table_metadata;

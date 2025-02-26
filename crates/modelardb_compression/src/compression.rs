@@ -259,7 +259,7 @@ mod tests {
 
     use super::*;
 
-    use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, UInt64Builder, UInt8Array};
+    use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, UInt8Array};
     use arrow::datatypes::{DataType, Field};
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};

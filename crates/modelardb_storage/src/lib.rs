@@ -129,11 +129,7 @@ pub fn register_model_table(
     model_table_metadata: Arc<ModelTableMetadata>,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
-    let model_table = ModelTable::new(
-        delta_table,
-        model_table_metadata.clone(),
-        data_sink,
-    );
+    let model_table = ModelTable::new(delta_table, model_table_metadata.clone(), data_sink);
 
     session_context.register_table(&model_table_metadata.name, model_table)?;
 
