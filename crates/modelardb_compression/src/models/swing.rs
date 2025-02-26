@@ -25,7 +25,7 @@
 
 use modelardb_types::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
 use modelardb_types::types::{
-    ErrorBound, Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
+    ErrorBound, Timestamp, TimestampBuilder, UnivariateIdBuilder, Value, ValueBuilder,
 };
 
 use super::timestamps;
@@ -302,16 +302,13 @@ pub fn sum(
     }
 }
 
-/// Reconstruct the values for the `timestamps` without matching values in
-/// `value_builder` using a model of type Swing. The `univariate_ids` and
-/// `values` are appended to `univariate_id_builder` and `value_builder`.
+/// Reconstruct the values for the `timestamps` without matching values in `value_builder` using a
+/// model of type Swing. The `values` are appended to `value_builder`.
 pub fn grid(
-    univariate_id: UnivariateId,
     start_time: Timestamp,
     end_time: Timestamp,
     first_value: Value,
     last_value: Value,
-    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
@@ -319,7 +316,6 @@ pub fn grid(
         compute_slope_and_intercept(start_time, first_value as f64, end_time, last_value as f64);
 
     for timestamp in timestamps {
-        univariate_id_builder.append_value(univariate_id);
         let value = (slope * (*timestamp as f64) + intercept) as Value;
         value_builder.append_value(value);
     }
@@ -766,31 +762,21 @@ mod tests {
     fn test_grid(value in num::i32::ANY.prop_map(i32_to_value)) {
         let timestamps: Vec<Timestamp> = (START_TIME ..= END_TIME)
             .step_by(SAMPLING_INTERVAL as usize).collect();
-        let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(timestamps.len());
         let mut value_builder = ValueBuilder::with_capacity(timestamps.len());
 
         // The linear function represents a constant to have a known value.
         grid(
-            1,
             START_TIME,
             END_TIME,
             value,
             value,
-            &mut univariate_id_builder,
             &timestamps,
             &mut value_builder,
         );
 
-        let univariate_ids = univariate_id_builder.finish();
         let values = value_builder.finish();
 
-        prop_assert!(
-            univariate_ids.len() == timestamps.len()
-            && univariate_ids.len() == values.len()
-        );
-        prop_assert!(univariate_ids
-             .iter()
-             .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
+        prop_assert!(timestamps.len() == values.len());
         prop_assert!(timestamps
             .windows(2)
             .all(|window| window[1] - window[0] == SAMPLING_INTERVAL));
