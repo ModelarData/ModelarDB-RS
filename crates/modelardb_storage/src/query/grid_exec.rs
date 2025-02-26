@@ -23,11 +23,11 @@ use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
+
 use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt64Builder,
-    UInt8Array,
+    Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, UInt8Array,
 };
 use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -186,7 +186,7 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Specify that [`GridExec`] requires one partition for each input as it assumes that the
-    /// global sort order are the same for its input and Apache Arrow DataFusion only guarantees the
+    /// sort order are the same for its input and Apache Arrow DataFusion only guarantees the
     /// sort order within each partition rather than the input's global sort order.
     fn required_input_distribution(&self) -> Vec<Distribution> {
         vec![Distribution::SinglePartition]
@@ -289,31 +289,25 @@ impl GridStream {
         // from each segment in the new batch as each segment contains at least one data point.
         let current_rows = self.current_batch.num_rows() - self.current_batch_offset;
         let new_rows = batch.num_rows();
-        let mut univariate_id_builder = UInt64Builder::with_capacity(current_rows + new_rows);
         let mut timestamp_builder = TimestampBuilder::with_capacity(current_rows + new_rows);
         let mut value_builder = ValueBuilder::with_capacity(current_rows + new_rows);
 
         // Copy over the data points from the current batch to keep the resulting batch sorted.
         let current_batch = &self.current_batch; // Required as self cannot be passed to array!.
-        univariate_id_builder.append_slice(
-            &modelardb_types::array!(current_batch, 0, UInt64Array).values()
-                [self.current_batch_offset..],
-        );
         timestamp_builder.append_slice(
-            &modelardb_types::array!(current_batch, 1, TimestampArray).values()
+            &modelardb_types::array!(current_batch, 0, TimestampArray).values()
                 [self.current_batch_offset..],
         );
         value_builder.append_slice(
-            &modelardb_types::array!(current_batch, 2, ValueArray).values()
+            &modelardb_types::array!(current_batch, 1, ValueArray).values()
                 [self.current_batch_offset..],
         );
 
         // Reconstruct the data points from the compressed segments.
         for row_index in 0..new_rows {
-            let length_before = univariate_id_builder.len();
+            let length_before = value_builder.len();
 
             modelardb_compression::grid(
-                0,
                 model_type_ids.value(row_index),
                 start_times.value(row_index),
                 end_times.value(row_index),
@@ -322,21 +316,19 @@ impl GridStream {
                 max_values.value(row_index),
                 values.value(row_index),
                 residuals.value(row_index),
-                &mut univariate_id_builder,
                 &mut timestamp_builder,
                 &mut value_builder,
             );
 
             self.grid_stream_metrics.add(
                 model_type_ids.value(row_index),
-                univariate_id_builder.len() - length_before,
+                value_builder.len() - length_before,
                 !residuals.value(row_index).is_empty(),
                 modelardb_compression::are_compressed_timestamps_regular(timestamps.values()),
             );
         }
 
         let columns: Vec<ArrayRef> = vec![
-            Arc::new(univariate_id_builder.finish()),
             Arc::new(timestamp_builder.finish()),
             Arc::new(value_builder.finish()),
         ];

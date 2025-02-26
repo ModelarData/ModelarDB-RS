@@ -174,9 +174,9 @@ impl Gorilla {
 /// it is assumed the first value in `values` is compressed against it instead of being stored in
 /// full, i.e., uncompressed.
 pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) -> Value {
-    // This function replicates code from gorilla::grid() as it isn't necessary
-    // to store the univariate ids, timestamps, and values in arrays for a sum.
-    // So any changes to the decompression must be mirrored in gorilla::grid().
+    // This function replicates code from gorilla::grid() as it isn't necessary to store the
+    // timestamps and values in arrays for a sum. So any changes to the decompression must be
+    // mirrored in gorilla::grid().
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;

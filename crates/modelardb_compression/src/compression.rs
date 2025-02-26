@@ -901,7 +901,6 @@ mod tests {
         uncompressed_values: &ValueArray,
         compressed_record_batch: &RecordBatch,
     ) {
-        let mut univariate_id_builder = UInt64Builder::new();
         let mut timestamp_builder = TimestampBuilder::new();
         let mut value_builder = ValueBuilder::new();
 
@@ -920,7 +919,7 @@ mod tests {
 
         let mut index_to_model_type = vec![];
         for row_index in 0..compressed_record_batch.num_rows() {
-            let start_index = univariate_id_builder.len();
+            let start_index = value_builder.len();
 
             models::grid(
                 model_type_ids.value(row_index),
@@ -935,7 +934,7 @@ mod tests {
                 &mut value_builder,
             );
 
-            let end_index = univariate_id_builder.len();
+            let end_index = value_builder.len();
             index_to_model_type.push((start_index..end_index, model_type_ids.value(row_index)));
         }
 

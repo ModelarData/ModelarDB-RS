@@ -24,13 +24,6 @@ use std::str::FromStr;
 
 use crate::error::{ModelarDbTypesError, Result};
 
-// Types used for a univariate id.
-pub type UnivariateId = std::primitive::u64;
-pub type ArrowUnivariateId = arrow::datatypes::UInt64Type;
-
-// Types used for a collection of univariate ids.
-pub type UnivariateIdBuilder = arrow::array::PrimitiveBuilder<ArrowUnivariateId>;
-
 // Types used for a single timestamp.
 pub type Timestamp = std::primitive::i64; // It is signed to match TimestampMicrosecondType.
 pub type ArrowTimestamp = arrow::datatypes::TimestampMicrosecondType;
