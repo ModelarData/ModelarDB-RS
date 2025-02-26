@@ -22,7 +22,7 @@
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
-use modelardb_types::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
+use modelardb_types::types::{Timestamp, Value, ValueBuilder};
 
 use crate::models;
 use crate::models::bits::{BitReader, BitVecBuilder};
@@ -215,13 +215,11 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
 
 /// Decompress all the values in `values` for the `timestamps` without matching values in
 /// `value_builder`. The values in `values` are compressed using Gorilla's compression method for
-/// floating-point values. `univariate_ids` and `values` are appended to `univariate_id_builder` and
-/// `value_builder`. If `maybe_model_last_value` is provided, it is assumed the first value in
-/// `values` is compressed against it instead of being stored in full, i.e., uncompressed.
+/// floating-point values. `values` are appended to `value_builder`. If `maybe_model_last_value`
+/// is provided, it is assumed the first value in `values` is compressed against it instead of being
+/// stored in full, i.e., uncompressed.
 pub fn grid(
-    univariate_id: UnivariateId,
     values: &[u8],
-    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
     maybe_model_last_value: Option<Value>,
@@ -238,7 +236,6 @@ pub fn grid(
     } else {
         // The first value is stored uncompressed using size_of::<Value> bits.
         let first_value = bits.read_bits(models::VALUE_SIZE_IN_BITS) as u32;
-        univariate_id_builder.append_value(univariate_id);
         value_builder.append_value(Value::from_bits(first_value));
         first_value
     };
@@ -262,7 +259,6 @@ pub fn grid(
             value ^= last_value;
             last_value = value;
         }
-        univariate_id_builder.append_value(univariate_id);
         value_builder.append_value(Value::from_bits(last_value));
     }
 }
@@ -516,29 +512,13 @@ mod tests {
     fn assert_grid_with_error_bound(error_bound: ErrorBound, values: &[Value]) {
         let compressed_values = compress_values_using_gorilla(error_bound, values, None);
 
-        let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(values.len());
         let timestamps: Vec<Timestamp> = (1..=values.len() as i64).step_by(1).collect();
         let mut value_builder = ValueBuilder::with_capacity(values.len());
-        grid(
-            1,
-            &compressed_values,
-            &mut univariate_id_builder,
-            &timestamps,
-            &mut value_builder,
-            None,
-        );
+        grid(&compressed_values, &timestamps, &mut value_builder, None);
 
-        let univariate_ids_array = univariate_id_builder.finish();
         let values_array = value_builder.finish();
 
-        assert!(
-            univariate_ids_array.len() == values.len()
-                && univariate_ids_array.len() == timestamps.len()
-                && univariate_ids_array.len() == values_array.len()
-        );
-        assert!(univariate_ids_array
-            .iter()
-            .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
+        assert!(values.len() == timestamps.len() && values.len() == values_array.len());
         assert!(timestamps
             .windows(2)
             .all(|window| window[1] - window[0] == 1));
@@ -580,24 +560,18 @@ mod tests {
     fn assert_grid_single(error_bound: ErrorBound, maybe_model_last_value: Option<Value>) {
         let compressed_values =
             compress_values_using_gorilla(error_bound, &[37.0], maybe_model_last_value);
-        let mut univariate_id_builder = UnivariateIdBuilder::new();
         let mut value_builder = ValueBuilder::new();
 
         grid(
-            1,
             &compressed_values,
-            &mut univariate_id_builder,
             &[100],
             &mut value_builder,
             maybe_model_last_value,
         );
 
-        let univariate_ids = univariate_id_builder.finish();
         let values = value_builder.finish();
 
-        assert_eq!(univariate_ids.len(), 1);
         assert_eq!(values.len(), 1);
-        assert_eq!(univariate_ids.value(0), 1);
         assert_eq!(values.value(0), 37.0);
     }
 
