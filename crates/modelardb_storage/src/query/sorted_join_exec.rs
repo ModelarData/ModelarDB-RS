@@ -26,7 +26,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
-use datafusion::arrow::array::{ArrayRef, StringBuilder};
+use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -46,11 +46,11 @@ use futures::stream::{Stream, StreamExt};
 pub(crate) enum SortedJoinColumnType {
     Timestamp,
     Field,
-    Tag,
+    Tag(String),
 }
 
-/// An execution plan that join arrays of data points sorted by `univariate_id` and `timestamp` from
-/// multiple execution plans and tags. It is `pub(crate)` so the additional rules added to Apache
+/// An execution plan that join arrays of data points sorted by tag columns and `timestamp` from
+/// multiple execution plans. It is `pub(crate)` so the additional rules added to Apache
 /// DataFusion's physical optimizer can pattern match on it.
 #[derive(Debug)]
 pub(crate) struct SortedJoinExec {
@@ -171,8 +171,8 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Specify that [`SortedJoinStream`] requires one partition for each input as it assumes that
-    /// the global sort order is the same for all inputs and Apache Arrow DataFusion only
-    /// guarantees the sort order within each partition rather than the inputs' global sort order.
+    /// the sort order is the same for all inputs and Apache Arrow DataFusion only guarantees the
+    /// sort order within each partition rather than the inputs' global sort order.
     fn required_input_distribution(&self) -> Vec<Distribution> {
         vec![Distribution::SinglePartition; self.inputs.len()]
     }
@@ -279,15 +279,11 @@ impl SortedJoinStream {
     fn sorted_join(&self) -> Poll<Option<DataFusionResult<RecordBatch>>> {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
-        // TODO: Compute the requested tag columns, so they can be assigned to the batch by index.
         // unwrap() is safe as a record batch is read from each input before this method is called.
         let batch = self.batches[0].as_ref().unwrap();
 
-        let mut tag_columns: Vec<StringBuilder> = vec![];
-
-        // The batches and tags columns are already in the correct order, so they can be appended.
+        // The batches are already in the correct order, so they can be appended.
         let mut field_index = 0;
-        let mut tag_index = 0;
 
         for element in &self.return_order {
             match element {
@@ -298,10 +294,9 @@ impl SortedJoinStream {
                     columns.push(batch.column(1).clone());
                     field_index += 1;
                 }
-                SortedJoinColumnType::Tag => {
-                    let tags = Arc::new(tag_columns[tag_index].finish());
-                    columns.push(tags);
-                    tag_index += 1;
+                SortedJoinColumnType::Tag(tag_column_name) => {
+                    // unwrap() is safe as all tag columns are present in the schema.
+                    columns.push(batch.column_by_name(tag_column_name).unwrap().clone());
                 }
             }
         }

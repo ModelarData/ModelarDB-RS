@@ -72,7 +72,7 @@ storage.
   - **Test** - Constants and functionality for data generation for use in tests.
 - [modelardb_types](/crates/modelardb_types) - Library of shared macros and types for use by the other crates.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
-  - **Functions** - Functions for operating on the types, e.g., extracting elements from univariate ids.
+  - **Functions** - Functions for operating on the types.
   - **Macros** - Macros for extracting an array from a `RecordBatch` and extracting all arrays from a `RecordBatch` with
   compressed segments.
   - **Schemas** - Schemas used throughout the ModelarDB project, e.g., for buffers and for Apache Parquet files with
