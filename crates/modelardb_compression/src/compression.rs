@@ -41,7 +41,7 @@ const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted according to
 /// `uncompressed_timestamps`. Returns [`ModelarDbCompressionError`] if `uncompressed_timestamps`
 /// and `uncompressed_values` have different lengths, otherwise the resulting compressed segments
-/// are returned as a [`RecordBatch`] with the [`compressed_schema`] schema.
+/// are returned as a [`RecordBatch`] with the `compressed_schema` schema.
 pub fn try_compress(
     compressed_schema: Arc<Schema>,
     tag_values: Vec<String>,
