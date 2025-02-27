@@ -1023,13 +1023,13 @@ mod tests {
         // message inserted would block the thread until the data messages have been processed.
         let number_of_buffers =
             reserved_memory / uncompressed_data_buffer::compute_memory_size(number_of_fields);
-        for tag_hash in 0..number_of_buffers {
+        for tag_value in 0..number_of_buffers {
             // Allocate many buffers that are never finished.
             insert_data_points(
                 1,
                 &mut data_manager,
                 &model_table_metadata.clone(),
-                &tag_hash.to_string(),
+                &tag_value.to_string(),
             )
             .await;
         }

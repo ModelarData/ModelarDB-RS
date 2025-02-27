@@ -217,10 +217,10 @@ fn query_order_and_requirement(
         let tag_column_name = model_table_metadata.schema.field(*index).name();
 
         // unwrap() is safe as the tag columns are always present in the schema.
-        let segment_index = schema.index_of(tag_column_name).unwrap();
+        let schema_index = schema.index_of(tag_column_name).unwrap();
 
         physical_sort_exprs.push(PhysicalSortExpr {
-            expr: Arc::new(Column::new(tag_column_name, segment_index)),
+            expr: Arc::new(Column::new(tag_column_name, schema_index)),
             options: sort_options,
         });
     }

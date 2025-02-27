@@ -48,7 +48,7 @@ pub struct CompressedSchema(pub arrow::datatypes::SchemaRef);
 pub struct QueryCompressedSchema(pub arrow::datatypes::SchemaRef);
 
 #[derive(Clone)]
-pub struct QuerySchema(pub arrow::datatypes::SchemaRef);
+pub struct GridSchema(pub arrow::datatypes::SchemaRef);
 
 #[derive(Clone)]
 pub struct ConfigurationSchema(pub arrow::datatypes::SchemaRef);

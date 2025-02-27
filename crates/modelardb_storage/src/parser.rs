@@ -1184,8 +1184,8 @@ mod tests {
         // Tracks if sqlparser at some point can parse fields/tags in a TABLE.
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field_one FIELD(10.5),
-                                     field_two FIELD(1%), tag TAG)",
+                "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD,
+                 field_one FIELD(10.5), field_two FIELD(1%), tag TAG)",
             )
             .is_err()
         );
