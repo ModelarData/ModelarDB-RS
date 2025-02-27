@@ -29,7 +29,7 @@ use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, LogicalPlan, TableProviderFilterPushDown};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
-use deltalake::{arrow::datatypes::SchemaRef, DeltaTable};
+use deltalake::{DeltaTable, arrow::datatypes::SchemaRef};
 use tonic::async_trait;
 
 /// A queryable representation of a normal table. [`NormalTable`] wraps the [`TableProvider`]

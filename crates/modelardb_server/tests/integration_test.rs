@@ -23,13 +23,13 @@ use std::ops::Range;
 use std::process::{Child, Command, Stdio};
 use std::str;
 use std::string::String;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
 use std::time::Duration;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
+use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket, utils};
 use bytes::{Buf, Bytes};
 use datafusion::arrow::array::{Array, Float64Array, StringArray, UInt64Array};
 use datafusion::arrow::compute;
@@ -38,7 +38,7 @@ use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use modelardb_common::test::data_generation;
 use modelardb_types::types::ErrorBound;
 use sysinfo::{Pid, ProcessesToUpdate, System};
@@ -452,7 +452,7 @@ impl TestContext {
             let schema_result = self
                 .client
                 .get_schema(Request::new(FlightDescriptor::new_path(vec![
-                    table_name.to_owned()
+                    table_name.to_owned(),
                 ])))
                 .await
                 .unwrap()
@@ -949,9 +949,11 @@ fn test_cannot_ingest_invalid_time_series() {
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
-    assert!(test_context
-        .send_time_series_to_server(flight_data)
-        .is_err());
+    assert!(
+        test_context
+            .send_time_series_to_server(flight_data)
+            .is_err()
+    );
 
     test_context.flush_data_to_disk();
 

@@ -33,7 +33,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
-use futures::{stream, Stream};
+use futures::{Stream, stream};
 use modelardb_common::arguments;
 use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
@@ -47,9 +47,9 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
+use crate::Context;
 use crate::cluster::Node;
 use crate::error::{ModelarDbManagerError, Result};
-use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
 pub fn start_apache_arrow_flight_server(

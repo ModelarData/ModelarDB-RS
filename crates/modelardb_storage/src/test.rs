@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use arrow::array::{BinaryArray, Float32Array, RecordBatch, StringArray, UInt16Array, UInt8Array};
+use arrow::array::{BinaryArray, Float32Array, RecordBatch, StringArray, UInt8Array, UInt16Array};
 use arrow::compute::concat_batches;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};

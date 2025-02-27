@@ -36,8 +36,8 @@ use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PhysicalExpr,
     PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
-use futures::stream::Stream;
 use futures::StreamExt;
+use futures::stream::Stream;
 use modelardb_types::types::{TimestampArray, ValueArray};
 
 /// A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using

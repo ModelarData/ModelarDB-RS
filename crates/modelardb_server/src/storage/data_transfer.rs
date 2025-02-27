@@ -321,10 +321,12 @@ mod tests {
         let (_normal_table_files_size, model_table_files_size) =
             write_batches_to_tables(&local_data_folder, 1).await;
 
-        assert!(data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
-            .await
-            .is_ok());
+        assert!(
+            data_transfer
+                .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
+                .await
+                .is_ok()
+        );
 
         assert_eq!(
             *data_transfer
@@ -370,9 +372,11 @@ mod tests {
             create_data_transfer_component(local_data_folder.clone()).await;
 
         data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
-        assert!(data_transfer
-            .dropped_tables
-            .contains(test::MODEL_TABLE_NAME));
+        assert!(
+            data_transfer
+                .dropped_tables
+                .contains(test::MODEL_TABLE_NAME)
+        );
     }
 
     #[tokio::test]
@@ -398,9 +402,11 @@ mod tests {
 
         // The table should be removed from the in-memory tracking of compressed files and removed
         // from the dropped tables.
-        assert!(!data_transfer
-            .table_size_in_bytes
-            .contains_key(test::MODEL_TABLE_NAME));
+        assert!(
+            !data_transfer
+                .table_size_in_bytes
+                .contains_key(test::MODEL_TABLE_NAME)
+        );
 
         assert!(data_transfer.dropped_tables.is_empty());
     }

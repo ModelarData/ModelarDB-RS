@@ -21,7 +21,7 @@ use std::error::Error;
 use arrow::array::ArrayRef;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
-use arrow_flight::{utils, FlightData, FlightDescriptor};
+use arrow_flight::{FlightData, FlightDescriptor, utils};
 use tonic::Status;
 
 /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a

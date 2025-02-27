@@ -24,7 +24,7 @@ use arrow::array::{Array, BinaryArray, BooleanArray, Float32Array, Int16Array, S
 use arrow::datatypes::{DataType, Field, Schema};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
-use datafusion::prelude::{col, SessionContext};
+use datafusion::prelude::{SessionContext, col};
 use modelardb_common::test::ERROR_BOUND_ZERO;
 use modelardb_types::types::ErrorBound;
 
@@ -572,17 +572,21 @@ mod tests {
             .unwrap();
 
         // Verify that the tables were created, registered, and has the expected columns.
-        assert!(metadata_manager
-            .session_context
-            .sql("SELECT table_name FROM normal_table_metadata")
-            .await
-            .is_ok());
+        assert!(
+            metadata_manager
+                .session_context
+                .sql("SELECT table_name FROM normal_table_metadata")
+                .await
+                .is_ok()
+        );
 
-        assert!(metadata_manager
-            .session_context
-            .sql("SELECT table_name, query_schema FROM model_table_metadata")
-            .await
-            .is_ok());
+        assert!(
+            metadata_manager
+                .session_context
+                .sql("SELECT table_name, query_schema FROM model_table_metadata")
+                .await
+                .is_ok()
+        );
 
         assert!(metadata_manager
             .session_context
@@ -595,37 +599,45 @@ mod tests {
     #[tokio::test]
     async fn test_normal_table_is_normal_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
-        assert!(metadata_manager
-            .is_normal_table("normal_table_1")
-            .await
-            .unwrap());
+        assert!(
+            metadata_manager
+                .is_normal_table("normal_table_1")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn test_model_table_is_not_normal_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-        assert!(!metadata_manager
-            .is_normal_table(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            !metadata_manager
+                .is_normal_table(test::MODEL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn test_model_table_is_model_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-        assert!(metadata_manager
-            .is_model_table(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            metadata_manager
+                .is_model_table(test::MODEL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn test_normal_table_is_not_model_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
-        assert!(!metadata_manager
-            .is_model_table("normal_table_1")
-            .await
-            .unwrap());
+        assert!(
+            !metadata_manager
+                .is_model_table("normal_table_1")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -693,10 +705,9 @@ mod tests {
         );
         assert_eq!(
             **batch.column(1),
-            BinaryArray::from_vec(vec![&try_convert_schema_to_bytes(
-                &test::model_table_metadata().query_schema
-            )
-            .unwrap()])
+            BinaryArray::from_vec(vec![
+                &try_convert_schema_to_bytes(&test::model_table_metadata().query_schema).unwrap()
+            ])
         );
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
@@ -771,10 +782,12 @@ mod tests {
     async fn test_drop_table_metadata_for_missing_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
-        assert!(metadata_manager
-            .drop_table_metadata("missing_table")
-            .await
-            .is_err());
+        assert!(
+            metadata_manager
+                .drop_table_metadata("missing_table")
+                .await
+                .is_err()
+        );
     }
 
     async fn create_metadata_manager_and_save_normal_tables() -> (TempDir, TableMetadataManager) {

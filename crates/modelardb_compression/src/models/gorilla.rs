@@ -25,8 +25,8 @@
 use modelardb_types::types::{Timestamp, Value, ValueBuilder};
 
 use crate::models;
-use crate::models::bits::{BitReader, BitVecBuilder};
 use crate::models::ErrorBound;
+use crate::models::bits::{BitReader, BitVecBuilder};
 
 /// The state the Gorilla model type needs while compressing the values of a
 /// time series segment.
@@ -519,9 +519,11 @@ mod tests {
         let values_array = value_builder.finish();
 
         assert!(values.len() == timestamps.len() && values.len() == values_array.len());
-        assert!(timestamps
-            .windows(2)
-            .all(|window| window[1] - window[0] == 1));
+        assert!(
+            timestamps
+                .windows(2)
+                .all(|window| window[1] - window[0] == 1)
+        );
         assert!(slice_of_value_equal(values_array.values(), values));
     }
 

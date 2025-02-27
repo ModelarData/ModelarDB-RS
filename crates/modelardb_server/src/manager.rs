@@ -24,13 +24,13 @@ use arrow_flight::{Action, Result as FlightResult};
 use modelardb_common::arguments;
 use modelardb_types::types::ServerMode;
 use tokio::sync::RwLock;
+use tonic::Request;
 use tonic::metadata::MetadataMap;
 use tonic::transport::Channel;
-use tonic::Request;
 
+use crate::PORT;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
-use crate::PORT;
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
 #[derive(Clone, Debug)]

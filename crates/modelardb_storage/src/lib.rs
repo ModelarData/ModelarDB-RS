@@ -40,8 +40,8 @@ use arrow_flight::{IpcMessage, SchemaAsIpc};
 use bytes::{Buf, Bytes};
 use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, ToDFSchema};
-use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::execution::SendableRecordBatchStream;
+use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::parquet::arrow::async_reader::{
     AsyncFileReader, ParquetObjectReader, ParquetRecordBatchStream,
 };
@@ -57,8 +57,8 @@ use deltalake::DeltaTable;
 use futures::StreamExt;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::ErrorBound;
-use object_store::path::Path;
 use object_store::ObjectStore;
+use object_store::path::Path;
 use sqlparser::ast::Statement;
 
 use crate::error::{ModelarDbStorageError, Result};

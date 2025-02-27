@@ -31,13 +31,13 @@ use arrow::datatypes::{Schema, SchemaRef, ToByteSlice};
 use arrow::ipc::convert;
 use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, Ticket};
+use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, Ticket, utils};
 use bytes::Bytes;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::{ObjectMeta, ObjectStore};
-use rustyline::history::FileHistory;
 use rustyline::Editor;
+use rustyline::history::FileHistory;
 use tonic::transport::Channel;
 use tonic::{Request, Streaming};
 

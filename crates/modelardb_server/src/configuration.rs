@@ -21,9 +21,9 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
+use crate::ClusterMode;
 use crate::error::Result;
 use crate::storage::StorageEngine;
-use crate::ClusterMode;
 
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]

@@ -24,7 +24,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use deltalake::{arrow::datatypes::SchemaRef, DeltaTable};
+use deltalake::{DeltaTable, arrow::datatypes::SchemaRef};
 use tonic::async_trait;
 
 /// A queryable representation of a metadata table. [`MetadataTable`] wraps the [`TableProvider`] of

@@ -21,8 +21,8 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::datatypes::{Field, Schema};
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::TaskContext;
 use datafusion::physical_plan::insert::DataSink;
