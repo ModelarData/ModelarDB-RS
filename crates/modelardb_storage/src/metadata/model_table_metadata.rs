@@ -529,7 +529,7 @@ mod test {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid argument: The record batch does not match the schema of the model table."
+            "Invalid Argument Error: The record batch does not match the schema of the model table."
         );
     }
 

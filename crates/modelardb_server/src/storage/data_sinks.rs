@@ -13,14 +13,16 @@
  * limitations under the License.
  */
 
-//! Implementation of [`DataSinks`](`DataSink`) that writes
-//! [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) to [`StorageEngine`].
+//! Implementation of [`DataSinks`](`DataSink`) that writes [`RecordBatches`](RecordBatch) to
+//! [`StorageEngine`].
 
 use std::any::Any;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::datatypes::{Field, Schema};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::TaskContext;
 use datafusion::physical_plan::insert::DataSink;
@@ -32,9 +34,8 @@ use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
 
-/// [`DataSink`] that writes [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) to
-/// [`StorageEngine`]. Use [`ModelTableDataSink`] for writing multivariate time series to
-/// [`StorageEngine`].
+/// [`DataSink`] that writes [`RecordBatches`](RecordBatch) to [`StorageEngine`]. Use
+/// [`ModelTableDataSink`] for writing multivariate time series to [`StorageEngine`].
 pub struct NormalTableDataSink {
     /// The name of the normal table inserted data will be written to.
     table_name: String,
@@ -151,6 +152,18 @@ impl DataSink for ModelTableDataSink {
         while let Some(record_batch) = data.next().await {
             let record_batch =
                 record_batch?.project(&self.model_table_metadata.query_schema_to_schema)?;
+
+            // Manually ensure the fields are not nullable. It is not possible to insert null values
+            // into model tables but the schema of the record batch may contain nullable fields.
+            let mut fields: Vec<Field> = Vec::with_capacity(record_batch.schema().fields.len());
+            for field in record_batch.schema().fields() {
+                fields.push(Field::new(field.name(), field.data_type().clone(), false));
+            }
+
+            let record_batch = RecordBatch::try_new(
+                Arc::new(Schema::new(fields)),
+                record_batch.columns().to_vec(),
+            )?;
 
             data_points_inserted += record_batch.num_rows() as u64;
 
