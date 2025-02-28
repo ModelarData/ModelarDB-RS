@@ -612,47 +612,55 @@ async fn test_can_create_register_and_list_multiple_normal_tables_and_model_tabl
     assert_eq!(retrieved_table_names, table_names);
 }
 
-#[test]
-fn test_can_drop_normal_table() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::NormalTable);
+#[tokio::test]
+async fn test_can_drop_normal_table() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::NormalTable)
+        .await;
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 
-    test_context.drop_table(TABLE_NAME).unwrap();
+    test_context.drop_table(TABLE_NAME).await.unwrap();
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names.len(), 0);
 
     // It should be possible to create a normal table, drop it, and then create a new normal table
     // with the same name.
-    test_context.create_table(TABLE_NAME, TableType::NormalTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::NormalTable)
+        .await;
 }
 
-#[test]
-fn test_can_drop_model_table() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+#[tokio::test]
+async fn test_can_drop_model_table() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 
-    test_context.drop_table(TABLE_NAME).unwrap();
+    test_context.drop_table(TABLE_NAME).await.unwrap();
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names.len(), 0);
 
     // It should be possible to create a model table, drop it, and then create a new model table with
     // the same name.
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 }
 
-#[test]
-fn test_cannot_drop_missing_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_cannot_drop_missing_table() {
+    let mut test_context = TestContext::new().await;
 
-    let result = test_context.drop_table(TABLE_NAME);
+    let result = test_context.drop_table(TABLE_NAME).await;
     assert!(result.is_err());
 }
 
@@ -1088,9 +1096,10 @@ fn ingest_time_series_and_flush_data(
 
     test_context
         .send_time_series_to_server(flight_data)
+        .await
         .unwrap();
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
 }
 
 #[test]
