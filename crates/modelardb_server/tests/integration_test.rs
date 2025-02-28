@@ -664,53 +664,57 @@ async fn test_cannot_drop_missing_table() {
     assert!(result.is_err());
 }
 
-#[test]
-fn test_can_truncate_normal_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_truncate_normal_table() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::NormalTable,
-    );
+    )
+    .await;
 
-    test_context.truncate_table(TABLE_NAME).unwrap();
+    test_context.truncate_table(TABLE_NAME).await.unwrap();
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     // The normal table should be empty after truncating it.
     assert_eq!(query_result.num_rows(), 0);
 }
 
-#[test]
-fn test_can_truncate_model_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_truncate_model_table() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::ModelTable,
-    );
+    )
+    .await;
 
-    test_context.truncate_table(TABLE_NAME).unwrap();
+    test_context.truncate_table(TABLE_NAME).await.unwrap();
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     // The model table should be empty after truncating it.
     assert_eq!(query_result.num_rows(), 0);
 }
 
-#[test]
-fn test_cannot_truncate_missing_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_cannot_truncate_missing_table() {
+    let mut test_context = TestContext::new().await;
 
-    let result = test_context.truncate_table(TABLE_NAME);
+    let result = test_context.truncate_table(TABLE_NAME).await;
     assert!(result.is_err());
 }
 
@@ -947,9 +951,11 @@ fn test_cannot_ingest_invalid_time_series() {
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
-    assert!(test_context
-        .send_time_series_to_server(flight_data)
-        .is_err());
+    assert!(
+        test_context
+            .send_time_series_to_server(flight_data)
+            .is_err()
+    );
 
     test_context.flush_data_to_disk();
 
@@ -1084,7 +1090,7 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
 }
 
 /// Creates a table of type `table_type`, ingests `time_series`, and then flushes that data to disk.
-fn ingest_time_series_and_flush_data(
+async fn ingest_time_series_and_flush_data(
     test_context: &mut TestContext,
     time_series: &[RecordBatch],
     table_type: TableType,
@@ -1092,7 +1098,7 @@ fn ingest_time_series_and_flush_data(
     let flight_data =
         TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
 
-    test_context.create_table(TABLE_NAME, table_type);
+    test_context.create_table(TABLE_NAME, table_type).await;
 
     test_context
         .send_time_series_to_server(flight_data)
