@@ -988,25 +988,26 @@ async fn test_cannot_ingest_invalid_time_series() {
     assert_eq!(query_result.num_rows(), 0);
 }
 
-#[test]
-fn test_do_get_can_execute_include_address_select_query() {
-    execute_and_assert_include_select(1);
+#[tokio::test]
+async fn test_do_get_can_execute_include_address_select_query() {
+    execute_and_assert_include_select(1).await;
 }
 
-#[test]
-fn test_do_get_can_execute_include_address_address_select_query() {
-    execute_and_assert_include_select(2);
+#[tokio::test]
+async fn test_do_get_can_execute_include_address_address_select_query() {
+    execute_and_assert_include_select(2).await;
 }
 
-fn execute_and_assert_include_select(address_count: usize) {
-    let mut test_context = TestContext::new();
+async fn execute_and_assert_include_select(address_count: usize) {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
     let expected_record_batches: Vec<_> = (0..address_count + 1).map(|_| &time_series).collect();
     let expected_time_series =
         compute::concat_batches(&time_series.schema(), expected_record_batches).unwrap();
 
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable)
+        .await;
 
     let port = test_context.port;
     let address = format!("'grpc://{HOST}:{port}'");
@@ -1015,34 +1016,35 @@ fn execute_and_assert_include_select(address_count: usize) {
 
     let query_result = test_context
         .execute_query(format!("INCLUDE {address} SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(expected_time_series, query_result);
 }
 
-#[test]
-fn test_count_from_segments_equals_count_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0);
+#[tokio::test]
+async fn test_count_from_segments_equals_count_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0).await;
 }
 
-#[test]
-fn test_min_from_segments_equals_min_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"), 0.0);
+#[tokio::test]
+async fn test_min_from_segments_equals_min_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"), 0.0).await;
 }
 
-#[test]
-fn test_max_from_segments_equals_max_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"), 0.0);
+#[tokio::test]
+async fn test_max_from_segments_equals_max_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"), 0.0).await;
 }
 
-#[test]
-fn test_sum_from_segments_equals_sum_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"), 0.001);
+#[tokio::test]
+async fn test_sum_from_segments_equals_sum_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"), 0.001).await;
 }
 
-#[test]
-fn test_avg_from_segments_equals_avg_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001);
+#[tokio::test]
+async fn test_avg_from_segments_equals_avg_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001).await;
 }
 
 /// Asserts that the query executed on segments in `segment_query` returns a result within
@@ -1056,11 +1058,12 @@ fn test_avg_from_segments_equals_avg_from_data_points() {
 ///    query was rewritten by the optimizer and the other query was not.
 /// 5. Comparing the results of `segment_query` and the new equivalent query to ensure they are
 ///    within `error_bound`.
-fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) {
-    let mut test_context = TestContext::new();
+async fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
 
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable)
+        .await;
 
     // The predicate will guarantee that all data points will be included in the query but will
     // prevent the optimizer from rewriting the query due to its presence in segment_query.
@@ -1068,9 +1071,11 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
 
     let data_point_query_plans = test_context
         .execute_query(format!("EXPLAIN {}", data_point_query))
+        .await
         .unwrap();
     let segment_query_plans = test_context
         .execute_query(format!("EXPLAIN {}", segment_query))
+        .await
         .unwrap();
 
     let data_point_query_plans_text =
@@ -1080,8 +1085,8 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
     assert!(data_point_query_plans_text.value(1).contains("GridExec"));
     assert!(!segment_query_plans_text.value(1).contains("GridExec"));
 
-    let data_point_query_result_set = test_context.execute_query(data_point_query).unwrap();
-    let segment_query_result_set = test_context.execute_query(segment_query).unwrap();
+    let data_point_query_result_set = test_context.execute_query(data_point_query).await.unwrap();
+    let segment_query_result_set = test_context.execute_query(segment_query).await.unwrap();
 
     if error_bound == 0.0 {
         assert_eq!(data_point_query_result_set, segment_query_result_set);
@@ -1131,10 +1136,12 @@ async fn ingest_time_series_and_flush_data(
     test_context.flush_data_to_disk().await;
 }
 
-#[test]
-fn test_can_get_configuration() {
-    let mut test_context = TestContext::new();
-    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
+#[tokio::test]
+async fn test_can_get_configuration() {
+    let mut test_context = TestContext::new().await;
+    let configuration = test_context
+        .retrieve_action_record_batch("GetConfiguration")
+        .await;
 
     let settings = modelardb_types::array!(configuration, 0, StringArray);
     let values = modelardb_types::array!(configuration, 1, UInt64Array);
@@ -1162,63 +1169,72 @@ fn test_can_get_configuration() {
     assert_eq!(values.value(6), 1);
 }
 
-#[test]
-fn test_can_update_uncompressed_reserved_memory_in_bytes() {
+#[tokio::test]
+async fn test_can_update_uncompressed_reserved_memory_in_bytes() {
     let values_array =
-        update_and_retrieve_configuration_values("uncompressed_reserved_memory_in_bytes");
+        update_and_retrieve_configuration_values("uncompressed_reserved_memory_in_bytes").await;
 
     assert_eq!(values_array.value(0), 1);
 }
 
-#[test]
-fn test_can_update_compressed_reserved_memory_in_bytes() {
+#[tokio::test]
+async fn test_can_update_compressed_reserved_memory_in_bytes() {
     let values_array =
-        update_and_retrieve_configuration_values("compressed_reserved_memory_in_bytes");
+        update_and_retrieve_configuration_values("compressed_reserved_memory_in_bytes").await;
 
     assert_eq!(values_array.value(1), 1);
 }
 
-fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
-    let mut test_context = TestContext::new();
-    test_context.update_configuration(setting, "1").unwrap();
+async fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .update_configuration(setting, "1")
+        .await
+        .unwrap();
 
-    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
+    let configuration = test_context
+        .retrieve_action_record_batch("GetConfiguration")
+        .await;
+
     modelardb_types::array!(configuration, 1, UInt64Array).clone()
 }
 
-#[test]
-fn test_cannot_update_transfer_batch_size_in_bytes() {
+#[tokio::test]
+async fn test_cannot_update_transfer_batch_size_in_bytes() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
         "transfer_batch_size_in_bytes",
         "1",
         "Invalid State Error: Storage engine is not configured to transfer data.",
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_cannot_update_transfer_time_in_seconds() {
+#[tokio::test]
+async fn test_cannot_update_transfer_time_in_seconds() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
         "transfer_time_in_seconds",
         "1",
         "Invalid State Error: Storage engine is not configured to transfer data.",
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_cannot_update_non_existing_setting() {
+#[tokio::test]
+async fn test_cannot_update_non_existing_setting() {
     update_configuration_and_assert_error(
         "invalid",
         "1",
         "invalid is not a setting in the server configuration.",
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_cannot_update_non_nullable_setting_with_empty_value() {
+#[tokio::test]
+async fn test_cannot_update_non_nullable_setting_with_empty_value() {
     for setting in [
         "uncompressed_reserved_memory_in_bytes",
         "compressed_reserved_memory_in_bytes",
@@ -1227,49 +1243,53 @@ fn test_cannot_update_non_nullable_setting_with_empty_value() {
             setting,
             "",
             format!("New value for {setting} cannot be empty.").as_str(),
-        );
+        )
+        .await;
     }
 }
 
-#[test]
-fn test_cannot_update_non_updatable_setting() {
+#[tokio::test]
+async fn test_cannot_update_non_updatable_setting() {
     for setting in ["ingestion_threads", "compression_threads", "writer_threads"] {
         update_configuration_and_assert_error(
             setting,
             "1",
             format!("{setting} is not an updatable setting in the server configuration.").as_str(),
-        );
+        )
+        .await;
     }
 }
 
-#[test]
-fn test_cannot_update_setting_with_invalid_value() {
+#[tokio::test]
+async fn test_cannot_update_setting_with_invalid_value() {
     update_configuration_and_assert_error(
         "compressed_reserved_memory_in_bytes",
         "-1",
         "New value for compressed_reserved_memory_in_bytes is not valid: invalid digit found in string",
-    );
+    ).await;
 }
 
-fn update_configuration_and_assert_error(setting: &str, setting_value: &str, error: &str) {
-    let mut test_context = TestContext::new();
-    let response = test_context.update_configuration(setting, setting_value);
+async fn update_configuration_and_assert_error(setting: &str, setting_value: &str, error: &str) {
+    let mut test_context = TestContext::new().await;
+    let response = test_context
+        .update_configuration(setting, setting_value)
+        .await;
 
     assert!(response.is_err());
     assert_eq!(response.err().unwrap().message(), error);
 }
 
-#[test]
-fn test_can_get_node_type() {
-    let mut test_context = TestContext::new();
-    let response_bytes = test_context.retrieve_action_bytes("NodeType");
+#[tokio::test]
+async fn test_can_get_node_type() {
+    let mut test_context = TestContext::new().await;
+    let response_bytes = test_context.retrieve_action_bytes("NodeType").await;
 
     assert_eq!(str::from_utf8(&response_bytes).unwrap(), "server");
 }
 
-#[test]
-fn test_can_create_tables() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_create_tables() {
+    let mut test_context = TestContext::new().await;
 
     let table_record_batch = modelardb_storage::test::table_metadata_record_batch();
     let table_record_batch_bytes =
@@ -1281,11 +1301,12 @@ fn test_can_create_tables() {
     };
 
     test_context
-        .runtime
-        .block_on(async { test_context.client.do_action(Request::new(action)).await })
+        .client
+        .do_action(Request::new(action))
+        .await
         .unwrap();
 
-    let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let mut retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     retrieved_table_names.sort();
     assert_eq!(
         retrieved_table_names,
@@ -1296,9 +1317,9 @@ fn test_can_create_tables() {
     );
 }
 
-#[test]
-fn test_cannot_create_tables_with_invalid_record_batch() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_cannot_create_tables_with_invalid_record_batch() {
+    let mut test_context = TestContext::new().await;
 
     let invalid_record_batch = modelardb_storage::test::normal_table_record_batch();
     let invalid_record_batch_bytes =
@@ -1309,9 +1330,6 @@ fn test_cannot_create_tables_with_invalid_record_batch() {
         body: invalid_record_batch_bytes.into(),
     };
 
-    let response = test_context
-        .runtime
-        .block_on(async { test_context.client.do_action(Request::new(action)).await });
-
+    let response = test_context.client.do_action(Request::new(action)).await;
     assert!(response.is_err());
 }
