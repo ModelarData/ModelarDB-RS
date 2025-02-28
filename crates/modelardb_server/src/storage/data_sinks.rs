@@ -153,8 +153,8 @@ impl DataSink for ModelTableDataSink {
             let record_batch =
                 record_batch?.project(&self.model_table_metadata.query_schema_to_schema)?;
 
-            // Manually ensure the fields are not nullable. It is not possible to insert null values
-            // into model tables but the schema of the record batch may contain nullable fields.
+            // Ensure the fields are not nullable. It is not possible to insert null values into
+            // model tables but the schema of the record batch may contain nullable fields.
             let mut fields: Vec<Field> = Vec::with_capacity(record_batch.schema().fields.len());
             for field in record_batch.schema().fields() {
                 fields.push(Field::new(field.name(), field.data_type().clone(), false));

@@ -49,7 +49,7 @@ pub(crate) enum SortedJoinColumnType {
     Tag(String),
 }
 
-/// An execution plan that join arrays of data points sorted by tag columns and `timestamp` from
+/// An execution plan that joins arrays of data points sorted by tag columns and `timestamp` from
 /// multiple execution plans. It is `pub(crate)` so the additional rules added to Apache
 /// DataFusion's physical optimizer can pattern match on it.
 #[derive(Debug)]

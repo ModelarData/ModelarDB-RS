@@ -176,8 +176,7 @@ impl UncompressedDataManager {
         let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
             model_table_metadata.column_arrays(&data_points)?;
 
-        // For each data point, compute a hash from the tags and pass the fields to the storage
-        // engine so they can be added to the appropriate UncompressedDataBuffer.
+        // For each data point, insert the timestamp and values into the corresponding UncompressedDataBuffer.
         for (index, timestamp) in timestamp_column_array.iter().enumerate() {
             let tag_values: Vec<String> = tag_column_arrays
                 .iter()
@@ -635,8 +634,8 @@ impl UncompressedDataManager {
     }
 }
 
-/// Calculate a unique hash for a specific combination of `table_name` and `tag_values`. The hash
-/// can be used to identify a specific multivariate time series during ingestion.
+/// Calculate a hash for a combination of `table_name` and `tag_values`. The hash can be used to
+/// identify a specific multivariate time series during ingestion.
 fn calculate_tag_hash(table_name: &str, tag_values: &[String]) -> u64 {
     let mut hash_data = tag_values.to_vec();
     hash_data.push(table_name.to_string());
