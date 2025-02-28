@@ -202,7 +202,7 @@ impl TestContext {
 
     /// Create a normal table or model table with or without tags in the server through the
     /// `do_action()` method and the `CreateTable` action.
-    fn create_table(&mut self, table_name: &str, table_type: TableType) {
+    async fn create_table(&mut self, table_name: &str, table_type: TableType) {
         let cmd = match table_type {
             TableType::NormalTable => {
                 format!(
@@ -257,26 +257,25 @@ impl TestContext {
 
         let ticket = Ticket { ticket: cmd.into() };
 
-        self.runtime.block_on(async {
-            self.client.do_get(ticket).await.unwrap();
-        })
+        self.client.do_get(ticket).await.unwrap();
     }
 
     /// Drop a table in the server through the `do_get()` method.
-    fn drop_table(&mut self, table_name: &str) -> Result<Response<Streaming<FlightData>>, Status> {
+    async fn drop_table(
+        &mut self,
+        table_name: &str,
+    ) -> Result<Response<Streaming<FlightData>>, Status> {
         let ticket = Ticket::new(format!("DROP TABLE {table_name}"));
-        self.runtime
-            .block_on(async { self.client.do_get(ticket).await })
+        self.client.do_get(ticket).await
     }
 
     /// Truncate a table in the server through the `do_get()` method.
-    fn truncate_table(
+    async fn truncate_table(
         &mut self,
         table_name: &str,
     ) -> Result<Response<Streaming<FlightData>>, Status> {
         let ticket = Ticket::new(format!("TRUNCATE TABLE {table_name}"));
-        self.runtime
-            .block_on(async { self.client.do_get(ticket).await })
+        self.client.do_get(ticket).await
     }
 
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
@@ -359,102 +358,92 @@ impl TestContext {
     }
 
     /// Send data points to the server through the `do_put()` method.
-    fn send_time_series_to_server(
+    async fn send_time_series_to_server(
         &mut self,
         flight_data: Vec<FlightData>,
     ) -> Result<Response<Streaming<PutResult>>, Status> {
-        self.runtime.block_on(async {
-            let flight_data_stream = stream::iter(flight_data);
-            self.client.do_put(flight_data_stream).await
-        })
+        let flight_data_stream = stream::iter(flight_data);
+        self.client.do_put(flight_data_stream).await
     }
 
     /// Flush the data in the StorageEngine to disk through the `do_action()` method.
-    fn flush_data_to_disk(&mut self) {
+    async fn flush_data_to_disk(&mut self) {
         let action = Action {
             r#type: "FlushMemory".to_owned(),
             body: Bytes::new(),
         };
 
-        self.runtime.block_on(async {
-            self.client.do_action(Request::new(action)).await.unwrap();
-        })
+        self.client.do_action(Request::new(action)).await.unwrap();
     }
 
     /// Execute a query against the server through the `do_get()` method and return it.
-    fn execute_query(&mut self, query: String) -> Result<RecordBatch, Box<dyn Error>> {
-        self.runtime.block_on(async {
-            // Execute query.
-            let ticket = Ticket {
-                ticket: query.into(),
-            };
-            let mut stream = self.client.do_get(ticket).await?.into_inner();
+    async fn execute_query(&mut self, query: String) -> Result<RecordBatch, Box<dyn Error>> {
+        // Execute query.
+        let ticket = Ticket {
+            ticket: query.into(),
+        };
+        let mut stream = self.client.do_get(ticket).await?.into_inner();
 
-            // Get schema of result set.
-            let flight_data = stream.message().await?.ok_or("No time series received.")?;
-            let schema = Arc::new(Schema::try_from(&flight_data)?);
+        // Get schema of result set.
+        let flight_data = stream.message().await?.ok_or("No time series received.")?;
+        let schema = Arc::new(Schema::try_from(&flight_data)?);
 
-            // Get data in result set.
-            let mut query_result = vec![];
-            while let Some(flight_data) = stream.message().await? {
-                let dictionaries_by_id = HashMap::new();
-                let record_batch = utils::flight_data_to_arrow_batch(
-                    &flight_data,
-                    schema.clone(),
-                    &dictionaries_by_id,
-                )?;
-                query_result.push(record_batch);
-            }
+        // Get data in result set.
+        let mut query_result = vec![];
+        while let Some(flight_data) = stream.message().await? {
+            let dictionaries_by_id = HashMap::new();
+            let record_batch = utils::flight_data_to_arrow_batch(
+                &flight_data,
+                schema.clone(),
+                &dictionaries_by_id,
+            )?;
+            query_result.push(record_batch);
+        }
 
-            if query_result.is_empty() {
-                Ok(RecordBatch::new_empty(schema))
-            } else {
-                // unwrap() is used as ? makes the return type Result<RecordBatch, ArrowError>>.
-                Ok(compute::concat_batches(&query_result[0].schema(), &query_result).unwrap())
-            }
-        })
+        if query_result.is_empty() {
+            Ok(RecordBatch::new_empty(schema))
+        } else {
+            // unwrap() is used as ? makes the return type Result<RecordBatch, ArrowError>>.
+            Ok(compute::concat_batches(&query_result[0].schema(), &query_result).unwrap())
+        }
     }
 
     /// Retrieve the table names currently in the server and return them.
-    fn retrieve_all_table_names(&mut self) -> Result<Vec<String>, Box<dyn Error>> {
+    async fn retrieve_all_table_names(&mut self) -> Result<Vec<String>, Box<dyn Error>> {
         let criteria = Criteria {
             expression: Bytes::new(),
         };
         let request = Request::new(criteria);
 
-        self.runtime.block_on(async {
-            let mut stream = self.client.list_flights(request).await?.into_inner();
-            let flights = stream.message().await?.ok_or("No time series received.")?;
+        let mut stream = self.client.list_flights(request).await?.into_inner();
+        let flights = stream.message().await?.ok_or("No time series received.")?;
 
-            let mut table_names = vec![];
-            if let Some(fd) = flights.flight_descriptor {
-                for table in fd.path {
-                    table_names.push(table);
-                }
+        let mut table_names = vec![];
+        if let Some(fd) = flights.flight_descriptor {
+            for table in fd.path {
+                table_names.push(table);
             }
-            Ok(table_names)
-        })
+        }
+        Ok(table_names)
     }
 
     /// Retrieve the schema of a table in the server and return it.
-    fn retrieve_schema(&mut self, table_name: &str) -> Schema {
-        self.runtime.block_on(async {
-            let schema_result = self
-                .client
-                .get_schema(Request::new(FlightDescriptor::new_path(vec![
-                    table_name.to_owned()
-                ])))
-                .await
-                .unwrap()
-                .into_inner();
+    async fn retrieve_schema(&mut self, table_name: &str) -> Schema {
+        let schema_result = self
+            .client
+            .get_schema(Request::new(FlightDescriptor::new_path(vec![
+                table_name.to_owned(),
+            ])))
+            .await
+            .unwrap()
+            .into_inner();
 
-            convert::try_schema_from_ipc_buffer(&schema_result.schema).unwrap()
-        })
+        convert::try_schema_from_ipc_buffer(&schema_result.schema).unwrap()
     }
 
     /// Update `setting` to `setting_value` in the server configuration using the
     /// `UpdateConfiguration` action.
-    fn update_configuration(
+    async fn update_configuration(
         &mut self,
         setting: &str,
         setting_value: &str,
@@ -472,14 +461,13 @@ impl TestContext {
                 .into(),
         };
 
-        self.runtime
-            .block_on(async { self.client.do_action(Request::new(action)).await })
+        self.client.do_action(Request::new(action)).await
     }
 
     /// Retrieve the response of the [`Action`] with the type `action_type` and convert it into an
     /// Apache Arrow [`RecordBatch`].
-    fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
-        let response_bytes = self.retrieve_action_bytes(action_type);
+    async fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
+        let response_bytes = self.retrieve_action_bytes(action_type).await;
 
         // Convert the bytes in the response into an Apache Arrow record batch.
         let mut reader = StreamReader::try_new(response_bytes.reader(), None).unwrap();
@@ -487,24 +475,23 @@ impl TestContext {
     }
 
     /// Retrieve the response of the [`Action`] with the type `action_type`.
-    fn retrieve_action_bytes(&mut self, action_type: &str) -> Bytes {
+    async fn retrieve_action_bytes(&mut self, action_type: &str) -> Bytes {
         let action = Action {
             r#type: action_type.to_owned(),
             body: Bytes::new(),
         };
 
         // Retrieve the bytes from the action response.
-        let response = self.runtime.block_on(async {
-            self.client
-                .do_action(Request::new(action))
-                .await
-                .unwrap()
-                .into_inner()
-                .message()
-                .await
-                .unwrap()
-                .unwrap()
-        });
+        let response = self
+            .client
+            .do_action(Request::new(action))
+            .await
+            .unwrap()
+            .into_inner()
+            .message()
+            .await
+            .unwrap()
+            .unwrap();
 
         response.body
     }
