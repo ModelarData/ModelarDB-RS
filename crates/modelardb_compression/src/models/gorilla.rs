@@ -15,12 +15,14 @@
 
 //! Implementation of the Gorilla model type which uses the lossless compression method for
 //! floating-point values proposed for the time series management system Gorilla in the [Gorilla
-//! paper]. The compression method described in the paper has been extended with support for lossy
-//! compression by replacing values with the previous value if possible within the error bound. As
-//! this compression method compresses the values of a time series segment using XOR and a variable
+//! paper]. To adapt Gorilla model type for float compression, float implementation of Gorilla
+//! from ELF repository was used [ELF repository]. The compression method has been extended with support for 
+//! lossy compression by replacing values with the previous value if possible within the error bound. 
+//! As this compression method compresses the values of a time series segment using XOR and a variable
 //! length binary encoding, aggregates are computed by iterating over all values in the segment.
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
+//! [ELF repository]: https://github.com/Spatio-Temporal-Lab/elf
 
 use modelardb_types::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
@@ -110,8 +112,12 @@ impl Gorilla {
         } else {
             // Store each new value as its leading zero bits (if necessary) and
             // meaningful bits (all bits from the first to the last one bit).
-            let leading_zero_bits = value_xor_last_value.leading_zeros() as u8;
+            let mut leading_zero_bits = value_xor_last_value.leading_zeros() as u8;
             let trailing_zero_bits = value_xor_last_value.trailing_zeros() as u8;
+            // Avoid overflow of leading bits.
+            if leading_zero_bits >= 16 {
+                leading_zero_bits = 15;
+            }
             self.compressed_values.append_a_one_bit();
 
             if leading_zero_bits >= self.last_leading_zero_bits
@@ -128,15 +134,21 @@ impl Gorilla {
                 );
             } else {
                 // Store the leading zero bits before the meaningful bits using
-                // 5 and 6 bits respectively as described in the Gorilla paper.
+                // 4 and 5 bits respectively as implemented in the ELF repository.
                 self.compressed_values.append_a_one_bit();
                 self.compressed_values
-                    .append_bits(leading_zero_bits as u64, 5);
+                    .append_bits(leading_zero_bits as u64, 4);
 
                 let meaningful_bits =
                     models::VALUE_SIZE_IN_BITS - leading_zero_bits - trailing_zero_bits;
-                self.compressed_values
-                    .append_bits(meaningful_bits as u64, 6);
+                // 0 is used to denote 32 meaningful bits 
+                if meaningful_bits == 32 {
+                    self.compressed_values
+                    .append_bits(0, 5);
+                } else {
+                    self.compressed_values
+                    .append_bits(meaningful_bits as u64, 5);
+                }
                 self.compressed_values.append_bits(
                     (value_xor_last_value >> trailing_zero_bits) as u64,
                     meaningful_bits,
@@ -195,8 +207,11 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
         if bits.read_bit() {
             if bits.read_bit() {
                 // New leading and trailing zeros.
-                leading_zeros = bits.read_bits(5) as u8;
-                let meaningful_bits = bits.read_bits(6) as u8;
+                leading_zeros = bits.read_bits(4) as u8;
+                let mut meaningful_bits = bits.read_bits(5) as u8;
+                if meaningful_bits == 0 {
+                    meaningful_bits = 32;
+                }
                 trailing_zeros = models::VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeros;
             }
 
@@ -249,8 +264,11 @@ pub fn grid(
         if bits.read_bit() {
             if bits.read_bit() {
                 // New leading and trailing zeros.
-                leading_zeros = bits.read_bits(5) as u8;
-                let meaningful_bits = bits.read_bits(6) as u8;
+                leading_zeros = bits.read_bits(4) as u8;
+                let mut meaningful_bits = bits.read_bits(5) as u8;
+                if meaningful_bits == 0 {
+                    meaningful_bits = 32;
+                }
                 trailing_zeros = models::VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeros;
             }
 
