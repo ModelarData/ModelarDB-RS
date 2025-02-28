@@ -504,59 +504,69 @@ impl Drop for TestContext {
     }
 }
 
-#[test]
-fn test_can_create_normal_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_create_normal_table() {
+    let mut test_context = TestContext::new().await;
 
-    test_context.create_table(TABLE_NAME, TableType::NormalTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::NormalTable)
+        .await;
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
-
-    assert_eq!(retrieved_table_names.len(), 1);
-    assert_eq!(retrieved_table_names[0], TABLE_NAME);
-}
-
-#[test]
-fn test_can_register_normal_table_after_restart() {
-    let mut test_context = TestContext::new();
-
-    test_context.create_table(TABLE_NAME, TableType::NormalTable);
-    test_context.restart_server();
-
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 }
 
-#[test]
-fn test_can_create_model_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_register_normal_table_after_restart() {
+    let mut test_context = TestContext::new().await;
 
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::NormalTable)
+        .await;
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    test_context.restart_server().await;
 
-    assert_eq!(retrieved_table_names.len(), 1);
-    assert_eq!(retrieved_table_names[0], TABLE_NAME);
-}
-
-#[test]
-fn test_can_register_model_table_after_restart() {
-    let mut test_context = TestContext::new();
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-    test_context.restart_server();
-
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 }
 
-#[test]
-fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_create_model_table() {
+    let mut test_context = TestContext::new().await;
+
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
+
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
+
+    assert_eq!(retrieved_table_names.len(), 1);
+    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+}
+
+#[tokio::test]
+async fn test_can_register_model_table_after_restart() {
+    let mut test_context = TestContext::new().await;
+
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
+
+    test_context.restart_server().await;
+
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
+
+    assert_eq!(retrieved_table_names.len(), 1);
+    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+}
+
+#[tokio::test]
+async fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
+    let mut test_context = TestContext::new().await;
     let table_types = &[
         TableType::NormalTable,
         TableType::ModelTable,
@@ -579,7 +589,10 @@ fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
 
         for table_number in 0..number_of_each_to_create {
             let table_name = table_type_name.to_owned() + &table_number.to_string();
-            test_context.create_table(&table_name, TableType::NormalTable);
+            test_context
+                .create_table(&table_name, TableType::NormalTable)
+                .await;
+
             table_names.push(table_name);
         }
     }
@@ -588,13 +601,13 @@ fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
     table_names.sort();
 
     // Ensure the tables were created without a restart.
-    let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let mut retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     retrieved_table_names.sort();
     assert_eq!(retrieved_table_names, table_names);
 
     // Ensure the tables were registered after a restart.
-    test_context.restart_server();
-    let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    test_context.restart_server().await;
+    let mut retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     retrieved_table_names.sort();
     assert_eq!(retrieved_table_names, table_names);
 }
