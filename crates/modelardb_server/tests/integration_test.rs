@@ -43,7 +43,7 @@ use modelardb_common::test::data_generation;
 use modelardb_types::types::ErrorBound;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use tempfile::TempDir;
-use tokio::runtime::Runtime;
+use tokio::time;
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -76,40 +76,37 @@ enum TableType {
     ModelTableAsField,
 }
 
-/// Async runtime, handler to the server process, and client for use by the tests. It implements
-/// `drop()` so the resources it manages is released no matter if a test succeeds, fails, or panics.
+/// Handler to the server process and client for use by the tests. It implements `drop()` so the
+/// resources it manages is released no matter if a test succeeds, fails, or panics.
 struct TestContext {
     temp_dir: TempDir,
     port: u16,
-    runtime: Runtime,
     server: Child,
     client: FlightServiceClient<Channel>,
 }
 
 impl TestContext {
-    /// Create a [`Runtime`], a server that stores data in a randomly generated local data folder
-    /// and listens on `PORT`, and a client and ensure they are all ready to be used in the tests.
-    fn new() -> Self {
-        let runtime = Runtime::new().unwrap();
+    /// Create a server that stores data in a randomly generated local data folder and listens on
+    /// `PORT` and a client and ensure they are ready to be used in the tests.
+    async fn new() -> Self {
         let temp_dir = tempfile::tempdir().unwrap();
         let port = PORT.fetch_add(1, Ordering::Relaxed);
         let mut server = Self::create_server(&temp_dir, port);
-        let client = Self::create_client(&runtime, &mut server, port);
+        let client = Self::create_client(&mut server, port).await;
 
         Self {
             temp_dir,
             port,
-            runtime,
             server,
             client,
         }
     }
 
     /// Restart the server and reconnect the client.
-    fn restart_server(&mut self) {
+    async fn restart_server(&mut self) {
         Self::kill_child(&mut self.server);
         self.server = Self::create_server(&self.temp_dir, self.port);
-        self.client = Self::create_client(&self.runtime, &mut self.server, self.port);
+        self.client = Self::create_client(&mut self.server, self.port).await;
     }
 
     /// Create a server that stores data in `local_data_folder` and listens on `port` and ensure it
@@ -119,6 +116,7 @@ impl TestContext {
         // (stderr) are not printed when all the tests are run using the "cargo test" command.
         // modelardbd is run using dev-release so the tests can use larger more realistic data sets.
         let local_data_folder = local_data_folder.path().to_str().unwrap();
+        // TODO: Maybe replace with tokio::process::Command.
         let mut server = Command::new("cargo")
             .env("MODELARDBD_PORT", port.to_string())
             .args([
@@ -152,23 +150,18 @@ impl TestContext {
     }
 
     /// Create the client and ensure it can connect to the server.
-    fn create_client(
-        runtime: &Runtime,
-        server: &mut Child,
-        port: u16,
-    ) -> FlightServiceClient<Channel> {
+    async fn create_client(server: &mut Child, port: u16) -> FlightServiceClient<Channel> {
         // Despite waiting for the expected output, the client may not able to connect the first
         // time. This rarely happens on a local machine but happens more often in GitHub Actions.
         let mut attempts = ATTEMPTS;
         loop {
-            if let Ok(client) = Self::create_apache_arrow_flight_service_client(runtime, HOST, port)
-            {
+            if let Ok(client) = Self::create_apache_arrow_flight_service_client(HOST, port).await {
                 return client;
             } else if attempts == 0 {
                 Self::kill_child(server);
                 panic!("The Apache Arrow Flight client could not connect to modelardbd.");
             } else {
-                thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);
+                time::sleep(ATTEMPT_SLEEP_IN_SECONDS).await;
                 attempts -= 1;
             }
         }
@@ -197,17 +190,14 @@ impl TestContext {
     }
 
     /// Return an Apache Arrow Flight client to access the remote methods provided by the server.
-    fn create_apache_arrow_flight_service_client(
-        runtime: &Runtime,
+    async fn create_apache_arrow_flight_service_client(
         host: &str,
         port: u16,
     ) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
         let address = format!("grpc://{host}:{port}");
 
-        runtime.block_on(async {
-            let client = FlightServiceClient::connect(address).await?;
-            Ok(client)
-        })
+        let client = FlightServiceClient::connect(address).await?;
+        Ok(client)
     }
 
     /// Create a normal table or model table with or without tags in the server through the
