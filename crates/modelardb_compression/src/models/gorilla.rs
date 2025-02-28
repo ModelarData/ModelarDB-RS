@@ -16,8 +16,8 @@
 //! Implementation of the Gorilla model type which uses the lossless compression method for
 //! floating-point values proposed for the time series management system Gorilla in the [Gorilla
 //! paper]. To adapt Gorilla model type for float compression, float implementation of Gorilla
-//! from ELF repository was used [ELF repository]. The compression method has been extended with support for 
-//! lossy compression by replacing values with the previous value if possible within the error bound. 
+//! from ELF repository was used [ELF repository]. The compression method has been extended with support for
+//! lossy compression by replacing values with the previous value if possible within the error bound.
 //! As this compression method compresses the values of a time series segment using XOR and a variable
 //! length binary encoding, aggregates are computed by iterating over all values in the segment.
 //!
@@ -141,13 +141,12 @@ impl Gorilla {
 
                 let meaningful_bits =
                     models::VALUE_SIZE_IN_BITS - leading_zero_bits - trailing_zero_bits;
-                // 0 is used to denote 32 meaningful bits 
+                // 0 is used to denote 32 meaningful bits.
                 if meaningful_bits == 32 {
-                    self.compressed_values
-                    .append_bits(0, 5);
+                    self.compressed_values.append_bits(0, 5);
                 } else {
                     self.compressed_values
-                    .append_bits(meaningful_bits as u64, 5);
+                        .append_bits(meaningful_bits as u64, 5);
                 }
                 self.compressed_values.append_bits(
                     (value_xor_last_value >> trailing_zero_bits) as u64,
