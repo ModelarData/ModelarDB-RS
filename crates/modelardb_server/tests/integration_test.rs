@@ -718,13 +718,15 @@ async fn test_cannot_truncate_missing_table() {
     assert!(result.is_err());
 }
 
-#[test]
-fn test_can_get_schema() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_get_schema() {
+    let mut test_context = TestContext::new().await;
 
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 
-    let schema = test_context.retrieve_schema(TABLE_NAME);
+    let schema = test_context.retrieve_schema(TABLE_NAME).await;
 
     assert_eq!(
         schema,
@@ -740,21 +742,19 @@ fn test_can_get_schema() {
     );
 }
 
-#[test]
-fn test_can_list_actions() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_list_actions() {
+    let mut test_context = TestContext::new().await;
 
-    let mut actions = test_context.runtime.block_on(async {
-        test_context
-            .client
-            .list_actions(Request::new(arrow_flight::Empty {}))
-            .await
-            .unwrap()
-            .into_inner()
-            .map(|action| action.unwrap().r#type)
-            .collect::<Vec<String>>()
-            .await
-    });
+    let mut actions = test_context
+        .client
+        .list_actions(Request::new(arrow_flight::Empty {}))
+        .await
+        .unwrap()
+        .into_inner()
+        .map(|action| action.unwrap().r#type)
+        .collect::<Vec<String>>()
+        .await;
 
     // Sort() is called on the vector to ensure that the assertion will pass even if the order of
     // the actions returned by the endpoint changes.
@@ -774,28 +774,32 @@ fn test_can_list_actions() {
     );
 }
 
-#[test]
-fn test_do_put_can_ingest_time_series_with_tags() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_do_put_can_ingest_time_series_with_tags() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::ModelTable,
-    );
+    )
+    .await;
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(time_series, query_result);
 }
 
-#[test]
-fn test_insert_can_ingest_time_series_with_tags() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+#[tokio::test]
+async fn test_insert_can_ingest_time_series_with_tags() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 
     let insert_result = test_context
         .execute_query(format!(
@@ -806,12 +810,14 @@ fn test_insert_can_ingest_time_series_with_tags() {
              ('2020-01-01 13:00:03', 1, 2, 3, 4, 5, 'Aalborg'),\
              ('2020-01-01 13:00:04', 1, 2, 3, 4, 5, 'Aalborg')"
         ))
+        .await
         .unwrap();
     let insert_result_count = modelardb_types::array!(insert_result, 0, UInt64Array).value(0);
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(insert_result.num_rows(), 1);
@@ -819,28 +825,32 @@ fn test_insert_can_ingest_time_series_with_tags() {
     assert_eq!(query_result.num_rows(), 5);
 }
 
-#[test]
-fn test_do_put_can_ingest_time_series_without_tags() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_do_put_can_ingest_time_series_without_tags() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::ModelTableNoTag,
-    );
+    )
+    .await;
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(time_series, query_result);
 }
 
-#[test]
-fn test_insert_can_ingest_time_series_without_tags() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::ModelTableNoTag);
+#[tokio::test]
+async fn test_insert_can_ingest_time_series_without_tags() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTableNoTag)
+        .await;
 
     let insert_result = test_context
         .execute_query(format!(
@@ -851,12 +861,14 @@ fn test_insert_can_ingest_time_series_without_tags() {
              ('2020-01-01 13:00:03', 1, 2, 3, 4, 5),\
              ('2020-01-01 13:00:04', 1, 2, 3, 4, 5)"
         ))
+        .await
         .unwrap();
     let insert_result_count = modelardb_types::array!(insert_result, 0, UInt64Array).value(0);
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(insert_result.num_rows(), 1);
@@ -864,20 +876,22 @@ fn test_insert_can_ingest_time_series_without_tags() {
     assert_eq!(query_result.num_rows(), 5);
 }
 
-#[test]
-fn test_do_put_can_ingest_time_series_with_generated_field() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_do_put_can_ingest_time_series_with_generated_field() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::ModelTableAsField,
-    );
+    )
+    .await;
 
     // The optimizer is allowed to add SortedJoinExec between SortedJoinExec and GeneratedAsExec.
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"))
+        .await
         .unwrap();
 
     // Column two in the query is the generated column which does not exist in data point.
@@ -887,10 +901,12 @@ fn test_do_put_can_ingest_time_series_with_generated_field() {
     assert_eq!(time_series.column(1), query_result.column(2));
 }
 
-#[test]
-fn test_insert_can_ingest_time_series_with_generated_field() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::ModelTableAsField);
+#[tokio::test]
+async fn test_insert_can_ingest_time_series_with_generated_field() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTableAsField)
+        .await;
 
     let insert_result = test_context
         .execute_query(format!(
@@ -901,12 +917,14 @@ fn test_insert_can_ingest_time_series_with_generated_field() {
              ('2020-01-01 13:00:03', 1, 2, 3, 4),\
              ('2020-01-01 13:00:04', 1, 2, 3, 4)"
         ))
+        .await
         .unwrap();
     let insert_result_count = modelardb_types::array!(insert_result, 0, UInt64Array).value(0);
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(insert_result.num_rows(), 1);
@@ -914,9 +932,9 @@ fn test_insert_can_ingest_time_series_with_generated_field() {
     assert_eq!(query_result.num_rows(), 5);
 }
 
-#[test]
-fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
+    let mut test_context = TestContext::new().await;
 
     let time_series_with_tag_one: RecordBatch =
         TestContext::generate_time_series_with_tag(false, None, Some("tag_one"));
@@ -924,12 +942,13 @@ fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
         TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
     let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
-    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::ModelTable);
+    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::ModelTable).await;
 
     let query_result = test_context
         .execute_query(format!(
             "SELECT * FROM {TABLE_NAME} ORDER BY tag, timestamp"
         ))
+        .await
         .unwrap();
 
     let expected = compute::concat_batches(&time_series[0].schema(), time_series).unwrap();
@@ -942,25 +961,29 @@ fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
     assert_eq!(expected, query_result);
 }
 
-#[test]
-fn test_cannot_ingest_invalid_time_series() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_cannot_ingest_invalid_time_series() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
     let flight_data =
         TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), &[time_series]);
 
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 
     assert!(
         test_context
             .send_time_series_to_server(flight_data)
+            .await
             .is_err()
     );
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
     assert_eq!(query_result.num_rows(), 0);
 }
