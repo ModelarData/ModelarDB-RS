@@ -23,13 +23,13 @@ use std::ops::Range;
 use std::process::{Child, Command, Stdio};
 use std::str;
 use std::string::String;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
 use std::time::Duration;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
+use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket, utils};
 use bytes::{Buf, Bytes};
 use datafusion::arrow::array::{Array, Float64Array, StringArray, UInt64Array};
 use datafusion::arrow::compute;
@@ -38,7 +38,7 @@ use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use modelardb_common::test::data_generation;
 use modelardb_types::types::ErrorBound;
 use sysinfo::{Pid, ProcessesToUpdate, System};
@@ -116,7 +116,6 @@ impl TestContext {
         // (stderr) are not printed when all the tests are run using the "cargo test" command.
         // modelardbd is run using dev-release so the tests can use larger more realistic data sets.
         let local_data_folder = local_data_folder.path().to_str().unwrap();
-        // TODO: Maybe replace with tokio::process::Command.
         let mut server = Command::new("cargo")
             .env("MODELARDBD_PORT", port.to_string())
             .args([
@@ -1024,27 +1023,32 @@ async fn execute_and_assert_include_select(address_count: usize) {
 
 #[tokio::test]
 async fn test_count_from_segments_equals_count_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0).await;
+    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0)
+        .await;
 }
 
 #[tokio::test]
 async fn test_min_from_segments_equals_min_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"), 0.0).await;
+    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"), 0.0)
+        .await;
 }
 
 #[tokio::test]
 async fn test_max_from_segments_equals_max_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"), 0.0).await;
+    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"), 0.0)
+        .await;
 }
 
 #[tokio::test]
 async fn test_sum_from_segments_equals_sum_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"), 0.001).await;
+    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"), 0.001)
+        .await;
 }
 
 #[tokio::test]
 async fn test_avg_from_segments_equals_avg_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001).await;
+    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001)
+        .await;
 }
 
 /// Asserts that the query executed on segments in `segment_query` returns a result within
