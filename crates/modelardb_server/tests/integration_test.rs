@@ -78,15 +78,15 @@ enum TableType {
 /// Handler to the server process and client for use by the tests. The local folder is deleted and
 /// the server process is killed when the struct is dropped.
 struct TestContext {
-    _temp_dir: TempDir,
-    _server: Child,
+    temp_dir: TempDir,
     port: u16,
+    server: Child,
     client: FlightServiceClient<Channel>,
 }
 
 impl TestContext {
     /// Create a server that stores data in a randomly generated local data folder and listens on
-    /// `PORT` and a client and ensure they are ready to be used in the tests.
+    /// `PORT` and a client that is connected to the server.
     async fn new() -> Self {
         let temp_dir = tempfile::tempdir().unwrap();
         let port = PORT.fetch_add(1, Ordering::Relaxed);
@@ -94,11 +94,18 @@ impl TestContext {
         let client = Self::create_client(port).await;
 
         Self {
-            _temp_dir: temp_dir,
-            _server: server,
+            temp_dir,
             port,
+            server,
             client,
         }
+    }
+
+    /// Restart the server on a new port and reconnect the client.
+    async fn restart_server(&mut self) {
+        self.port = PORT.fetch_add(1, Ordering::Relaxed);
+        self.server = Self::create_server(&self.temp_dir, self.port).await;
+        self.client = Self::create_client(self.port).await;
     }
 
     /// Create a server that stores data in `local_data_folder` and listens on `port` and ensure it
