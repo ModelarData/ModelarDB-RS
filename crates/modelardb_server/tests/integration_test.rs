@@ -101,7 +101,8 @@ impl TestContext {
         }
     }
 
-    /// Restart the server on a new port and reconnect the client.
+    /// Restart the server on a new port to avoid conflicts with the server process that is killed
+    /// and reconnect the client.
     async fn restart_server(&mut self) {
         self.port = PORT.fetch_add(1, Ordering::Relaxed);
         self.server = Self::create_server(&self.temp_dir, self.port).await;
@@ -377,7 +378,6 @@ impl TestContext {
         if query_result.is_empty() {
             Ok(RecordBatch::new_empty(schema))
         } else {
-            // unwrap() is used as ? makes the return type Result<RecordBatch, ArrowError>>.
             Ok(compute::concat_batches(&query_result[0].schema(), &query_result).unwrap())
         }
     }
