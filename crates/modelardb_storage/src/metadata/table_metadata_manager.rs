@@ -62,6 +62,24 @@ pub struct TableMetadataManager {
 }
 
 impl TableMetadataManager {
+    /// Create a new [`TableMetadataManager`] that saves the metadata to an in-memory Delta Lake and
+    /// initialize the metadata tables. If the metadata tables could not be created, return
+    /// [`ModelarDbStorageError`].
+    pub async fn new_in_memory(maybe_session_context: Option<Arc<SessionContext>>) -> Result<Self> {
+        let table_metadata_manager = Self {
+            delta_lake: DeltaLake::new_in_memory(),
+            tag_value_hashes: DashMap::new(),
+            session_context: maybe_session_context
+                .unwrap_or_else(|| Arc::new(SessionContext::new())),
+        };
+
+        table_metadata_manager
+            .create_and_register_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
     /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and
     /// initialize the metadata tables. If the metadata tables could not be created, return
     /// [`ModelarDbStorageError`].
@@ -943,23 +961,29 @@ mod tests {
             .unwrap();
 
         // Verify that the tables were created, registered, and has the expected columns.
-        assert!(metadata_manager
-            .session_context
-            .sql("SELECT table_name FROM normal_table_metadata")
-            .await
-            .is_ok());
+        assert!(
+            metadata_manager
+                .session_context
+                .sql("SELECT table_name FROM normal_table_metadata")
+                .await
+                .is_ok()
+        );
 
-        assert!(metadata_manager
-            .session_context
-            .sql("SELECT table_name, query_schema FROM model_table_metadata")
-            .await
-            .is_ok());
+        assert!(
+            metadata_manager
+                .session_context
+                .sql("SELECT table_name, query_schema FROM model_table_metadata")
+                .await
+                .is_ok()
+        );
 
-        assert!(metadata_manager
-            .session_context
-            .sql("SELECT hash, table_name FROM model_table_hash_table_name")
-            .await
-            .is_ok());
+        assert!(
+            metadata_manager
+                .session_context
+                .sql("SELECT hash, table_name FROM model_table_hash_table_name")
+                .await
+                .is_ok()
+        );
 
         assert!(metadata_manager
             .session_context
@@ -1001,46 +1025,56 @@ mod tests {
         let result = metadata_manager.register_tags_table("missing_table").await;
 
         assert!(result.is_err());
-        assert!(!metadata_manager
-            .session_context
-            .table_exist("missing_table_tags")
-            .unwrap());
+        assert!(
+            !metadata_manager
+                .session_context
+                .table_exist("missing_table_tags")
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn test_normal_table_is_normal_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
-        assert!(metadata_manager
-            .is_normal_table("normal_table_1")
-            .await
-            .unwrap());
+        assert!(
+            metadata_manager
+                .is_normal_table("normal_table_1")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn test_model_table_is_not_normal_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-        assert!(!metadata_manager
-            .is_normal_table(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            !metadata_manager
+                .is_normal_table(test::MODEL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn test_model_table_is_model_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
-        assert!(metadata_manager
-            .is_model_table(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            metadata_manager
+                .is_model_table(test::MODEL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn test_normal_table_is_not_model_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
-        assert!(!metadata_manager
-            .is_model_table("normal_table_1")
-            .await
-            .unwrap());
+        assert!(
+            !metadata_manager
+                .is_model_table("normal_table_1")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1112,10 +1146,9 @@ mod tests {
         );
         assert_eq!(
             **batch.column(1),
-            BinaryArray::from_vec(vec![&try_convert_schema_to_bytes(
-                &test::model_table_metadata().query_schema
-            )
-            .unwrap()])
+            BinaryArray::from_vec(vec![
+                &try_convert_schema_to_bytes(&test::model_table_metadata().query_schema).unwrap()
+            ])
         );
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
@@ -1177,11 +1210,13 @@ mod tests {
 
         // Verify that the tags table was deleted from the Delta Lake.
         let tags_table_name = format!("{}_tags", test::MODEL_TABLE_NAME);
-        assert!(!temp_dir
-            .path()
-            .join("metadata")
-            .join(tags_table_name)
-            .exists());
+        assert!(
+            !temp_dir
+                .path()
+                .join("metadata")
+                .join(tags_table_name)
+                .exists()
+        );
 
         // Verify that the model table was deleted from the model_table_metadata table.
         let sql = "SELECT table_name FROM model_table_metadata";
@@ -1215,10 +1250,12 @@ mod tests {
     async fn test_drop_table_metadata_for_missing_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
-        assert!(metadata_manager
-            .drop_table_metadata("missing_table")
-            .await
-            .is_err());
+        assert!(
+            metadata_manager
+                .drop_table_metadata("missing_table")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1281,10 +1318,12 @@ mod tests {
     async fn test_truncate_table_metadata_for_missing_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
-        assert!(metadata_manager
-            .truncate_table_metadata("missing_table")
-            .await
-            .is_err());
+        assert!(
+            metadata_manager
+                .truncate_table_metadata("missing_table")
+                .await
+                .is_err()
+        );
     }
 
     async fn create_metadata_manager_and_save_normal_tables() -> (TempDir, TableMetadataManager) {
@@ -1572,10 +1611,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(metadata_manager
-            .tag_hash_to_model_table_name(0)
-            .await
-            .is_err());
+        assert!(
+            metadata_manager
+                .tag_hash_to_model_table_name(0)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
