@@ -17,15 +17,13 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::io::Read;
 use std::iter::repeat;
 use std::ops::Range;
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::str;
 use std::string::String;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::thread;
 use std::time::Duration;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
@@ -41,8 +39,9 @@ use datafusion::arrow::record_batch::RecordBatch;
 use futures::{StreamExt, stream};
 use modelardb_common::test::data_generation;
 use modelardb_types::types::ErrorBound;
-use sysinfo::{Pid, ProcessesToUpdate, System};
 use tempfile::TempDir;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
 use tokio::time;
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status, Streaming};
@@ -76,12 +75,12 @@ enum TableType {
     ModelTableAsField,
 }
 
-/// Handler to the server process and client for use by the tests. It implements `drop()` so the
-/// resources it manages is released no matter if a test succeeds, fails, or panics.
+/// Handler to the server process and client for use by the tests. The local folder is deleted and
+/// the server process is killed when the struct is dropped.
 struct TestContext {
-    temp_dir: TempDir,
+    _temp_dir: TempDir,
+    _server: Child,
     port: u16,
-    server: Child,
     client: FlightServiceClient<Channel>,
 }
 
@@ -91,27 +90,20 @@ impl TestContext {
     async fn new() -> Self {
         let temp_dir = tempfile::tempdir().unwrap();
         let port = PORT.fetch_add(1, Ordering::Relaxed);
-        let mut server = Self::create_server(&temp_dir, port);
-        let client = Self::create_client(&mut server, port).await;
+        let server = Self::create_server(&temp_dir, port).await;
+        let client = Self::create_client(port).await;
 
         Self {
-            temp_dir,
+            _temp_dir: temp_dir,
+            _server: server,
             port,
-            server,
             client,
         }
     }
 
-    /// Restart the server and reconnect the client.
-    async fn restart_server(&mut self) {
-        Self::kill_child(&mut self.server);
-        self.server = Self::create_server(&self.temp_dir, self.port);
-        self.client = Self::create_client(&mut self.server, self.port).await;
-    }
-
     /// Create a server that stores data in `local_data_folder` and listens on `port` and ensure it
     /// is ready to receive requests.
-    fn create_server(local_data_folder: &TempDir, port: u16) -> Child {
+    async fn create_server(local_data_folder: &TempDir, port: u16) -> Child {
         // The server's stdout and stderr are piped so the log messages (stdout) and expected errors
         // (stderr) are not printed when all the tests are run using the "cargo test" command.
         // modelardbd is run using dev-release so the tests can use larger more realistic data sets.
@@ -126,30 +118,29 @@ impl TestContext {
                 "modelardbd",
                 local_data_folder,
             ])
+            .kill_on_drop(true)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
 
         // Ensure that the server has started before executing the test. stdout will not include EOF
-        // until the process ends, so the bytes are read one at a time until the output stating that
-        // the server is ready is printed. If this ever becomes a bottleneck tokio::process::Command
-        // looks like an alternative if it can be used without adding features to the server itself.
-        let stdout = server.stdout.as_mut().unwrap();
-        let mut stdout_bytes = stdout.bytes().flatten();
-        let mut stdout_output: Vec<u8> = Vec::with_capacity(512);
-        let stdout_expected = "Starting Apache Arrow Flight on".as_bytes();
-        while stdout_output.len() < stdout_expected.len()
-            || &stdout_output[stdout_output.len() - stdout_expected.len()..] != stdout_expected
-        {
-            stdout_output.push(stdout_bytes.next().unwrap());
+        // until the process ends, so the output is read one line at a time until the output stating
+        // that the server is ready is printed.
+        let stdout = server.stdout.take().unwrap();
+        let mut reader = BufReader::new(stdout).lines();
+
+        while let Some(line) = reader.next_line().await.unwrap() {
+            if line.contains("Starting Apache Arrow Flight on") {
+                break;
+            }
         }
 
         server
     }
 
     /// Create the client and ensure it can connect to the server.
-    async fn create_client(server: &mut Child, port: u16) -> FlightServiceClient<Channel> {
+    async fn create_client(port: u16) -> FlightServiceClient<Channel> {
         // Despite waiting for the expected output, the client may not able to connect the first
         // time. This rarely happens on a local machine but happens more often in GitHub Actions.
         let mut attempts = ATTEMPTS;
@@ -157,34 +148,11 @@ impl TestContext {
             if let Ok(client) = Self::create_apache_arrow_flight_service_client(HOST, port).await {
                 return client;
             } else if attempts == 0 {
-                Self::kill_child(server);
                 panic!("The Apache Arrow Flight client could not connect to modelardbd.");
             } else {
                 time::sleep(ATTEMPT_SLEEP_IN_SECONDS).await;
                 attempts -= 1;
             }
-        }
-    }
-
-    /// Kill a `child` process.
-    fn kill_child(child: &mut Child) {
-        let mut system = System::new_all();
-
-        let pid = Pid::from_u32(child.id());
-        let pids = &[pid];
-        let processes_to_update = ProcessesToUpdate::Some(pids);
-
-        while let Some(_process) = system.process(pid) {
-            // Microsoft Windows often fails to kill the process and then succeed afterward.
-            let mut attempts = ATTEMPTS;
-            while child.kill().is_err() && attempts > 0 {
-                thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);
-                attempts -= 1;
-            }
-            child.wait().unwrap();
-
-            // Ensure the process is removed if it is killed before checking the condition.
-            system.refresh_processes(processes_to_update, true);
         }
     }
 
@@ -493,13 +461,6 @@ impl TestContext {
             .unwrap();
 
         response.body
-    }
-}
-
-impl Drop for TestContext {
-    /// Kill the server process when [`TestContext`] is dropped.
-    fn drop(&mut self) {
-        Self::kill_child(&mut self.server);
     }
 }
 
