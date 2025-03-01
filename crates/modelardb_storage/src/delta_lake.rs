@@ -34,6 +34,7 @@ use modelardb_common::arguments;
 use modelardb_types::schemas::{DISK_COMPRESSED_SCHEMA, FIELD_COLUMN};
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
+use object_store::memory::InMemory;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use url::Url;
@@ -57,6 +58,16 @@ pub struct DeltaLake {
 }
 
 impl DeltaLake {
+    /// Create a new [`DeltaLake`] that manages the Delta tables in memory.
+    pub fn new_in_memory() -> Self {
+        Self {
+            location: "memory://modelardb".to_owned(),
+            storage_options: HashMap::new(),
+            object_store: Arc::new(InMemory::new()),
+            maybe_local_file_system: None,
+        }
+    }
+
     /// Create a new [`DeltaLake`] that manages the Delta tables in `data_folder_path`. Returns a
     /// [`ModelarDbStorageError`] if `data_folder_path` does not exist and could not be created.
     pub fn try_from_local_path(data_folder_path: &StdPath) -> Result<Self> {
