@@ -17,19 +17,17 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::io::Read;
 use std::iter::repeat;
 use std::ops::Range;
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::str;
 use std::string::String;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
-use std::thread;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
+use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket, utils};
 use bytes::{Buf, Bytes};
 use datafusion::arrow::array::{Array, Float64Array, StringArray, UInt64Array};
 use datafusion::arrow::compute;
@@ -38,12 +36,13 @@ use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use modelardb_common::test::data_generation;
 use modelardb_types::types::ErrorBound;
-use sysinfo::{Pid, ProcessesToUpdate, System};
 use tempfile::TempDir;
-use tokio::runtime::Runtime;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::time;
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -76,45 +75,43 @@ enum TableType {
     ModelTableAsField,
 }
 
-/// Async runtime, handler to the server process, and client for use by the tests. It implements
-/// `drop()` so the resources it manages is released no matter if a test succeeds, fails, or panics.
+/// Handler to the server process and client for use by the tests. The local folder is deleted and
+/// the server process is killed when the struct is dropped.
 struct TestContext {
     temp_dir: TempDir,
     port: u16,
-    runtime: Runtime,
     server: Child,
     client: FlightServiceClient<Channel>,
 }
 
 impl TestContext {
-    /// Create a [`Runtime`], a server that stores data in a randomly generated local data folder
-    /// and listens on `PORT`, and a client and ensure they are all ready to be used in the tests.
-    fn new() -> Self {
-        let runtime = Runtime::new().unwrap();
+    /// Create a server that stores data in a randomly generated local data folder and listens on
+    /// `PORT` and a client that is connected to the server.
+    async fn new() -> Self {
         let temp_dir = tempfile::tempdir().unwrap();
         let port = PORT.fetch_add(1, Ordering::Relaxed);
-        let mut server = Self::create_server(&temp_dir, port);
-        let client = Self::create_client(&runtime, &mut server, port);
+        let server = Self::create_server(&temp_dir, port).await;
+        let client = Self::create_client(port).await;
 
         Self {
             temp_dir,
             port,
-            runtime,
             server,
             client,
         }
     }
 
-    /// Restart the server and reconnect the client.
-    fn restart_server(&mut self) {
-        Self::kill_child(&mut self.server);
-        self.server = Self::create_server(&self.temp_dir, self.port);
-        self.client = Self::create_client(&self.runtime, &mut self.server, self.port);
+    /// Restart the server on a new port to avoid conflicts with the server process that is killed
+    /// and reconnect the client.
+    async fn restart_server(&mut self) {
+        self.port = PORT.fetch_add(1, Ordering::Relaxed);
+        self.server = Self::create_server(&self.temp_dir, self.port).await;
+        self.client = Self::create_client(self.port).await;
     }
 
     /// Create a server that stores data in `local_data_folder` and listens on `port` and ensure it
     /// is ready to receive requests.
-    fn create_server(local_data_folder: &TempDir, port: u16) -> Child {
+    async fn create_server(local_data_folder: &TempDir, port: u16) -> Child {
         // The server's stdout and stderr are piped so the log messages (stdout) and expected errors
         // (stderr) are not printed when all the tests are run using the "cargo test" command.
         // modelardbd is run using dev-release so the tests can use larger more realistic data sets.
@@ -129,90 +126,58 @@ impl TestContext {
                 "modelardbd",
                 local_data_folder,
             ])
+            .kill_on_drop(true)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
 
         // Ensure that the server has started before executing the test. stdout will not include EOF
-        // until the process ends, so the bytes are read one at a time until the output stating that
-        // the server is ready is printed. If this ever becomes a bottleneck tokio::process::Command
-        // looks like an alternative if it can be used without adding features to the server itself.
-        let stdout = server.stdout.as_mut().unwrap();
-        let mut stdout_bytes = stdout.bytes().flatten();
-        let mut stdout_output: Vec<u8> = Vec::with_capacity(512);
-        let stdout_expected = "Starting Apache Arrow Flight on".as_bytes();
-        while stdout_output.len() < stdout_expected.len()
-            || &stdout_output[stdout_output.len() - stdout_expected.len()..] != stdout_expected
-        {
-            stdout_output.push(stdout_bytes.next().unwrap());
+        // until the process ends, so the output is read one line at a time until the output stating
+        // that the server is ready is printed.
+        let stdout = server.stdout.take().unwrap();
+        let mut reader = BufReader::new(stdout).lines();
+
+        while let Some(line) = reader.next_line().await.unwrap() {
+            if line.contains("Starting Apache Arrow Flight on") {
+                break;
+            }
         }
 
         server
     }
 
     /// Create the client and ensure it can connect to the server.
-    fn create_client(
-        runtime: &Runtime,
-        server: &mut Child,
-        port: u16,
-    ) -> FlightServiceClient<Channel> {
+    async fn create_client(port: u16) -> FlightServiceClient<Channel> {
         // Despite waiting for the expected output, the client may not able to connect the first
         // time. This rarely happens on a local machine but happens more often in GitHub Actions.
         let mut attempts = ATTEMPTS;
         loop {
-            if let Ok(client) = Self::create_apache_arrow_flight_service_client(runtime, HOST, port)
-            {
+            if let Ok(client) = Self::create_apache_arrow_flight_service_client(HOST, port).await {
                 return client;
             } else if attempts == 0 {
-                Self::kill_child(server);
                 panic!("The Apache Arrow Flight client could not connect to modelardbd.");
             } else {
-                thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);
+                time::sleep(ATTEMPT_SLEEP_IN_SECONDS).await;
                 attempts -= 1;
             }
-        }
-    }
-
-    /// Kill a `child` process.
-    fn kill_child(child: &mut Child) {
-        let mut system = System::new_all();
-
-        let pid = Pid::from_u32(child.id());
-        let pids = &[pid];
-        let processes_to_update = ProcessesToUpdate::Some(pids);
-
-        while let Some(_process) = system.process(pid) {
-            // Microsoft Windows often fails to kill the process and then succeed afterward.
-            let mut attempts = ATTEMPTS;
-            while child.kill().is_err() && attempts > 0 {
-                thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);
-                attempts -= 1;
-            }
-            child.wait().unwrap();
-
-            // Ensure the process is removed if it is killed before checking the condition.
-            system.refresh_processes(processes_to_update, true);
         }
     }
 
     /// Return an Apache Arrow Flight client to access the remote methods provided by the server.
-    fn create_apache_arrow_flight_service_client(
-        runtime: &Runtime,
+    async fn create_apache_arrow_flight_service_client(
         host: &str,
         port: u16,
     ) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
         let address = format!("grpc://{host}:{port}");
 
-        runtime.block_on(async {
-            let client = FlightServiceClient::connect(address).await?;
-            Ok(client)
-        })
+        let client = FlightServiceClient::connect(address).await?;
+        Ok(client)
     }
 
     /// Create a normal table or model table with or without tags in the server through the
     /// `do_action()` method and the `CreateTable` action.
-    fn create_table(&mut self, table_name: &str, table_type: TableType) {
+    async fn create_table(&mut self, table_name: &str, table_type: TableType) {
         let cmd = match table_type {
             TableType::NormalTable => {
                 format!(
@@ -267,26 +232,25 @@ impl TestContext {
 
         let ticket = Ticket { ticket: cmd.into() };
 
-        self.runtime.block_on(async {
-            self.client.do_get(ticket).await.unwrap();
-        })
+        self.client.do_get(ticket).await.unwrap();
     }
 
     /// Drop a table in the server through the `do_get()` method.
-    fn drop_table(&mut self, table_name: &str) -> Result<Response<Streaming<FlightData>>, Status> {
+    async fn drop_table(
+        &mut self,
+        table_name: &str,
+    ) -> Result<Response<Streaming<FlightData>>, Status> {
         let ticket = Ticket::new(format!("DROP TABLE {table_name}"));
-        self.runtime
-            .block_on(async { self.client.do_get(ticket).await })
+        self.client.do_get(ticket).await
     }
 
     /// Truncate a table in the server through the `do_get()` method.
-    fn truncate_table(
+    async fn truncate_table(
         &mut self,
         table_name: &str,
     ) -> Result<Response<Streaming<FlightData>>, Status> {
         let ticket = Ticket::new(format!("TRUNCATE TABLE {table_name}"));
-        self.runtime
-            .block_on(async { self.client.do_get(ticket).await })
+        self.client.do_get(ticket).await
     }
 
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
@@ -369,102 +333,91 @@ impl TestContext {
     }
 
     /// Send data points to the server through the `do_put()` method.
-    fn send_time_series_to_server(
+    async fn send_time_series_to_server(
         &mut self,
         flight_data: Vec<FlightData>,
     ) -> Result<Response<Streaming<PutResult>>, Status> {
-        self.runtime.block_on(async {
-            let flight_data_stream = stream::iter(flight_data);
-            self.client.do_put(flight_data_stream).await
-        })
+        let flight_data_stream = stream::iter(flight_data);
+        self.client.do_put(flight_data_stream).await
     }
 
     /// Flush the data in the StorageEngine to disk through the `do_action()` method.
-    fn flush_data_to_disk(&mut self) {
+    async fn flush_data_to_disk(&mut self) {
         let action = Action {
             r#type: "FlushMemory".to_owned(),
             body: Bytes::new(),
         };
 
-        self.runtime.block_on(async {
-            self.client.do_action(Request::new(action)).await.unwrap();
-        })
+        self.client.do_action(Request::new(action)).await.unwrap();
     }
 
     /// Execute a query against the server through the `do_get()` method and return it.
-    fn execute_query(&mut self, query: String) -> Result<RecordBatch, Box<dyn Error>> {
-        self.runtime.block_on(async {
-            // Execute query.
-            let ticket = Ticket {
-                ticket: query.into(),
-            };
-            let mut stream = self.client.do_get(ticket).await?.into_inner();
+    async fn execute_query(&mut self, query: String) -> Result<RecordBatch, Box<dyn Error>> {
+        // Execute query.
+        let ticket = Ticket {
+            ticket: query.into(),
+        };
+        let mut stream = self.client.do_get(ticket).await?.into_inner();
 
-            // Get schema of result set.
-            let flight_data = stream.message().await?.ok_or("No time series received.")?;
-            let schema = Arc::new(Schema::try_from(&flight_data)?);
+        // Get schema of result set.
+        let flight_data = stream.message().await?.ok_or("No time series received.")?;
+        let schema = Arc::new(Schema::try_from(&flight_data)?);
 
-            // Get data in result set.
-            let mut query_result = vec![];
-            while let Some(flight_data) = stream.message().await? {
-                let dictionaries_by_id = HashMap::new();
-                let record_batch = utils::flight_data_to_arrow_batch(
-                    &flight_data,
-                    schema.clone(),
-                    &dictionaries_by_id,
-                )?;
-                query_result.push(record_batch);
-            }
+        // Get data in result set.
+        let mut query_result = vec![];
+        while let Some(flight_data) = stream.message().await? {
+            let dictionaries_by_id = HashMap::new();
+            let record_batch = utils::flight_data_to_arrow_batch(
+                &flight_data,
+                schema.clone(),
+                &dictionaries_by_id,
+            )?;
+            query_result.push(record_batch);
+        }
 
-            if query_result.is_empty() {
-                Ok(RecordBatch::new_empty(schema))
-            } else {
-                // unwrap() is used as ? makes the return type Result<RecordBatch, ArrowError>>.
-                Ok(compute::concat_batches(&query_result[0].schema(), &query_result).unwrap())
-            }
-        })
+        if query_result.is_empty() {
+            Ok(RecordBatch::new_empty(schema))
+        } else {
+            Ok(compute::concat_batches(&query_result[0].schema(), &query_result).unwrap())
+        }
     }
 
     /// Retrieve the table names currently in the server and return them.
-    fn retrieve_all_table_names(&mut self) -> Result<Vec<String>, Box<dyn Error>> {
+    async fn retrieve_all_table_names(&mut self) -> Result<Vec<String>, Box<dyn Error>> {
         let criteria = Criteria {
             expression: Bytes::new(),
         };
         let request = Request::new(criteria);
 
-        self.runtime.block_on(async {
-            let mut stream = self.client.list_flights(request).await?.into_inner();
-            let flights = stream.message().await?.ok_or("No time series received.")?;
+        let mut stream = self.client.list_flights(request).await?.into_inner();
+        let flights = stream.message().await?.ok_or("No time series received.")?;
 
-            let mut table_names = vec![];
-            if let Some(fd) = flights.flight_descriptor {
-                for table in fd.path {
-                    table_names.push(table);
-                }
+        let mut table_names = vec![];
+        if let Some(fd) = flights.flight_descriptor {
+            for table in fd.path {
+                table_names.push(table);
             }
-            Ok(table_names)
-        })
+        }
+        Ok(table_names)
     }
 
     /// Retrieve the schema of a table in the server and return it.
-    fn retrieve_schema(&mut self, table_name: &str) -> Schema {
-        self.runtime.block_on(async {
-            let schema_result = self
-                .client
-                .get_schema(Request::new(FlightDescriptor::new_path(vec![
-                    table_name.to_owned()
-                ])))
-                .await
-                .unwrap()
-                .into_inner();
+    async fn retrieve_schema(&mut self, table_name: &str) -> Schema {
+        let schema_result = self
+            .client
+            .get_schema(Request::new(FlightDescriptor::new_path(vec![
+                table_name.to_owned(),
+            ])))
+            .await
+            .unwrap()
+            .into_inner();
 
-            convert::try_schema_from_ipc_buffer(&schema_result.schema).unwrap()
-        })
+        convert::try_schema_from_ipc_buffer(&schema_result.schema).unwrap()
     }
 
     /// Update `setting` to `setting_value` in the server configuration using the
     /// `UpdateConfiguration` action.
-    fn update_configuration(
+    async fn update_configuration(
         &mut self,
         setting: &str,
         setting_value: &str,
@@ -482,14 +435,13 @@ impl TestContext {
                 .into(),
         };
 
-        self.runtime
-            .block_on(async { self.client.do_action(Request::new(action)).await })
+        self.client.do_action(Request::new(action)).await
     }
 
     /// Retrieve the response of the [`Action`] with the type `action_type` and convert it into an
     /// Apache Arrow [`RecordBatch`].
-    fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
-        let response_bytes = self.retrieve_action_bytes(action_type);
+    async fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
+        let response_bytes = self.retrieve_action_bytes(action_type).await;
 
         // Convert the bytes in the response into an Apache Arrow record batch.
         let mut reader = StreamReader::try_new(response_bytes.reader(), None).unwrap();
@@ -497,89 +449,91 @@ impl TestContext {
     }
 
     /// Retrieve the response of the [`Action`] with the type `action_type`.
-    fn retrieve_action_bytes(&mut self, action_type: &str) -> Bytes {
+    async fn retrieve_action_bytes(&mut self, action_type: &str) -> Bytes {
         let action = Action {
             r#type: action_type.to_owned(),
             body: Bytes::new(),
         };
 
         // Retrieve the bytes from the action response.
-        let response = self.runtime.block_on(async {
-            self.client
-                .do_action(Request::new(action))
-                .await
-                .unwrap()
-                .into_inner()
-                .message()
-                .await
-                .unwrap()
-                .unwrap()
-        });
+        let response = self
+            .client
+            .do_action(Request::new(action))
+            .await
+            .unwrap()
+            .into_inner()
+            .message()
+            .await
+            .unwrap()
+            .unwrap();
 
         response.body
     }
 }
 
-impl Drop for TestContext {
-    /// Kill the server process when [`TestContext`] is dropped.
-    fn drop(&mut self) {
-        Self::kill_child(&mut self.server);
-    }
-}
+#[tokio::test]
+async fn test_can_create_normal_table() {
+    let mut test_context = TestContext::new().await;
 
-#[test]
-fn test_can_create_normal_table() {
-    let mut test_context = TestContext::new();
+    test_context
+        .create_table(TABLE_NAME, TableType::NormalTable)
+        .await;
 
-    test_context.create_table(TABLE_NAME, TableType::NormalTable);
-
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 }
 
-#[test]
-fn test_can_register_normal_table_after_restart() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_register_normal_table_after_restart() {
+    let mut test_context = TestContext::new().await;
 
-    test_context.create_table(TABLE_NAME, TableType::NormalTable);
-    test_context.restart_server();
+    test_context
+        .create_table(TABLE_NAME, TableType::NormalTable)
+        .await;
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    test_context.restart_server().await;
 
-    assert_eq!(retrieved_table_names.len(), 1);
-    assert_eq!(retrieved_table_names[0], TABLE_NAME);
-}
-
-#[test]
-fn test_can_create_model_table() {
-    let mut test_context = TestContext::new();
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 }
 
-#[test]
-fn test_can_register_model_table_after_restart() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_create_model_table() {
+    let mut test_context = TestContext::new().await;
 
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-    test_context.restart_server();
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 }
 
-#[test]
-fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_register_model_table_after_restart() {
+    let mut test_context = TestContext::new().await;
+
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
+
+    test_context.restart_server().await;
+
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
+
+    assert_eq!(retrieved_table_names.len(), 1);
+    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+}
+
+#[tokio::test]
+async fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
+    let mut test_context = TestContext::new().await;
     let table_types = &[
         TableType::NormalTable,
         TableType::ModelTable,
@@ -602,7 +556,10 @@ fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
 
         for table_number in 0..number_of_each_to_create {
             let table_name = table_type_name.to_owned() + &table_number.to_string();
-            test_context.create_table(&table_name, TableType::NormalTable);
+            test_context
+                .create_table(&table_name, TableType::NormalTable)
+                .await;
+
             table_names.push(table_name);
         }
     }
@@ -611,118 +568,132 @@ fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
     table_names.sort();
 
     // Ensure the tables were created without a restart.
-    let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let mut retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     retrieved_table_names.sort();
     assert_eq!(retrieved_table_names, table_names);
 
     // Ensure the tables were registered after a restart.
-    test_context.restart_server();
-    let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    test_context.restart_server().await;
+    let mut retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     retrieved_table_names.sort();
     assert_eq!(retrieved_table_names, table_names);
 }
 
-#[test]
-fn test_can_drop_normal_table() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::NormalTable);
+#[tokio::test]
+async fn test_can_drop_normal_table() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::NormalTable)
+        .await;
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 
-    test_context.drop_table(TABLE_NAME).unwrap();
+    test_context.drop_table(TABLE_NAME).await.unwrap();
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names.len(), 0);
 
     // It should be possible to create a normal table, drop it, and then create a new normal table
     // with the same name.
-    test_context.create_table(TABLE_NAME, TableType::NormalTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::NormalTable)
+        .await;
 }
 
-#[test]
-fn test_can_drop_model_table() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+#[tokio::test]
+async fn test_can_drop_model_table() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 
-    test_context.drop_table(TABLE_NAME).unwrap();
+    test_context.drop_table(TABLE_NAME).await.unwrap();
 
-    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names.len(), 0);
 
     // It should be possible to create a model table, drop it, and then create a new model table with
     // the same name.
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 }
 
-#[test]
-fn test_cannot_drop_missing_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_cannot_drop_missing_table() {
+    let mut test_context = TestContext::new().await;
 
-    let result = test_context.drop_table(TABLE_NAME);
+    let result = test_context.drop_table(TABLE_NAME).await;
     assert!(result.is_err());
 }
 
-#[test]
-fn test_can_truncate_normal_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_truncate_normal_table() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::NormalTable,
-    );
+    )
+    .await;
 
-    test_context.truncate_table(TABLE_NAME).unwrap();
+    test_context.truncate_table(TABLE_NAME).await.unwrap();
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     // The normal table should be empty after truncating it.
     assert_eq!(query_result.num_rows(), 0);
 }
 
-#[test]
-fn test_can_truncate_model_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_truncate_model_table() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::ModelTable,
-    );
+    )
+    .await;
 
-    test_context.truncate_table(TABLE_NAME).unwrap();
+    test_context.truncate_table(TABLE_NAME).await.unwrap();
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     // The model table should be empty after truncating it.
     assert_eq!(query_result.num_rows(), 0);
 }
 
-#[test]
-fn test_cannot_truncate_missing_table() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_cannot_truncate_missing_table() {
+    let mut test_context = TestContext::new().await;
 
-    let result = test_context.truncate_table(TABLE_NAME);
+    let result = test_context.truncate_table(TABLE_NAME).await;
     assert!(result.is_err());
 }
 
-#[test]
-fn test_can_get_schema() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_get_schema() {
+    let mut test_context = TestContext::new().await;
 
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 
-    let schema = test_context.retrieve_schema(TABLE_NAME);
+    let schema = test_context.retrieve_schema(TABLE_NAME).await;
 
     assert_eq!(
         schema,
@@ -738,21 +709,19 @@ fn test_can_get_schema() {
     );
 }
 
-#[test]
-fn test_can_list_actions() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_list_actions() {
+    let mut test_context = TestContext::new().await;
 
-    let mut actions = test_context.runtime.block_on(async {
-        test_context
-            .client
-            .list_actions(Request::new(arrow_flight::Empty {}))
-            .await
-            .unwrap()
-            .into_inner()
-            .map(|action| action.unwrap().r#type)
-            .collect::<Vec<String>>()
-            .await
-    });
+    let mut actions = test_context
+        .client
+        .list_actions(Request::new(arrow_flight::Empty {}))
+        .await
+        .unwrap()
+        .into_inner()
+        .map(|action| action.unwrap().r#type)
+        .collect::<Vec<String>>()
+        .await;
 
     // Sort() is called on the vector to ensure that the assertion will pass even if the order of
     // the actions returned by the endpoint changes.
@@ -772,28 +741,32 @@ fn test_can_list_actions() {
     );
 }
 
-#[test]
-fn test_do_put_can_ingest_time_series_with_tags() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_do_put_can_ingest_time_series_with_tags() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::ModelTable,
-    );
+    )
+    .await;
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(time_series, query_result);
 }
 
-#[test]
-fn test_insert_can_ingest_time_series_with_tags() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+#[tokio::test]
+async fn test_insert_can_ingest_time_series_with_tags() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 
     let insert_result = test_context
         .execute_query(format!(
@@ -804,12 +777,14 @@ fn test_insert_can_ingest_time_series_with_tags() {
              ('2020-01-01 13:00:03', 1, 2, 3, 4, 5, 'Aalborg'),\
              ('2020-01-01 13:00:04', 1, 2, 3, 4, 5, 'Aalborg')"
         ))
+        .await
         .unwrap();
     let insert_result_count = modelardb_types::array!(insert_result, 0, UInt64Array).value(0);
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(insert_result.num_rows(), 1);
@@ -817,28 +792,32 @@ fn test_insert_can_ingest_time_series_with_tags() {
     assert_eq!(query_result.num_rows(), 5);
 }
 
-#[test]
-fn test_do_put_can_ingest_time_series_without_tags() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_do_put_can_ingest_time_series_without_tags() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::ModelTableNoTag,
-    );
+    )
+    .await;
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(time_series, query_result);
 }
 
-#[test]
-fn test_insert_can_ingest_time_series_without_tags() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::ModelTableNoTag);
+#[tokio::test]
+async fn test_insert_can_ingest_time_series_without_tags() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTableNoTag)
+        .await;
 
     let insert_result = test_context
         .execute_query(format!(
@@ -849,12 +828,14 @@ fn test_insert_can_ingest_time_series_without_tags() {
              ('2020-01-01 13:00:03', 1, 2, 3, 4, 5),\
              ('2020-01-01 13:00:04', 1, 2, 3, 4, 5)"
         ))
+        .await
         .unwrap();
     let insert_result_count = modelardb_types::array!(insert_result, 0, UInt64Array).value(0);
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(insert_result.num_rows(), 1);
@@ -862,20 +843,22 @@ fn test_insert_can_ingest_time_series_without_tags() {
     assert_eq!(query_result.num_rows(), 5);
 }
 
-#[test]
-fn test_do_put_can_ingest_time_series_with_generated_field() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_do_put_can_ingest_time_series_with_generated_field() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
         TableType::ModelTableAsField,
-    );
+    )
+    .await;
 
     // The optimizer is allowed to add SortedJoinExec between SortedJoinExec and GeneratedAsExec.
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"))
+        .await
         .unwrap();
 
     // Column two in the query is the generated column which does not exist in data point.
@@ -885,10 +868,12 @@ fn test_do_put_can_ingest_time_series_with_generated_field() {
     assert_eq!(time_series.column(1), query_result.column(2));
 }
 
-#[test]
-fn test_insert_can_ingest_time_series_with_generated_field() {
-    let mut test_context = TestContext::new();
-    test_context.create_table(TABLE_NAME, TableType::ModelTableAsField);
+#[tokio::test]
+async fn test_insert_can_ingest_time_series_with_generated_field() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTableAsField)
+        .await;
 
     let insert_result = test_context
         .execute_query(format!(
@@ -899,12 +884,14 @@ fn test_insert_can_ingest_time_series_with_generated_field() {
              ('2020-01-01 13:00:03', 1, 2, 3, 4),\
              ('2020-01-01 13:00:04', 1, 2, 3, 4)"
         ))
+        .await
         .unwrap();
     let insert_result_count = modelardb_types::array!(insert_result, 0, UInt64Array).value(0);
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(insert_result.num_rows(), 1);
@@ -912,9 +899,9 @@ fn test_insert_can_ingest_time_series_with_generated_field() {
     assert_eq!(query_result.num_rows(), 5);
 }
 
-#[test]
-fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
+    let mut test_context = TestContext::new().await;
 
     let time_series_with_tag_one: RecordBatch =
         TestContext::generate_time_series_with_tag(false, None, Some("tag_one"));
@@ -922,12 +909,13 @@ fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
         TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
     let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
-    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::ModelTable);
+    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::ModelTable).await;
 
     let query_result = test_context
         .execute_query(format!(
             "SELECT * FROM {TABLE_NAME} ORDER BY tag, timestamp"
         ))
+        .await
         .unwrap();
 
     let expected = compute::concat_batches(&time_series[0].schema(), time_series).unwrap();
@@ -940,46 +928,53 @@ fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
     assert_eq!(expected, query_result);
 }
 
-#[test]
-fn test_cannot_ingest_invalid_time_series() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_cannot_ingest_invalid_time_series() {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
     let flight_data =
         TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), &[time_series]);
 
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+    test_context
+        .create_table(TABLE_NAME, TableType::ModelTable)
+        .await;
 
-    assert!(test_context
-        .send_time_series_to_server(flight_data)
-        .is_err());
+    assert!(
+        test_context
+            .send_time_series_to_server(flight_data)
+            .await
+            .is_err()
+    );
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
     assert_eq!(query_result.num_rows(), 0);
 }
 
-#[test]
-fn test_do_get_can_execute_include_address_select_query() {
-    execute_and_assert_include_select(1);
+#[tokio::test]
+async fn test_do_get_can_execute_include_address_select_query() {
+    execute_and_assert_include_select(1).await;
 }
 
-#[test]
-fn test_do_get_can_execute_include_address_address_select_query() {
-    execute_and_assert_include_select(2);
+#[tokio::test]
+async fn test_do_get_can_execute_include_address_address_select_query() {
+    execute_and_assert_include_select(2).await;
 }
 
-fn execute_and_assert_include_select(address_count: usize) {
-    let mut test_context = TestContext::new();
+async fn execute_and_assert_include_select(address_count: usize) {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
     let expected_record_batches: Vec<_> = (0..address_count + 1).map(|_| &time_series).collect();
     let expected_time_series =
         compute::concat_batches(&time_series.schema(), expected_record_batches).unwrap();
 
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable)
+        .await;
 
     let port = test_context.port;
     let address = format!("'grpc://{HOST}:{port}'");
@@ -988,34 +983,40 @@ fn execute_and_assert_include_select(address_count: usize) {
 
     let query_result = test_context
         .execute_query(format!("INCLUDE {address} SELECT * FROM {TABLE_NAME}"))
+        .await
         .unwrap();
 
     assert_eq!(expected_time_series, query_result);
 }
 
-#[test]
-fn test_count_from_segments_equals_count_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0);
+#[tokio::test]
+async fn test_count_from_segments_equals_count_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0)
+        .await;
 }
 
-#[test]
-fn test_min_from_segments_equals_min_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"), 0.0);
+#[tokio::test]
+async fn test_min_from_segments_equals_min_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"), 0.0)
+        .await;
 }
 
-#[test]
-fn test_max_from_segments_equals_max_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"), 0.0);
+#[tokio::test]
+async fn test_max_from_segments_equals_max_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"), 0.0)
+        .await;
 }
 
-#[test]
-fn test_sum_from_segments_equals_sum_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"), 0.001);
+#[tokio::test]
+async fn test_sum_from_segments_equals_sum_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"), 0.001)
+        .await;
 }
 
-#[test]
-fn test_avg_from_segments_equals_avg_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001);
+#[tokio::test]
+async fn test_avg_from_segments_equals_avg_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001)
+        .await;
 }
 
 /// Asserts that the query executed on segments in `segment_query` returns a result within
@@ -1029,11 +1030,12 @@ fn test_avg_from_segments_equals_avg_from_data_points() {
 ///    query was rewritten by the optimizer and the other query was not.
 /// 5. Comparing the results of `segment_query` and the new equivalent query to ensure they are
 ///    within `error_bound`.
-fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) {
-    let mut test_context = TestContext::new();
+async fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) {
+    let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
 
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable)
+        .await;
 
     // The predicate will guarantee that all data points will be included in the query but will
     // prevent the optimizer from rewriting the query due to its presence in segment_query.
@@ -1041,9 +1043,11 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
 
     let data_point_query_plans = test_context
         .execute_query(format!("EXPLAIN {}", data_point_query))
+        .await
         .unwrap();
     let segment_query_plans = test_context
         .execute_query(format!("EXPLAIN {}", segment_query))
+        .await
         .unwrap();
 
     let data_point_query_plans_text =
@@ -1053,8 +1057,8 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
     assert!(data_point_query_plans_text.value(1).contains("GridExec"));
     assert!(!segment_query_plans_text.value(1).contains("GridExec"));
 
-    let data_point_query_result_set = test_context.execute_query(data_point_query).unwrap();
-    let segment_query_result_set = test_context.execute_query(segment_query).unwrap();
+    let data_point_query_result_set = test_context.execute_query(data_point_query).await.unwrap();
+    let segment_query_result_set = test_context.execute_query(segment_query).await.unwrap();
 
     if error_bound == 0.0 {
         assert_eq!(data_point_query_result_set, segment_query_result_set);
@@ -1086,7 +1090,7 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
 }
 
 /// Creates a table of type `table_type`, ingests `time_series`, and then flushes that data to disk.
-fn ingest_time_series_and_flush_data(
+async fn ingest_time_series_and_flush_data(
     test_context: &mut TestContext,
     time_series: &[RecordBatch],
     table_type: TableType,
@@ -1094,19 +1098,22 @@ fn ingest_time_series_and_flush_data(
     let flight_data =
         TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
 
-    test_context.create_table(TABLE_NAME, table_type);
+    test_context.create_table(TABLE_NAME, table_type).await;
 
     test_context
         .send_time_series_to_server(flight_data)
+        .await
         .unwrap();
 
-    test_context.flush_data_to_disk();
+    test_context.flush_data_to_disk().await;
 }
 
-#[test]
-fn test_can_get_configuration() {
-    let mut test_context = TestContext::new();
-    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
+#[tokio::test]
+async fn test_can_get_configuration() {
+    let mut test_context = TestContext::new().await;
+    let configuration = test_context
+        .retrieve_action_record_batch("GetConfiguration")
+        .await;
 
     let settings = modelardb_types::array!(configuration, 0, StringArray);
     let values = modelardb_types::array!(configuration, 1, UInt64Array);
@@ -1134,63 +1141,72 @@ fn test_can_get_configuration() {
     assert_eq!(values.value(6), 1);
 }
 
-#[test]
-fn test_can_update_uncompressed_reserved_memory_in_bytes() {
+#[tokio::test]
+async fn test_can_update_uncompressed_reserved_memory_in_bytes() {
     let values_array =
-        update_and_retrieve_configuration_values("uncompressed_reserved_memory_in_bytes");
+        update_and_retrieve_configuration_values("uncompressed_reserved_memory_in_bytes").await;
 
     assert_eq!(values_array.value(0), 1);
 }
 
-#[test]
-fn test_can_update_compressed_reserved_memory_in_bytes() {
+#[tokio::test]
+async fn test_can_update_compressed_reserved_memory_in_bytes() {
     let values_array =
-        update_and_retrieve_configuration_values("compressed_reserved_memory_in_bytes");
+        update_and_retrieve_configuration_values("compressed_reserved_memory_in_bytes").await;
 
     assert_eq!(values_array.value(1), 1);
 }
 
-fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
-    let mut test_context = TestContext::new();
-    test_context.update_configuration(setting, "1").unwrap();
+async fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .update_configuration(setting, "1")
+        .await
+        .unwrap();
 
-    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
+    let configuration = test_context
+        .retrieve_action_record_batch("GetConfiguration")
+        .await;
+
     modelardb_types::array!(configuration, 1, UInt64Array).clone()
 }
 
-#[test]
-fn test_cannot_update_transfer_batch_size_in_bytes() {
+#[tokio::test]
+async fn test_cannot_update_transfer_batch_size_in_bytes() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
         "transfer_batch_size_in_bytes",
         "1",
         "Invalid State Error: Storage engine is not configured to transfer data.",
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_cannot_update_transfer_time_in_seconds() {
+#[tokio::test]
+async fn test_cannot_update_transfer_time_in_seconds() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
         "transfer_time_in_seconds",
         "1",
         "Invalid State Error: Storage engine is not configured to transfer data.",
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_cannot_update_non_existing_setting() {
+#[tokio::test]
+async fn test_cannot_update_non_existing_setting() {
     update_configuration_and_assert_error(
         "invalid",
         "1",
         "invalid is not a setting in the server configuration.",
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_cannot_update_non_nullable_setting_with_empty_value() {
+#[tokio::test]
+async fn test_cannot_update_non_nullable_setting_with_empty_value() {
     for setting in [
         "uncompressed_reserved_memory_in_bytes",
         "compressed_reserved_memory_in_bytes",
@@ -1199,49 +1215,53 @@ fn test_cannot_update_non_nullable_setting_with_empty_value() {
             setting,
             "",
             format!("New value for {setting} cannot be empty.").as_str(),
-        );
+        )
+        .await;
     }
 }
 
-#[test]
-fn test_cannot_update_non_updatable_setting() {
+#[tokio::test]
+async fn test_cannot_update_non_updatable_setting() {
     for setting in ["ingestion_threads", "compression_threads", "writer_threads"] {
         update_configuration_and_assert_error(
             setting,
             "1",
             format!("{setting} is not an updatable setting in the server configuration.").as_str(),
-        );
+        )
+        .await;
     }
 }
 
-#[test]
-fn test_cannot_update_setting_with_invalid_value() {
+#[tokio::test]
+async fn test_cannot_update_setting_with_invalid_value() {
     update_configuration_and_assert_error(
         "compressed_reserved_memory_in_bytes",
         "-1",
         "New value for compressed_reserved_memory_in_bytes is not valid: invalid digit found in string",
-    );
+    ).await;
 }
 
-fn update_configuration_and_assert_error(setting: &str, setting_value: &str, error: &str) {
-    let mut test_context = TestContext::new();
-    let response = test_context.update_configuration(setting, setting_value);
+async fn update_configuration_and_assert_error(setting: &str, setting_value: &str, error: &str) {
+    let mut test_context = TestContext::new().await;
+    let response = test_context
+        .update_configuration(setting, setting_value)
+        .await;
 
     assert!(response.is_err());
     assert_eq!(response.err().unwrap().message(), error);
 }
 
-#[test]
-fn test_can_get_node_type() {
-    let mut test_context = TestContext::new();
-    let response_bytes = test_context.retrieve_action_bytes("NodeType");
+#[tokio::test]
+async fn test_can_get_node_type() {
+    let mut test_context = TestContext::new().await;
+    let response_bytes = test_context.retrieve_action_bytes("NodeType").await;
 
     assert_eq!(str::from_utf8(&response_bytes).unwrap(), "server");
 }
 
-#[test]
-fn test_can_create_tables() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_can_create_tables() {
+    let mut test_context = TestContext::new().await;
 
     let table_record_batch = modelardb_storage::test::table_metadata_record_batch();
     let table_record_batch_bytes =
@@ -1253,11 +1273,12 @@ fn test_can_create_tables() {
     };
 
     test_context
-        .runtime
-        .block_on(async { test_context.client.do_action(Request::new(action)).await })
+        .client
+        .do_action(Request::new(action))
+        .await
         .unwrap();
 
-    let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    let mut retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     retrieved_table_names.sort();
     assert_eq!(
         retrieved_table_names,
@@ -1268,9 +1289,9 @@ fn test_can_create_tables() {
     );
 }
 
-#[test]
-fn test_cannot_create_tables_with_invalid_record_batch() {
-    let mut test_context = TestContext::new();
+#[tokio::test]
+async fn test_cannot_create_tables_with_invalid_record_batch() {
+    let mut test_context = TestContext::new().await;
 
     let invalid_record_batch = modelardb_storage::test::normal_table_record_batch();
     let invalid_record_batch_bytes =
@@ -1281,9 +1302,6 @@ fn test_cannot_create_tables_with_invalid_record_batch() {
         body: invalid_record_batch_bytes.into(),
     };
 
-    let response = test_context
-        .runtime
-        .block_on(async { test_context.client.do_action(Request::new(action)).await });
-
+    let response = test_context.client.do_action(Request::new(action)).await;
     assert!(response.is_err());
 }
