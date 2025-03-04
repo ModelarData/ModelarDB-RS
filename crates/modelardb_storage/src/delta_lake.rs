@@ -498,7 +498,7 @@ impl DeltaLake {
         mut delta_table_writer: DeltaTableWriter,
         record_batches: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
-        let result = delta_table_writer.write(&record_batches).await;
+        let result = delta_table_writer.write_all(&record_batches).await;
         if result.is_ok() {
             delta_table_writer.commit().await
         } else {
@@ -583,13 +583,21 @@ impl DeltaTableWriter {
         })
     }
 
-    /// Write `record_batches` to the delta table. Returns a [`ModelarDbStorageError`] if one of the
+    /// Write `record_batch` to the delta table. Returns a [`ModelarDbStorageError`] if the
     /// [`RecordBatches`](RecordBatch) does not match the schema of the delta table or if the
     /// writing fails.
-    pub async fn write(&mut self, record_batches: &[RecordBatch]) -> Result<()> {
-        for batch in record_batches {
-            self.delta_data_checker.check_batch(batch).await?;
-            self.delta_writer.write(batch).await?;
+    pub async fn write(&mut self, record_batch: &RecordBatch) -> Result<()> {
+        self.delta_data_checker.check_batch(record_batch).await?;
+        self.delta_writer.write(record_batch).await?;
+        Ok(())
+    }
+
+    /// Write all `record_batches` to the delta table. Returns a [`ModelarDbStorageError`] if one of
+    /// the [`RecordBatches`](RecordBatch) does not match the schema of the delta table or if the
+    /// writing fails.
+    pub async fn write_all(&mut self, record_batches: &[RecordBatch]) -> Result<()> {
+        for record_batch in record_batches {
+            self.write(record_batch).await?;
         }
         Ok(())
     }
