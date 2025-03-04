@@ -260,7 +260,7 @@ impl DeltaLake {
     /// Return a [`DeltaTableWriter`] for writing to the model table with `delta_table` in the Delta
     /// Lake, or a [`ModelarDbStorageError`] if a connection to the delta lake cannot be established
     /// or the table does not exist.
-    async fn model_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
+    pub async fn model_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
@@ -276,7 +276,7 @@ impl DeltaLake {
     /// Return a [`DeltaTableWriter`] for writing to the table with `delta_tale` in the Delta Lake,
     /// or a [`ModelarDbStorageError`] if a connection to the delta lake cannot be established or
     /// the table does not exist.
-    async fn normal_or_metadata_table_writer(
+    pub async fn normal_or_metadata_table_writer(
         &self,
         delta_table: DeltaTable,
     ) -> Result<DeltaTableWriter> {
