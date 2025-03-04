@@ -26,7 +26,7 @@ use datafusion::catalog::TableProvider;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
 use deltalake::delta_datafusion::DeltaDataChecker;
-use deltalake::kernel::{Action, StructField};
+use deltalake::kernel::{Action, Add, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::operations::transaction::{CommitBuilder, CommitProperties};
 use deltalake::operations::writer::{DeltaWriter, WriterConfig};
@@ -603,27 +603,49 @@ impl DeltaTableWriter {
     }
 
     /// Consume the [`DeltaLakeWriter`], finish the writing, and commit the files that has been
-    /// written to the log. Returns a [`ModelarDbStorageError`] if an error occurs when finishing
-    /// the writing, committing the files that has been written, or updating the [`DeltaTable`].
+    /// written to the log. If an error occurs before the commit is finished, the already written
+    /// files are deleted if possible. Returns a [`ModelarDbStorageError`] if an error occurs when
+    /// finishing the writing, committing the files that has been written, deleting the written
+    /// files, or updating the [`DeltaTable`].
     pub async fn commit(mut self) -> Result<DeltaTable> {
-        let actions = self
-            .delta_writer
-            .close()
-            .await?
+        // Write the remaining buffered files.
+        let added_files = self.delta_writer.close().await?;
+
+        // Clone added_files in case of rollback.
+        let actions = added_files
+            .clone()
             .into_iter()
             .map(Action::Add)
-            .collect();
+            .collect::<Vec<Action>>();
 
+        // Prepare all inputs to the commit.
+        let object_store = self.delta_table.object_store();
         let commit_properties = CommitProperties::default();
-        let table_data = self.delta_table.snapshot()?;
+        let table_data = match self.delta_table.snapshot() {
+            Ok(table_data) => table_data,
+            Err(delta_table_error) => {
+                delete_added_files(&object_store, added_files).await?;
+                return Err(ModelarDbStorageError::DeltaLake(delta_table_error));
+            }
+        };
         let log_store = self.delta_table.log_store();
-        let _finalized_commit = CommitBuilder::from(commit_properties)
+
+        // Construct the commit to be written.
+        let commit_builder = CommitBuilder::from(commit_properties)
             .with_actions(actions)
             .with_operation_id(self.operation_id)
-            .build(Some(table_data), log_store, self.delta_operation)
-            .await?;
+            .build(Some(table_data), log_store, self.delta_operation);
 
-        // DeltaTable::new_with_state() is pub(crate).
+        // Write the commit to the delta table.
+        let _finalized_commit = match commit_builder.await {
+            Ok(finalized_commit) => finalized_commit,
+            Err(delta_table_error) => {
+                delete_added_files(&object_store, added_files).await?;
+                return Err(ModelarDbStorageError::DeltaLake(delta_table_error));
+            }
+        };
+
+        // Return delta table with the commit.
         self.delta_table.load().await?;
         Ok(self.delta_table)
     }
@@ -634,10 +656,19 @@ impl DeltaTableWriter {
     /// automatically in drop() is not async and async_drop() is not yet a stable API.
     pub async fn rollback(self) -> Result<DeltaTable> {
         let object_store = self.delta_table.object_store();
-        for add in self.delta_writer.close().await? {
-            let path: Path = Path::from(add.path);
-            object_store.delete(&path).await?;
-        }
+        let added_files = self.delta_writer.close().await?;
+        delete_added_files(&object_store, added_files).await?;
         Ok(self.delta_table)
     }
+}
+
+/// Delete the `added_files` from `object_store`. Returns a [`ModelarDbStorageError`] if a file
+/// could not be deleted. It is a function instead of a method on [`DeltaTableWriter`] so it can be
+/// called by [`DeltaTableWriter`] after the [`DeltaWriter`] is closed without lifetime issues.
+async fn delete_added_files(object_store: &dyn ObjectStore, added_files: Vec<Add>) -> Result<()> {
+    for add_file in added_files {
+        let path: Path = Path::from(add_file.path);
+        object_store.delete(&path).await?;
+    }
+    Ok(())
 }
