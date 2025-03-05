@@ -26,8 +26,8 @@ use datafusion::parquet::errors::ParquetError;
 use deltalake::errors::DeltaTableError;
 use modelardb_common::error::ModelarDbCommonError;
 use modelardb_types::error::ModelarDbTypesError;
-use object_store::path::Error as ObjectStorePathError;
 use object_store::Error as ObjectStoreError;
+use object_store::path::Error as ObjectStorePathError;
 use sqlparser::parser::ParserError;
 
 /// Result type used throughout `modelardb_storage`.

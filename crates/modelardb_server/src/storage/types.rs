@@ -492,8 +492,10 @@ mod tests {
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        assert!(!memory_pool
-            .try_reserve_compressed_memory(2 * test::COMPRESSED_RESERVED_MEMORY_IN_BYTES));
+        assert!(
+            !memory_pool
+                .try_reserve_compressed_memory(2 * test::COMPRESSED_RESERVED_MEMORY_IN_BYTES)
+        );
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),

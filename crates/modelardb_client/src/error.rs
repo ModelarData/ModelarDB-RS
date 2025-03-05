@@ -23,8 +23,8 @@ use std::result::Result as StdResult;
 use arrow::error::ArrowError;
 use object_store::Error as ObjectStoreError;
 use rustyline::error::ReadlineError as RustyLineError;
-use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
+use tonic::transport::Error as TonicTransportError;
 
 /// Result type used throughout `modelardb_client`.
 pub type Result<T> = StdResult<T, ModelarDbClientError>;

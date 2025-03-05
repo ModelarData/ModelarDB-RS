@@ -17,11 +17,12 @@
 
 use std::collections::HashMap;
 use std::error::Error;
+use std::sync::Arc;
 
 use arrow::array::ArrayRef;
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
-use arrow_flight::{utils, FlightData, FlightDescriptor};
+use arrow_flight::{FlightData, FlightDescriptor, utils};
 use tonic::Status;
 
 /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
@@ -39,7 +40,7 @@ pub fn table_name_from_flight_descriptor(
 /// could not be converted, [`Status`] is returned.
 pub fn flight_data_to_record_batch(
     flight_data: &FlightData,
-    schema: &SchemaRef,
+    schema: &Arc<Schema>,
     dictionaries_by_id: &HashMap<i64, ArrayRef>,
 ) -> Result<RecordBatch, Status> {
     debug_assert_eq!(flight_data.flight_descriptor, None);

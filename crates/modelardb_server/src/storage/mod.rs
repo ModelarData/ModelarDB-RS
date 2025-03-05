@@ -109,7 +109,6 @@ impl StorageEngine {
         // Create the uncompressed data manager.
         let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
             data_folders.local_data_folder.clone(),
-            data_folders.maybe_remote_data_folder.clone(),
             memory_pool.clone(),
             channels.clone(),
         ));

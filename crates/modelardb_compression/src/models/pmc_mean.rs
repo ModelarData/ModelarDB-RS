@@ -21,7 +21,7 @@
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
 use modelardb_types::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
-use modelardb_types::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
+use modelardb_types::types::{Timestamp, Value, ValueBuilder};
 
 use crate::models;
 use crate::models::ErrorBound;
@@ -100,18 +100,10 @@ pub fn sum(model_length: usize, value: Value) -> Value {
     model_length as Value * value
 }
 
-/// Reconstruct the values for the `timestamps` without matching values in
-/// `value_builder` using a model of type PMC-Mean. The `univariate_ids` and
-/// `values` are appended to `univariate_builder` and `value_builder`.
-pub fn grid(
-    univariate_id: UnivariateId,
-    value: Value,
-    univariate_id_builder: &mut UnivariateIdBuilder,
-    timestamps: &[Timestamp],
-    value_builder: &mut ValueBuilder,
-) {
+/// Reconstruct the values for the `timestamps` without matching values in `value_builder` using a
+/// model of type PMC-Mean. The `values` are appended to `value_builder`.
+pub fn grid(value: Value, timestamps: &[Timestamp], value_builder: &mut ValueBuilder) {
     for _timestamp in timestamps {
-        univariate_id_builder.append_value(univariate_id);
         value_builder.append_value(value);
     }
 }
@@ -376,29 +368,20 @@ mod tests {
     #[test]
     fn test_grid(value in ProptestValue::ANY) {
         let sampling_interval: i64 = 60;
-        let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(10);
         let timestamps: Vec<Timestamp> = (60..=600).step_by(60).collect();
         let mut value_builder = ValueBuilder::with_capacity(10);
 
         grid(
-            1,
             value,
-            &mut univariate_id_builder,
             &timestamps,
             &mut value_builder,
         );
 
-        let univariate_ids = univariate_id_builder.finish();
         let values = value_builder.finish();
 
         prop_assert!(
-            univariate_ids.len() == 10
-            && univariate_ids.len() == timestamps.len()
-            && univariate_ids.len() == values.len()
+            timestamps.len() == 10 && timestamps.len() == values.len()
         );
-        prop_assert!(univariate_ids
-             .iter()
-             .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
         prop_assert!(timestamps
             .windows(2)
             .all(|window| window[1] - window[0] == sampling_interval));

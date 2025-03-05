@@ -21,20 +21,12 @@ use std::sync::LazyLock;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use crate::types::{
-    ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
-    QueryCompressedSchema, QuerySchema, TableMetadataSchema, UncompressedSchema,
+    ArrowTimestamp, ArrowValue, CompressedSchema, ConfigurationSchema, GridSchema,
+    QueryCompressedSchema, TableMetadataSchema,
 };
 
 /// Name of the column used to partition the compressed segments.
 pub const FIELD_COLUMN: &str = "field_column";
-
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for uncompressed data buffers.
-pub static UNCOMPRESSED_SCHEMA: LazyLock<UncompressedSchema> = LazyLock::new(|| {
-    UncompressedSchema(Arc::new(Schema::new(vec![
-        Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("values", ArrowValue::DATA_TYPE, false),
-    ])))
-});
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments.
 pub static COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
@@ -44,19 +36,10 @@ pub static COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
     CompressedSchema(Arc::new(Schema::new(query_compressed_schema_fields)))
 });
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used when writing compressed
-/// segments to disk as the Delta Lake Protocol does not support unsigned integers.
-pub static DISK_COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
-    let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields().to_vec();
-    compressed_schema_fields[0] = Arc::new(Field::new("univariate_id", DataType::Int64, false));
-    CompressedSchema(Arc::new(Schema::new(compressed_schema_fields)))
-});
-
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments when
 /// executing queries as [`FIELD_COLUMN`] is not stored in the Apache Parquet files.
 pub static QUERY_COMPRESSED_SCHEMA: LazyLock<QueryCompressedSchema> = LazyLock::new(|| {
     QueryCompressedSchema(Arc::new(Schema::new(vec![
-        Field::new("univariate_id", DataType::UInt64, false),
         Field::new("model_type_id", DataType::UInt8, false),
         Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
         Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
@@ -67,15 +50,6 @@ pub static QUERY_COMPRESSED_SCHEMA: LazyLock<QueryCompressedSchema> = LazyLock::
         Field::new("residuals", DataType::Binary, false),
         Field::new("error", DataType::Float32, false),
     ])))
-});
-
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used when reading compressed
-/// segments from disk as the Delta Lake Protocol does not support unsigned integers.
-pub static DISK_QUERY_COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
-    let mut query_compressed_schema_fields = QUERY_COMPRESSED_SCHEMA.0.fields().to_vec();
-    query_compressed_schema_fields[0] =
-        Arc::new(Field::new("univariate_id", DataType::Int64, false));
-    CompressedSchema(Arc::new(Schema::new(query_compressed_schema_fields)))
 });
 
 /// Minimum size of the metadata required for a compressed segment. Meaning that the sizes of
@@ -91,9 +65,8 @@ pub static COMPRESSED_METADATA_SIZE_IN_BYTES: LazyLock<usize> = LazyLock::new(||
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used internally during query processing.
-pub static GRID_SCHEMA: LazyLock<QuerySchema> = LazyLock::new(|| {
-    QuerySchema(Arc::new(Schema::new(vec![
-        Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
+pub static GRID_SCHEMA: LazyLock<GridSchema> = LazyLock::new(|| {
+    GridSchema(Arc::new(Schema::new(vec![
         Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
         Field::new("value", ArrowValue::DATA_TYPE, false),
     ])))

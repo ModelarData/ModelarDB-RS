@@ -19,13 +19,13 @@
 
 use std::result::Result;
 
+use rustyline::Context;
+use rustyline::Helper;
 use rustyline::completion::{self, Completer};
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
-use rustyline::Context;
-use rustyline::Helper;
 
 /// Provides tab-completion for the client's read-eval-print loop.
 pub struct ClientHelper {

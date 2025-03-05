@@ -24,9 +24,7 @@
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
 use modelardb_types::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
-use modelardb_types::types::{
-    ErrorBound, Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
-};
+use modelardb_types::types::{ErrorBound, Timestamp, TimestampBuilder, Value, ValueBuilder};
 
 use super::timestamps;
 use crate::models;
@@ -302,16 +300,13 @@ pub fn sum(
     }
 }
 
-/// Reconstruct the values for the `timestamps` without matching values in
-/// `value_builder` using a model of type Swing. The `univariate_ids` and
-/// `values` are appended to `univariate_id_builder` and `value_builder`.
+/// Reconstruct the values for the `timestamps` without matching values in `value_builder` using a
+/// model of type Swing. The `values` are appended to `value_builder`.
 pub fn grid(
-    univariate_id: UnivariateId,
     start_time: Timestamp,
     end_time: Timestamp,
     first_value: Value,
     last_value: Value,
-    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
@@ -319,7 +314,6 @@ pub fn grid(
         compute_slope_and_intercept(start_time, first_value as f64, end_time, last_value as f64);
 
     for timestamp in timestamps {
-        univariate_id_builder.append_value(univariate_id);
         let value = (slope * (*timestamp as f64) + intercept) as Value;
         value_builder.append_value(value);
     }
@@ -350,10 +344,14 @@ fn compute_slope_and_intercept(
 mod tests {
     use super::*;
 
-    use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
+    use std::sync::Arc;
+
+    use arrow::array::{BinaryArray, Float32Array, UInt8Array};
+    use arrow::datatypes::{DataType, Field, Schema};
     use modelardb_common::test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
     };
+    use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
     use proptest::num::f32 as ProptestValue;
     use proptest::strategy::Strategy;
@@ -762,31 +760,21 @@ mod tests {
     fn test_grid(value in num::i32::ANY.prop_map(i32_to_value)) {
         let timestamps: Vec<Timestamp> = (START_TIME ..= END_TIME)
             .step_by(SAMPLING_INTERVAL as usize).collect();
-        let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(timestamps.len());
         let mut value_builder = ValueBuilder::with_capacity(timestamps.len());
 
         // The linear function represents a constant to have a known value.
         grid(
-            1,
             START_TIME,
             END_TIME,
             value,
             value,
-            &mut univariate_id_builder,
             &timestamps,
             &mut value_builder,
         );
 
-        let univariate_ids = univariate_id_builder.finish();
         let values = value_builder.finish();
 
-        prop_assert!(
-            univariate_ids.len() == timestamps.len()
-            && univariate_ids.len() == values.len()
-        );
-        prop_assert!(univariate_ids
-             .iter()
-             .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
+        prop_assert!(timestamps.len() == values.len());
         prop_assert!(timestamps
             .windows(2)
             .all(|window| window[1] - window[0] == SAMPLING_INTERVAL));
@@ -856,12 +844,24 @@ mod tests {
             (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize),
         );
         let values = ValueArray::from_iter_values(values);
-        let segments = crate::try_compress(1, error_bound, &timestamps, &values).unwrap();
+
+        let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
+        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
+        let compressed_schema = Arc::new(Schema::new(compressed_schema_fields));
+
+        let segments = crate::try_compress(
+            &timestamps,
+            &values,
+            error_bound,
+            compressed_schema,
+            vec!["tag".to_owned()],
+            0,
+        )
+        .unwrap();
 
         // Extract the individual columns from the record batch.
         modelardb_types::arrays!(
             segments,
-            _univariate_id_array,
             model_type_id_array,
             start_time_array,
             end_time_array,
@@ -878,12 +878,10 @@ mod tests {
         assert_eq!(model_type_id_array.value(0), SWING_ID);
 
         // Reconstruct all values from the segment.
-        let mut reconstructed_ids = UnivariateIdBuilder::with_capacity(timestamps.len());
         let mut reconstructed_timestamps = TimestampBuilder::with_capacity(timestamps.len());
         let mut reconstructed_values = ValueBuilder::with_capacity(timestamps.len());
 
         models::grid(
-            0,
             model_type_id_array.value(0),
             start_time_array.value(0),
             end_time_array.value(0),
@@ -892,7 +890,6 @@ mod tests {
             max_value_array.value(0),
             values_array.value(0),
             residuals_array.value(0),
-            &mut reconstructed_ids,
             &mut reconstructed_timestamps,
             &mut reconstructed_values,
         );

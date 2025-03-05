@@ -21,9 +21,9 @@ use std::sync::Arc;
 
 use arrow::array::{Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
+use deltalake::DeltaTableError;
 use deltalake::datafusion::logical_expr::{col, lit};
 use deltalake::datafusion::prelude::SessionContext;
-use deltalake::DeltaTableError;
 use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_storage::{register_metadata_table, sql_and_concat};
@@ -205,17 +205,21 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
         // Verify that the tables were created, registered, and has the expected columns.
-        assert!(metadata_manager
-            .session_context
-            .sql("SELECT key FROM manager_metadata")
-            .await
-            .is_ok());
+        assert!(
+            metadata_manager
+                .session_context
+                .sql("SELECT key FROM manager_metadata")
+                .await
+                .is_ok()
+        );
 
-        assert!(metadata_manager
-            .session_context
-            .sql("SELECT url, mode FROM nodes")
-            .await
-            .is_ok());
+        assert!(
+            metadata_manager
+                .session_context
+                .sql("SELECT url, mode FROM nodes")
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

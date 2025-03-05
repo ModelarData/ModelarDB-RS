@@ -31,18 +31,16 @@ use deltalake::protocol::SaveMode;
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_common::arguments;
-use modelardb_types::schemas::{DISK_COMPRESSED_SCHEMA, FIELD_COLUMN};
+use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
+use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
-use object_store::ObjectStore;
 use url::Url;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::{
-    apache_parquet_writer_properties, maybe_univariate_ids_uint64_to_int64, METADATA_FOLDER,
-    TABLE_FOLDER,
-};
+use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
 pub struct DeltaLake {
@@ -291,15 +289,18 @@ impl DeltaLake {
         .await
     }
 
-    /// Create a Delta Lake table for a model table with `table_name` and [`DISK_COMPRESSED_SCHEMA`]
-    /// if it does not already exist. Returns [`DeltaTable`] if the table could be created and
+    /// Create a Delta Lake table for a model table with `model_table_metadata` if it does not
+    /// already exist. Returns [`DeltaTable`] if the table could be created and
     /// [`ModelarDbStorageError`] if it could not.
-    pub async fn create_model_table(&self, table_name: &str) -> Result<DeltaTable> {
+    pub async fn create_model_table(
+        &self,
+        model_table_metadata: &ModelTableMetadata,
+    ) -> Result<DeltaTable> {
         self.create_table(
-            table_name,
-            &DISK_COMPRESSED_SCHEMA.0,
+            &model_table_metadata.name,
+            &model_table_metadata.compressed_schema,
             &[FIELD_COLUMN.to_owned()],
-            self.location_of_compressed_table(table_name),
+            self.location_of_compressed_table(&model_table_metadata.name),
             SaveMode::ErrorIfExists,
         )
         .await
@@ -409,7 +410,7 @@ impl DeltaLake {
         let table = self.metadata_delta_table(table_name).await?;
 
         // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
-        // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
+        // returns the Delta Lake schema instead of the Apache DataFusion schema.
         let record_batch = RecordBatch::try_new(TableProvider::schema(&table), columns)?;
 
         self.write_record_batches_to_table(
@@ -445,19 +446,22 @@ impl DeltaLake {
     pub async fn write_compressed_segments_to_model_table(
         &self,
         table_name: &str,
-        mut compressed_segments: Vec<RecordBatch>,
+        compressed_segments: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
-        // Reinterpret univariate_ids from uint64 to int64 if necessary to fix #187 as a stopgap until #197.
-        maybe_univariate_ids_uint64_to_int64(&mut compressed_segments);
+        // Specify that the file must be sorted by the tag columns and then by start_time.
+        let mut sorting_columns = Vec::new();
+        let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
+        let compressed_schema_len = compressed_segments[0].schema().fields().len();
 
-        // Specify that the file must be sorted by univariate_id and then by start_time.
-        let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
-        ]);
+        // Compressed segments have the tag columns at the end of the schema.
+        for tag_column_index in base_compressed_schema_len..compressed_schema_len {
+            sorting_columns.push(SortingColumn::new(tag_column_index as i32, false, false));
+        }
+
+        sorting_columns.push(SortingColumn::new(1, false, false));
 
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
-        let writer_properties = apache_parquet_writer_properties(sorting_columns);
+        let writer_properties = apache_parquet_writer_properties(Some(sorting_columns));
 
         self.write_record_batches_to_table(
             self.delta_table(table_name).await?,

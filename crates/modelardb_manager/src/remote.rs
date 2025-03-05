@@ -33,7 +33,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
-use futures::{stream, Stream};
+use futures::{Stream, stream};
 use modelardb_common::arguments;
 use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
@@ -47,9 +47,9 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
+use crate::Context;
 use crate::cluster::Node;
 use crate::error::{ModelarDbManagerError, Result};
-use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
 pub fn start_apache_arrow_flight_server(
@@ -217,7 +217,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .delta_lake
-            .create_model_table(&model_table_metadata.name)
+            .create_model_table(&model_table_metadata)
             .await
             .map_err(error_to_status_internal)?;
 
@@ -282,19 +282,15 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Truncate the table in the metadata Delta Lake, the data Delta Lake, and in each node
-    /// controlled by the manager. If the table does not exist or the table cannot be truncated in
-    /// the remote data folder and in each node, return [`Status`].
+    /// Truncate the table in the remote data folder and at each node controlled by the manager. If
+    /// the table does not exist or the table cannot be truncated in the remote data folder and at
+    /// each node, return [`Status`].
     async fn truncate_cluster_table(&self, table_name: &str) -> StdResult<(), Status> {
-        // Truncate the table in the remote data folder metadata Delta Lake. This will return an
-        // error if the table does not exist.
-        self.context
-            .remote_data_folder
-            .metadata_manager
-            .table_metadata_manager
-            .truncate_table_metadata(table_name)
-            .await
-            .map_err(error_to_status_internal)?;
+        if self.check_if_table_exists(table_name).await.is_ok() {
+            return Err(Status::invalid_argument(format!(
+                "Table with name '{table_name}' does not exist.",
+            )));
+        }
 
         // Truncate the table in the remote data folder data Delta lake.
         self.context

@@ -26,9 +26,7 @@ pub mod timestamps;
 use std::mem;
 
 use arrow::array::ArrayBuilder;
-use modelardb_types::types::{
-    ErrorBound, Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
-};
+use modelardb_types::types::{ErrorBound, Timestamp, TimestampBuilder, Value, ValueBuilder};
 
 use crate::types::CompressedSegmentBuilder;
 
@@ -183,10 +181,9 @@ pub fn sum(
 }
 
 /// Reconstruct the data points for a compressed segment whose values are represented by a model and
-/// residuals. Each data point is split into its three components and appended to `univariate_ids`,
-/// `timestamps`, and `values`.
+/// residuals. Each data point is split into its two components and appended to `timestamp_builder`
+/// and `value_builder`.
 pub fn grid(
-    univariate_id: UnivariateId,
     model_type_id: u8,
     start_time: Timestamp,
     end_time: Timestamp,
@@ -195,7 +192,6 @@ pub fn grid(
     max_value: Value,
     values: &[u8],
     residuals: &[u8],
-    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamp_builder: &mut TimestampBuilder,
     value_builder: &mut ValueBuilder,
 ) {
@@ -212,9 +208,7 @@ pub fn grid(
     // Reconstruct the values from the model.
     match model_type_id {
         PMC_MEAN_ID => pmc_mean::grid(
-            univariate_id,
             CompressedSegmentBuilder::decode_values_for_pmc_mean(min_value, max_value, values),
-            univariate_id_builder,
             model_timestamps,
             value_builder,
         ),
@@ -226,24 +220,15 @@ pub fn grid(
             let model_end_time = *model_timestamps.last().unwrap();
 
             swing::grid(
-                univariate_id,
                 start_time,
                 model_end_time,
                 first_value,
                 last_value,
-                univariate_id_builder,
                 model_timestamps,
                 value_builder,
             )
         }
-        GORILLA_ID => gorilla::grid(
-            univariate_id,
-            values,
-            univariate_id_builder,
-            model_timestamps,
-            value_builder,
-            None,
-        ),
+        GORILLA_ID => gorilla::grid(values, model_timestamps, value_builder, None),
         _ => panic!("Unknown model type."),
     }
 
@@ -252,9 +237,7 @@ pub fn grid(
         let model_last_value = value_builder.values_slice()[value_builder.len() - 1];
 
         gorilla::grid(
-            univariate_id,
             &residuals[..residuals.len() - 1],
-            univariate_id_builder,
             residuals_timestamps,
             value_builder,
             Some(model_last_value),

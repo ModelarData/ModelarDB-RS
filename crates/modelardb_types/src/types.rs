@@ -21,15 +21,11 @@
 
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
+
+use arrow::datatypes::Schema;
 
 use crate::error::{ModelarDbTypesError, Result};
-
-// Types used for a univariate id.
-pub type UnivariateId = std::primitive::u64;
-pub type ArrowUnivariateId = arrow::datatypes::UInt64Type;
-
-// Types used for a collection of univariate ids.
-pub type UnivariateIdBuilder = arrow::array::PrimitiveBuilder<ArrowUnivariateId>;
 
 // Types used for a single timestamp.
 pub type Timestamp = std::primitive::i64; // It is signed to match TimestampMicrosecondType.
@@ -47,24 +43,21 @@ pub type ArrowValue = arrow::datatypes::Float32Type;
 pub type ValueBuilder = arrow::array::PrimitiveBuilder<ArrowValue>;
 pub type ValueArray = arrow::array::PrimitiveArray<ArrowValue>;
 
-// Types used for the schema of uncompressed data, compressed data, the configuration, and table metadata.
+// Types used for the schema of compressed data, the configuration, and table metadata.
 #[derive(Clone)]
-pub struct UncompressedSchema(pub arrow::datatypes::SchemaRef);
+pub struct CompressedSchema(pub Arc<Schema>);
 
 #[derive(Clone)]
-pub struct CompressedSchema(pub arrow::datatypes::SchemaRef);
+pub struct QueryCompressedSchema(pub Arc<Schema>);
 
 #[derive(Clone)]
-pub struct QueryCompressedSchema(pub arrow::datatypes::SchemaRef);
+pub struct GridSchema(pub Arc<Schema>);
 
 #[derive(Clone)]
-pub struct QuerySchema(pub arrow::datatypes::SchemaRef);
+pub struct ConfigurationSchema(pub Arc<Schema>);
 
 #[derive(Clone)]
-pub struct ConfigurationSchema(pub arrow::datatypes::SchemaRef);
-
-#[derive(Clone)]
-pub struct TableMetadataSchema(pub arrow::datatypes::SchemaRef);
+pub struct TableMetadataSchema(pub Arc<Schema>);
 
 /// Absolute or relative per-value error bound.
 #[derive(Debug, Copy, Clone, PartialEq)]

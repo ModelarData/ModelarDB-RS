@@ -27,12 +27,11 @@ use std::sync::Arc;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
-    SchemaResult, Ticket,
+    SchemaResult, Ticket, utils,
 };
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt64Array};
-use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
@@ -40,8 +39,8 @@ use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStream};
 use deltalake::arrow::datatypes::Schema;
-use futures::stream::{self, BoxStream, SelectAll};
 use futures::StreamExt;
+use futures::stream::{self, BoxStream, SelectAll};
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_common::{arguments, remote};
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
@@ -57,9 +56,9 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
+use crate::ClusterMode;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
-use crate::ClusterMode;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
 /// process the requests through [`FlightServiceHandler`].
@@ -273,7 +272,7 @@ impl FlightServiceHandler {
     async fn ingest_into_normal_table(
         &self,
         table_name: &str,
-        schema: &SchemaRef,
+        schema: &Arc<Schema>,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.

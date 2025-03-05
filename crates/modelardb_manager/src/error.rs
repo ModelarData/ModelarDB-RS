@@ -23,8 +23,8 @@ use std::result::Result as StdResult;
 use deltalake::errors::DeltaTableError;
 use modelardb_common::error::ModelarDbCommonError;
 use modelardb_storage::error::ModelarDbStorageError;
-use tonic::transport::Error as TonicTransportError;
 use tonic::Status as TonicStatusError;
+use tonic::transport::Error as TonicTransportError;
 
 /// Result type used throughout `modelardb_manager`.
 pub type Result<T> = StdResult<T, ModelarDbManagerError>;

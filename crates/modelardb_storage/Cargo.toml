@@ -24,7 +24,6 @@ arrow-flight.workspace = true
 arrow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
-dashmap.workspace = true
 datafusion.workspace = true
 deltalake = { workspace = true, features = ["datafusion", "s3"] }
 futures.workspace = true
@@ -39,6 +38,5 @@ url.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
-proptest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
