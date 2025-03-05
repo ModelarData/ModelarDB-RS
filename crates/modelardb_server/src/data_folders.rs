@@ -22,10 +22,10 @@ use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::ServerMode;
 
-use crate::error::ModelarDbServerError;
-use crate::manager::Manager;
 use crate::ClusterMode;
 use crate::Result;
+use crate::error::ModelarDbServerError;
+use crate::manager::Manager;
 
 /// Folder for storing metadata and data in Apache Parquet files.
 #[derive(Clone)]
@@ -37,6 +37,18 @@ pub struct DataFolder {
 }
 
 impl DataFolder {
+    /// Return a [`DataFolder`] with an in-memory [`DeltaLake`] and [`TableMetadataManager`]. If
+    /// the metadata tables could not be created, [`ModelarDbServerError`] is returned.
+    pub async fn try_new_in_memory() -> Result<Self> {
+        let delta_lake = DeltaLake::new_in_memory();
+        let table_metadata_manager = TableMetadataManager::new_in_memory(None).await?;
+
+        Ok(Self {
+            delta_lake: Arc::new(delta_lake),
+            table_metadata_manager: Arc::new(table_metadata_manager),
+        })
+    }
+
     /// Return a [`DataFolder`] created from `data_folder_path`. If the folder does not exist, it is
     /// created. If the folder does not exist and could not be created or if the metadata tables
     /// could not be created, [`ModelarDbServerError`] is returned.
@@ -163,9 +175,11 @@ mod tests {
     // Tests for try_from_command_line_arguments().
     #[tokio::test]
     async fn test_try_from_empty_command_line_arguments() {
-        assert!(DataFolders::try_from_command_line_arguments(&[])
-            .await
-            .is_err());
+        assert!(
+            DataFolders::try_from_command_line_arguments(&[])
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
