@@ -76,7 +76,7 @@ pub(crate) struct ModelTable {
     query_order_segment: LexOrdering,
     /// The sort order that [`GridExec`] requires for the segments it receives as its input.
     query_requirement_segment: LexRequirement,
-    /// Schema used internally during query processing.
+    /// Schema used to reconstruct the data points from each field column in the compressed segments.
     grid_schema: Arc<Schema>,
     /// The sort order [`GridExec`] guarantees for the data points it produces. It is guaranteed by
     /// [`GridExec`] because it receives segments sorted by `query_order_segment` from [`ParquetExec`]
@@ -108,7 +108,11 @@ impl ModelTable {
         };
 
         // Add the tag columns to the base schema for queryable compressed segments.
-        let mut query_compressed_schema_fields = QUERY_COMPRESSED_SCHEMA.0.fields.clone().to_vec();
+        let mut query_compressed_schema_fields = Vec::with_capacity(
+            QUERY_COMPRESSED_SCHEMA.0.fields.len() + model_table_metadata.tag_column_indices.len(),
+        );
+
+        query_compressed_schema_fields.extend(QUERY_COMPRESSED_SCHEMA.0.fields.clone().to_vec());
         for index in &model_table_metadata.tag_column_indices {
             query_compressed_schema_fields
                 .push(Arc::new(model_table_metadata.schema.field(*index).clone()));
@@ -123,7 +127,11 @@ impl ModelTable {
         );
 
         // Add the tag columns to the base schema for data points.
-        let mut grid_schema_fields = GRID_SCHEMA.0.fields.clone().to_vec();
+        let mut grid_schema_fields = Vec::with_capacity(
+            GRID_SCHEMA.0.fields.len() + model_table_metadata.tag_column_indices.len(),
+        );
+
+        grid_schema_fields.extend(GRID_SCHEMA.0.fields.clone().to_vec());
         for index in &model_table_metadata.tag_column_indices {
             grid_schema_fields.push(Arc::new(model_table_metadata.schema.field(*index).clone()));
         }
@@ -212,7 +220,8 @@ fn query_order_and_requirement(
         nulls_first: false,
     };
 
-    let mut physical_sort_exprs = vec![];
+    let mut physical_sort_exprs =
+        Vec::with_capacity(model_table_metadata.tag_column_indices.len() + 1);
     for index in &model_table_metadata.tag_column_indices {
         let tag_column_name = model_table_metadata.schema.field(*index).name();
 
@@ -361,7 +370,7 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
 }
 
 /// Convert `maybe_expr` to a [`PhysicalExpr`] with the types in `query_schema` if possible.
-fn maybe_convert_logical_expr_to_physical_expr(
+fn try_convert_logical_expr_to_physical_expr(
     maybe_expr: Option<&Expr>,
     query_schema: SchemaRef,
 ) -> DataFusionResult<Option<Arc<dyn PhysicalExpr>>> {
@@ -586,12 +595,12 @@ impl TableProvider for ModelTable {
         let (maybe_rewritten_parquet_filters, maybe_rewritten_grid_filters) =
             rewrite_and_combine_filters(schema, filters);
 
-        let maybe_physical_parquet_filters = maybe_convert_logical_expr_to_physical_expr(
+        let maybe_physical_parquet_filters = try_convert_logical_expr_to_physical_expr(
             maybe_rewritten_parquet_filters.as_ref(),
             self.query_compressed_schema.clone(),
         )?;
 
-        let maybe_physical_grid_filters = maybe_convert_logical_expr_to_physical_expr(
+        let maybe_physical_grid_filters = try_convert_logical_expr_to_physical_expr(
             maybe_rewritten_grid_filters.as_ref(),
             self.grid_schema.clone(),
         )?;

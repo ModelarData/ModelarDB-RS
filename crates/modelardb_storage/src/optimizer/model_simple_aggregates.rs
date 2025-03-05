@@ -219,8 +219,8 @@ fn rewrite_aggregates_to_use_segments(
                 && aggregate_exec.filter_expr().iter().all(Option::is_none)
                 && aggregate_exec.group_expr().is_empty()
             {
-                // Remove RepartitionExec if added by Apache Arrow DataFusion. Both AggregateExec
-                // and RepartitionExec can only have one child, so it is not necessary to check it.
+                // Remove RepartitionExec if added by Apache DataFusion. Both AggregateExec and
+                // RepartitionExec can only have one child, so it is not necessary to check it.
                 let maybe_repartition_exec = &aggregate_exec_children[0];
                 let aggregate_exec_input = if let Some(repartition_exec) = maybe_repartition_exec
                     .as_any()
@@ -688,8 +688,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_rewrite_aggregates_on_one_column_without_predicates() {
-        // Apache Arrow DataFusion 30 creates two input columns to AggregateExec when both SUM and
-        // AVG is computed in the same query, so for now, multiple queries are used for the test.
+        // Apache DataFusion 30 creates two input columns to AggregateExec when both SUM and AVG is
+        // computed in the same query, so for now, multiple queries are used for the test.
         let query_no_avg = &format!(
             "SELECT COUNT(field_1), MIN(field_1), MAX(field_1), SUM(field_1) FROM {}",
             test::MODEL_TABLE_NAME

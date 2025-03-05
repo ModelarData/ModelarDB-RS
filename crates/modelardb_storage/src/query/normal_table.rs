@@ -34,7 +34,7 @@ use tonic::async_trait;
 
 /// A queryable representation of a normal table. [`NormalTable`] wraps the [`TableProvider`]
 /// [`DeltaTable`] and passes most methods calls directly to it. Thus, it can be registered with
-/// Apache Arrow DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is updated to the
+/// Apache DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is updated to the
 /// latest snapshot when accessed and support for inserting has been added.
 #[derive(Debug)]
 pub(crate) struct NormalTable {

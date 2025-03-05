@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Implementation of the Apache Arrow DataFusion execution plan [`GeneratedAsExec`] and its
-//! corresponding stream [`GeneratedAsStream`] which computes generated columns and adds them to the
-//! result. Generated columns can be computed from other columns and constant values.
+//! Implementation of the Apache DataFusion execution plan [`GeneratedAsExec`] and its corresponding
+//! stream [`GeneratedAsStream`] which computes generated columns and adds them to the result.
+//! Generated columns can be computed from other columns and constant values.
 
 use std::any::Any;
 use std::fmt::{Formatter, Result as FmtResult};

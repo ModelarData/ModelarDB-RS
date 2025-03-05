@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Implementation of the Apache Arrow DataFusion execution plan [`GridExec`] and its corresponding
+//! Implementation of the Apache DataFusion execution plan [`GridExec`] and its corresponding
 //! stream [`GridStream`] which reconstructs the data points for a specific column from the
 //! compressed segments containing metadata and models.
 
@@ -188,8 +188,8 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Specify that [`GridExec`] requires one partition for each input as it assumes that the
-    /// sort order are the same for its input and Apache Arrow DataFusion only guarantees the
-    /// sort order within each partition rather than the input's global sort order.
+    /// sort order are the same for its input and Apache DataFusion only guarantees the sort order
+    /// within each partition rather than the input's global sort order.
     fn required_input_distribution(&self) -> Vec<Distribution> {
         vec![Distribution::SinglePartition]
     }
@@ -286,7 +286,8 @@ impl GridStream {
             _error_array
         );
 
-        let mut tag_arrays = vec![];
+        let mut tag_arrays =
+            Vec::with_capacity(batch.num_columns() - QUERY_COMPRESSED_SCHEMA.0.fields().len());
         for tag_index in QUERY_COMPRESSED_SCHEMA.0.fields().len()..batch.num_columns() {
             tag_arrays.push(modelardb_types::array!(batch, tag_index, StringArray));
         }
@@ -299,7 +300,7 @@ impl GridStream {
         let mut timestamp_builder = TimestampBuilder::with_capacity(current_rows + new_rows);
         let mut value_builder = ValueBuilder::with_capacity(current_rows + new_rows);
 
-        let mut tag_builders = vec![];
+        let mut tag_builders = Vec::with_capacity(tag_arrays.len());
         for _ in 0..tag_arrays.len() {
             tag_builders.push(StringBuilder::with_capacity(
                 current_rows + new_rows,
@@ -320,6 +321,8 @@ impl GridStream {
 
         for (index, tag_builder) in tag_builders.iter_mut().enumerate() {
             let tag_array = modelardb_types::array!(current_batch, index + 2, StringArray);
+
+            // Append each value individually since StringBuilder does not have an append_slice() method.
             for i in self.current_batch_offset..current_batch.num_rows() {
                 tag_builder.append_value(tag_array.value(i));
             }
@@ -359,10 +362,9 @@ impl GridStream {
             );
         }
 
-        let mut columns: Vec<ArrayRef> = vec![
-            Arc::new(timestamp_builder.finish()),
-            Arc::new(value_builder.finish()),
-        ];
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(tag_builders.len() + 2);
+        columns.push(Arc::new(timestamp_builder.finish()));
+        columns.push(Arc::new(value_builder.finish()));
 
         for mut tag_builder in tag_builders {
             columns.push(Arc::new(tag_builder.finish()));

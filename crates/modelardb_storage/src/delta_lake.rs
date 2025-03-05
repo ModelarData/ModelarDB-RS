@@ -410,7 +410,7 @@ impl DeltaLake {
         let table = self.metadata_delta_table(table_name).await?;
 
         // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
-        // returns the Delta Lake schema instead of the Apache Arrow DataFusion schema.
+        // returns the Delta Lake schema instead of the Apache DataFusion schema.
         let record_batch = RecordBatch::try_new(TableProvider::schema(&table), columns)?;
 
         self.write_record_batches_to_table(

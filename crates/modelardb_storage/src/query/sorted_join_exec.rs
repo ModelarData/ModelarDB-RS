@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! Implementation of the Apache Arrow DataFusion execution plan [`SortedJoinExec`] and its
-//! corresponding stream [`SortedJoinStream`] which joins multiple sorted array produced by
+//! Implementation of the Apache DataFusion execution plan [`SortedJoinExec`] and its corresponding
+//! stream [`SortedJoinStream`] which joins multiple sorted array produced by
 //! [`GridExecs`](crate::query::grid_exec::GridExec) streams and combines them with the time series
 //! tags retrieved from the [`TableMetadataManager`](metadata::table_metadata_manager::TableMetadataManager)
 //! to create the complete results containing a timestamp column, one or more field columns, and zero
@@ -171,8 +171,8 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Specify that [`SortedJoinStream`] requires one partition for each input as it assumes that
-    /// the sort order is the same for all inputs and Apache Arrow DataFusion only guarantees the
-    /// sort order within each partition rather than the inputs' global sort order.
+    /// the sort order is the same for all inputs and Apache DataFusion only guarantees the sort
+    /// order within each partition rather than the inputs' global sort order.
     fn required_input_distribution(&self) -> Vec<Distribution> {
         vec![Distribution::SinglePartition; self.inputs.len()]
     }
