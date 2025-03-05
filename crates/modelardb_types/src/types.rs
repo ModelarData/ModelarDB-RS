@@ -21,6 +21,9 @@
 
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
+
+use arrow::datatypes::Schema;
 
 use crate::error::{ModelarDbTypesError, Result};
 
@@ -42,19 +45,19 @@ pub type ValueArray = arrow::array::PrimitiveArray<ArrowValue>;
 
 // Types used for the schema of compressed data, the configuration, and table metadata.
 #[derive(Clone)]
-pub struct CompressedSchema(pub arrow::datatypes::SchemaRef);
+pub struct CompressedSchema(pub Arc<Schema>);
 
 #[derive(Clone)]
-pub struct QueryCompressedSchema(pub arrow::datatypes::SchemaRef);
+pub struct QueryCompressedSchema(pub Arc<Schema>);
 
 #[derive(Clone)]
-pub struct GridSchema(pub arrow::datatypes::SchemaRef);
+pub struct GridSchema(pub Arc<Schema>);
 
 #[derive(Clone)]
-pub struct ConfigurationSchema(pub arrow::datatypes::SchemaRef);
+pub struct ConfigurationSchema(pub Arc<Schema>);
 
 #[derive(Clone)]
-pub struct TableMetadataSchema(pub arrow::datatypes::SchemaRef);
+pub struct TableMetadataSchema(pub Arc<Schema>);
 
 /// Absolute or relative per-value error bound.
 #[derive(Debug, Copy, Clone, PartialEq)]

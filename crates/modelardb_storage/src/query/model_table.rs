@@ -26,9 +26,7 @@ use std::sync::Arc;
 use arrow::compute::SortOptions;
 use arrow::datatypes::DataType::Utf8;
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{
-    ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
-};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, TimeUnit};
 use datafusion::catalog::Session;
 use datafusion::common::{Statistics, ToDFSchema};
 use datafusion::datasource::listing::PartitionedFile;
@@ -255,10 +253,7 @@ fn query_order_and_requirement(
 /// to a filter that is written in terms of the schema used for compressed segments by the storage
 /// engine and a filter that is written in terms of the schema used for univariate time series by
 /// [`GridExec`] for its output. If the filters cannot be rewritten an empty [`None`] is returned.
-fn rewrite_and_combine_filters(
-    schema: &SchemaRef,
-    filters: &[Expr],
-) -> (Option<Expr>, Option<Expr>) {
+fn rewrite_and_combine_filters(schema: &Schema, filters: &[Expr]) -> (Option<Expr>, Option<Expr>) {
     let rewritten_filters = filters
         .iter()
         .filter_map(|filter| rewrite_filter(schema, filter));
@@ -279,7 +274,7 @@ fn rewrite_and_combine_filters(
 /// that is written in terms of the schema used for compressed segments by the storage engine and a
 /// filter that is written in terms of the schema used for univariate time series by [`GridExec`].
 /// If the filter cannot be rewritten, [`None`] is returned.
-fn rewrite_filter(query_schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr)> {
+fn rewrite_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> {
     match filter {
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
             if let Expr::Column(column) = &**left {
@@ -372,7 +367,7 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
 /// Convert `maybe_expr` to a [`PhysicalExpr`] with the types in `query_schema` if possible.
 fn try_convert_logical_expr_to_physical_expr(
     maybe_expr: Option<&Expr>,
-    query_schema: SchemaRef,
+    query_schema: Arc<Schema>,
 ) -> DataFusionResult<Option<Arc<dyn PhysicalExpr>>> {
     // Option.map() is not used so errors can be returned with ?.
     if let Some(maybe_expr) = maybe_expr {
@@ -388,7 +383,7 @@ fn try_convert_logical_expr_to_physical_expr(
 /// Convert `expr` to a [`PhysicalExpr`] with the types in `query_schema`.
 fn convert_logical_expr_to_physical_expr(
     expr: &Expr,
-    query_schema: SchemaRef,
+    query_schema: Arc<Schema>,
 ) -> DataFusionResult<Arc<dyn PhysicalExpr>> {
     let df_query_schema = query_schema.clone().to_dfschema()?;
     planner::create_physical_expr(expr, &df_query_schema, &ExecutionProps::new())
@@ -402,7 +397,7 @@ fn new_apache_parquet_exec(
     partition_filters: &[PartitionFilter],
     maybe_limit: Option<usize>,
     maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
-    file_schema: SchemaRef,
+    file_schema: Arc<Schema>,
     output_ordering: Vec<LexOrdering>,
 ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
     // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
@@ -486,7 +481,7 @@ impl TableProvider for ModelTable {
     }
 
     /// Return the query schema of the model table registered with Apache DataFusion.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.model_table_metadata.query_schema.clone()
     }
 

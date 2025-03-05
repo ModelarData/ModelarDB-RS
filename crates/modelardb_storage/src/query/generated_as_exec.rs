@@ -23,8 +23,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
+use arrow::datatypes::Schema;
 use datafusion::arrow::array::StringArray;
-use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::temporal_conversions;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -63,7 +63,7 @@ impl ColumnToGenerate {
 #[derive(Debug)]
 pub(super) struct GeneratedAsExec {
     /// Schema of the execution plan.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Columns to generate and the index they should be at.
     columns_to_generate: Vec<ColumnToGenerate>,
     /// Execution plan to read batches of segments from.
@@ -76,7 +76,7 @@ pub(super) struct GeneratedAsExec {
 
 impl GeneratedAsExec {
     pub(super) fn new(
-        schema: SchemaRef,
+        schema: Arc<Schema>,
         columns_to_generate: Vec<ColumnToGenerate>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
@@ -113,7 +113,7 @@ impl ExecutionPlan for GeneratedAsExec {
     }
 
     /// Return the schema of the plan.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 
@@ -184,7 +184,7 @@ impl DisplayAs for GeneratedAsExec {
 /// adds them to the batch, and then returns the result.
 struct GeneratedAsStream {
     /// Schema of the stream.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Columns to generate and the index they should be at.
     columns_to_generate: Vec<ColumnToGenerate>,
     /// Stream to read batches of rows from.
@@ -195,7 +195,7 @@ struct GeneratedAsStream {
 
 impl GeneratedAsStream {
     fn new(
-        schema: SchemaRef,
+        schema: Arc<Schema>,
         columns_to_generate: Vec<ColumnToGenerate>,
         input: SendableRecordBatchStream,
         baseline_metrics: BaselineMetrics,
@@ -321,7 +321,7 @@ impl Stream for GeneratedAsStream {
 
 impl RecordBatchStream for GeneratedAsStream {
     /// Return the schema of the stream.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 }

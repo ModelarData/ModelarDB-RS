@@ -21,6 +21,7 @@
 use std::borrow::Cow;
 use std::{any::Any, sync::Arc};
 
+use arrow::datatypes::Schema;
 use datafusion::catalog::Session;
 use datafusion::common::Constraints;
 use datafusion::datasource::{TableProvider, TableType};
@@ -29,7 +30,7 @@ use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, LogicalPlan, TableProviderFilterPushDown};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
-use deltalake::{DeltaTable, arrow::datatypes::SchemaRef};
+use deltalake::DeltaTable;
 use tonic::async_trait;
 
 /// A queryable representation of a normal table. [`NormalTable`] wraps the [`TableProvider`]
@@ -61,7 +62,7 @@ impl TableProvider for NormalTable {
     }
 
     /// Return the query schema of the normal table registered with Apache DataFusion.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         TableProvider::schema(&self.delta_table)
     }
 

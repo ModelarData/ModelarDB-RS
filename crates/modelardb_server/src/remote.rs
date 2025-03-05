@@ -32,7 +32,6 @@ use arrow_flight::{
     SchemaResult, Ticket, utils,
 };
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt64Array};
-use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
@@ -273,7 +272,7 @@ impl FlightServiceHandler {
     async fn ingest_into_normal_table(
         &self,
         table_name: &str,
-        schema: &SchemaRef,
+        schema: &Arc<Schema>,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.

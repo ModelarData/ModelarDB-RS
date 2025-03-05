@@ -31,7 +31,6 @@ use datafusion::arrow::array::{
     Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, UInt8Array,
 };
 use datafusion::arrow::compute::filter_record_batch;
-use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -56,7 +55,7 @@ use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, Value
 #[derive(Debug, Clone)]
 pub(crate) struct GridExec {
     /// Schema of the execution plan.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Predicate to filter data points by.
     maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Number of data points requested by the query.
@@ -123,7 +122,7 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Return the schema of the plan.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 
@@ -218,7 +217,7 @@ impl DisplayAs for GridExec {
 /// points from the metadata and models in the segments, and returns batches of data points.
 struct GridStream {
     /// Schema of the stream.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Predicate to filter data points by.
     maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Stream to read batches of compressed segments from.
@@ -235,7 +234,7 @@ struct GridStream {
 
 impl GridStream {
     fn new(
-        schema: SchemaRef,
+        schema: Arc<Schema>,
         maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
         limit: Option<usize>,
         input: SendableRecordBatchStream,
@@ -429,7 +428,7 @@ impl Stream for GridStream {
 
 impl RecordBatchStream for GridStream {
     /// Return the schema of the stream.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 }

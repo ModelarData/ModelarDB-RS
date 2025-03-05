@@ -26,8 +26,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
+use arrow::datatypes::Schema;
 use datafusion::arrow::array::ArrayRef;
-use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
@@ -55,7 +55,7 @@ pub(crate) enum SortedJoinColumnType {
 #[derive(Debug)]
 pub(crate) struct SortedJoinExec {
     /// Schema of the execution plan.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Order of columns to return.
     return_order: Vec<SortedJoinColumnType>,
     /// Execution plans to read batches of data points from.
@@ -70,7 +70,7 @@ pub(crate) struct SortedJoinExec {
 
 impl SortedJoinExec {
     pub(crate) fn new(
-        schema: SchemaRef,
+        schema: Arc<Schema>,
         return_order: Vec<SortedJoinColumnType>,
         inputs: Vec<Arc<dyn ExecutionPlan>>,
         query_requirement_data_point: LexRequirement,
@@ -108,7 +108,7 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Return the schema of the plan.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 
@@ -199,7 +199,7 @@ impl DisplayAs for SortedJoinExec {
 
 struct SortedJoinStream {
     /// Schema of the stream.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Order of columns to return.
     return_order: Vec<SortedJoinColumnType>,
     /// Streams to read batches of data points from.
@@ -212,7 +212,7 @@ struct SortedJoinStream {
 
 impl SortedJoinStream {
     fn new(
-        schema: SchemaRef,
+        schema: Arc<Schema>,
         return_order: Vec<SortedJoinColumnType>,
         inputs: Vec<SendableRecordBatchStream>,
         baseline_metrics: BaselineMetrics,
@@ -334,7 +334,7 @@ impl Stream for SortedJoinStream {
 
 impl RecordBatchStream for SortedJoinStream {
     /// Return the schema of the stream.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 }

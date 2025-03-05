@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::{Schema, SchemaRef};
+use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
@@ -391,7 +391,7 @@ impl Context {
     pub async fn schema_of_table_in_default_database_schema(
         &self,
         table_name: &str,
-    ) -> Result<SchemaRef> {
+    ) -> Result<Arc<Schema>> {
         let database_schema = self.default_database_schema()?;
 
         let table = database_schema.table(table_name).await?.ok_or_else(|| {

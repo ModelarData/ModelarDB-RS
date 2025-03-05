@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use arrow::array::ArrayRef;
-use arrow::datatypes::{Schema, SchemaRef, ToByteSlice};
+use arrow::datatypes::{Schema, ToByteSlice};
 use arrow::ipc::convert;
 use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
@@ -387,7 +387,7 @@ async fn execute_query_and_print_result(
 /// Returns [`ModelarDbClientError`] if the batches in the result set could not be printed.
 async fn print_batches_with_confirmation(
     mut stream: Streaming<FlightData>,
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     dictionaries_by_id: &HashMap<i64, ArrayRef>,
 ) -> Result<()> {
     let mut user_input = String::new();
@@ -424,7 +424,7 @@ async fn print_batches_with_confirmation(
 /// batches in the result set could not be printed.
 async fn print_batches_without_confirmation(
     mut stream: Streaming<FlightData>,
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     dictionaries_by_id: &HashMap<i64, ArrayRef>,
 ) -> Result<()> {
     while let Some(flight_data) = stream.message().await? {

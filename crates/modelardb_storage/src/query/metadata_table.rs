@@ -19,12 +19,13 @@
 
 use std::{any::Any, sync::Arc};
 
+use arrow::datatypes::Schema;
 use datafusion::catalog::Session;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use deltalake::{DeltaTable, arrow::datatypes::SchemaRef};
+use deltalake::DeltaTable;
 use tonic::async_trait;
 
 /// A queryable representation of a metadata table. [`MetadataTable`] wraps the [`TableProvider`] of
@@ -51,7 +52,7 @@ impl TableProvider for MetadataTable {
     }
 
     /// Return the query schema of the metadata table registered with Apache DataFusion.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         TableProvider::schema(&self.delta_table)
     }
 

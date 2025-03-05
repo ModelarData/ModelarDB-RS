@@ -33,7 +33,7 @@ use arrow::array::{
 };
 use arrow::compute;
 use arrow::compute::concat_batches;
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::{IpcWriteOptions, StreamWriter};
 use arrow_flight::{IpcMessage, SchemaAsIpc};
@@ -300,7 +300,7 @@ pub fn try_convert_record_batch_to_bytes(record_batch: &RecordBatch) -> Result<V
 /// otherwise [`ModelarDbStorageError`].
 pub fn try_convert_bytes_to_record_batch(
     record_batch_bytes: Vec<u8>,
-    schema: &SchemaRef,
+    schema: &Arc<Schema>,
 ) -> Result<RecordBatch> {
     let bytes: Bytes = record_batch_bytes.into();
     let reader = StreamReader::try_new(bytes.reader(), None)?;
