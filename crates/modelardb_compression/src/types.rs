@@ -15,7 +15,7 @@
 
 //! The types used throughout the crate.
 
-use std::debug_assert;
+use std::{debug_assert, iter};
 use std::sync::Arc;
 
 use arrow::array::{
@@ -481,7 +481,7 @@ impl CompressedSegmentBatchBuilder {
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
     pub(crate) fn finish(mut self) -> RecordBatch {
         let batch_length = self.model_type_ids.len();
-        let field_column_array: UInt16Array = std::iter::repeat(self.field_column_index)
+        let field_column_array: UInt16Array = iter::repeat(self.field_column_index)
             .take(batch_length)
             .collect();
 
@@ -499,7 +499,7 @@ impl CompressedSegmentBatchBuilder {
         ];
 
         for tag_value in &self.tag_values {
-            let tag_array: StringArray = std::iter::repeat(Some(tag_value))
+            let tag_array: StringArray = iter::repeat(Some(tag_value))
                 .take(batch_length)
                 .collect();
 

@@ -588,12 +588,12 @@ impl UncompressedDataManager {
 
                 // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
                 modelardb_compression::try_compress(
+                    uncompressed_timestamps,
+                    uncompressed_values,
+                    error_bound,
                     model_table_metadata.compressed_schema.clone(),
                     tag_values.clone(),
                     *field_column_index as u16,
-                    error_bound,
-                    uncompressed_timestamps,
-                    uncompressed_values,
                 )
                 .unwrap()
             })

@@ -850,12 +850,12 @@ mod tests {
         let compressed_schema = Arc::new(Schema::new(compressed_schema_fields));
 
         let segments = crate::try_compress(
+            &timestamps,
+            &values,
+            error_bound,
             compressed_schema,
             vec!["tag".to_owned()],
             0,
-            error_bound,
-            &timestamps,
-            &values,
         )
         .unwrap();
 

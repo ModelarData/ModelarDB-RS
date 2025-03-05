@@ -39,16 +39,19 @@ const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 /// regular and delta-of-deltas followed by a variable length binary encoding if irregular.
 /// `uncompressed_values` is compressed within `error_bound` using the model types in `models`.
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted according to
-/// `uncompressed_timestamps`. Returns [`ModelarDbCompressionError`] if `uncompressed_timestamps`
-/// and `uncompressed_values` have different lengths, otherwise the resulting compressed segments
-/// are returned as a [`RecordBatch`] with the `compressed_schema` schema.
+/// `uncompressed_timestamps`. The resulting compressed segments have the schema in `compressed_schema`
+/// with the tag columns populated by the values in `tag_values` and the field column index populated
+/// by `field_column_index`. Returns [`ModelarDbCompressionError`] if `uncompressed_timestamps` and
+/// `uncompressed_values` have different lengths or if `compressed_schema` is not a valid schema for
+/// compressed segments, otherwise the resulting compressed segments are returned as a
+/// [`RecordBatch`] with the `compressed_schema` schema.
 pub fn try_compress(
+    uncompressed_timestamps: &TimestampArray,
+    uncompressed_values: &ValueArray,
+    error_bound: ErrorBound,
     compressed_schema: Arc<Schema>,
     tag_values: Vec<String>,
     field_column_index: u16,
-    error_bound: ErrorBound,
-    uncompressed_timestamps: &TimestampArray,
-    uncompressed_values: &ValueArray,
 ) -> Result<RecordBatch> {
     // The uncompressed data must be passed as arrays instead of a RecordBatch as a TimestampArray
     // and a ValueArray is the only supported input. However, as a result it is necessary to verify
@@ -276,12 +279,12 @@ mod tests {
     #[test]
     fn test_try_compress_empty_time_series_within_absolute_error_bound_zero() {
         let compressed_record_batch = try_compress(
+            &TimestampBuilder::new().finish(),
+            &ValueBuilder::new().finish(),
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             compressed_schema(),
             vec![TAG_VALUE.to_owned()],
             0,
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &TimestampBuilder::new().finish(),
-            &ValueBuilder::new().finish(),
         )
         .unwrap();
         assert_eq!(0, compressed_record_batch.num_rows());
@@ -290,12 +293,12 @@ mod tests {
     #[test]
     fn test_try_compress_empty_time_series_within_relative_error_bound_zero() {
         let compressed_record_batch = try_compress(
+            &TimestampBuilder::new().finish(),
+            &ValueBuilder::new().finish(),
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             compressed_schema(),
             vec![TAG_VALUE.to_owned()],
             0,
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            &TimestampBuilder::new().finish(),
-            &ValueBuilder::new().finish(),
         )
         .unwrap();
         assert_eq!(0, compressed_record_batch.num_rows());
@@ -512,12 +515,12 @@ mod tests {
             data_generation::generate_values(uncompressed_timestamps.values(), values_structure);
 
         let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
             compressed_schema(),
             vec![TAG_VALUE.to_owned()],
             0,
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
         )
         .unwrap();
 
@@ -662,12 +665,12 @@ mod tests {
         assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
 
         let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
             compressed_schema(),
             vec![TAG_VALUE.to_owned()],
             0,
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
         )
         .unwrap();
 
@@ -878,12 +881,12 @@ mod tests {
             );
 
         let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
             compressed_schema(),
             vec![TAG_VALUE.to_owned()],
             0,
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
         )
         .unwrap();
 

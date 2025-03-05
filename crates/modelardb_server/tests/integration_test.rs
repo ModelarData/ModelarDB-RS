@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::Read;
-use std::iter::repeat;
+use std::iter;
 use std::ops::Range;
 use std::process::{Child, Command, Stdio};
 use std::str;
@@ -331,7 +331,7 @@ impl TestContext {
         if let Some(tag) = maybe_tag {
             fields.push(Field::new("tag", DataType::Utf8, false));
             columns.push(Arc::new(StringArray::from_iter_values(
-                repeat(tag).take(time_series_len),
+                iter::repeat(tag).take(time_series_len),
             )));
         }
 
