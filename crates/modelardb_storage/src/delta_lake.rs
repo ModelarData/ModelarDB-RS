@@ -58,6 +58,21 @@ pub struct DeltaLake {
 }
 
 impl DeltaLake {
+    /// Create a new [`DeltaLake`] that manages the Delta tables in `local_url`. If `local_url` has
+    /// the schema `file` or no schema, the Delta tables are managed in a local data folder. If
+    /// `local_url` has the schema `memory`, the Delta tables are managed in memory. Return
+    /// [`ModelarDbStorageError`] if `local_url` cannot be parsed.
+    pub fn try_from_local_url(local_url: &str) -> Result<Self> {
+        match local_url.split_once("://") {
+            Some(("file", local_path)) => Self::try_from_local_path(StdPath::new(local_path)),
+            None => Self::try_from_local_path(StdPath::new(local_url)),
+            Some(("memory", _)) => Ok(Self::new_in_memory()),
+            _ => Err(ModelarDbStorageError::InvalidArgument(format!(
+                "{local_url} is not a valid local URL."
+            ))),
+        }
+    }
+
     /// Create a new [`DeltaLake`] that manages the Delta tables in memory.
     pub fn new_in_memory() -> Self {
         Self {
