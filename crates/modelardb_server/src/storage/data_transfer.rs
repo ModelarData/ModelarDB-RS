@@ -465,7 +465,8 @@ mod tests {
     /// single model table in it.
     async fn create_local_data_folder_with_tables() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder = DataFolder::try_from_path(temp_dir.path()).await.unwrap();
+        let temp_dir_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
 
         // Create a normal table.
         local_data_folder
@@ -553,7 +554,8 @@ mod tests {
         local_data_folder: DataFolder,
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
-        let remote_data_folder = DataFolder::try_from_path(target_dir.path()).await.unwrap();
+        let target_dir_url = target_dir.path().to_str().unwrap();
+        let remote_data_folder = DataFolder::try_from_local_url(target_dir_url).await.unwrap();
 
         // Set the transfer batch size so that data is transferred if three batches are written.
         let data_transfer = DataTransfer::try_new(
