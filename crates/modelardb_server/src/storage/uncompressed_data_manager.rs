@@ -180,7 +180,7 @@ impl UncompressedDataManager {
         for (index, timestamp) in timestamp_column_array.iter().enumerate() {
             let tag_values: Vec<String> = tag_column_arrays
                 .iter()
-                .map(|array| array.value(index).to_string())
+                .map(|array| array.value(index).to_owned())
                 .collect();
 
             let mut values = field_column_arrays.iter().map(|array| array.value(index));
@@ -577,7 +577,7 @@ impl UncompressedDataManager {
 
         let tag_values: Vec<String> = tag_column_arrays
             .iter()
-            .map(|array| array.value(0).to_string())
+            .map(|array| array.value(0).to_owned())
             .collect();
 
         let compressed_segments = field_column_arrays
@@ -634,14 +634,15 @@ impl UncompressedDataManager {
     }
 }
 
-/// Calculate a hash for a combination of `table_name` and `tag_values`. The hash can be used to
+/// Calculate a hash for a combination of `table_name` and `tag_values`. The hash is used to
 /// identify a specific multivariate time series during ingestion.
 fn calculate_tag_hash(table_name: &str, tag_values: &[String]) -> u64 {
-    let mut hash_data = tag_values.to_vec();
-    hash_data.push(table_name.to_string());
-
     let mut hasher = DefaultHasher::new();
-    hasher.write(hash_data.join(";").as_bytes());
+    for tag_value in tag_values {
+        hasher.write(tag_value.as_bytes());
+    }
+
+    hasher.write(table_name.as_bytes());
 
     hasher.finish()
 }
@@ -668,7 +669,7 @@ mod tests {
     use crate::{ClusterMode, DataFolders};
 
     const TAG_VALUE: &str = "tag";
-    const TAG_HASH: u64 = 15537859409877038916;
+    const TAG_HASH: u64 = 10828528714290431980;
 
     // Tests for UncompressedDataManager.
     #[tokio::test]

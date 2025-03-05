@@ -282,9 +282,9 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Truncate the table in the data Delta Lake and in each node controlled by the manager. If the
-    /// table does not exist or the table cannot be truncated in the remote data folder and in each
-    /// node, return [`Status`].
+    /// Truncate the table in the remote data folder and at each node controlled by the manager. If
+    /// the table does not exist or the table cannot be truncated in the remote data folder and at
+    /// each node, return [`Status`].
     async fn truncate_cluster_table(&self, table_name: &str) -> StdResult<(), Status> {
         if self.check_if_table_exists(table_name).await.is_ok() {
             return Err(Status::invalid_argument(format!(

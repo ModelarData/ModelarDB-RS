@@ -21,7 +21,6 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::TaskContext;
@@ -106,9 +105,9 @@ impl DisplayAs for NormalTableDataSink {
     }
 }
 
-/// [`DataSink`] that writes [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
-/// containing multivariate time series to [`StorageEngine`]. Assumes the generated columns are
-/// included, thus they are dropped without checking the schema.
+/// [`DataSink`] that writes [`RecordBatches`](RecordBatch) containing multivariate time series to
+/// [`StorageEngine`]. Assumes the generated columns are included, thus they are dropped without
+/// checking the schema.
 pub struct ModelTableDataSink {
     /// Metadata for the model table inserted data will be written to.
     model_table_metadata: Arc<ModelTableMetadata>,
@@ -150,18 +149,16 @@ impl DataSink for ModelTableDataSink {
         let mut data_points_inserted: u64 = 0;
 
         while let Some(record_batch) = data.next().await {
+            // Remove the generated columns from the record batch. The generated columns must be
+            // part of the inserted data since Apache DataFusion checks it before passing it to
+            // write_all().
             let record_batch =
                 record_batch?.project(&self.model_table_metadata.query_schema_to_schema)?;
 
-            // Ensure the fields are not nullable. It is not possible to insert null values into
-            // model tables but the schema of the record batch may contain nullable fields.
-            let mut fields: Vec<Field> = Vec::with_capacity(record_batch.schema().fields.len());
-            for field in record_batch.schema().fields() {
-                fields.push(Field::new(field.name(), field.data_type().clone(), false));
-            }
-
+            // Create a new record batch with the schema of the model table to fix the problem where
+            // the schema of the inserted data has nullable fields.
             let record_batch = RecordBatch::try_new(
-                Arc::new(Schema::new(fields)),
+                self.model_table_metadata.schema.clone(),
                 record_batch.columns().to_vec(),
             )?;
 

@@ -358,7 +358,7 @@ impl UncompressedOnDiskDataBuffer {
 
         let tag_values: Vec<String> = tag_column_arrays
             .iter()
-            .map(|array| array.value(0).to_string())
+            .map(|array| array.value(0).to_owned())
             .collect();
 
         let mut in_memory_buffer = UncompressedInMemoryDataBuffer::new(

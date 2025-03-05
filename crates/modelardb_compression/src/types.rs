@@ -15,8 +15,8 @@
 
 //! The types used throughout the crate.
 
-use std::{debug_assert, iter};
 use std::sync::Arc;
+use std::{debug_assert, iter};
 
 use arrow::array::{
     ArrayBuilder, ArrayRef, BinaryBuilder, Float32Builder, StringArray, UInt8Builder, UInt16Array,
@@ -485,24 +485,20 @@ impl CompressedSegmentBatchBuilder {
             .take(batch_length)
             .collect();
 
-        let mut columns: Vec<ArrayRef> = vec![
-            Arc::new(self.model_type_ids.finish()),
-            Arc::new(self.start_times.finish()),
-            Arc::new(self.end_times.finish()),
-            Arc::new(self.timestamps.finish()),
-            Arc::new(self.min_values.finish()),
-            Arc::new(self.max_values.finish()),
-            Arc::new(self.values.finish()),
-            Arc::new(self.residuals.finish()),
-            Arc::new(self.error.finish()),
-            Arc::new(field_column_array),
-        ];
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.compressed_schema.fields.len());
+        columns.push(Arc::new(self.model_type_ids.finish()));
+        columns.push(Arc::new(self.start_times.finish()));
+        columns.push(Arc::new(self.end_times.finish()));
+        columns.push(Arc::new(self.timestamps.finish()));
+        columns.push(Arc::new(self.min_values.finish()));
+        columns.push(Arc::new(self.max_values.finish()));
+        columns.push(Arc::new(self.values.finish()));
+        columns.push(Arc::new(self.residuals.finish()));
+        columns.push(Arc::new(self.error.finish()));
+        columns.push(Arc::new(field_column_array));
 
         for tag_value in &self.tag_values {
-            let tag_array: StringArray = iter::repeat(Some(tag_value))
-                .take(batch_length)
-                .collect();
-
+            let tag_array: StringArray = iter::repeat(Some(tag_value)).take(batch_length).collect();
             columns.push(Arc::new(tag_array));
         }
 
