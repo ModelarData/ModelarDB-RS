@@ -19,8 +19,8 @@
 //! support for storing uncompressed data points in Apache Parquet files on disk.
 
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use std::{iter, mem};
 use std::sync::Arc;
+use std::{iter, mem};
 
 use datafusion::arrow::array::{Array, ArrayBuilder, StringArray};
 use datafusion::arrow::compute;
@@ -173,9 +173,8 @@ impl UncompressedInMemoryDataBuffer {
             } else if self.model_table_metadata.is_tag(column_index) {
                 // The tag value is the same for each data point so it is not sorted.
                 let tag_value = self.tag_values[tag_column_index].clone();
-                let tag_array: StringArray = iter::repeat(Some(tag_value))
-                    .take(buffer_length)
-                    .collect();
+                let tag_array: StringArray =
+                    iter::repeat(Some(tag_value)).take(buffer_length).collect();
                 columns.push(Arc::new(tag_array));
 
                 tag_column_index += 1;

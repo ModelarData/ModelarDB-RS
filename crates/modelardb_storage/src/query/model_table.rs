@@ -91,7 +91,7 @@ impl ModelTable {
         data_sink: Arc<dyn DataSink>,
     ) -> Arc<Self> {
         // Compute the index of the first stored field column in the model table's query schema. It
-        // is used for queries without fields as uids, timestamps, and values are stored together.
+        // is used for queries without fields as tags, timestamps, and values are stored together.
         let fallback_field_column = {
             model_table_metadata
                 .query_schema
@@ -407,7 +407,6 @@ fn new_apache_parquet_exec(
         .collect::<StdResult<Vec<LogicalFile>, DeltaTableError>>()
         .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
-    // TODO: prune the Apache Parquet files using metadata and maybe_parquet_filters if possible.
     logical_files.sort_by_key(|logical_file| logical_file.modification_time());
 
     // Create the data source operator. Assumes the ObjectStore exists.
@@ -416,8 +415,6 @@ fn new_apache_parquet_exec(
         .map(|logical_file| logical_file_to_partitioned_file(logical_file))
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
 
-    // TODO: give the optimizer more info for timestamps and values through statistics, e.g, min
-    // can be computed using only the metadata Delta Lake due to the aggregate_statistics rule.
     let log_store = delta_table.log_store();
     let file_scan_config = FileScanConfig {
         object_store_url: log_store.object_store_url(),
