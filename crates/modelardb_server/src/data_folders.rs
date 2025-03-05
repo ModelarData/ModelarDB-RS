@@ -15,17 +15,16 @@
 
 //! Implementation of a struct that provides access to the local and remote data storage components.
 
-use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::ServerMode;
 
-use crate::ClusterMode;
-use crate::Result;
 use crate::error::ModelarDbServerError;
 use crate::manager::Manager;
+use crate::ClusterMode;
+use crate::Result;
 
 /// Folder for storing metadata and data in Apache Parquet files.
 #[derive(Clone)]
@@ -37,25 +36,14 @@ pub struct DataFolder {
 }
 
 impl DataFolder {
-    /// Return a [`DataFolder`] with an in-memory [`DeltaLake`] and [`TableMetadataManager`]. If
-    /// the metadata tables could not be created, [`ModelarDbServerError`] is returned.
-    pub async fn try_new_in_memory() -> Result<Self> {
-        let delta_lake = DeltaLake::new_in_memory();
-        let table_metadata_manager = TableMetadataManager::new_in_memory(None).await?;
-
-        Ok(Self {
-            delta_lake: Arc::new(delta_lake),
-            table_metadata_manager: Arc::new(table_metadata_manager),
-        })
-    }
-
-    /// Return a [`DataFolder`] created from `data_folder_path`. If the folder does not exist, it is
-    /// created. If the folder does not exist and could not be created or if the metadata tables
-    /// could not be created, [`ModelarDbServerError`] is returned.
-    pub async fn try_from_path(data_folder_path: &StdPath) -> Result<Self> {
-        let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
+    /// Return a [`DataFolder`] with a local [`DeltaLake`] and [`TableMetadataManager`] created from
+    /// `local_url`. If `local_url` is a folder that does not exist, it is created. If `local_url`
+    /// could not be parsed, if the folder does not exist and could not be created, or if the
+    /// metadata tables could not be created, [`ModelarDbServerError`] is returned.
+    pub async fn try_from_local_url(local_url: &str) -> Result<Self> {
+        let delta_lake = DeltaLake::try_from_local_url(local_url)?;
         let table_metadata_manager =
-            TableMetadataManager::try_from_path(data_folder_path, None).await?;
+            TableMetadataManager::try_from_local_url(local_url, None).await?;
 
         Ok(Self {
             delta_lake: Arc::new(delta_lake),
@@ -114,21 +102,21 @@ impl DataFolders {
     ) -> Result<(ClusterMode, Self)> {
         // Match the provided command line arguments to the supported inputs.
         match arguments {
-            &["edge", local_data_folder] | &[local_data_folder] => {
+            &["edge", local_data_folder_url] | &[local_data_folder_url] => {
                 let local_data_folder =
-                    DataFolder::try_from_path(StdPath::new(local_data_folder)).await?;
+                    DataFolder::try_from_local_url(local_data_folder_url).await?;
 
                 Ok((
                     ClusterMode::SingleNode,
                     Self::new(local_data_folder.clone(), None, local_data_folder),
                 ))
             }
-            &["cloud", local_data_folder, manager_url] => {
+            &["cloud", local_data_folder_url, manager_url] => {
                 let (manager, connection_info) =
                     Manager::register_node(manager_url, ServerMode::Cloud).await?;
 
                 let local_data_folder =
-                    DataFolder::try_from_path(StdPath::new(local_data_folder)).await?;
+                    DataFolder::try_from_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
                     DataFolder::try_from_connection_info(&connection_info).await?;
@@ -142,12 +130,13 @@ impl DataFolders {
                     ),
                 ))
             }
-            &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
+            &["edge", local_data_folder_url, manager_url]
+            | &[local_data_folder_url, manager_url] => {
                 let (manager, connection_info) =
                     Manager::register_node(manager_url, ServerMode::Edge).await?;
 
                 let local_data_folder =
-                    DataFolder::try_from_path(StdPath::new(local_data_folder)).await?;
+                    DataFolder::try_from_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
                     DataFolder::try_from_connection_info(&connection_info).await?;
