@@ -75,7 +75,7 @@ fn main() -> Result<()> {
     {
         cluster_mode_and_data_folders
     } else {
-        arguments::print_usage_and_exit_with_error("[server_mode] local_data_folder [manager_url]");
+        arguments::print_usage_and_exit_with_error("[server_mode] local_data_folder_url [manager_url]");
     };
 
     let context = Arc::new(runtime.block_on(Context::try_new(

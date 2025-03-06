@@ -61,7 +61,6 @@ impl TableMetadataManager {
     ) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::try_from_local_url(local_url)?,
-            tag_value_hashes: DashMap::new(),
             session_context: maybe_session_context
                 .unwrap_or_else(|| Arc::new(SessionContext::new())),
         };
@@ -79,7 +78,6 @@ impl TableMetadataManager {
     pub async fn new_in_memory(maybe_session_context: Option<Arc<SessionContext>>) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::new_in_memory(),
-            tag_value_hashes: DashMap::new(),
             session_context: maybe_session_context
                 .unwrap_or_else(|| Arc::new(SessionContext::new())),
         };
