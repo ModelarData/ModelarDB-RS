@@ -359,6 +359,7 @@ impl DeltaLake {
             // try_into(). To ensure values that are not supported by Delta Lake cannot be inserted
             // into the table, a table backed by Delta Lake cannot contain unsigned integers.
             match field.data_type() {
+                DataType::UInt8 if is_model_table => {} // Exception for model_type_id.
                 DataType::UInt16 if is_model_table => {} // Exception for field_column.
                 DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
                     Err(DeltaTableError::SchemaMismatch {
@@ -498,11 +499,13 @@ impl DeltaLake {
         mut delta_table_writer: DeltaTableWriter,
         record_batches: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
-        let result = delta_table_writer.write_all(&record_batches).await;
-        if result.is_ok() {
-            delta_table_writer.commit().await
-        } else {
-            delta_table_writer.rollback().await
+        dbg!(&record_batches[0].schema());
+        match delta_table_writer.write_all(&record_batches).await {
+            Ok(_) => delta_table_writer.commit().await,
+            Err(error) => {
+                delta_table_writer.rollback().await?;
+                Err(error)
+            }
         }
     }
 
