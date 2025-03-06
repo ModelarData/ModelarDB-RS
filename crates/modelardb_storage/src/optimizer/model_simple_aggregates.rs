@@ -22,7 +22,7 @@
 use std::mem;
 use std::sync::{Arc, LazyLock};
 
-use arrow::array::UInt8Array;
+use arrow::array::Int8Array;
 use datafusion::arrow::array::{ArrayRef, BinaryArray};
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType};
 use datafusion::common::tree_node::{Transformed, TreeNode};
@@ -471,7 +471,7 @@ struct ModelSumAccumulator {
 impl Accumulator for ModelSumAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
-        let model_type_ids = modelardb_types::value!(arrays, 0, UInt8Array);
+        let model_type_ids = modelardb_types::value!(arrays, 0, Int8Array);
         let start_times = modelardb_types::value!(arrays, 1, TimestampArray);
         let end_times = modelardb_types::value!(arrays, 2, TimestampArray);
         let timestamps = modelardb_types::value!(arrays, 3, BinaryArray);
@@ -491,7 +491,7 @@ impl Accumulator for ModelSumAccumulator {
             let residuals = residuals.value(row_index);
 
             self.sum += modelardb_compression::sum(
-                model_type_id as u8,
+                model_type_id,
                 start_time,
                 end_time,
                 timestamps,
@@ -543,7 +543,7 @@ struct ModelAvgAccumulator {
 impl Accumulator for ModelAvgAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
-        let model_type_ids = modelardb_types::value!(arrays, 0, UInt8Array);
+        let model_type_ids = modelardb_types::value!(arrays, 0, Int8Array);
         let start_times = modelardb_types::value!(arrays, 1, TimestampArray);
         let end_times = modelardb_types::value!(arrays, 2, TimestampArray);
         let timestamps = modelardb_types::value!(arrays, 3, BinaryArray);
@@ -563,7 +563,7 @@ impl Accumulator for ModelAvgAccumulator {
             let residuals = residuals.value(row_index);
 
             self.sum += modelardb_compression::sum(
-                model_type_id as u8,
+                model_type_id,
                 start_time,
                 end_time,
                 timestamps,

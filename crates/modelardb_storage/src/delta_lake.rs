@@ -348,8 +348,6 @@ impl DeltaLake {
         location: String,
         save_mode: SaveMode,
     ) -> Result<DeltaTable> {
-        let is_model_table = partition_columns == [FIELD_COLUMN.to_owned()];
-
         let mut columns: Vec<StructField> = Vec::with_capacity(schema.fields().len());
         for field in schema.fields() {
             let field: &Field = field;
@@ -359,8 +357,6 @@ impl DeltaLake {
             // try_into(). To ensure values that are not supported by Delta Lake cannot be inserted
             // into the table, a table backed by Delta Lake cannot contain unsigned integers.
             match field.data_type() {
-                DataType::UInt8 if is_model_table => {} // Exception for model_type_id.
-                DataType::UInt16 if is_model_table => {} // Exception for field_column.
                 DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
                     Err(DeltaTableError::SchemaMismatch {
                         msg: "Unsigned integers are not supported.".to_owned(),
@@ -499,7 +495,6 @@ impl DeltaLake {
         mut delta_table_writer: DeltaTableWriter,
         record_batches: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
-        dbg!(&record_batches[0].schema());
         match delta_table_writer.write_all(&record_batches).await {
             Ok(_) => delta_table_writer.commit().await,
             Err(error) => {

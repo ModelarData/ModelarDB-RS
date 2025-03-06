@@ -31,7 +31,7 @@ pub const FIELD_COLUMN: &str = "field_column";
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments.
 pub static COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
     let mut query_compressed_schema_fields = QUERY_COMPRESSED_SCHEMA.0.fields().to_vec();
-    let field_column = Arc::new(Field::new(FIELD_COLUMN, DataType::UInt16, false));
+    let field_column = Arc::new(Field::new(FIELD_COLUMN, DataType::Int16, false));
     query_compressed_schema_fields.push(field_column);
     CompressedSchema(Arc::new(Schema::new(query_compressed_schema_fields)))
 });
@@ -40,7 +40,7 @@ pub static COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
 /// executing queries as [`FIELD_COLUMN`] is not stored in the Apache Parquet files.
 pub static QUERY_COMPRESSED_SCHEMA: LazyLock<QueryCompressedSchema> = LazyLock::new(|| {
     QueryCompressedSchema(Arc::new(Schema::new(vec![
-        Field::new("model_type_id", DataType::UInt8, false),
+        Field::new("model_type_id", DataType::Int8, false),
         Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
         Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
         Field::new("timestamps", DataType::Binary, false),

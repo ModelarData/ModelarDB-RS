@@ -297,7 +297,7 @@ mod tests {
     use modelardb_storage::test;
     use tempfile::{self, TempDir};
 
-    const COLUMN_INDEX: u16 = 1;
+    const COLUMN_INDEX: i16 = 1;
 
     // Tests for insert_record_batch().
     #[tokio::test]
