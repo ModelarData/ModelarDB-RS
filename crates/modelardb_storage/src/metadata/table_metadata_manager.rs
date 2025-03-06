@@ -75,7 +75,9 @@ impl TableMetadataManager {
     /// Create a new [`TableMetadataManager`] that saves the metadata to an in-memory Delta Lake and
     /// initialize the metadata tables. If the metadata tables could not be created, return
     /// [`ModelarDbStorageError`].
-    pub async fn new_in_memory(maybe_session_context: Option<Arc<SessionContext>>) -> Result<Self> {
+    pub async fn try_new_in_memory(
+        maybe_session_context: Option<Arc<SessionContext>>,
+    ) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::new_in_memory(),
             session_context: maybe_session_context
