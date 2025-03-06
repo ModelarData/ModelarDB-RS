@@ -22,10 +22,10 @@ use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::ServerMode;
 
-use crate::error::ModelarDbServerError;
-use crate::manager::Manager;
 use crate::ClusterMode;
 use crate::Result;
+use crate::error::ModelarDbServerError;
+use crate::manager::Manager;
 
 /// Folder for storing metadata and data in Apache Parquet files.
 #[derive(Clone)]
@@ -163,9 +163,11 @@ mod tests {
     // Tests for try_from_command_line_arguments().
     #[tokio::test]
     async fn test_try_from_empty_command_line_arguments() {
-        assert!(DataFolders::try_from_command_line_arguments(&[])
-            .await
-            .is_err());
+        assert!(
+            DataFolders::try_from_command_line_arguments(&[])
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

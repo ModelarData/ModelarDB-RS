@@ -21,6 +21,7 @@
 use std::borrow::Cow;
 use std::{any::Any, sync::Arc};
 
+use arrow::datatypes::Schema;
 use datafusion::catalog::Session;
 use datafusion::common::Constraints;
 use datafusion::datasource::{TableProvider, TableType};
@@ -29,12 +30,12 @@ use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, LogicalPlan, TableProviderFilterPushDown};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
-use deltalake::{arrow::datatypes::SchemaRef, DeltaTable};
+use deltalake::DeltaTable;
 use tonic::async_trait;
 
 /// A queryable representation of a normal table. [`NormalTable`] wraps the [`TableProvider`]
 /// [`DeltaTable`] and passes most methods calls directly to it. Thus, it can be registered with
-/// Apache Arrow DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is updated to the
+/// Apache DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is updated to the
 /// latest snapshot when accessed and support for inserting has been added.
 #[derive(Debug)]
 pub(crate) struct NormalTable {
@@ -61,7 +62,7 @@ impl TableProvider for NormalTable {
     }
 
     /// Return the query schema of the normal table registered with Apache DataFusion.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         TableProvider::schema(&self.delta_table)
     }
 

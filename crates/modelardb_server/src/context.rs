@@ -18,11 +18,10 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::{Schema, SchemaRef};
+use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -30,8 +29,8 @@ use tracing::info;
 
 use crate::configuration::ConfigurationManager;
 use crate::error::{ModelarDbServerError, Result};
-use crate::storage::data_sinks::{ModelTableDataSink, NormalTableDataSink};
 use crate::storage::StorageEngine;
+use crate::storage::data_sinks::{ModelTableDataSink, NormalTableDataSink};
 use crate::{ClusterMode, DataFolders};
 
 /// Provides access to the system's configuration and components.
@@ -161,34 +160,18 @@ impl Context {
         self.data_folders
             .local_data_folder
             .delta_lake
-            .create_model_table(&model_table_metadata.name)
+            .create_model_table(model_table_metadata)
             .await?;
 
-        let query_folder_table_metadata_manager = self
-            .data_folders
-            .query_data_folder
-            .table_metadata_manager
-            .clone();
-
         // Register the model table with Apache DataFusion.
-        self.register_model_table(
-            Arc::new(model_table_metadata.clone()),
-            query_folder_table_metadata_manager.clone(),
-        )
-        .await?;
+        self.register_model_table(Arc::new(model_table_metadata.clone()))
+            .await?;
 
         // Persist the new model table to the metadata Delta Lake.
         self.data_folders
             .local_data_folder
             .table_metadata_manager
             .save_model_table_metadata(model_table_metadata)
-            .await?;
-
-        // Register the metadata table needed for querying the model table if it is not already
-        // registered. The tags table is already registered if the query data folder and local data
-        // folder is the same.
-        query_folder_table_metadata_manager
-            .register_tags_table(&model_table_metadata.name)
             .await?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
@@ -257,22 +240,19 @@ impl Context {
             .model_table_metadata()
             .await?;
 
-        let table_metadata_manager = &self.data_folders.query_data_folder.table_metadata_manager;
         for metadata in model_table_metadata {
-            self.register_model_table(metadata, table_metadata_manager.clone())
-                .await?;
+            self.register_model_table(metadata).await?;
         }
 
         Ok(())
     }
 
-    /// Register the model table with `model_table_metadata` from `table_metadata_manager` in Apache
-    /// DataFusion. If the model table does not exist or could not be registered with Apache
-    /// DataFusion, return [`ModelarDbServerError`].
+    /// Register the model table with `model_table_metadata` in Apache DataFusion. If the model
+    /// table does not exist or could not be registered with Apache DataFusion, return
+    /// [`ModelarDbServerError`].
     async fn register_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
-        table_metadata_manager: Arc<TableMetadataManager>,
     ) -> Result<()> {
         let delta_table = self
             .data_folders
@@ -290,7 +270,6 @@ impl Context {
             &self.session_context,
             delta_table,
             model_table_metadata.clone(),
-            table_metadata_manager,
             model_table_data_sink,
         )?;
 
@@ -336,8 +315,8 @@ impl Context {
     }
 
     /// Delete all data from the table with `table_name` if it exists. The table data is deleted
-    /// from the storage engine, metadata Delta Lake, and data Delta Lake. If the table does not
-    /// exist or if it could not be truncated, [`ModelarDbServerError`] is returned.
+    /// from the storage engine and data Delta Lake. If the table does not exist or if it could not
+    /// be truncated, [`ModelarDbServerError`] is returned.
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
         // Deleting the table from the storage engine does not require the table to exist, so the
         // table is checked first.
@@ -348,13 +327,6 @@ impl Context {
         }
 
         self.drop_table_from_storage_engine(table_name).await?;
-
-        // Delete the table metadata from the metadata Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .table_metadata_manager
-            .truncate_table_metadata(table_name)
-            .await?;
 
         // Delete the table data from the data Delta Lake.
         self.data_folders
@@ -419,7 +391,7 @@ impl Context {
     pub async fn schema_of_table_in_default_database_schema(
         &self,
         table_name: &str,
-    ) -> Result<SchemaRef> {
+    ) -> Result<Arc<Schema>> {
         let database_schema = self.default_database_schema()?;
 
         let table = database_schema.table(table_name).await?.ok_or_else(|| {
@@ -473,15 +445,19 @@ mod tests {
             .unwrap();
 
         // Both a normal table and a model table should be created.
-        assert!(context
-            .check_if_table_exists(test::NORMAL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            context
+                .check_if_table_exists(test::NORMAL_TABLE_NAME)
+                .await
+                .is_err()
+        );
 
-        assert!(context
-            .check_if_table_exists(test::MODEL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            context
+                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -504,19 +480,23 @@ mod tests {
         assert!(folder_path.exists());
 
         // The normal table should be saved to the metadata Delta Lake.
-        assert!(context
-            .data_folders
-            .local_data_folder
-            .table_metadata_manager
-            .is_normal_table(test::NORMAL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            context
+                .data_folders
+                .local_data_folder
+                .table_metadata_manager
+                .is_normal_table(test::NORMAL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // The normal table should be registered in the Apache DataFusion catalog.
-        assert!(context
-            .check_if_table_exists(test::NORMAL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            context
+                .check_if_table_exists(test::NORMAL_TABLE_NAME)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -524,15 +504,19 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context
-            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
-            .await
-            .is_ok());
+        assert!(
+            context
+                .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
+                .await
+                .is_ok()
+        );
 
-        assert!(context
-            .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
-            .await
-            .is_err());
+        assert!(
+            context
+                .create_normal_table(test::NORMAL_TABLE_NAME, &test::normal_table_schema())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -560,10 +544,12 @@ mod tests {
         );
 
         // The model table should be registered in the Apache DataFusion catalog.
-        assert!(context
-            .check_if_table_exists(test::MODEL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            context
+                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -571,15 +557,19 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context
-            .create_model_table(&test::model_table_metadata())
-            .await
-            .is_ok());
+        assert!(
+            context
+                .create_model_table(&test::model_table_metadata())
+                .await
+                .is_ok()
+        );
 
-        assert!(context
-            .create_model_table(&test::model_table_metadata())
-            .await
-            .is_err());
+        assert!(
+            context
+                .create_model_table(&test::model_table_metadata())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -632,27 +622,33 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(context
-            .check_if_table_exists(test::NORMAL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            context
+                .check_if_table_exists(test::NORMAL_TABLE_NAME)
+                .await
+                .is_err()
+        );
 
         context.drop_table(test::NORMAL_TABLE_NAME).await.unwrap();
 
         // The normal table should be deregistered from the Apache DataFusion session context.
-        assert!(context
-            .check_if_table_exists(test::NORMAL_TABLE_NAME)
-            .await
-            .is_ok());
+        assert!(
+            context
+                .check_if_table_exists(test::NORMAL_TABLE_NAME)
+                .await
+                .is_ok()
+        );
 
         // The normal table should be deleted from the metadata Delta Lake.
-        assert!(!context
-            .data_folders
-            .local_data_folder
-            .table_metadata_manager
-            .is_normal_table(test::NORMAL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            !context
+                .data_folders
+                .local_data_folder
+                .table_metadata_manager
+                .is_normal_table(test::NORMAL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // The normal table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
@@ -668,27 +664,33 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(context
-            .check_if_table_exists(test::MODEL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            context
+                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .await
+                .is_err()
+        );
 
         context.drop_table(test::MODEL_TABLE_NAME).await.unwrap();
 
         // The model table should be deregistered from the Apache DataFusion session context.
-        assert!(context
-            .check_if_table_exists(test::MODEL_TABLE_NAME)
-            .await
-            .is_ok());
+        assert!(
+            context
+                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .await
+                .is_ok()
+        );
 
         // The model table should be deleted from the metadata Delta Lake.
-        assert!(!context
-            .data_folders
-            .local_data_folder
-            .table_metadata_manager
-            .is_model_table(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            !context
+                .data_folders
+                .local_data_folder
+                .table_metadata_manager
+                .is_model_table(test::MODEL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // The model table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
@@ -738,11 +740,13 @@ mod tests {
             .unwrap();
 
         // The normal table should not be deleted from the metadata Delta Lake.
-        assert!(local_data_folder
-            .table_metadata_manager
-            .is_normal_table(test::NORMAL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            local_data_folder
+                .table_metadata_manager
+                .is_normal_table(test::NORMAL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // The normal table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
@@ -783,11 +787,13 @@ mod tests {
             .unwrap();
 
         // The model table should not be deleted from the metadata Delta Lake.
-        assert!(local_data_folder
-            .table_metadata_manager
-            .is_model_table(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            local_data_folder
+                .table_metadata_manager
+                .is_model_table(test::MODEL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // The model table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
@@ -799,10 +805,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context
-            .truncate_table(test::MODEL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            context
+                .truncate_table(test::MODEL_TABLE_NAME)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -834,11 +842,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(context
-            .model_table_metadata_from_default_database_schema(test::NORMAL_TABLE_NAME)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            context
+                .model_table_metadata_from_default_database_schema(test::NORMAL_TABLE_NAME)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -846,10 +856,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context
-            .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            context
+                .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -862,10 +874,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(context
-            .check_if_table_exists(test::MODEL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            context
+                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -873,10 +887,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context
-            .check_if_table_exists(test::MODEL_TABLE_NAME)
-            .await
-            .is_ok());
+        assert!(
+            context
+                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -902,10 +918,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context
-            .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
-            .await
-            .is_err())
+        assert!(
+            context
+                .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
+                .await
+                .is_err()
+        )
     }
 
     /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.

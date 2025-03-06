@@ -13,14 +13,15 @@
  * limitations under the License.
  */
 
-//! Implementation of [`DataSinks`](`DataSink`) that writes
-//! [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) to [`StorageEngine`].
+//! Implementation of [`DataSinks`](`DataSink`) that writes [`RecordBatches`](RecordBatch) to
+//! [`StorageEngine`].
 
 use std::any::Any;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::TaskContext;
 use datafusion::physical_plan::insert::DataSink;
@@ -32,9 +33,8 @@ use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
 
-/// [`DataSink`] that writes [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) to
-/// [`StorageEngine`]. Use [`ModelTableDataSink`] for writing multivariate time series to
-/// [`StorageEngine`].
+/// [`DataSink`] that writes [`RecordBatches`](RecordBatch) to [`StorageEngine`]. Use
+/// [`ModelTableDataSink`] for writing multivariate time series to [`StorageEngine`].
 pub struct NormalTableDataSink {
     /// The name of the normal table inserted data will be written to.
     table_name: String,
@@ -105,9 +105,9 @@ impl DisplayAs for NormalTableDataSink {
     }
 }
 
-/// [`DataSink`] that writes [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
-/// containing multivariate time series to [`StorageEngine`]. Assumes the generated columns are
-/// included, thus they are dropped without checking the schema.
+/// [`DataSink`] that writes [`RecordBatches`](RecordBatch) containing multivariate time series to
+/// [`StorageEngine`]. Assumes the generated columns are included, thus they are dropped without
+/// checking the schema.
 pub struct ModelTableDataSink {
     /// Metadata for the model table inserted data will be written to.
     model_table_metadata: Arc<ModelTableMetadata>,
@@ -149,8 +149,18 @@ impl DataSink for ModelTableDataSink {
         let mut data_points_inserted: u64 = 0;
 
         while let Some(record_batch) = data.next().await {
+            // Remove the generated columns from the record batch. The generated columns must be
+            // part of the inserted data since Apache DataFusion checks it before passing it to
+            // write_all().
             let record_batch =
                 record_batch?.project(&self.model_table_metadata.query_schema_to_schema)?;
+
+            // Create a new record batch with the schema of the model table to fix the problem where
+            // the schema of the inserted data has nullable fields.
+            let record_batch = RecordBatch::try_new(
+                self.model_table_metadata.schema.clone(),
+                record_batch.columns().to_vec(),
+            )?;
 
             data_points_inserted += record_batch.num_rows() as u64;
 

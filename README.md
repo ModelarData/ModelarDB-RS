@@ -16,7 +16,7 @@ ModelarDB is designed to be cross-platform and is currently automatically tested
 through [GitHub Actions](https://github.com/ModelarData/ModelarDB-RS/actions). It is also known to work on FreeBSD which
 is [currently not supported by GitHub Actions](https://github.com/actions/runner/issues/385). It is implemented in
 [Rust](https://www.rust-lang.org/) and uses [Apache Arrow Flight](https://github.com/apache/arrow-rs/tree/master/arrow-flight)
-for communicating with clients, [Apache Arrow DataFusion](https://github.com/apache/arrow-datafusion) as its query
+for communicating with clients, [Apache DataFusion](https://github.com/apache/datafusion) as its query
 engine, [Apache Arrow](https://github.com/apache/arrow-rs) as its in-memory data format, and
 [Apache Parquet](https://github.com/apache/arrow-rs/tree/master/parquet) as its on-disk data format.
 

@@ -17,13 +17,15 @@
 //! using the model types in [`models`] to produce compressed segments containing metadata and
 //! models.
 
+use std::sync::Arc;
+
+use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
-use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{ErrorBound, TimestampArray, ValueArray};
 
 use crate::error::{ModelarDbCompressionError, Result};
 use crate::models::gorilla::Gorilla;
-use crate::models::{self, timestamps, GORILLA_ID};
+use crate::models::{self, GORILLA_ID, timestamps};
 use crate::types::{CompressedSegmentBatchBuilder, CompressedSegmentBuilder, ModelBuilder};
 
 /// Maximum number of residuals that can be stored as part of a compressed segment. The number of
@@ -37,14 +39,19 @@ const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 /// regular and delta-of-deltas followed by a variable length binary encoding if irregular.
 /// `uncompressed_values` is compressed within `error_bound` using the model types in `models`.
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted according to
-/// `uncompressed_timestamps`. Returns [`ModelarDbCompressionError`] if `uncompressed_timestamps`
-/// and `uncompressed_values` have different lengths, otherwise the resulting compressed segments
-/// are returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`] schema.
+/// `uncompressed_timestamps`. The resulting compressed segments have the schema in `compressed_schema`
+/// with the tag columns populated by the values in `tag_values` and the field column index populated
+/// by `field_column_index`. Returns [`ModelarDbCompressionError`] if `uncompressed_timestamps` and
+/// `uncompressed_values` have different lengths or if `compressed_schema` is not a valid schema for
+/// compressed segments, otherwise the resulting compressed segments are returned as a
+/// [`RecordBatch`] with the `compressed_schema` schema.
 pub fn try_compress(
-    univariate_id: u64,
-    error_bound: ErrorBound,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
+    error_bound: ErrorBound,
+    compressed_schema: Arc<Schema>,
+    tag_values: Vec<String>,
+    field_column_index: u16,
 ) -> Result<RecordBatch> {
     // The uncompressed data must be passed as arrays instead of a RecordBatch as a TimestampArray
     // and a ValueArray is the only supported input. However, as a result it is necessary to verify
@@ -57,13 +64,18 @@ pub fn try_compress(
 
     // If there is no uncompressed data to compress, an empty [`RecordBatch`] can be returned.
     if uncompressed_timestamps.is_empty() {
-        return Ok(RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone()));
+        return Ok(RecordBatch::new_empty(compressed_schema));
     }
 
     // Enough memory for end_index compressed segments are allocated to never require reallocation
     // as one compressed segment is created per data point in the absolute worst case.
     let end_index = uncompressed_timestamps.len();
-    let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(end_index);
+    let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(
+        compressed_schema,
+        tag_values,
+        field_column_index,
+        end_index,
+    );
 
     // Compress the uncompressed timestamps and uncompressed values.
     let mut current_start_index = 0;
@@ -84,7 +96,6 @@ pub fn try_compress(
             // Flush the previous model and any residual value if either exists.
             if current_start_index > 0 {
                 store_compressed_segments_with_model_and_or_residuals(
-                    univariate_id,
                     error_bound,
                     previous_model,
                     current_start_index - 1,
@@ -109,7 +120,6 @@ pub fn try_compress(
     }
 
     store_compressed_segments_with_model_and_or_residuals(
-        univariate_id,
         error_bound,
         previous_model,
         end_index - 1,
@@ -155,7 +165,6 @@ pub(crate) fn fit_next_model(
 /// - One compressed segment that stores residuals as a single model if `maybe_model` is
 ///   [`None`].
 fn store_compressed_segments_with_model_and_or_residuals(
-    univariate_id: u64,
     error_bound: ErrorBound,
     maybe_model: Option<CompressedSegmentBuilder>,
     residuals_end_index: usize,
@@ -168,7 +177,6 @@ fn store_compressed_segments_with_model_and_or_residuals(
         if (residuals_end_index - model.end_index) <= RESIDUAL_VALUES_MAX_LENGTH.into() {
             // Few or no residuals exists so the model and any residuals are put into one segment.
             model.finish(
-                univariate_id,
                 error_bound,
                 residuals_end_index,
                 uncompressed_timestamps,
@@ -180,7 +188,6 @@ fn store_compressed_segments_with_model_and_or_residuals(
             let model_end_index = model.end_index;
 
             model.finish(
-                univariate_id,
                 error_bound,
                 model_end_index, // No residuals are stored.
                 uncompressed_timestamps,
@@ -189,7 +196,6 @@ fn store_compressed_segments_with_model_and_or_residuals(
             );
 
             compress_and_store_residuals_in_a_separate_segment(
-                univariate_id,
                 error_bound,
                 model_end_index + 1,
                 residuals_end_index,
@@ -202,7 +208,6 @@ fn store_compressed_segments_with_model_and_or_residuals(
         // The residuals are stored as a separate segment as the first sub-sequence of values in
         // `uncompressed_values` are residuals, thus the residuals must be stored in a segment.
         compress_and_store_residuals_in_a_separate_segment(
-            univariate_id,
             error_bound,
             0,
             residuals_end_index,
@@ -213,12 +218,10 @@ fn store_compressed_segments_with_model_and_or_residuals(
     }
 }
 
-/// For the time series with `univariate_id`, compress the values from `start_index` to and
-/// including `end_index` in `uncompressed_values` using [`Gorilla`] and store the resulting model
-/// with the corresponding timestamps from `uncompressed_timestamps` as a segment in
-/// `compressed_segment_batch_builder`.
+/// Compress the values from `start_index` to and including `end_index` in `uncompressed_values`
+/// using [`Gorilla`] and store the resulting model with the corresponding timestamps from
+/// `uncompressed_timestamps` as a segment in `compressed_segment_batch_builder`.
 fn compress_and_store_residuals_in_a_separate_segment(
-    univariate_id: u64,
     error_bound: ErrorBound,
     start_index: usize,
     end_index: usize,
@@ -241,7 +244,6 @@ fn compress_and_store_residuals_in_a_separate_segment(
     let (values, min_value, max_value) = gorilla.model();
 
     compressed_segment_batch_builder.append_compressed_segment(
-        univariate_id,
         GORILLA_ID,
         start_time,
         end_time,
@@ -260,16 +262,16 @@ mod tests {
 
     use super::*;
 
-    use arrow::array::{
-        ArrayBuilder, BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array,
-    };
+    use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, UInt8Array};
+    use arrow::datatypes::{DataType, Field};
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
+    use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
 
-    use crate::{models, MODEL_TYPE_NAMES};
+    use crate::{MODEL_TYPE_NAMES, models};
 
-    const UNIVARIATE_ID: u64 = 1;
+    const TAG_VALUE: &str = "tag";
     const ADD_NOISE_RANGE: Option<Range<f32>> = Some(1.0..1.05);
     const TRY_COMPRESS_TEST_LENGTH: usize = 50;
 
@@ -277,10 +279,12 @@ mod tests {
     #[test]
     fn test_try_compress_empty_time_series_within_absolute_error_bound_zero() {
         let compressed_record_batch = try_compress(
-            UNIVARIATE_ID,
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             &TimestampBuilder::new().finish(),
             &ValueBuilder::new().finish(),
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
         )
         .unwrap();
         assert_eq!(0, compressed_record_batch.num_rows());
@@ -289,10 +293,12 @@ mod tests {
     #[test]
     fn test_try_compress_empty_time_series_within_relative_error_bound_zero() {
         let compressed_record_batch = try_compress(
-            UNIVARIATE_ID,
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             &TimestampBuilder::new().finish(),
             &ValueBuilder::new().finish(),
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
         )
         .unwrap();
         assert_eq!(0, compressed_record_batch.num_rows());
@@ -509,10 +515,12 @@ mod tests {
             data_generation::generate_values(uncompressed_timestamps.values(), values_structure);
 
         let compressed_record_batch = try_compress(
-            1,
-            error_bound,
             &uncompressed_timestamps,
             &uncompressed_values,
+            error_bound,
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
         )
         .unwrap();
 
@@ -526,8 +534,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_random_linear_constant_time_series_within_absolute_error_bound_zero(
-    ) {
+    fn test_try_compress_regular_random_linear_constant_time_series_within_absolute_error_bound_zero()
+     {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -537,8 +545,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_random_linear_constant_time_series_within_relative_error_bound_zero(
-    ) {
+    fn test_try_compress_regular_random_linear_constant_time_series_within_relative_error_bound_zero()
+     {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -548,8 +556,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_random_linear_constant_time_series_within_absolute_error_bound_zero(
-    ) {
+    fn test_try_compress_irregular_random_linear_constant_time_series_within_absolute_error_bound_zero()
+     {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -559,8 +567,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_random_linear_constant_time_series_within_relative_error_bound_zero(
-    ) {
+    fn test_try_compress_irregular_random_linear_constant_time_series_within_relative_error_bound_zero()
+     {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -570,8 +578,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_constant_linear_random_time_series_within_absolute_error_bound_zero(
-    ) {
+    fn test_try_compress_regular_constant_linear_random_time_series_within_absolute_error_bound_zero()
+     {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -581,8 +589,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_constant_linear_random_time_series_within_relative_error_bound_zero(
-    ) {
+    fn test_try_compress_regular_constant_linear_random_time_series_within_relative_error_bound_zero()
+     {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -592,8 +600,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_constant_linear_random_time_series_within_absolute_error_bound_zero(
-    ) {
+    fn test_try_compress_irregular_constant_linear_random_time_series_within_absolute_error_bound_zero()
+     {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -603,8 +611,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_constant_linear_random_time_series_within_relative_error_bound_zero(
-    ) {
+    fn test_try_compress_irregular_constant_linear_random_time_series_within_relative_error_bound_zero()
+     {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -657,10 +665,12 @@ mod tests {
         assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
 
         let compressed_record_batch = try_compress(
-            UNIVARIATE_ID,
-            error_bound,
             &uncompressed_timestamps,
             &uncompressed_values,
+            error_bound,
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
         )
         .unwrap();
 
@@ -692,13 +702,13 @@ mod tests {
             compressed_record_batch,
         );
 
-        let model_type_ids = modelardb_types::array!(compressed_record_batch, 1, UInt8Array);
+        let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, UInt8Array);
         assert_eq!(model_type_ids.values(), expected_model_type_ids);
     }
 
     #[test]
-    fn test_try_compress_regular_synthetic_time_series_without_noise_within_absolute_error_bound_zero(
-    ) {
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_absolute_error_bound_zero()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -707,8 +717,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_synthetic_time_series_without_noise_within_relative_error_bound_zero(
-    ) {
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_relative_error_bound_zero()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -717,8 +727,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_synthetic_time_series_without_noise_within_absolute_error_bound_five(
-    ) {
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_absolute_error_bound_five()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_FIVE).unwrap(),
             false,
@@ -727,8 +737,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_synthetic_time_series_without_noise_within_relative_error_bound_five(
-    ) {
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_relative_error_bound_five()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             false,
@@ -777,8 +787,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_absolute_error_bound_zero(
-    ) {
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_absolute_error_bound_zero()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -787,8 +797,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_relative_error_bound_zero(
-    ) {
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_relative_error_bound_zero()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -797,8 +807,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_absolute_error_bound_five(
-    ) {
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_absolute_error_bound_five()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_FIVE).unwrap(),
             true,
@@ -807,8 +817,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_relative_error_bound_five(
-    ) {
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_relative_error_bound_five()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             true,
@@ -817,8 +827,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_absolute_error_bound_zero(
-    ) {
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_absolute_error_bound_zero()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -827,8 +837,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_relative_error_bound_zero(
-    ) {
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_relative_error_bound_zero()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -837,8 +847,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_absolute_error_bound_five(
-    ) {
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_absolute_error_bound_five()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_FIVE).unwrap(),
             true,
@@ -847,8 +857,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_relative_error_bound_five(
-    ) {
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_relative_error_bound_five()
+     {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             true,
@@ -871,10 +881,12 @@ mod tests {
             );
 
         let compressed_record_batch = try_compress(
-            UNIVARIATE_ID,
-            error_bound,
             &uncompressed_timestamps,
             &uncompressed_values,
+            error_bound,
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
         )
         .unwrap();
 
@@ -892,13 +904,11 @@ mod tests {
         uncompressed_values: &ValueArray,
         compressed_record_batch: &RecordBatch,
     ) {
-        let mut univariate_id_builder = UInt64Builder::new();
         let mut timestamp_builder = TimestampBuilder::new();
         let mut value_builder = ValueBuilder::new();
 
         modelardb_types::arrays!(
             compressed_record_batch,
-            univariate_ids,
             model_type_ids,
             start_times,
             end_times,
@@ -912,10 +922,9 @@ mod tests {
 
         let mut index_to_model_type = vec![];
         for row_index in 0..compressed_record_batch.num_rows() {
-            let start_index = univariate_id_builder.len();
+            let start_index = value_builder.len();
 
             models::grid(
-                univariate_ids.value(row_index),
                 model_type_ids.value(row_index),
                 start_times.value(row_index),
                 end_times.value(row_index),
@@ -924,12 +933,11 @@ mod tests {
                 max_values.value(row_index),
                 values.value(row_index),
                 residuals.value(row_index),
-                &mut univariate_id_builder,
                 &mut timestamp_builder,
                 &mut value_builder,
             );
 
-            let end_index = univariate_id_builder.len();
+            let end_index = value_builder.len();
             index_to_model_type.push((start_index..end_index, model_type_ids.value(row_index)));
         }
 
@@ -962,10 +970,15 @@ mod tests {
         let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
         let uncompressed_timestamps = TimestampArray::from_iter_values((100..=500).step_by(100));
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
-        let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(1);
+
+        let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(
+            compressed_schema(),
+            vec![TAG_VALUE.to_owned()],
+            0,
+            1,
+        );
 
         compress_and_store_residuals_in_a_separate_segment(
-            0,
             error_bound,
             0,
             uncompressed_timestamps.len() - 1,
@@ -977,7 +990,6 @@ mod tests {
         let compressed_record_batch = compressed_segment_batch_builder.finish();
         modelardb_types::arrays!(
             compressed_record_batch,
-            univariate_ids,
             model_type_ids,
             start_times,
             end_times,
@@ -990,7 +1002,6 @@ mod tests {
         );
 
         assert_eq!(1, compressed_record_batch.num_rows());
-        assert_eq!(0, univariate_ids.value(0));
         assert_eq!(GORILLA_ID, model_type_ids.value(0));
         assert_eq!(100, start_times.value(0));
         assert_eq!(500, end_times.value(0));
@@ -1001,5 +1012,12 @@ mod tests {
         assert_eq!(8, values.value(0).len());
         assert!(residuals.value(0).is_empty());
         assert!(errors.value(0).is_nan());
+    }
+
+    pub fn compressed_schema() -> Arc<Schema> {
+        let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
+        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
+
+        Arc::new(Schema::new(compressed_schema_fields))
     }
 }
