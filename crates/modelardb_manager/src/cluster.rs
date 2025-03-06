@@ -20,13 +20,13 @@ use std::collections::VecDeque;
 use arrow::record_batch::RecordBatch;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Ticket};
-use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use log::info;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::ServerMode;
-use tonic::metadata::{Ascii, MetadataValue};
 use tonic::Request;
+use tonic::metadata::{Ascii, MetadataValue};
 
 use crate::error::{ModelarDbManagerError, Result};
 
@@ -288,10 +288,12 @@ mod test {
     #[tokio::test]
     async fn test_remove_node_invalid_url() {
         let mut cluster = Cluster::new();
-        assert!(cluster
-            .remove_node("invalid_url", &Uuid::new_v4().to_string().parse().unwrap())
-            .await
-            .is_err());
+        assert!(
+            cluster
+                .remove_node("invalid_url", &Uuid::new_v4().to_string().parse().unwrap())
+                .await
+                .is_err()
+        );
     }
 
     #[test]

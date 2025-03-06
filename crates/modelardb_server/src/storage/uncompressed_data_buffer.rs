@@ -19,18 +19,16 @@
 //! support for storing uncompressed data points in Apache Parquet files on disk.
 
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use std::mem;
 use std::sync::Arc;
+use std::{iter, mem};
 
-use datafusion::arrow::array::{Array, ArrayBuilder};
+use datafusion::arrow::array::{Array, ArrayBuilder, StringArray};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_types::types::{
-    Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
-};
-use object_store::path::Path;
+use modelardb_types::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 use object_store::ObjectStore;
+use object_store::path::Path;
 use tracing::debug;
 
 use crate::error::Result;
@@ -82,11 +80,14 @@ pub(super) struct UncompressedInMemoryDataBuffer {
     timestamps: TimestampBuilder,
     /// Builders for each stored field that float values are appended to.
     values: Vec<ValueBuilder>,
+    /// The tag values for the time series the buffer stores data points for.
+    tag_values: Vec<String>,
 }
 
 impl UncompressedInMemoryDataBuffer {
     pub(super) fn new(
         tag_hash: u64,
+        tag_values: Vec<String>,
         model_table_metadata: Arc<ModelTableMetadata>,
         current_batch_index: u64,
     ) -> Self {
@@ -101,6 +102,7 @@ impl UncompressedInMemoryDataBuffer {
             updated_by_batch_index: current_batch_index,
             timestamps,
             values,
+            tag_values,
         }
     }
 
@@ -112,7 +114,7 @@ impl UncompressedInMemoryDataBuffer {
 
     /// Return how many data points the [`UncompressedInMemoryDataBuffer`] currently contains.
     pub(super) fn len(&self) -> usize {
-        // The length is always the same for both builders.
+        // The length is always the same for all builders.
         self.timestamps.len()
     }
 
@@ -153,28 +155,39 @@ impl UncompressedInMemoryDataBuffer {
 
     /// Finish the array builders and return the data in a [`RecordBatch`] sorted by time.
     pub(super) async fn record_batch(&mut self) -> Result<RecordBatch> {
+        let buffer_length = self.len();
         let timestamps = self.timestamps.finish();
 
         // lexsort() is not used as it is unclear in what order it sorts multiple arrays, instead a
         // combination of sort_to_indices() and take(), like how lexsort() is implemented, is used.
         let sorted_indices = compute::sort_to_indices(&timestamps, None, None)?;
 
-        let mut columns = Vec::with_capacity(1 + self.values.len());
-        columns.push(compute::take(&timestamps, &sorted_indices, None)?);
-        for value in &mut self.values {
-            columns.push(compute::take(&value.finish(), &sorted_indices, None)?);
+        let mut field_column_index = 0;
+        let mut tag_column_index = 0;
+        let mut columns = Vec::with_capacity(self.model_table_metadata.schema.fields().len());
+
+        // Iterate over the column indices in the schema and add the sorted data to the columns.
+        for column_index in 0..self.model_table_metadata.schema.fields().len() {
+            if self.model_table_metadata.is_timestamp(column_index) {
+                columns.push(compute::take(&timestamps, &sorted_indices, None)?);
+            } else if self.model_table_metadata.is_tag(column_index) {
+                // The tag value is the same for each data point so it is not sorted.
+                let tag_value = self.tag_values[tag_column_index].clone();
+                let tag_array: StringArray =
+                    iter::repeat(Some(tag_value)).take(buffer_length).collect();
+                columns.push(Arc::new(tag_array));
+
+                tag_column_index += 1;
+            } else {
+                let values = &self.values[field_column_index].finish();
+                columns.push(compute::take(&values, &sorted_indices, None)?);
+
+                field_column_index += 1;
+            }
         }
 
-        RecordBatch::try_new(
-            self.model_table_metadata.uncompressed_schema.clone(),
-            columns,
-        )
-        .map_err(|error| error.into())
-    }
-
-    /// Return the tag hash that identifies the time series the buffer stores data points from.
-    pub(super) fn tag_hash(&self) -> u64 {
-        self.tag_hash
+        RecordBatch::try_new(self.model_table_metadata.schema.clone(), columns)
+            .map_err(|error| error.into())
     }
 
     /// Return the metadata for the model table the buffer stores data points for.
@@ -255,11 +268,13 @@ impl UncompressedOnDiskDataBuffer {
         data_points: RecordBatch,
     ) -> Result<Self> {
         // Create a path that uses the first timestamp as the filename.
-        let timestamps = modelardb_types::array!(data_points, 0, TimestampArray);
-        let file_path = Path::from(format!(
-            "{UNCOMPRESSED_DATA_FOLDER}/{tag_hash}/{}.parquet",
-            timestamps.value(0)
-        ));
+        let timestamp_index = model_table_metadata.timestamp_column_index;
+        let timestamps = modelardb_types::array!(data_points, timestamp_index, TimestampArray);
+        let file_path = spilled_buffer_file_path(
+            &model_table_metadata.name,
+            tag_hash,
+            &format!("{}.parquet", timestamps.value(0)),
+        );
 
         modelardb_storage::write_record_batch_to_apache_parquet_file(
             &file_path,
@@ -288,7 +303,7 @@ impl UncompressedOnDiskDataBuffer {
         local_data_folder: Arc<dyn ObjectStore>,
         file_name: &str,
     ) -> Result<Self> {
-        let file_path = Path::from(format!("{UNCOMPRESSED_DATA_FOLDER}/{tag_hash}/{file_name}"));
+        let file_path = spilled_buffer_file_path(&model_table_metadata.name, tag_hash, file_name);
 
         Ok(Self {
             tag_hash,
@@ -315,11 +330,6 @@ impl UncompressedOnDiskDataBuffer {
         Ok(data_points)
     }
 
-    /// Return the tag hash that identifies the time series the buffer stores data points from.
-    pub(super) fn tag_hash(&self) -> u64 {
-        self.tag_hash
-    }
-
     /// Return the metadata for the model table the buffer stores data points for.
     pub(super) fn model_table_metadata(&self) -> &Arc<ModelTableMetadata> {
         &self.model_table_metadata
@@ -342,13 +352,17 @@ impl UncompressedOnDiskDataBuffer {
     ) -> Result<UncompressedInMemoryDataBuffer> {
         let data_points = self.record_batch().await?;
 
-        let timestamp_column_array = modelardb_types::array!(data_points, 0, TimestampArray);
-        let field_column_arrays: Vec<_> = (1..data_points.num_columns())
-            .map(|index| modelardb_types::array!(data_points, index, ValueArray))
+        let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
+            self.model_table_metadata.column_arrays(&data_points)?;
+
+        let tag_values: Vec<String> = tag_column_arrays
+            .iter()
+            .map(|array| array.value(0).to_owned())
             .collect();
 
         let mut in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             self.tag_hash,
+            tag_values,
             self.model_table_metadata.clone(),
             current_batch_index,
         );
@@ -377,6 +391,14 @@ impl Debug for UncompressedOnDiskDataBuffer {
     }
 }
 
+/// Return the [`Path`] for a spilled buffer for the time series with `tag_hash` in the table with
+/// `table_name`.
+fn spilled_buffer_file_path(table_name: &str, tag_hash: u64, file_name: &str) -> Path {
+    Path::from(format!(
+        "{UNCOMPRESSED_DATA_FOLDER}/{table_name}/{tag_hash}/{file_name}",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,13 +413,15 @@ mod tests {
     use tokio::runtime::Runtime;
 
     const CURRENT_BATCH_INDEX: u64 = 1;
-    const TAG_HASH: u64 = 1;
+    const TAG_VALUE: &str = "tag";
+    const TAG_HASH: u64 = 15537859409877038916;
 
     // Tests for UncompressedInMemoryDataBuffer.
     #[test]
     fn test_get_in_memory_data_buffer_memory_size() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -424,6 +448,7 @@ mod tests {
     fn test_get_in_memory_data_buffer_len() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -435,6 +460,7 @@ mod tests {
     fn test_can_insert_data_point_into_in_memory_data_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -447,6 +473,7 @@ mod tests {
     fn test_check_if_in_memory_data_buffer_is_unused() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX - 1,
         );
@@ -465,6 +492,7 @@ mod tests {
     fn test_check_is_in_memory_data_buffer_full() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -477,6 +505,7 @@ mod tests {
     fn test_check_is_in_memory_data_buffer_not_full() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -490,6 +519,7 @@ mod tests {
     fn test_in_memory_data_buffer_panic_if_inserting_data_point_when_full() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -499,17 +529,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_record_batch_from_in_memory_data_buffer() {
+        let model_table_metadata = test::model_table_metadata_arc();
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
-            test::model_table_metadata_arc(),
+            vec![TAG_VALUE.to_owned()],
+            model_table_metadata.clone(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
 
         let capacity = uncompressed_buffer.capacity();
         let data = uncompressed_buffer.record_batch().await.unwrap();
-        assert_eq!(data.num_columns(), 3);
+
         assert_eq!(data.num_rows(), capacity);
+        assert_eq!(data.schema(), model_table_metadata.schema);
     }
 
     proptest! {
@@ -518,9 +551,11 @@ mod tests {
         // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
+        let model_table_metadata = test::model_table_metadata_arc();
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
-            test::model_table_metadata_arc(),
+            vec![TAG_VALUE.to_owned()],
+            model_table_metadata.clone(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -531,7 +566,7 @@ mod tests {
         }
 
         let data = runtime.block_on(uncompressed_buffer.record_batch()).unwrap();
-        assert_eq!(data.num_columns(), 3);
+        assert_eq!(data.schema(), model_table_metadata.schema);
         let timestamps = modelardb_types::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
     }
@@ -541,6 +576,7 @@ mod tests {
     async fn test_in_memory_data_buffer_can_spill_not_full_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -555,9 +591,10 @@ mod tests {
             .await
             .unwrap();
 
-        let uncompressed_path = temp_dir
-            .path()
-            .join(format!("{UNCOMPRESSED_DATA_FOLDER}/1"));
+        let uncompressed_path = temp_dir.path().join(format!(
+            "{UNCOMPRESSED_DATA_FOLDER}/{}/{TAG_HASH}",
+            test::MODEL_TABLE_NAME
+        ));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 
@@ -565,6 +602,7 @@ mod tests {
     async fn test_in_memory_data_buffer_can_spill_full_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -579,9 +617,10 @@ mod tests {
             .await
             .unwrap();
 
-        let uncompressed_path = temp_dir
-            .path()
-            .join(format!("{UNCOMPRESSED_DATA_FOLDER}/1"));
+        let uncompressed_path = temp_dir.path().join(format!(
+            "{UNCOMPRESSED_DATA_FOLDER}/{}/{TAG_HASH}",
+            test::MODEL_TABLE_NAME
+        ));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 
@@ -594,20 +633,16 @@ mod tests {
         let spilled_buffer_path = temp_dir
             .path()
             .join(UNCOMPRESSED_DATA_FOLDER)
-            .join("1")
+            .join(test::MODEL_TABLE_NAME)
+            .join(TAG_HASH.to_string())
             .join("1234567890123.parquet");
         assert!(spilled_buffer_path.exists());
 
         let data = uncompressed_on_disk_buffer.record_batch().await.unwrap();
 
-        assert_eq!(data.num_columns(), 3);
+        assert_eq!(data.schema(), test::model_table_metadata().schema);
         assert_eq!(data.num_rows(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
 
-        let spilled_buffer_path = temp_dir
-            .path()
-            .join(UNCOMPRESSED_DATA_FOLDER)
-            .join("1")
-            .join("1234567890123.parquet");
         assert!(!spilled_buffer_path.exists());
     }
 
@@ -616,9 +651,11 @@ mod tests {
         // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
+        let model_table_metadata = test::model_table_metadata_arc();
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
-            test::model_table_metadata_arc(),
+            vec![TAG_VALUE.to_owned()],
+            model_table_metadata.clone(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -639,7 +676,7 @@ mod tests {
         assert_eq!(spilled_buffers.len(), 1);
 
         let data = runtime.block_on(uncompressed_on_disk_buffer.record_batch()).unwrap();
-        assert_eq!(data.num_columns(), 3);
+        assert_eq!(data.schema(), model_table_metadata.schema);
         let timestamps = modelardb_types::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
 
@@ -670,6 +707,7 @@ mod tests {
         // The creation of record_batch empties uncompressed_in_memory_buffer_to_be_spilled.
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -705,6 +743,7 @@ mod tests {
 
         let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
+            vec![TAG_VALUE.to_owned()],
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );

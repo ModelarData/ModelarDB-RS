@@ -13,22 +13,21 @@
  * limitations under the License.
  */
 
-//! Implementation of the Apache Arrow DataFusion execution plan [`SortedJoinExec`] and its
-//! corresponding stream [`SortedJoinStream`] which joins multiple sorted array produced by
+//! Implementation of the Apache DataFusion execution plan [`SortedJoinExec`] and its corresponding
+//! stream [`SortedJoinStream`] which joins multiple sorted array produced by
 //! [`GridExecs`](crate::query::grid_exec::GridExec) streams and combines them with the time series
 //! tags retrieved from the [`TableMetadataManager`](metadata::table_metadata_manager::TableMetadataManager)
 //! to create the complete results containing a timestamp column, one or more field columns, and zero
 //! or more tag columns.
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
-use datafusion::arrow::array::{ArrayRef, StringBuilder, UInt64Array};
-use datafusion::arrow::datatypes::SchemaRef;
+use arrow::datatypes::Schema;
+use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
@@ -40,9 +39,6 @@ use datafusion::physical_plan::{
     PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-use modelardb_types::functions;
-
-use crate::query::QUERY_REQUIREMENT_DATA_POINT;
 
 /// The different types of columns supported by [`SortedJoinExec`], used for specifying the order in
 /// which the timestamp, field, and tag columns should be returned by [`SortedJoinStream`].
@@ -50,37 +46,36 @@ use crate::query::QUERY_REQUIREMENT_DATA_POINT;
 pub(crate) enum SortedJoinColumnType {
     Timestamp,
     Field,
-    Tag,
+    Tag(String),
 }
 
-/// An execution plan that join arrays of data points sorted by `univariate_id` and `timestamp` from
-/// multiple execution plans and tags. It is `pub(crate)` so the additional rules added to Apache
+/// An execution plan that joins arrays of data points sorted by tag columns and `timestamp` from
+/// multiple execution plans. It is `pub(crate)` so the additional rules added to Apache
 /// DataFusion's physical optimizer can pattern match on it.
 #[derive(Debug)]
 pub(crate) struct SortedJoinExec {
     /// Schema of the execution plan.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Order of columns to return.
     return_order: Vec<SortedJoinColumnType>,
-    /// Mapping from tag hash to tags.
-    hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Execution plans to read batches of data points from.
     inputs: Vec<Arc<dyn ExecutionPlan>>,
     /// Properties about the plan used in query optimization.
     plan_properties: PlanProperties,
+    /// The sort order that [`SortedJoinExec`] requires for the data points it receives as its input.
+    query_requirement_data_point: LexRequirement,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
 
 impl SortedJoinExec {
     pub(crate) fn new(
-        schema: SchemaRef,
+        schema: Arc<Schema>,
         return_order: Vec<SortedJoinColumnType>,
-        hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<Arc<dyn ExecutionPlan>>,
+        query_requirement_data_point: LexRequirement,
     ) -> Arc<Self> {
-        // Specify that the record batches produced by the execution plan will have an unknown order
-        // as the output from SortedJoinExec does not include the univariate_id but instead tags.
+        // Specify that the record batches produced by the execution plan will have an unknown order.
         let equivalence_properties = EquivalenceProperties::new(schema.clone());
 
         let plan_properties = PlanProperties::new(
@@ -93,9 +88,9 @@ impl SortedJoinExec {
         Arc::new(SortedJoinExec {
             schema,
             return_order,
-            hash_to_tags,
             inputs,
             plan_properties,
+            query_requirement_data_point,
             metrics: ExecutionPlanMetricsSet::new(),
         })
     }
@@ -113,7 +108,7 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Return the schema of the plan.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 
@@ -139,8 +134,8 @@ impl ExecutionPlan for SortedJoinExec {
             Ok(SortedJoinExec::new(
                 self.schema.clone(),
                 self.return_order.clone(),
-                self.hash_to_tags.clone(),
                 children,
+                self.query_requirement_data_point.clone(),
             ))
         } else {
             Err(DataFusionError::Plan(format!(
@@ -165,7 +160,6 @@ impl ExecutionPlan for SortedJoinExec {
         Ok(Box::pin(SortedJoinStream::new(
             self.schema.clone(),
             self.return_order.clone(),
-            self.hash_to_tags.clone(),
             streams,
             BaselineMetrics::new(&self.metrics, partition),
         )))
@@ -177,16 +171,16 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Specify that [`SortedJoinStream`] requires one partition for each input as it assumes that
-    /// the global sort order is the same for all inputs and Apache Arrow DataFusion only
-    /// guarantees the sort order within each partition rather than the inputs' global sort order.
+    /// the sort order is the same for all inputs and Apache DataFusion only guarantees the sort
+    /// order within each partition rather than the inputs' global sort order.
     fn required_input_distribution(&self) -> Vec<Distribution> {
         vec![Distribution::SinglePartition; self.inputs.len()]
     }
 
     /// Specify that [`SortedJoinStream`] requires that its inputs' provide data that is sorted by
-    /// [`QUERY_REQUIREMENT_DATA_POINT`].
+    /// `query_requirement_data_point`.
     fn required_input_ordering(&self) -> Vec<Option<LexRequirement>> {
-        vec![Some(QUERY_REQUIREMENT_DATA_POINT.clone()); self.inputs.len()]
+        vec![Some(self.query_requirement_data_point.clone()); self.inputs.len()]
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.
@@ -205,11 +199,9 @@ impl DisplayAs for SortedJoinExec {
 
 struct SortedJoinStream {
     /// Schema of the stream.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Order of columns to return.
     return_order: Vec<SortedJoinColumnType>,
-    /// Mapping from tag hash to tags.
-    hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Streams to read batches of data points from.
     inputs: Vec<SendableRecordBatchStream>,
     /// Current batch of data points to join from.
@@ -220,9 +212,8 @@ struct SortedJoinStream {
 
 impl SortedJoinStream {
     fn new(
-        schema: SchemaRef,
+        schema: Arc<Schema>,
         return_order: Vec<SortedJoinColumnType>,
-        hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<SendableRecordBatchStream>,
         baseline_metrics: BaselineMetrics,
     ) -> Self {
@@ -232,7 +223,6 @@ impl SortedJoinStream {
         SortedJoinStream {
             schema,
             return_order,
-            hash_to_tags,
             inputs,
             batches,
             baseline_metrics,
@@ -289,50 +279,24 @@ impl SortedJoinStream {
     fn sorted_join(&self) -> Poll<Option<DataFusionResult<RecordBatch>>> {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
-        // Compute the requested tag columns, so they can be assigned to the batch by index.
         // unwrap() is safe as a record batch is read from each input before this method is called.
         let batch = self.batches[0].as_ref().unwrap();
-        let univariate_ids = modelardb_types::array!(batch, 0, UInt64Array);
 
-        let mut tag_columns = if !self.hash_to_tags.is_empty() {
-            // unwrap() is safe as hash_to_tags is guaranteed not to be empty.
-            let tags = self.hash_to_tags.values().next().unwrap();
-            let capacity = univariate_ids.len();
-            let mut tag_columns: Vec<StringBuilder> = tags
-                .iter()
-                .map(|_vec| StringBuilder::with_capacity(capacity, capacity))
-                .collect();
-
-            for univariate_id in univariate_ids.values() {
-                let tag_hash = functions::univariate_id_to_tag_hash(*univariate_id);
-                let tags = &self.hash_to_tags[&tag_hash];
-                for (index, tag) in tags.iter().enumerate() {
-                    tag_columns[index].append_value(tag.clone());
-                }
-            }
-
-            tag_columns
-        } else {
-            vec![]
-        };
-
-        // The batches and tags columns are already in the correct order, so they can be appended.
+        // The batches are already in the correct order, so they can be appended.
         let mut field_index = 0;
-        let mut tag_index = 0;
 
         for element in &self.return_order {
             match element {
-                SortedJoinColumnType::Timestamp => columns.push(batch.column(1).clone()),
+                SortedJoinColumnType::Timestamp => columns.push(batch.column(0).clone()),
                 SortedJoinColumnType::Field => {
                     // unwrap() is safe as a record batch has already been read from each input.
                     let batch = self.batches[field_index].as_ref().unwrap();
-                    columns.push(batch.column(2).clone());
+                    columns.push(batch.column(1).clone());
                     field_index += 1;
                 }
-                SortedJoinColumnType::Tag => {
-                    let tags = Arc::new(tag_columns[tag_index].finish());
-                    columns.push(tags);
-                    tag_index += 1;
+                SortedJoinColumnType::Tag(tag_column_name) => {
+                    // unwrap() is safe as all tag columns are present in the schema.
+                    columns.push(batch.column_by_name(tag_column_name).unwrap().clone());
                 }
             }
         }
@@ -370,7 +334,7 @@ impl Stream for SortedJoinStream {
 
 impl RecordBatchStream for SortedJoinStream {
     /// Return the schema of the stream.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 }

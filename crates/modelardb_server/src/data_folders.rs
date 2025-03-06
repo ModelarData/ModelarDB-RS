@@ -21,10 +21,10 @@ use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::ServerMode;
 
-use crate::error::ModelarDbServerError;
-use crate::manager::Manager;
 use crate::ClusterMode;
 use crate::Result;
+use crate::error::ModelarDbServerError;
+use crate::manager::Manager;
 
 /// Folder for storing metadata and data in Apache Parquet files.
 #[derive(Clone)]

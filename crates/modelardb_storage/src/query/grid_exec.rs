@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Implementation of the Apache Arrow DataFusion execution plan [`GridExec`] and its corresponding
+//! Implementation of the Apache DataFusion execution plan [`GridExec`] and its corresponding
 //! stream [`GridStream`] which reconstructs the data points for a specific column from the
 //! compressed segments containing metadata and models.
 
@@ -24,18 +24,18 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
+use arrow::array::{StringArray, StringBuilder};
+use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt64Builder,
-    UInt8Array,
+    Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, UInt8Array,
 };
 use datafusion::arrow::compute::filter_record_batch;
-use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{EquivalenceProperties, LexRequirement};
+use datafusion::physical_expr::{EquivalenceProperties, LexOrdering, LexRequirement};
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet,
@@ -46,11 +46,8 @@ use datafusion::physical_plan::{
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
-use modelardb_types::schemas::GRID_SCHEMA;
+use modelardb_types::schemas::QUERY_COMPRESSED_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
-
-use crate::query::{QUERY_ORDER_DATA_POINT, QUERY_REQUIREMENT_SEGMENT};
-use crate::univariate_ids_int64_to_uint64;
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
 /// metadata and models. It is `pub(crate)` so the additional rules added to Apache DataFusion's
@@ -58,7 +55,7 @@ use crate::univariate_ids_int64_to_uint64;
 #[derive(Debug, Clone)]
 pub(crate) struct GridExec {
     /// Schema of the execution plan.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Predicate to filter data points by.
     maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Number of data points requested by the query.
@@ -67,24 +64,29 @@ pub(crate) struct GridExec {
     input: Arc<dyn ExecutionPlan>,
     /// Properties about the plan used in query optimization.
     plan_properties: PlanProperties,
+    /// The sort order that [`GridExec`] requires for the segments it receives as its input.
+    query_requirement_segment: LexRequirement,
+    /// The sort order [`GridExec`] guarantees for the data points it produces.
+    query_order_data_point: LexOrdering,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
 
 impl GridExec {
     pub(super) fn new(
+        schema: Arc<Schema>,
         maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
         limit: Option<usize>,
         input: Arc<dyn ExecutionPlan>,
+        query_requirement_segment: LexRequirement,
+        query_order_data_point: LexOrdering,
     ) -> Arc<Self> {
-        let schema = GRID_SCHEMA.0.clone();
-
-        // The global order for the data points produced by the set of GridExec instances producing
+        // The sort order for the data points produced by the set of GridExec instances producing
         // input for a SortedJoinExec must be the same. This is needed because SortedJoinExec
-        // assumes the data it receives from all of its inputs uses the same global sort order.
+        // assumes the data it receives from all of its inputs uses the same sort order.
         let equivalence_properties = EquivalenceProperties::new_with_orderings(
             schema.clone(),
-            &[QUERY_ORDER_DATA_POINT.clone()],
+            &[query_order_data_point.clone()],
         );
 
         let plan_properties = PlanProperties::new(
@@ -100,6 +102,8 @@ impl GridExec {
             limit,
             input,
             plan_properties,
+            query_requirement_segment,
+            query_order_data_point,
             metrics: ExecutionPlanMetricsSet::new(),
         })
     }
@@ -118,7 +122,7 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Return the schema of the plan.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 
@@ -141,9 +145,12 @@ impl ExecutionPlan for GridExec {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
             Ok(GridExec::new(
+                self.schema.clone(),
                 self.maybe_predicate.clone(),
                 self.limit,
                 children[0].clone(),
+                self.query_requirement_segment.clone(),
+                self.query_order_data_point.clone(),
             ))
         } else {
             Err(DataFusionError::Plan(format!(
@@ -160,7 +167,7 @@ impl ExecutionPlan for GridExec {
         partition: usize,
         task_context: Arc<TaskContext>,
     ) -> DataFusionResult<SendableRecordBatchStream> {
-        // Must be read before GridStream as task_context are moved into input.
+        // Must be read before GridStream as task_context is moved into input.
         let batch_size = task_context.session_config().batch_size();
         let grid_stream_metrics = GridStreamMetrics::new(&self.metrics, partition);
 
@@ -180,16 +187,16 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Specify that [`GridExec`] requires one partition for each input as it assumes that the
-    /// global sort order are the same for its input and Apache Arrow DataFusion only guarantees the
-    /// sort order within each partition rather than the input's global sort order.
+    /// sort order are the same for its input and Apache DataFusion only guarantees the sort order
+    /// within each partition rather than the input's global sort order.
     fn required_input_distribution(&self) -> Vec<Distribution> {
         vec![Distribution::SinglePartition]
     }
 
     /// Specify that [`GridExec`] requires that its input provides data that is sorted by
-    /// [`QUERY_REQUIREMENT_SEGMENT`].
+    /// `query_requirement_segment`.
     fn required_input_ordering(&self) -> Vec<Option<LexRequirement>> {
-        vec![Some(QUERY_REQUIREMENT_SEGMENT.clone())]
+        vec![Some(self.query_requirement_segment.clone())]
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.
@@ -210,7 +217,7 @@ impl DisplayAs for GridExec {
 /// points from the metadata and models in the segments, and returns batches of data points.
 struct GridStream {
     /// Schema of the stream.
-    schema: SchemaRef,
+    schema: Arc<Schema>,
     /// Predicate to filter data points by.
     maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Stream to read batches of compressed segments from.
@@ -227,7 +234,7 @@ struct GridStream {
 
 impl GridStream {
     fn new(
-        schema: SchemaRef,
+        schema: Arc<Schema>,
         maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
         limit: Option<usize>,
         input: SendableRecordBatchStream,
@@ -264,13 +271,9 @@ impl GridStream {
             .elapsed_compute()
             .timer();
 
-        // Reinterpret univariate_ids from int64 to uint64 to fix #187 as a stopgap until #197.
-        let batch = univariate_ids_int64_to_uint64(batch);
-
         // Retrieve the arrays from batch and cast them to their concrete type.
         modelardb_types::arrays!(
             batch,
-            univariate_ids,
             model_type_ids,
             start_times,
             end_times,
@@ -282,36 +285,53 @@ impl GridStream {
             _error_array
         );
 
+        let mut tag_arrays =
+            Vec::with_capacity(batch.num_columns() - QUERY_COMPRESSED_SCHEMA.0.fields().len());
+        for tag_index in QUERY_COMPRESSED_SCHEMA.0.fields().len()..batch.num_columns() {
+            tag_arrays.push(modelardb_types::array!(batch, tag_index, StringArray));
+        }
+
         // Allocate builders with approximately enough capacity. The builders are allocated with
         // enough capacity for the remaining data points in the current batch and one data point
         // from each segment in the new batch as each segment contains at least one data point.
         let current_rows = self.current_batch.num_rows() - self.current_batch_offset;
         let new_rows = batch.num_rows();
-        let mut univariate_id_builder = UInt64Builder::with_capacity(current_rows + new_rows);
         let mut timestamp_builder = TimestampBuilder::with_capacity(current_rows + new_rows);
         let mut value_builder = ValueBuilder::with_capacity(current_rows + new_rows);
 
+        let mut tag_builders = Vec::with_capacity(tag_arrays.len());
+        for _ in 0..tag_arrays.len() {
+            tag_builders.push(StringBuilder::with_capacity(
+                current_rows + new_rows,
+                current_rows + new_rows,
+            ));
+        }
+
         // Copy over the data points from the current batch to keep the resulting batch sorted.
         let current_batch = &self.current_batch; // Required as self cannot be passed to array!.
-        univariate_id_builder.append_slice(
-            &modelardb_types::array!(current_batch, 0, UInt64Array).values()
-                [self.current_batch_offset..],
-        );
         timestamp_builder.append_slice(
-            &modelardb_types::array!(current_batch, 1, TimestampArray).values()
+            &modelardb_types::array!(current_batch, 0, TimestampArray).values()
                 [self.current_batch_offset..],
         );
         value_builder.append_slice(
-            &modelardb_types::array!(current_batch, 2, ValueArray).values()
+            &modelardb_types::array!(current_batch, 1, ValueArray).values()
                 [self.current_batch_offset..],
         );
 
+        for (index, tag_builder) in tag_builders.iter_mut().enumerate() {
+            let tag_array = modelardb_types::array!(current_batch, index + 2, StringArray);
+
+            // Append each value individually since StringBuilder does not have an append_slice() method.
+            for i in self.current_batch_offset..current_batch.num_rows() {
+                tag_builder.append_value(tag_array.value(i));
+            }
+        }
+
         // Reconstruct the data points from the compressed segments.
         for row_index in 0..new_rows {
-            let length_before = univariate_id_builder.len();
+            let length_before = value_builder.len();
 
             modelardb_compression::grid(
-                univariate_ids.value(row_index),
                 model_type_ids.value(row_index),
                 start_times.value(row_index),
                 end_times.value(row_index),
@@ -320,24 +340,34 @@ impl GridStream {
                 max_values.value(row_index),
                 values.value(row_index),
                 residuals.value(row_index),
-                &mut univariate_id_builder,
                 &mut timestamp_builder,
                 &mut value_builder,
             );
 
+            let created_rows = value_builder.len() - length_before;
+
+            for (tag_builder, tag_array) in tag_builders.iter_mut().zip(&tag_arrays) {
+                let tag_value = tag_array.value(row_index);
+                for _ in 0..created_rows {
+                    tag_builder.append_value(tag_value);
+                }
+            }
+
             self.grid_stream_metrics.add(
                 model_type_ids.value(row_index),
-                univariate_id_builder.len() - length_before,
+                created_rows,
                 !residuals.value(row_index).is_empty(),
                 modelardb_compression::are_compressed_timestamps_regular(timestamps.values()),
             );
         }
 
-        let columns: Vec<ArrayRef> = vec![
-            Arc::new(univariate_id_builder.finish()),
-            Arc::new(timestamp_builder.finish()),
-            Arc::new(value_builder.finish()),
-        ];
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(tag_builders.len() + 2);
+        columns.push(Arc::new(timestamp_builder.finish()));
+        columns.push(Arc::new(value_builder.finish()));
+
+        for mut tag_builder in tag_builders {
+            columns.push(Arc::new(tag_builder.finish()));
+        }
 
         // Update the current batch, unwrap() is safe as GridStream uses a static schema.
         // For simplicity, all data points are reconstructed and then pruned by time.
@@ -398,7 +428,7 @@ impl Stream for GridStream {
 
 impl RecordBatchStream for GridStream {
     /// Return the schema of the stream.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 }

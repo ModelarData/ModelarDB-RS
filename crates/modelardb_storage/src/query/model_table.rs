@@ -23,10 +23,10 @@ use std::fmt;
 use std::result::Result as StdResult;
 use std::sync::Arc;
 
+use arrow::compute::SortOptions;
+use arrow::datatypes::DataType::Utf8;
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{
-    ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
-};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, TimeUnit};
 use datafusion::catalog::Session;
 use datafusion::common::{Statistics, ToDFSchema};
 use datafusion::datasource::listing::PartitionedFile;
@@ -36,22 +36,22 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
-use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
-use datafusion::physical_expr::{planner, LexOrdering};
+use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator, utils};
+use datafusion::physical_expr::expressions::Column;
+use datafusion::physical_expr::{
+    LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement, planner,
+};
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFile;
 use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
-use modelardb_types::schemas::{DISK_QUERY_COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
+use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::metadata::table_metadata_manager::TableMetadataManager;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
-
-use super::QUERY_ORDER_SEGMENT;
 
 /// A queryable representation of a model table which stores multivariate time series as segments
 /// containing metadata and models. [`ModelTable`] implements [`TableProvider`] so it can be
@@ -64,21 +64,34 @@ pub(crate) struct ModelTable {
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Where data should be written to.
     data_sink: Arc<dyn DataSink>,
-    /// Access to metadata related to tables.
-    table_metadata_manager: Arc<TableMetadataManager>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u16,
+    /// Schema of the compressed segments stored on disk.
+    query_compressed_schema: Arc<Schema>,
+    /// The sort order [`ParquetExec`] guarantees for the segments it produces. It is guaranteed by
+    /// [`ParquetExec`] because the storage engine uses this sort order for each Apache Parquet file
+    /// in this model table and these files are read sequentially by [`ParquetExec`].
+    query_order_segment: LexOrdering,
+    /// The sort order that [`GridExec`] requires for the segments it receives as its input.
+    query_requirement_segment: LexRequirement,
+    /// Schema used to reconstruct the data points from each field column in the compressed segments.
+    grid_schema: Arc<Schema>,
+    /// The sort order [`GridExec`] guarantees for the data points it produces. It is guaranteed by
+    /// [`GridExec`] because it receives segments sorted by `query_order_segment` from [`ParquetExec`]
+    /// and because these segments cannot contain data points for overlapping time intervals.
+    query_order_data_point: LexOrdering,
+    /// The sort order that [`SortedJoinExec`] requires for the data points it receives as its input.
+    query_requirement_data_point: LexRequirement,
 }
 
 impl ModelTable {
     pub(crate) fn new(
         delta_table: DeltaTable,
-        table_metadata_manager: Arc<TableMetadataManager>,
         model_table_metadata: Arc<ModelTableMetadata>,
         data_sink: Arc<dyn DataSink>,
     ) -> Arc<Self> {
         // Compute the index of the first stored field column in the model table's query schema. It
-        // is used for queries without fields as uids, timestamps, and values are stored together.
+        // is used for queries without fields as tags, timestamps, and values are stored together.
         let fallback_field_column = {
             model_table_metadata
                 .query_schema
@@ -92,12 +105,54 @@ impl ModelTable {
                 .unwrap() as u16 // unwrap() is safe as all model tables contain at least one field.
         };
 
+        // Add the tag columns to the base schema for queryable compressed segments.
+        let mut query_compressed_schema_fields = Vec::with_capacity(
+            QUERY_COMPRESSED_SCHEMA.0.fields.len() + model_table_metadata.tag_column_indices.len(),
+        );
+
+        query_compressed_schema_fields.extend(QUERY_COMPRESSED_SCHEMA.0.fields.clone().to_vec());
+        for index in &model_table_metadata.tag_column_indices {
+            query_compressed_schema_fields
+                .push(Arc::new(model_table_metadata.schema.field(*index).clone()));
+        }
+
+        let query_compressed_schema = Arc::new(Schema::new(query_compressed_schema_fields));
+
+        let (query_order_segment, query_requirement_segment) = query_order_and_requirement(
+            &model_table_metadata,
+            &query_compressed_schema,
+            Column::new("start_time", 1),
+        );
+
+        // Add the tag columns to the base schema for data points.
+        let mut grid_schema_fields = Vec::with_capacity(
+            GRID_SCHEMA.0.fields.len() + model_table_metadata.tag_column_indices.len(),
+        );
+
+        grid_schema_fields.extend(GRID_SCHEMA.0.fields.clone().to_vec());
+        for index in &model_table_metadata.tag_column_indices {
+            grid_schema_fields.push(Arc::new(model_table_metadata.schema.field(*index).clone()));
+        }
+
+        let grid_schema = Arc::new(Schema::new(grid_schema_fields));
+
+        let (query_order_data_point, query_requirement_data_point) = query_order_and_requirement(
+            &model_table_metadata,
+            &grid_schema,
+            Column::new("timestamp", 0),
+        );
+
         Arc::new(ModelTable {
             delta_table,
             model_table_metadata,
             data_sink,
-            table_metadata_manager,
             fallback_field_column,
+            query_compressed_schema,
+            query_order_segment,
+            query_requirement_segment,
+            grid_schema,
+            query_order_data_point,
+            query_requirement_data_point,
         })
     }
 
@@ -151,14 +206,54 @@ impl fmt::Debug for ModelTable {
     }
 }
 
+/// Return a [`LexOrdering`] and [`LexRequirement`] that sort by the tag columns from
+/// `model_table_metadata` in `schema` first and then by `time_column`.
+fn query_order_and_requirement(
+    model_table_metadata: &ModelTableMetadata,
+    schema: &Schema,
+    time_column: Column,
+) -> (LexOrdering, LexRequirement) {
+    let sort_options = SortOptions {
+        descending: false,
+        nulls_first: false,
+    };
+
+    let mut physical_sort_exprs =
+        Vec::with_capacity(model_table_metadata.tag_column_indices.len() + 1);
+    for index in &model_table_metadata.tag_column_indices {
+        let tag_column_name = model_table_metadata.schema.field(*index).name();
+
+        // unwrap() is safe as the tag columns are always present in the schema.
+        let schema_index = schema.index_of(tag_column_name).unwrap();
+
+        physical_sort_exprs.push(PhysicalSortExpr {
+            expr: Arc::new(Column::new(tag_column_name, schema_index)),
+            options: sort_options,
+        });
+    }
+
+    physical_sort_exprs.push(PhysicalSortExpr {
+        expr: Arc::new(time_column),
+        options: sort_options,
+    });
+
+    let physical_sort_requirements: Vec<PhysicalSortRequirement> = physical_sort_exprs
+        .clone()
+        .into_iter()
+        .map(|physical_sort_expr| physical_sort_expr.into())
+        .collect();
+
+    (
+        LexOrdering::new(physical_sort_exprs),
+        LexRequirement::new(physical_sort_requirements),
+    )
+}
+
 /// Rewrite and combine the `filters` that are written in terms of the model table's query schema,
 /// to a filter that is written in terms of the schema used for compressed segments by the storage
 /// engine and a filter that is written in terms of the schema used for univariate time series by
 /// [`GridExec`] for its output. If the filters cannot be rewritten an empty [`None`] is returned.
-fn rewrite_and_combine_filters(
-    schema: &SchemaRef,
-    filters: &[Expr],
-) -> (Option<Expr>, Option<Expr>) {
+fn rewrite_and_combine_filters(schema: &Schema, filters: &[Expr]) -> (Option<Expr>, Option<Expr>) {
     let rewritten_filters = filters
         .iter()
         .filter_map(|filter| rewrite_filter(schema, filter));
@@ -179,7 +274,7 @@ fn rewrite_and_combine_filters(
 /// that is written in terms of the schema used for compressed segments by the storage engine and a
 /// filter that is written in terms of the schema used for univariate time series by [`GridExec`].
 /// If the filter cannot be rewritten, [`None`] is returned.
-fn rewrite_filter(query_schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr)> {
+fn rewrite_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> {
     match filter {
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
             if let Expr::Column(column) = &**left {
@@ -269,10 +364,10 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
     })
 }
 
-/// Convert `expr` to a [`Option<PhysicalExpr>`] with the types in `query_schema`.
-fn maybe_convert_logical_expr_to_physical_expr(
+/// Convert `maybe_expr` to a [`PhysicalExpr`] with the types in `query_schema` if possible.
+fn try_convert_logical_expr_to_physical_expr(
     maybe_expr: Option<&Expr>,
-    query_schema: SchemaRef,
+    query_schema: Arc<Schema>,
 ) -> DataFusionResult<Option<Arc<dyn PhysicalExpr>>> {
     // Option.map() is not used so errors can be returned with ?.
     if let Some(maybe_expr) = maybe_expr {
@@ -288,7 +383,7 @@ fn maybe_convert_logical_expr_to_physical_expr(
 /// Convert `expr` to a [`PhysicalExpr`] with the types in `query_schema`.
 fn convert_logical_expr_to_physical_expr(
     expr: &Expr,
-    query_schema: SchemaRef,
+    query_schema: Arc<Schema>,
 ) -> DataFusionResult<Arc<dyn PhysicalExpr>> {
     let df_query_schema = query_schema.clone().to_dfschema()?;
     planner::create_physical_expr(expr, &df_query_schema, &ExecutionProps::new())
@@ -302,6 +397,8 @@ fn new_apache_parquet_exec(
     partition_filters: &[PartitionFilter],
     maybe_limit: Option<usize>,
     maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
+    file_schema: Arc<Schema>,
+    output_ordering: Vec<LexOrdering>,
 ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
     // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
     let mut logical_files = delta_table
@@ -310,7 +407,6 @@ fn new_apache_parquet_exec(
         .collect::<StdResult<Vec<LogicalFile>, DeltaTableError>>()
         .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
-    // TODO: prune the Apache Parquet files using metadata and maybe_parquet_filters if possible.
     logical_files.sort_by_key(|logical_file| logical_file.modification_time());
 
     // Create the data source operator. Assumes the ObjectStore exists.
@@ -319,18 +415,16 @@ fn new_apache_parquet_exec(
         .map(|logical_file| logical_file_to_partitioned_file(logical_file))
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
 
-    // TODO: give the optimizer more info for timestamps and values through statistics, e.g, min
-    // can be computed using only the metadata Delta Lake due to the aggregate_statistics rule.
     let log_store = delta_table.log_store();
     let file_scan_config = FileScanConfig {
         object_store_url: log_store.object_store_url(),
-        file_schema: DISK_QUERY_COMPRESSED_SCHEMA.0.clone(),
+        file_schema: file_schema.clone(),
         file_groups: vec![partitioned_files],
-        statistics: Statistics::new_unknown(&DISK_QUERY_COMPRESSED_SCHEMA.0),
+        statistics: Statistics::new_unknown(&file_schema),
         projection: None,
         limit: maybe_limit,
         table_partition_cols: vec![],
-        output_ordering: vec![LexOrdering::new(QUERY_ORDER_SEGMENT.to_vec())],
+        output_ordering,
     };
 
     let apache_parquet_exec_builder = if let Some(parquet_filters) = maybe_parquet_filters {
@@ -347,8 +441,8 @@ fn new_apache_parquet_exec(
     Ok(Arc::new(apache_parquet_exec))
 }
 
-// Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
-// returned if the time the file was last modified cannot be read from `logical_file`.
+/// Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
+/// returned if the time the file was last modified cannot be read from `logical_file`.
 fn logical_file_to_partitioned_file(
     logical_file: &LogicalFile,
 ) -> DataFusionResult<PartitionedFile> {
@@ -384,7 +478,7 @@ impl TableProvider for ModelTable {
     }
 
     /// Return the query schema of the model table registered with Apache DataFusion.
-    fn schema(&self) -> SchemaRef {
+    fn schema(&self) -> Arc<Schema> {
         self.model_table_metadata.query_schema.clone()
     }
 
@@ -403,7 +497,6 @@ impl TableProvider for ModelTable {
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // Create shorthands for the metadata used during planning to improve readability.
-        let table_name = self.model_table_metadata.name.as_str();
         let schema = &self.model_table_metadata.schema;
         let tag_column_indices = &self.model_table_metadata.tag_column_indices;
         let query_schema = &self.model_table_metadata.query_schema;
@@ -460,9 +553,7 @@ impl TableProvider for ModelTable {
         let mut stored_columns_in_projection: Vec<SortedJoinColumnType> =
             Vec::with_capacity(projection.len());
         let mut stored_field_columns_in_projection: Vec<u16> =
-            Vec::with_capacity(query_schema.fields.len() - 1 - tag_column_indices.len());
-        let mut stored_tag_columns_in_projection: Vec<&str> =
-            Vec::with_capacity(tag_column_indices.len());
+            Vec::with_capacity(schema.fields.len() - 1 - tag_column_indices.len());
         let mut generated_columns_in_projection: Vec<ColumnToGenerate> =
             Vec::with_capacity(query_schema.fields.len() - schema.fields().len());
 
@@ -470,11 +561,10 @@ impl TableProvider for ModelTable {
             if *query_schema.field(*query_schema_index).data_type() == ArrowTimestamp::DATA_TYPE {
                 // Timestamp.
                 stored_columns_in_projection.push(SortedJoinColumnType::Timestamp);
-            } else if tag_column_indices.contains(query_schema_index) {
+            } else if *query_schema.field(*query_schema_index).data_type() == Utf8 {
                 // Tag.
-                stored_tag_columns_in_projection
-                    .push(query_schema.fields[*query_schema_index].name());
-                stored_columns_in_projection.push(SortedJoinColumnType::Tag);
+                let tag_column_name = query_schema.fields[*query_schema_index].name().clone();
+                stored_columns_in_projection.push(SortedJoinColumnType::Tag(tag_column_name));
             } else if let Some(generated_column) = &generated_columns[*query_schema_index] {
                 // Generated field.
                 let physical_expr = convert_logical_expr_to_physical_expr(
@@ -492,30 +582,20 @@ impl TableProvider for ModelTable {
             }
         }
 
-        // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
-        // segments can be pruned by univariate_id in ParquetExec and hash_to_tags can be minimized.
         // Filters are not converted to PhysicalExpr in rewrite_and_combine_filters() to simplify
         // testing rewrite_and_combine_filters() as Expr can be compared while PhysicalExpr cannot.
         let (maybe_rewritten_parquet_filters, maybe_rewritten_grid_filters) =
             rewrite_and_combine_filters(schema, filters);
 
-        let maybe_physical_parquet_filters = maybe_convert_logical_expr_to_physical_expr(
+        let maybe_physical_parquet_filters = try_convert_logical_expr_to_physical_expr(
             maybe_rewritten_parquet_filters.as_ref(),
-            DISK_QUERY_COMPRESSED_SCHEMA.0.clone(),
+            self.query_compressed_schema.clone(),
         )?;
 
-        let maybe_physical_grid_filters = maybe_convert_logical_expr_to_physical_expr(
+        let maybe_physical_grid_filters = try_convert_logical_expr_to_physical_expr(
             maybe_rewritten_grid_filters.as_ref(),
-            GRID_SCHEMA.0.clone(),
+            self.grid_schema.clone(),
         )?;
-
-        // Compute a mapping from hashes to the requested tag values in the requested order. If the
-        // server is a cloud node, use the table metadata manager for the remote metadata Delta Lake.
-        let hash_to_tags = self
-            .table_metadata_manager
-            .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
-            .await
-            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         if stored_field_columns_in_projection.is_empty() {
             stored_field_columns_in_projection.push(self.fallback_field_column);
@@ -541,9 +621,18 @@ impl TableProvider for ModelTable {
                 &partition_filters,
                 limit,
                 &maybe_physical_parquet_filters,
+                self.query_compressed_schema.clone(),
+                vec![LexOrdering::new(self.query_order_segment.to_vec())],
             )?;
 
-            let grid_exec = GridExec::new(maybe_physical_grid_filters.clone(), limit, parquet_exec);
+            let grid_exec = GridExec::new(
+                self.grid_schema.clone(),
+                maybe_physical_grid_filters.clone(),
+                limit,
+                parquet_exec,
+                self.query_requirement_segment.clone(),
+                self.query_order_data_point.clone(),
+            );
 
             field_column_execution_plans.push(grid_exec);
         }
@@ -551,8 +640,8 @@ impl TableProvider for ModelTable {
         let sorted_join_exec = SortedJoinExec::new(
             schema_after_projection,
             stored_columns_in_projection,
-            Arc::new(hash_to_tags),
             field_column_execution_plans,
+            self.query_requirement_data_point.clone(),
         );
 
         // Only include GeneratedAsExec in the query plan if there are columns to generate.

@@ -17,13 +17,14 @@
 
 use std::sync::Arc;
 
-use arrow::array::{BinaryArray, Float32Array, RecordBatch, UInt16Array, UInt64Array, UInt8Array};
+use arrow::array::{BinaryArray, Float32Array, RecordBatch, StringArray, UInt8Array, UInt16Array};
 use arrow::compute::concat_batches;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
-use modelardb_types::functions;
-use modelardb_types::schemas::{COMPRESSED_SCHEMA, TABLE_METADATA_SCHEMA};
-use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
+use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
+use modelardb_types::types::{
+    ArrowTimestamp, ArrowValue, ErrorBound, Timestamp, TimestampArray, Value, ValueArray,
+};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::{model_table_metadata_to_record_batch, normal_table_metadata_to_record_batch};
@@ -114,26 +115,43 @@ pub fn model_table_metadata_arc() -> Arc<ModelTableMetadata> {
     Arc::new(model_table_metadata())
 }
 
-/// Return a [`RecordBatch`] containing three compressed segments.
-pub fn compressed_segments_record_batch() -> RecordBatch {
-    compressed_segments_record_batch_with_time(1, 0, 0.0)
+/// Create a [`RecordBatch`] with data that resembles uncompressed data with a single tag and two
+/// field columns. The returned data has `row_count` rows, with a different tag for each row.
+pub fn uncompressed_model_table_record_batch(row_count: usize) -> RecordBatch {
+    let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
+    let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
+    let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
+
+    RecordBatch::try_new(
+        model_table_metadata().schema.clone(),
+        vec![
+            Arc::new(TimestampArray::from(timestamps)),
+            Arc::new(ValueArray::from(values.clone())),
+            Arc::new(ValueArray::from(values)),
+            Arc::new(StringArray::from(tags)),
+        ],
+    )
+    .unwrap()
 }
 
-/// Return a [`RecordBatch`] containing three compressed segments from `univariate_id`. The
-/// compressed segments time range is from `time_ms` to `time_ms` + 3, while the value range is from
-/// `offset` + 5.2 to `offset` + 34.2.
+/// Return a [`RecordBatch`] containing three compressed segments.
+pub fn compressed_segments_record_batch() -> RecordBatch {
+    compressed_segments_record_batch_with_time(0, 0, 0.0)
+}
+
+/// Return a [`RecordBatch`] containing three compressed segments. The compressed segments time
+/// range is from `time_ms` to `time_ms` + 3, while the value range is from`offset` + 5.2 to
+/// `offset` + 34.2.
 pub fn compressed_segments_record_batch_with_time(
-    univariate_id: u64,
+    field_column: u16,
     time_ms: i64,
     offset: f32,
 ) -> RecordBatch {
-    let field_column = functions::univariate_id_to_column_index(univariate_id);
     let start_times = vec![time_ms, time_ms + 2, time_ms + 4];
     let end_times = vec![time_ms + 1, time_ms + 3, time_ms + 5];
     let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];
     let max_values = vec![offset + 20.2, offset + 12.2, offset + 34.2];
 
-    let univariate_id = UInt64Array::from(vec![univariate_id, univariate_id, univariate_id]);
     let model_type_id = UInt8Array::from(vec![1, 1, 2]);
     let start_time = TimestampArray::from(start_times);
     let end_time = TimestampArray::from(end_times);
@@ -144,13 +162,11 @@ pub fn compressed_segments_record_batch_with_time(
     let residuals = BinaryArray::from_vec(vec![b"", b"", b""]);
     let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
     let field_column = UInt16Array::from(vec![field_column, field_column, field_column]);
-
-    let schema = COMPRESSED_SCHEMA.clone();
+    let tag_column = StringArray::from(vec!["tag", "tag", "tag"]);
 
     RecordBatch::try_new(
-        schema.0,
+        model_table_metadata().compressed_schema,
         vec![
-            Arc::new(univariate_id),
             Arc::new(model_type_id),
             Arc::new(start_time),
             Arc::new(end_time),
@@ -161,6 +177,7 @@ pub fn compressed_segments_record_batch_with_time(
             Arc::new(residuals),
             Arc::new(error),
             Arc::new(field_column),
+            Arc::new(tag_column),
         ],
     )
     .unwrap()

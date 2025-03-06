@@ -219,8 +219,8 @@ fn rewrite_aggregates_to_use_segments(
                 && aggregate_exec.filter_expr().iter().all(Option::is_none)
                 && aggregate_exec.group_expr().is_empty()
             {
-                // Remove RepartitionExec if added by Apache Arrow DataFusion. Both AggregateExec
-                // and RepartitionExec can only have one child, so it is not necessary to check it.
+                // Remove RepartitionExec if added by Apache DataFusion. Both AggregateExec and
+                // RepartitionExec can only have one child, so it is not necessary to check it.
                 let maybe_repartition_exec = &aggregate_exec_children[0];
                 let aggregate_exec_input = if let Some(repartition_exec) = maybe_repartition_exec
                     .as_any()
@@ -334,9 +334,9 @@ struct ModelCountAccumulator {
 impl Accumulator for ModelCountAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
-        let start_times = modelardb_types::value!(arrays, 2, TimestampArray);
-        let end_times = modelardb_types::value!(arrays, 3, TimestampArray);
-        let timestamps = modelardb_types::value!(arrays, 4, BinaryArray);
+        let start_times = modelardb_types::value!(arrays, 1, TimestampArray);
+        let end_times = modelardb_types::value!(arrays, 2, TimestampArray);
+        let timestamps = modelardb_types::value!(arrays, 3, BinaryArray);
 
         for row_index in 0..start_times.len() {
             let start_time = start_times.value(row_index);
@@ -384,7 +384,7 @@ struct ModelMinAccumulator {
 impl Accumulator for ModelMinAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
-        let min_values = modelardb_types::value!(values, 5, ValueArray);
+        let min_values = modelardb_types::value!(values, 4, ValueArray);
         for row_index in 0..min_values.len() {
             self.min = Value::min(self.min, min_values.value(row_index));
         }
@@ -427,7 +427,7 @@ struct ModelMaxAccumulator {
 impl Accumulator for ModelMaxAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
-        let max_values = modelardb_types::value!(arrays, 6, ValueArray);
+        let max_values = modelardb_types::value!(arrays, 5, ValueArray);
         for row_index in 0..max_values.len() {
             self.max = Value::max(self.max, max_values.value(row_index));
         }
@@ -470,14 +470,14 @@ struct ModelSumAccumulator {
 impl Accumulator for ModelSumAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
-        let model_type_ids = modelardb_types::value!(arrays, 1, UInt8Array);
-        let start_times = modelardb_types::value!(arrays, 2, TimestampArray);
-        let end_times = modelardb_types::value!(arrays, 3, TimestampArray);
-        let timestamps = modelardb_types::value!(arrays, 4, BinaryArray);
-        let min_values = modelardb_types::value!(arrays, 5, ValueArray);
-        let max_values = modelardb_types::value!(arrays, 6, ValueArray);
-        let values = modelardb_types::value!(arrays, 7, BinaryArray);
-        let residuals = modelardb_types::value!(arrays, 8, BinaryArray);
+        let model_type_ids = modelardb_types::value!(arrays, 0, UInt8Array);
+        let start_times = modelardb_types::value!(arrays, 1, TimestampArray);
+        let end_times = modelardb_types::value!(arrays, 2, TimestampArray);
+        let timestamps = modelardb_types::value!(arrays, 3, BinaryArray);
+        let min_values = modelardb_types::value!(arrays, 4, ValueArray);
+        let max_values = modelardb_types::value!(arrays, 5, ValueArray);
+        let values = modelardb_types::value!(arrays, 6, BinaryArray);
+        let residuals = modelardb_types::value!(arrays, 7, BinaryArray);
 
         for row_index in 0..model_type_ids.len() {
             let model_type_id = model_type_ids.value(row_index);
@@ -542,14 +542,14 @@ struct ModelAvgAccumulator {
 impl Accumulator for ModelAvgAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
-        let model_type_ids = modelardb_types::value!(arrays, 1, UInt8Array);
-        let start_times = modelardb_types::value!(arrays, 2, TimestampArray);
-        let end_times = modelardb_types::value!(arrays, 3, TimestampArray);
-        let timestamps = modelardb_types::value!(arrays, 4, BinaryArray);
-        let min_values = modelardb_types::value!(arrays, 5, ValueArray);
-        let max_values = modelardb_types::value!(arrays, 6, ValueArray);
-        let values = modelardb_types::value!(arrays, 7, BinaryArray);
-        let residuals = modelardb_types::value!(arrays, 8, BinaryArray);
+        let model_type_ids = modelardb_types::value!(arrays, 0, UInt8Array);
+        let start_times = modelardb_types::value!(arrays, 1, TimestampArray);
+        let end_times = modelardb_types::value!(arrays, 2, TimestampArray);
+        let timestamps = modelardb_types::value!(arrays, 3, BinaryArray);
+        let min_values = modelardb_types::value!(arrays, 4, ValueArray);
+        let max_values = modelardb_types::value!(arrays, 5, ValueArray);
+        let values = modelardb_types::value!(arrays, 6, BinaryArray);
+        let residuals = modelardb_types::value!(arrays, 7, BinaryArray);
 
         for row_index in 0..model_type_ids.len() {
             let model_type_id = model_type_ids.value(row_index);
@@ -630,7 +630,6 @@ mod tests {
     use tonic::async_trait;
 
     use crate::delta_lake::DeltaLake;
-    use crate::metadata::table_metadata_manager::TableMetadataManager;
     use crate::optimizer;
     use crate::query::grid_exec::GridExec;
     use crate::query::model_table::ModelTable;
@@ -689,8 +688,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_rewrite_aggregates_on_one_column_without_predicates() {
-        // Apache Arrow DataFusion 30 creates two input columns to AggregateExec when both SUM and
-        // AVG is computed in the same query, so for now, multiple queries are used for the test.
+        // Apache DataFusion 30 creates two input columns to AggregateExec when both SUM and AVG is
+        // computed in the same query, so for now, multiple queries are used for the test.
         let query_no_avg = &format!(
             "SELECT COUNT(field_1), MIN(field_1), MAX(field_1), SUM(field_1) FROM {}",
             test::MODEL_TABLE_NAME
@@ -766,11 +765,6 @@ mod tests {
         // Setup access to data and metadata in data folder.
         let data_folder_path = temp_dir.path();
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path).unwrap();
-        let table_metadata_manager = Arc::new(
-            TableMetadataManager::try_from_path(data_folder_path, None)
-                .await
-                .unwrap(),
-        );
 
         // Setup access to Apache DataFusion.
         let mut session_state_builder = SessionStateBuilder::new().with_default_features();
@@ -788,12 +782,7 @@ mod tests {
         let model_table_metadata = test::model_table_metadata_arc();
 
         let delta_table = delta_lake
-            .create_model_table(&model_table_metadata.name)
-            .await
-            .unwrap();
-
-        table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .create_model_table(&model_table_metadata)
             .await
             .unwrap();
 
@@ -801,7 +790,6 @@ mod tests {
 
         let model_table = ModelTable::new(
             delta_table,
-            table_metadata_manager,
             model_table_metadata.clone(),
             model_table_data_sink,
         );
