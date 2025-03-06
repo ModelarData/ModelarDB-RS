@@ -263,13 +263,21 @@ impl DeltaLake {
     pub async fn model_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
 
-        // Specify that the file must be sorted by univariate_id and then by start_time.
-        let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
-        ]);
+        // Specify that the file must be sorted by the tag columns and then by start_time.
+        let mut sorting_columns = Vec::new();
+        let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
+        let compressed_schema = TableProvider::schema(&delta_table);
+        let compressed_schema_len = compressed_schema.fields().len();
 
-        let writer_properties = apache_parquet_writer_properties(sorting_columns);
+        // Compressed segments have the tag columns at the end of the schema.
+        for tag_column_index in base_compressed_schema_len..compressed_schema_len {
+            sorting_columns.push(SortingColumn::new(tag_column_index as i32, false, false));
+        }
+
+        // Compressed segments store the first timestamp in the second column.
+        sorting_columns.push(SortingColumn::new(1, false, false));
+
+        let writer_properties = apache_parquet_writer_properties(Some(sorting_columns));
         DeltaTableWriter::try_new(delta_table, partition_columns, writer_properties)
     }
 
@@ -352,10 +360,8 @@ impl DeltaLake {
         for field in schema.fields() {
             let field: &Field = field;
 
-            // Delta Lakes does not support unsigned integers, thus the Apache Arrow types UInt8,
-            // UInt16, UInt32, and UInt64 are converted to Int8, Int16, Int32, and Int64 by
-            // try_into(). To ensure values that are not supported by Delta Lake cannot be inserted
-            // into the table, a table backed by Delta Lake cannot contain unsigned integers.
+            // Delta Lakes does not support unsigned integers. Thus tables containing the Apache
+            // Arrow types UInt8, UInt16, UInt32, and UInt64 must currently be rejected.
             match field.data_type() {
                 DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
                     Err(DeltaTableError::SchemaMismatch {
@@ -436,11 +442,7 @@ impl DeltaLake {
         columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable> {
         let delta_table = self.metadata_delta_table(table_name).await?;
-
-        // TableProvider::schema(&table) is used instead of table.schema() because table.schema()
-        // returns the Delta Lake schema instead of the Apache DataFusion schema.
         let record_batch = RecordBatch::try_new(TableProvider::schema(&delta_table), columns)?;
-
         let delta_table_writer = self.normal_or_metadata_table_writer(delta_table).await?;
         self.write_record_batches_to_table(delta_table_writer, vec![record_batch])
             .await
@@ -468,18 +470,6 @@ impl DeltaLake {
         table_name: &str,
         compressed_segments: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
-        // Specify that the file must be sorted by the tag columns and then by start_time.
-        let mut sorting_columns = Vec::new();
-        let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
-        let compressed_schema_len = compressed_segments[0].schema().fields().len();
-
-        // Compressed segments have the tag columns at the end of the schema.
-        for tag_column_index in base_compressed_schema_len..compressed_schema_len {
-            sorting_columns.push(SortingColumn::new(tag_column_index as i32, false, false));
-        }
-
-        sorting_columns.push(SortingColumn::new(1, false, false));
-
         let delta_table = self.delta_table(table_name).await?;
         let delta_table_writer = self.model_table_writer(delta_table).await?;
         self.write_record_batches_to_table(delta_table_writer, compressed_segments)
@@ -600,7 +590,7 @@ impl DeltaTableWriter {
         Ok(())
     }
 
-    /// Consume the [`DeltaLakeWriter`], finish the writing, and commit the files that has been
+    /// Consume the [`DeltaTableWriter`], finish the writing, and commit the files that has been
     /// written to the log. If an error occurs before the commit is finished, the already written
     /// files are deleted if possible. Returns a [`ModelarDbStorageError`] if an error occurs when
     /// finishing the writing, committing the files that has been written, deleting the written
@@ -648,7 +638,7 @@ impl DeltaTableWriter {
         Ok(self.delta_table)
     }
 
-    /// Consume the [`DeltaLakeWriter`], abort the writing, and delete all of the files that has
+    /// Consume the [`DeltaTableWriter`], abort the writing, and delete all of the files that has
     /// already been written. Returns a [`ModelarDbStorageError`] if an error occurs when aborting
     /// the writing or deleting the files that has already been written. Rollback is not called
     /// automatically in drop() is not async and async_drop() is not yet a stable API.
