@@ -213,7 +213,7 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
-    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the delta lake cannot be
+    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
     /// established or the table does not exist.
     pub async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_metadata_table(table_name);
@@ -221,7 +221,7 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection to the delta lake cannot be established or the
+    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_compressed_table(table_name);
@@ -229,7 +229,7 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaOps`] for manipulating the metadata table with `table_name` in the Delta
-    /// Lake, or a [`ModelarDbStorageError`] if a connection to the delta lake cannot be established
+    /// Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established
     /// or the table does not exist.
     pub async fn metadata_delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
         let table_path = self.location_of_metadata_table(table_name);
@@ -239,7 +239,7 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection to the delta lake cannot be established or the
+    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
     pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
         let table_path = self.location_of_compressed_table(table_name);
@@ -249,7 +249,7 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection to the delta lake cannot be established or the
+    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
     async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
         deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone())
@@ -258,7 +258,7 @@ impl DeltaLake {
     }
 
     /// Return a [`DeltaTableWriter`] for writing to the model table with `delta_table` in the Delta
-    /// Lake, or a [`ModelarDbStorageError`] if a connection to the delta lake cannot be established
+    /// Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established
     /// or the table does not exist.
     pub async fn model_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
@@ -360,7 +360,7 @@ impl DeltaLake {
         for field in schema.fields() {
             let field: &Field = field;
 
-            // Delta Lakes does not support unsigned integers. Thus tables containing the Apache
+            // Delta Lake does not support unsigned integers. Thus tables containing the Apache
             // Arrow types UInt8, UInt16, UInt32, and UInt64 must currently be rejected.
             match field.data_type() {
                 DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
@@ -589,10 +589,10 @@ impl DeltaTableWriter {
         Ok(())
     }
 
-    /// Consume the [`DeltaTableWriter`], finish the writing, and commit the files that has been
+    /// Consume the [`DeltaTableWriter`], finish the writing, and commit the files that have been
     /// written to the log. If an error occurs before the commit is finished, the already written
     /// files are deleted if possible. Returns a [`ModelarDbStorageError`] if an error occurs when
-    /// finishing the writing, committing the files that has been written, deleting the written
+    /// finishing the writing, committing the files that have been written, deleting the written
     /// files, or updating the [`DeltaTable`].
     pub async fn commit(mut self) -> Result<DeltaTable> {
         // Write the remaining buffered files.
@@ -637,7 +637,7 @@ impl DeltaTableWriter {
         Ok(self.delta_table)
     }
 
-    /// Consume the [`DeltaTableWriter`], abort the writing, and delete all of the files that has
+    /// Consume the [`DeltaTableWriter`], abort the writing, and delete all of the files that have
     /// already been written. Returns a [`ModelarDbStorageError`] if an error occurs when aborting
     /// the writing or deleting the files that have already been written. Rollback is not called
     /// automatically as drop() is not async and async_drop() is not yet a stable API.
