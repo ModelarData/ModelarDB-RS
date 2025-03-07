@@ -28,7 +28,7 @@ use arrow::array::{StringArray, StringBuilder};
 use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, UInt8Array,
+    Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, Int8Array,
 };
 use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -503,7 +503,7 @@ impl GridStreamMetrics {
     }
 
     /// Calculate all metrics and add them to [`Self`].
-    fn add(&self, model_type_id: u8, created_rows: usize, has_residuals: bool, is_regular: bool) {
+    fn add(&self, model_type_id: i8, created_rows: usize, has_residuals: bool, is_regular: bool) {
         self.rows_created.add(created_rows);
         self.rows_created_by_model_type[model_type_id as usize].add(created_rows);
         self.segments_with_residuals.add(has_residuals as usize);

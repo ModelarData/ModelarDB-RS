@@ -25,7 +25,7 @@ crossbeam-channel = "0.5.14"
 crossbeam-queue = "0.3.12"
 dashmap = "6.0.1"
 datafusion = "44.0.0"
-deltalake = "0.24.0"
+deltalake = { git = "https://github.com/ModelarData/delta-rs", rev = "1c5924931ba105305b0bae86795b639de43f9be3" } # Issue 289.
 dirs = "6.0.0"
 futures = "0.3.31"
 log = "0.4.25"

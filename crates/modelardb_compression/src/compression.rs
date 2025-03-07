@@ -51,7 +51,7 @@ pub fn try_compress(
     error_bound: ErrorBound,
     compressed_schema: Arc<Schema>,
     tag_values: Vec<String>,
-    field_column_index: u16,
+    field_column_index: i16,
 ) -> Result<RecordBatch> {
     // The uncompressed data must be passed as arrays instead of a RecordBatch as a TimestampArray
     // and a ValueArray is the only supported input. However, as a result it is necessary to verify
@@ -262,7 +262,7 @@ mod tests {
 
     use super::*;
 
-    use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, UInt8Array};
+    use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, Int8Array};
     use arrow::datatypes::{DataType, Field};
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
@@ -508,7 +508,7 @@ mod tests {
         irregular: bool,
         values_structure: ValuesStructure,
         error_bound: ErrorBound,
-        expected_model_type_ids: &[u8],
+        expected_model_type_ids: &[i8],
     ) {
         let uncompressed_timestamps = data_generation::generate_timestamps(10, irregular);
         let uncompressed_values =
@@ -624,8 +624,8 @@ mod tests {
     fn generate_compress_and_assert_known_time_series(
         error_bound: ErrorBound,
         generate_irregular_timestamps: bool,
-        generate_model_type_ids: &[u8],
-        expected_model_type_ids: &[u8],
+        generate_model_type_ids: &[i8],
+        expected_model_type_ids: &[i8],
     ) {
         let uncompressed_timestamps = data_generation::generate_timestamps(
             3 * TRY_COMPRESS_TEST_LENGTH,
@@ -688,7 +688,7 @@ mod tests {
         uncompressed_timestamps: &TimestampArray,
         uncompressed_values: &ValueArray,
         compressed_record_batch: &RecordBatch,
-        expected_model_type_ids: &[u8],
+        expected_model_type_ids: &[i8],
     ) {
         assert_eq!(
             expected_model_type_ids.len(),
@@ -702,7 +702,7 @@ mod tests {
             compressed_record_batch,
         );
 
-        let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, UInt8Array);
+        let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, Int8Array);
         assert_eq!(model_type_ids.values(), expected_model_type_ids);
     }
 
