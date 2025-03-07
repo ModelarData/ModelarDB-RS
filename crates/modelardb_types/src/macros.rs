@@ -107,7 +107,7 @@ macro_rules! array {
 /// ```
 /// # use std::sync::Arc;
 /// #
-/// # use arrow::array::{BinaryArray, Float32Array, Int8Array, Int16Array, Int64Array};
+/// # use arrow::array::{BinaryArray, Float32Array, Int8Array, Int16Array};
 /// # use arrow::record_batch::RecordBatch;
 /// # use modelardb_types::schemas::COMPRESSED_SCHEMA;
 /// # use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};

@@ -22,8 +22,7 @@
 use std::mem;
 use std::sync::{Arc, LazyLock};
 
-use arrow::array::Int8Array;
-use datafusion::arrow::array::{ArrayRef, BinaryArray};
+use datafusion::arrow::array::{ArrayRef, BinaryArray, Int8Array};
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType};
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
