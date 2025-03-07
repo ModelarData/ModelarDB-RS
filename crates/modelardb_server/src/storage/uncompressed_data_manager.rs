@@ -19,8 +19,8 @@
 use std::hash::{DefaultHasher, Hasher};
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::mem;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -33,6 +33,7 @@ use tracing::{debug, error, warn};
 use crate::context::Context;
 use crate::data_folders::DataFolder;
 use crate::error::Result;
+use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::types::Channels;
 use crate::storage::types::MemoryPool;
@@ -41,7 +42,6 @@ use crate::storage::uncompressed_data_buffer::{
     self, IngestedDataBuffer, UncompressedDataBuffer, UncompressedInMemoryDataBuffer,
     UncompressedOnDiskDataBuffer,
 };
-use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When an uncompressed data buffer is finished the data is made available for compression.
@@ -663,7 +663,7 @@ mod tests {
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
     use crate::{ClusterMode, DataFolders};
@@ -806,9 +806,11 @@ mod tests {
 
         insert_data_points(1, &mut data_manager, &model_table_metadata, TAG_VALUE).await;
 
-        assert!(data_manager
-            .uncompressed_in_memory_data_buffers
-            .contains_key(&TAG_HASH));
+        assert!(
+            data_manager
+                .uncompressed_in_memory_data_buffers
+                .contains_key(&TAG_HASH)
+        );
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
@@ -832,9 +834,11 @@ mod tests {
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
-        assert!(data_manager
-            .uncompressed_in_memory_data_buffers
-            .contains_key(&TAG_HASH));
+        assert!(
+            data_manager
+                .uncompressed_in_memory_data_buffers
+                .contains_key(&TAG_HASH)
+        );
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
@@ -862,9 +866,11 @@ mod tests {
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
-        assert!(data_manager
-            .uncompressed_in_memory_data_buffers
-            .contains_key(&TAG_HASH));
+        assert!(
+            data_manager
+                .uncompressed_in_memory_data_buffers
+                .contains_key(&TAG_HASH)
+        );
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
@@ -950,11 +956,13 @@ mod tests {
         )
         .await;
 
-        assert!(data_manager
-            .channels
-            .uncompressed_data_receiver
-            .try_recv()
-            .is_ok());
+        assert!(
+            data_manager
+                .channels
+                .uncompressed_data_receiver
+                .try_recv()
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -970,17 +978,21 @@ mod tests {
         )
         .await;
 
-        assert!(data_manager
-            .channels
-            .uncompressed_data_receiver
-            .try_recv()
-            .is_ok());
+        assert!(
+            data_manager
+                .channels
+                .uncompressed_data_receiver
+                .try_recv()
+                .is_ok()
+        );
 
-        assert!(data_manager
-            .channels
-            .uncompressed_data_receiver
-            .try_recv()
-            .is_ok());
+        assert!(
+            data_manager
+                .channels
+                .uncompressed_data_receiver
+                .try_recv()
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -988,11 +1000,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (data_manager, _model_table_metadata) = create_managers(&temp_dir).await;
 
-        assert!(data_manager
-            .channels
-            .uncompressed_data_receiver
-            .try_recv()
-            .is_err());
+        assert!(
+            data_manager
+                .channels
+                .uncompressed_data_receiver
+                .try_recv()
+                .is_err()
+        );
     }
 
     #[tokio::test]
