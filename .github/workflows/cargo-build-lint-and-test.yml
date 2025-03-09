@@ -102,9 +102,9 @@ jobs:
 
     # Run Python Tests.
     - name: Update pip
-      run: python3 -m pip install pip --force-reinstall
+      run: python3 -m pip install pip --force-reinstall --break-system-packages --user
     - name: Install dependencies
-      run: python3 -m pip install .
+      run: python3 -m pip install .  --break-system-packages --user
       working-directory: crates/modelardb_embedded/bindings/python
     - name: Run unittest
       run: python3 -m unittest --verbose
