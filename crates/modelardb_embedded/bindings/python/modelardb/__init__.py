@@ -268,25 +268,24 @@ class ModelarDB:
             script_folder = os.path.dirname(os.path.abspath(__file__))
 
             # Select the library to use based on the operating system.
-            match platform.system():
-                case "Linux":
-                    library_path = (
-                        script_folder
-                        +
-                            f"/../../../../../target/{build}/libmodelardb_embedded.so"
-                    )
-                case "Darwin":
-                    library_path = (
-                        script_folder
-                        + f"/../../../../../target/{build}/libmodelardb_embedded.dylib"
-                    )
-                case "Windows":
-                    library_path = (
-                        script_folder
-                        + f"\\..\\..\\..\\..\\..\\target\\{build}\\modelardb_embedded.dll"
-                    )
-                case _:
-                    raise RuntimeError("Only Linux, macOS, and Windows are supported.")
+            system = platform.system()
+            if system == "Linux":
+                library_path = (
+                    script_folder
+                    + f"/../../../../../target/{build}/libmodelardb_embedded.so"
+                )
+            elif system == "Darwin":
+                library_path = (
+                    script_folder
+                    + f"/../../../../../target/{build}/libmodelardb_embedded.dylib"
+                )
+            elif system == "Windows":
+                library_path = (
+                    script_folder
+                    + f"\\..\\..\\..\\..\\..\\target\\{build}\\modelardb_embedded.dll"
+                )
+            else:
+                raise RuntimeError("Only Linux, macOS, and Windows are supported.")
 
             if not os.path.isfile(library_path):
                 raise RuntimeError("The Rust library has not been compiled.")
@@ -923,17 +922,14 @@ class ModelarDB:
         :type return_code: int
         :raises RuntimeError or ValueError: If `return_code` is not 0.
         """
-        match return_code:
-            case self.__library.RETURN_SUCCESS:
-                pass  # No errors.
-            case self.__library.RETURN_FAILURE:
-                raise RuntimeError(
-                    ffi.string(self.__library.modelardb_embedded_error()).decode(
-                        "UTF-8"
-                    )
-                )
-            case _:
-                raise ValueError("Unknown return code.")
+        if return_code == self.__library.RETURN_SUCCESS:
+            pass  # No errors.
+        elif return_code == self.__library.RETURN_FAILURE:
+            raise RuntimeError(
+                ffi.string(self.__library.modelardb_embedded_error()).decode("UTF-8")
+            )
+        else:
+            raise ValueError("Unknown return code.")
 
 
 def open_local(data_folder_path: str) -> ModelarDB:
