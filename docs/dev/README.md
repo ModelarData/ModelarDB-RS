@@ -18,6 +18,8 @@ exists, e.g., the bug report if it is a bugfix, and as a new GitHub issue otherw
 ## Structure
 The ModelarDB project consists of the following crates and major components:
 
+- [modelardb_bulkloader](/crates/modelardb_bulkloader) - ModelarDB's command-line bulk loader in the form of the binary
+`modelardbb`.
 - [modelardb_client](/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **Helper** - Enhances the command-line client with autocompletion of keywords and names.
@@ -36,6 +38,11 @@ of time series.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **Types** - Types used throughout the crate, e.g., for creating compressed segments and accumulating batches of
   them.
+- [modelardb_embedded](/crates/modelardb_embedded) - Library for reading from and writing to ModelarDB instances and
+data folder from programming languages.
+  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
+  - **C-API** - A C-API for using modelardb_embedded from other programming languages through a C-FFI.
+  - **ModelarDB** - Module providing functionality for reading from and writing to ModelarDB instances and data folders.
 - [modelardb_manager](/crates/modelardb_manager) - ModelarDB's manager in the form of the binary `modelardbm`.
   - **Cluster** - Manages edge and cloud nodes currently controlled by the ModelarDB manager and provides functionality
   for balancing query workloads across multiple cloud nodes.
