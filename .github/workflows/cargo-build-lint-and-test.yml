@@ -88,7 +88,7 @@ jobs:
     - name: Cargo Install machete
       run: cargo install cargo-machete
 
-    # Run Lints and Tests.
+    # Run Rust Lints and Tests.
     - name: Cargo Build
       run: cargo build --verbose --all-targets
     - name: Cargo Clippy
@@ -99,6 +99,16 @@ jobs:
       run: cargo machete --with-metadata
     - name: Cargo Test
       run: cargo test --verbose --all-targets -- --nocapture
+
+    # Run Python Tests.
+    - name: Update pip
+      run: python3 -m pip install pip --force-reinstall
+    - name: Install dependencies
+      run: python3 -m pip install .
+      working-directory: crates/modelardb_embedded/bindings/python
+    - name: Run unittest
+      run: python3 -m unittest --verbose
+      working-directory: crates/modelardb_embedded/bindings/python
 
     # Upload Code Coverage Report.
     - name: grcov
