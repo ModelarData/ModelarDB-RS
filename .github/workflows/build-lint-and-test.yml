@@ -101,13 +101,17 @@ jobs:
       run: cargo test --verbose --all-targets -- --nocapture
 
     # Run Python Tests.
+    - name: Python Version
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13' 
     - name: Pip Update
-      run: python3.12 -m pip install pip --force-reinstall --break-system-packages --user
+      run: python -m pip install pip --force-reinstall --break-system-packages --user
     - name: Pip Install
-      run: python3.12 -m pip install .  --break-system-packages --user
+      run: python -m pip install .  --break-system-packages --user
       working-directory: crates/modelardb_embedded/bindings/python
     - name: Python Unittest
-      run: python3.12 -m unittest --verbose
+      run: python -m unittest --verbose
       working-directory: crates/modelardb_embedded/bindings/python
 
     # Upload Code Coverage Report.
