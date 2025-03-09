@@ -39,7 +39,7 @@ of time series.
   - **Types** - Types used throughout the crate, e.g., for creating compressed segments and accumulating batches of
   them.
 - [modelardb_embedded](/crates/modelardb_embedded) - Library for reading from and writing to ModelarDB instances and
-data folder from programming languages.
+data folders from programming languages.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **C-API** - A C-API for using modelardb_embedded from other programming languages through a C-FFI.
   - **ModelarDB** - Module providing functionality for reading from and writing to ModelarDB instances and data folders.
