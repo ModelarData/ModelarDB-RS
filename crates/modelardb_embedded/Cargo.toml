@@ -23,7 +23,6 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 # cdylib is for dynamically linking with process that use bindings.
 # lib is for statically linking with a Rust crate like bulkloader.
 crate-type = ["cdylib", "lib"]
-name = "modelardbe"
 
 [dependencies]
 arrow = { workspace = true, features = ["ffi"] }

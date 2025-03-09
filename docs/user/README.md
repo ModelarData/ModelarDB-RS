@@ -31,7 +31,7 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
    - Run Client: `cargo run --bin modelardb [server_address] [query_file]`
 5. Move `modelardbd`, `modelardbm`,`modelardb`, and `modelardbb` from the `target` directory to any
    directory.
-6. Install and test the Python bindings for `modelardbe` using Python:
+6. Install and test the Python bindings for `modelardb_embedded` using Python:
    * Install: `python3 -m pip install .`
    * Run Tests: `python3 -m unittest`
 
@@ -40,10 +40,10 @@ ModelarDB consists of four binaries and a library with bindings: `modelardbd` is
 executes SQL queries, `modelardbm` is a manager for one or more DBMS servers deployed on the *edge* or in the *cloud*,
 `modelardb` is a command-line client for connecting to a DBMS server and executing commands and SQL queries,
 `modelardbb` is a command-line bulk loader that operates without `modelardbd` as it reads from and write to
-`modelardbd`'s data folder directly, and `modelardbe` is an embeddable library for executing queries against and writing
-to `modelardbd` or its data folder directly. `modelardbd` uses local storage on the edge and an Amazon S3-compatible or
-Azure Blob Storage object store in the cloud. `modelardbd` can be deployed alone or together with `modelardbm` depending
-on the use cases.
+`modelardbd`'s data folder directly, and `modelardb_embedded` is an embeddable library for executing queries against and
+writing to `modelardbd` or its data folder directly. `modelardbd` uses local storage on the edge and an Amazon
+S3-compatible or Azure Blob Storage object store in the cloud. `modelardbd` can be deployed alone or together with
+`modelardbm` depending on the use cases.
 
 `modelardbd` can be deployed on a single node to manage data in a local folder. In this configuration `modelardbm` is
 not needed. `modelardbd` can also be deployed in a distributed configuration across edge and cloud. In this
@@ -353,27 +353,27 @@ for flight_stream_chunk in flight_stream_reader:
 ```
 
 ### Embed Library
-ModelarDB includes an embeddable library in the form of `modelardbe`. It allows programming languages to execute queries
-against or write to `modelardbd`, `modelardbm` or a data folder directly. A C-API allows other programming languages
-than Rust to also use `modelardbe`. The location where queries and writes are executed is specified using the set of
-`open_*()` methods and the `connect()` method. The other methods in `modelardbe` work for both local disk, object store,
-`modelardbd`, and `modelardbm` with a few exceptions. Thus, a program can be developed against a small data set in a
-local local data folder and then scaled by switching to `modelardbd`.
+ModelarDB includes an embeddable library in the form of `modelardb_embedded`. It allows programming languages to execute
+queries against or write to `modelardbd`, `modelardbm` or a data folder directly. A C-API allows other programming
+languages than Rust to also use `modelardb_embedded`. The location where queries and writes are executed is specified
+using the set of `open_*()` methods and the `connect()` method. The other methods in `modelardb_embedded` work for both
+local disk, object store, `modelardbd`, and `modelardbm` with a few exceptions. Thus, a program can be developed against
+a small data set in a local local data folder and then scaled by switching to `modelardbd`.
 
 ```python
-import modelardbe
+import modelardb
 
 # Execute queries and write to a data folder on a local disk.
-local_data_folder = modelardbe.open_local(data_folder_path)
+local_data_folder = modelardb.open_local(data_folder_path)
 
 # Execute queries and write to a data folder in a S3-compatible object store.
-remote_data_folder = modelardbe.open_s3(endpoint, bucket_name, access_key_id, secret_access_key)
+remote_data_folder = modelardb.open_s3(endpoint, bucket_name, access_key_id, secret_access_key)
 
 # Execute queries and write to a data folder in Microsoft Azure Blob Storage.
-remote_data_folder = modelardbe.open_azure(account_name, access_key, container_name)
+remote_data_folder = modelardb.open_azure(account_name, access_key, container_name)
 
 # Execute queries and write to a `modelardbd` or `modelardbm` instance.
-modelardbd_or_manager_instance = modelardbe.connect(node)
+modelardbd_or_manager_instance = modelardb.connect(node)
 ```
 
 ## ModelarDB configuration

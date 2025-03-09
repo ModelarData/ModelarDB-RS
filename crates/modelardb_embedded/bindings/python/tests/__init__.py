@@ -17,9 +17,9 @@ import os
 import unittest
 from tempfile import TemporaryDirectory
 
-import modelardbe
+import modelardb
 import pyarrow
-from modelardbe import (
+from modelardb import (
     AbsoluteErrorBound,
     ModelTable,
     NormalTable,
@@ -35,7 +35,7 @@ MODEL_TABLE_NAME = "model_table"
 MISSING_TABLE_NAME = "missing_table"
 
 
-class ModelarDBEmbeddedPythonTest(unittest.TestCase):
+class ModelarDBPythonTest(unittest.TestCase):
     # Tests for AbsoluteErrorBound.
     def test_can_create_absolute_error_bound_with_float_zero(self):
         _ = AbsoluteErrorBound(0)
@@ -145,11 +145,11 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             data_folder = ModelarDB.open_local(temp_dir)
 
             expected_schema = model_table_query_schema()
-            model_table_type = modelardbe.ModelTable(
+            model_table_type = modelardb.ModelTable(
                 expected_schema,
                 {
-                    "field_one": modelardbe.AbsoluteErrorBound(1),
-                    "field_two": modelardbe.RelativeErrorBound(10),
+                    "field_one": modelardb.AbsoluteErrorBound(1),
+                    "field_two": modelardb.RelativeErrorBound(10),
                 },
                 {"field_three": "field_one + field_two"},
             )
@@ -270,8 +270,8 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             data_folder.write(MODEL_TABLE_NAME, model_table_data())
 
             columns = [
-                ("tag", modelardbe.Aggregate.NONE),
-                ("field_one", modelardbe.Aggregate.SUM),
+                ("tag", modelardb.Aggregate.NONE),
+                ("field_one", modelardb.Aggregate.SUM),
             ]
             actual_result = data_folder.read_model_table(
                 MODEL_TABLE_NAME, columns, ["tag"]
@@ -528,11 +528,11 @@ def create_tables_in_data_folder(data_folder: ModelarDB):
     table_type = NormalTable(normal_table_schema())
     data_folder.create(NORMAL_TABLE_NAME, table_type)
 
-    model_table_type = modelardbe.ModelTable(
+    model_table_type = modelardb.ModelTable(
         model_table_query_schema(),
         {
-            "field_one": modelardbe.AbsoluteErrorBound(1),
-            "field_two": modelardbe.RelativeErrorBound(10),
+            "field_one": modelardb.AbsoluteErrorBound(1),
+            "field_two": modelardb.RelativeErrorBound(10),
         },
         {"field_three": "field_one + field_two"},
     )

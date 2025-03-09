@@ -272,17 +272,18 @@ class ModelarDB:
                 case "Linux":
                     library_path = (
                         script_folder
-                        + f"/../../../../../target/{build}/libmodelardbe.so"
+                        +
+                            f"/../../../../../target/{build}/libmodelardb_embedded.so"
                     )
                 case "Darwin":
                     library_path = (
                         script_folder
-                        + f"/../../../../../target/{build}/libmodelardbe.dylib"
+                        + f"/../../../../../target/{build}/libmodelardb_embedded.dylib"
                     )
                 case "Windows":
                     library_path = (
                         script_folder
-                        + f"\\..\\..\\..\\..\\..\\target\\{build}\\modelardbe.dll"
+                        + f"\\..\\..\\..\\..\\..\\target\\{build}\\modelardb_embedded.dll"
                     )
                 case _:
                     raise RuntimeError("Only Linux, macOS, and Windows are supported.")
