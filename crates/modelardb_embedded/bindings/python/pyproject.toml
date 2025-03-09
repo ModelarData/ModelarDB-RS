@@ -13,7 +13,7 @@
 # limitations under the License.
 
 [project]
-name = "modelardb_embedded"
+name = "modelardbe"
 description = "Python interface for ModelarDB Embedded"
 version = "0.0.1"
 license = "Apache-2.0"

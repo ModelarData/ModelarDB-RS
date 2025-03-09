@@ -271,15 +271,18 @@ class ModelarDB:
             match platform.system():
                 case "Linux":
                     library_path = (
-                        script_folder + f"/../../../../../target/{build}/libmodelardb_embedded.so"
+                        script_folder
+                        + f"/../../../../../target/{build}/libmodelardbe.so"
                     )
                 case "Darwin":
                     library_path = (
-                        script_folder + f"/../../../../../target/{build}/libmodelardb_embedded.dylib"
+                        script_folder
+                        + f"/../../../../../target/{build}/libmodelardbe.dylib"
                     )
                 case "Windows":
                     library_path = (
-                        script_folder + f"\\..\\..\\..\\..\\..\\target\\{build}\\modelardb_embedded.dll"
+                        script_folder
+                        + f"\\..\\..\\..\\..\\..\\target\\{build}\\modelardbe.dll"
                     )
                 case _:
                     raise RuntimeError("Only Linux, macOS, and Windows are supported.")
@@ -417,7 +420,9 @@ class ModelarDB:
 
         data_folder_path_ptr = ffi.new("char[]", bytes(data_folder_path, "UTF-8"))
 
-        self.__modelardb_ptr = self.__library.modelardb_embedded_open_local(data_folder_path_ptr)
+        self.__modelardb_ptr = self.__library.modelardb_embedded_open_local(
+            data_folder_path_ptr
+        )
         self.__is_data_folder = True
 
         if self.__modelardb_ptr == ffi.NULL:
@@ -499,7 +504,9 @@ class ModelarDB:
 
         node_url_ptr = ffi.new("char[]", bytes(node.url, "UTF-8"))
 
-        self.__modelardb_ptr = self.__library.modelardb_embedded_connect(node_url_ptr, isinstance(node, Server))
+        self.__modelardb_ptr = self.__library.modelardb_embedded_connect(
+            node_url_ptr, isinstance(node, Server)
+        )
         self.__is_data_folder = False
 
         if self.__modelardb_ptr == ffi.NULL:
@@ -509,7 +516,9 @@ class ModelarDB:
 
     def __del__(self):
         """Close the connection to the local folder, object store, or node and deallocate the memory."""
-        return_code = self.__library.modelardb_embedded_close(self.__modelardb_ptr, self.__is_data_folder)
+        return_code = self.__library.modelardb_embedded_close(
+            self.__modelardb_ptr, self.__is_data_folder
+        )
         self.__check_return_code_and_raise_error(return_code)
 
     def create(self, table_name: str, table_type: NormalTable | ModelTable):
@@ -580,7 +589,10 @@ class ModelarDB:
         tables_ffi = FFIArray.from_type(StringArray)
 
         return_code = self.__library.modelardb_embedded_tables(
-            self.__modelardb_ptr, self.__is_data_folder, tables_ffi.array_ptr, tables_ffi.schema_ptr
+            self.__modelardb_ptr,
+            self.__is_data_folder,
+            tables_ffi.array_ptr,
+            tables_ffi.schema_ptr,
         )
         self.__check_return_code_and_raise_error(return_code)
 
@@ -869,7 +881,11 @@ class ModelarDB:
         to_table_name = ffi.new("char[]", bytes(to_table_name, "UTF-8"))
 
         return_code = self.__library.modelardb_embedded_move(
-            from_modelardb, self.__is_data_folder, from_table_name, to_modelardb, to_table_name
+            from_modelardb,
+            self.__is_data_folder,
+            from_table_name,
+            to_modelardb,
+            to_table_name,
         )
         self.__check_return_code_and_raise_error(return_code)
 
@@ -911,7 +927,9 @@ class ModelarDB:
                 pass  # No errors.
             case self.__library.RETURN_FAILURE:
                 raise RuntimeError(
-                    ffi.string(self.__library.modelardb_embedded_error()).decode("UTF-8")
+                    ffi.string(self.__library.modelardb_embedded_error()).decode(
+                        "UTF-8"
+                    )
                 )
             case _:
                 raise ValueError("Unknown return code.")

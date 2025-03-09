@@ -17,9 +17,9 @@ import os
 import unittest
 from tempfile import TemporaryDirectory
 
-import modelardb_embedded
+import modelardbe
 import pyarrow
-from modelardb_embedded import (
+from modelardbe import (
     AbsoluteErrorBound,
     ModelTable,
     NormalTable,
@@ -145,11 +145,11 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             data_folder = ModelarDB.open_local(temp_dir)
 
             expected_schema = model_table_query_schema()
-            model_table_type = modelardb_embedded.ModelTable(
+            model_table_type = modelardbe.ModelTable(
                 expected_schema,
                 {
-                    "field_one": modelardb_embedded.AbsoluteErrorBound(1),
-                    "field_two": modelardb_embedded.RelativeErrorBound(10),
+                    "field_one": modelardbe.AbsoluteErrorBound(1),
+                    "field_two": modelardbe.RelativeErrorBound(10),
                 },
                 {"field_three": "field_one + field_two"},
             )
@@ -169,8 +169,10 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             with self.assertRaises(RuntimeError) as context:
                 data_folder.create(NORMAL_TABLE_NAME, NormalTable(pyarrow.schema([])))
 
-            error_message = ("ModelarDB Storage Error: Delta Lake Error: Generic error: At least one column must be "
-                             "defined to create a table.")
+            error_message = (
+                "ModelarDB Storage Error: Delta Lake Error: Generic error: At least one column must be "
+                "defined to create a table."
+            )
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_tables(self):
@@ -178,7 +180,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             data_folder = ModelarDB.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            self.assertEqual(data_folder.tables(), [NORMAL_TABLE_NAME, MODEL_TABLE_NAME])
+            self.assertEqual(
+                data_folder.tables(), [NORMAL_TABLE_NAME, MODEL_TABLE_NAME]
+            )
 
     def test_data_folder_schema(self):
         with TemporaryDirectory() as temp_dir:
@@ -198,7 +202,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             with self.assertRaises(RuntimeError) as context:
                 data_folder.schema(MISSING_TABLE_NAME)
 
-            error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a table."
+            error_message = (
+                f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a table."
+            )
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_write(self):
@@ -219,7 +225,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             with self.assertRaises(RuntimeError) as context:
                 data_folder.write(MISSING_TABLE_NAME, model_table_data())
 
-            error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a table."
+            error_message = (
+                f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a table."
+            )
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_read_model_table(self):
@@ -230,7 +238,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             data_folder.write(MODEL_TABLE_NAME, model_table_data())
 
             actual_result = data_folder.read_model_table(MODEL_TABLE_NAME)
-            self.assertEqual(actual_result, sorted_model_table_data_with_generated_column())
+            self.assertEqual(
+                actual_result, sorted_model_table_data_with_generated_column()
+            )
 
     def test_data_folder_read_model_table_with_columns_tags_timestamps(self):
         with TemporaryDirectory() as temp_dir:
@@ -248,7 +258,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
                 end_time=end_time + datetime.timedelta(microseconds=250),
             )
             expected_result = sorted_model_table_data_with_generated_column()
-            self.assertEqual(actual_result, expected_result.select(["tag", "field_one"]).slice(1, 1))
+            self.assertEqual(
+                actual_result, expected_result.select(["tag", "field_one"]).slice(1, 1)
+            )
 
     def test_data_folder_read_model_table_with_aggregates(self):
         with TemporaryDirectory() as temp_dir:
@@ -257,14 +269,22 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
 
             data_folder.write(MODEL_TABLE_NAME, model_table_data())
 
-            columns = [("tag", modelardb_embedded.Aggregate.NONE), ("field_one", modelardb_embedded.Aggregate.SUM)]
-            actual_result = data_folder.read_model_table(MODEL_TABLE_NAME, columns, ["tag"])
+            columns = [
+                ("tag", modelardbe.Aggregate.NONE),
+                ("field_one", modelardbe.Aggregate.SUM),
+            ]
+            actual_result = data_folder.read_model_table(
+                MODEL_TABLE_NAME, columns, ["tag"]
+            )
 
             expected_result = [
                 {"tag": "tag_one", f"sum({MODEL_TABLE_NAME}.field_one)": 111.0},
                 {"tag": "tag_two", f"sum({MODEL_TABLE_NAME}.field_one)": 219.0},
             ]
-            self.assertEqual(sorted(actual_result.to_pylist(), key=lambda x: x["tag"]), expected_result)
+            self.assertEqual(
+                sorted(actual_result.to_pylist(), key=lambda x: x["tag"]),
+                expected_result,
+            )
 
     def test_data_folder_read_model_table_error(self):
         with TemporaryDirectory() as temp_dir:
@@ -273,7 +293,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             with self.assertRaises(RuntimeError) as context:
                 data_folder.read_model_table(MISSING_TABLE_NAME)
 
-            error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table."
+            error_message = (
+                f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table."
+            )
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_copy_model_table(self):
@@ -287,12 +309,18 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
                 to_data_folder = ModelarDB.open_local(to_temp_dir)
                 create_tables_in_data_folder(to_data_folder)
 
-                from_data_folder.copy_model_table(MODEL_TABLE_NAME, to_data_folder, MODEL_TABLE_NAME)
+                from_data_folder.copy_model_table(
+                    MODEL_TABLE_NAME, to_data_folder, MODEL_TABLE_NAME
+                )
 
                 # After copying the data it should also be in to_table.
                 expected_result = sorted_model_table_data_with_generated_column()
-                self.assertEqual(from_data_folder.read_model_table(MODEL_TABLE_NAME), expected_result)
-                self.assertEqual(to_data_folder.read_model_table(MODEL_TABLE_NAME), expected_result)
+                self.assertEqual(
+                    from_data_folder.read_model_table(MODEL_TABLE_NAME), expected_result
+                )
+                self.assertEqual(
+                    to_data_folder.read_model_table(MODEL_TABLE_NAME), expected_result
+                )
 
     def test_data_folder_copy_model_table_with_timestamps(self):
         with TemporaryDirectory() as from_temp_dir:
@@ -302,7 +330,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
 
                 # Force the physical data to have multiple segments by writing the data in three parts.
                 for i in range(3):
-                    from_data_folder.write(MODEL_TABLE_NAME, model_table_data().slice(i * 2, 2))
+                    from_data_folder.write(
+                        MODEL_TABLE_NAME, model_table_data().slice(i * 2, 2)
+                    )
 
                 to_data_folder = ModelarDB.open_local(to_temp_dir)
                 create_tables_in_data_folder(to_data_folder)
@@ -318,10 +348,16 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
 
                 # After copying the data it should also be in to_table.
                 from_expected_result = model_table_data_with_generated_column()
-                self.assertEqual(from_data_folder.read_model_table(MODEL_TABLE_NAME), from_expected_result)
+                self.assertEqual(
+                    from_data_folder.read_model_table(MODEL_TABLE_NAME),
+                    from_expected_result,
+                )
 
                 to_expected_result = from_expected_result.slice(2, 2)
-                self.assertEqual(to_data_folder.read_model_table(MODEL_TABLE_NAME), to_expected_result)
+                self.assertEqual(
+                    to_data_folder.read_model_table(MODEL_TABLE_NAME),
+                    to_expected_result,
+                )
 
     def test_data_folder_copy_model_table_error(self):
         with TemporaryDirectory() as from_temp_dir:
@@ -330,7 +366,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
                 to_data_folder = ModelarDB.open_local(to_temp_dir)
 
                 with self.assertRaises(RuntimeError) as context:
-                    from_data_folder.copy_model_table(MISSING_TABLE_NAME, to_data_folder, MISSING_TABLE_NAME)
+                    from_data_folder.copy_model_table(
+                        MISSING_TABLE_NAME, to_data_folder, MISSING_TABLE_NAME
+                    )
 
                 error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table."
                 self.assertEqual(error_message, str(context.exception))
@@ -343,7 +381,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             data_folder.write(MODEL_TABLE_NAME, model_table_data())
 
             actual_result = data_folder.read(f"SELECT * FROM {MODEL_TABLE_NAME}")
-            self.assertEqual(actual_result, sorted_model_table_data_with_generated_column())
+            self.assertEqual(
+                actual_result, sorted_model_table_data_with_generated_column()
+            )
 
     def test_data_folder_read_error(self):
         with TemporaryDirectory() as temp_dir:
@@ -352,8 +392,10 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             with self.assertRaises(RuntimeError) as context:
                 data_folder.read(f"SELECT * FROM {MISSING_TABLE_NAME}")
 
-            error_message = (f"DataFusion Error: Error during planning: table 'datafusion.public.{MISSING_TABLE_NAME}' "
-                             f"not found")
+            error_message = (
+                f"DataFusion Error: Error during planning: table 'datafusion.public.{MISSING_TABLE_NAME}' "
+                f"not found"
+            )
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_copy_normal_table(self):
@@ -369,7 +411,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
                 create_tables_in_data_folder(to_data_folder)
 
                 sql = f"SELECT * FROM {NORMAL_TABLE_NAME}"
-                from_data_folder.copy_normal_table(sql, to_data_folder, NORMAL_TABLE_NAME)
+                from_data_folder.copy_normal_table(
+                    sql, to_data_folder, NORMAL_TABLE_NAME
+                )
 
                 # After copying the data it should also be in to_table.
                 self.assertEqual(from_data_folder.read(sql), expected_result)
@@ -383,7 +427,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
 
                 with self.assertRaises(RuntimeError) as context:
                     sql = f"SELECT * FROM {MISSING_TABLE_NAME}"
-                    from_data_folder.copy_normal_table(sql, to_data_folder, MISSING_TABLE_NAME)
+                    from_data_folder.copy_normal_table(
+                        sql, to_data_folder, MISSING_TABLE_NAME
+                    )
 
                 error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a normal table."
                 self.assertEqual(error_message, str(context.exception))
@@ -399,12 +445,18 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
                 to_data_folder = ModelarDB.open_local(to_temp_dir)
                 create_tables_in_data_folder(to_data_folder)
 
-                from_data_folder.move(MODEL_TABLE_NAME, to_data_folder, MODEL_TABLE_NAME)
+                from_data_folder.move(
+                    MODEL_TABLE_NAME, to_data_folder, MODEL_TABLE_NAME
+                )
 
-                self.assertEqual(from_data_folder.read_model_table(MODEL_TABLE_NAME).num_rows, 0)
+                self.assertEqual(
+                    from_data_folder.read_model_table(MODEL_TABLE_NAME).num_rows, 0
+                )
 
                 expected_result = sorted_model_table_data_with_generated_column()
-                self.assertEqual(to_data_folder.read_model_table(MODEL_TABLE_NAME), expected_result)
+                self.assertEqual(
+                    to_data_folder.read_model_table(MODEL_TABLE_NAME), expected_result
+                )
 
     def test_data_folder_move_error(self):
         with TemporaryDirectory() as from_temp_dir:
@@ -413,10 +465,14 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
                 to_data_folder = ModelarDB.open_local(to_temp_dir)
 
                 with self.assertRaises(RuntimeError) as context:
-                    from_data_folder.move(MISSING_TABLE_NAME, to_data_folder, MISSING_TABLE_NAME)
+                    from_data_folder.move(
+                        MISSING_TABLE_NAME, to_data_folder, MISSING_TABLE_NAME
+                    )
 
-                error_message = (f"Invalid Argument Error: {MISSING_TABLE_NAME} and {MISSING_TABLE_NAME} are not both "
-                                 f"normal tables or model tables.")
+                error_message = (
+                    f"Invalid Argument Error: {MISSING_TABLE_NAME} and {MISSING_TABLE_NAME} are not both "
+                    f"normal tables or model tables."
+                )
                 self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_drop(self):
@@ -427,7 +483,9 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
 
             data_folder.drop(MODEL_TABLE_NAME)
 
-            self.assertFalse(os.path.exists(os.path.join(temp_dir, "tables", MODEL_TABLE_NAME)))
+            self.assertFalse(
+                os.path.exists(os.path.join(temp_dir, "tables", MODEL_TABLE_NAME))
+            )
             self.assertFalse(MODEL_TABLE_NAME in data_folder.tables())
 
     def test_data_folder_drop_error(self):
@@ -437,8 +495,10 @@ class ModelarDBEmbeddedPythonTest(unittest.TestCase):
             with self.assertRaises(RuntimeError) as context:
                 data_folder.drop(MISSING_TABLE_NAME)
 
-            error_message = (f"ModelarDB Storage Error: Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' "
-                             f"does not exist.")
+            error_message = (
+                f"ModelarDB Storage Error: Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' "
+                f"does not exist."
+            )
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_truncate(self):
@@ -468,11 +528,11 @@ def create_tables_in_data_folder(data_folder: ModelarDB):
     table_type = NormalTable(normal_table_schema())
     data_folder.create(NORMAL_TABLE_NAME, table_type)
 
-    model_table_type = modelardb_embedded.ModelTable(
+    model_table_type = modelardbe.ModelTable(
         model_table_query_schema(),
         {
-            "field_one": modelardb_embedded.AbsoluteErrorBound(1),
-            "field_two": modelardb_embedded.RelativeErrorBound(10),
+            "field_one": modelardbe.AbsoluteErrorBound(1),
+            "field_two": modelardbe.RelativeErrorBound(10),
         },
         {"field_three": "field_one + field_two"},
     )
@@ -530,7 +590,9 @@ def sorted_model_table_data_with_generated_column() -> RecordBatch:
 def model_table_data_with_generated_column() -> RecordBatch:
     data = model_table_data()
 
-    generated_column_array = pyarrow.array([74, 146, 74, 146, 74, 146], pyarrow.float32())
+    generated_column_array = pyarrow.array(
+        [74, 146, 74, 146, 74, 146], pyarrow.float32()
+    )
     return data.append_column("field_three", generated_column_array)
 
 
