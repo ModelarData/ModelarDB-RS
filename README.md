@@ -2,7 +2,7 @@
 :warning: **The current version of ModelarDB is alpha software and not yet ready for production use.**
 
 [![Ast-grep Scan](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/ast-grep-scan.yml/badge.svg)](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/ast-grep-scan.yml/badge.yml)
-[![Cargo Build, Lint, and Test](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/cargo-build-lint-and-test.yml/badge.svg)](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/cargo-build-lint-and-test.yml)
+[![Build, Lint, and Test](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/build-lint-and-test.yml/badge.svg)](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/build-lint-and-test.yml)
 
 ModelarDB is an efficient high-performance time series management system that is designed to efficiently ingest,
 transfer, store, and analyze high-frequency time series across the edge, cloud, and client. It provides state-of-the-art
@@ -49,5 +49,4 @@ deprecated JVM-based prototype validated the benefits of using a model-based rep
 has been superseded by this current, much more efficient, Rust-based implementation.
 
 ## License
-ModelarDB is licensed under version 2.0 of the Apache License and a copy of the
-license is bundled with the program.
+ModelarDB is licensed under version 2.0 of the Apache License and a copy of the license is bundled with the program.

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Cargo Build, Lint, and Test
+name: Build, Lint, and Test
 
 on:
   pull_request:
@@ -35,8 +35,8 @@ env:
   AWS_ALLOW_HTTP: true
 
 jobs:
-  cargo_build_lint_and_test:
-    name: Cargo Build, Lint, and Test
+  build_lint_and_test:
+    name: Build, Lint, and Test
 
     runs-on: ${{ matrix.operating-system }}
     strategy:
@@ -101,17 +101,17 @@ jobs:
       run: cargo test --verbose --all-targets -- --nocapture
 
     # Run Python Tests.
-    - name: Update pip
+    - name: Pip Update
       run: python3 -m pip install pip --force-reinstall --break-system-packages --user
-    - name: Install dependencies
+    - name: Pip Install
       run: python3 -m pip install .  --break-system-packages --user
       working-directory: crates/modelardb_embedded/bindings/python
-    - name: Run unittest
+    - name: Python Unittest
       run: python3 -m unittest --verbose
       working-directory: crates/modelardb_embedded/bindings/python
 
     # Upload Code Coverage Report.
-    - name: grcov
+    - name: Grcov Upload
       run: grcov . --source-dir . --binary-path ./target/debug/ --output-types html --branch --ignore-not-existing -o ./target/debug/coverage/
     - uses: actions/upload-artifact@v4
       with:
