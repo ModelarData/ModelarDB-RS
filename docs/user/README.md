@@ -37,9 +37,9 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 
 ## Usage
 ModelarDB consists of four binaries and a library with bindings: `modelardbd` is a DBMS server that manages data and
-executes SQL queries, `modelardbm` is a manager for one or more DBMS servers deployed on the *edge* or in the *cloud*,
-`modelardb` is a command-line client for connecting to a DBMS server and executing commands and SQL queries,
-`modelardbb` is a command-line bulk loader that operates without `modelardbd` as it reads from and writes to
+executes SQL queries, `modelardbm` is a manager for one or more `modelardbd` instances deployed on the *edge* or in the
+*cloud*, `modelardb` is a command-line client for connecting to a `modelardbd` instance and executing commands and SQL
+queries, `modelardbb` is a command-line bulk loader that operates without `modelardbd` as it reads from and writes to
 `modelardbd`'s data folder directly, and `modelardb_embedded` is an embeddable library for executing queries against and
 writing to `modelardbd` or its data folder directly. `modelardbd` uses local storage on the edge and an Amazon
 S3-compatible or Azure Blob Storage object store in the cloud. `modelardbd` can be deployed alone or together with
