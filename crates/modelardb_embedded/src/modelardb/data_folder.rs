@@ -102,6 +102,15 @@ pub struct DataFolder {
 }
 
 impl DataFolder {
+    /// Creates a [`DataFolder`] that manages data in memory and returns it. If the metadata tables
+    /// could not be created, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn open_memory() -> Result<Self> {
+        let delta_lake = DeltaLake::new_in_memory();
+        let table_metadata_manager = Arc::new(TableMetadataManager::try_new_in_memory(None).await?);
+
+        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
+    }
+
     /// Creates a [`DataFolder`] that manages data in the local folder at `data_folder_path` and
     /// returns it. If the folder does not exist and could not be created or the metadata tables
     /// could not be created, [`ModelarDbEmbeddedError`] is returned.
