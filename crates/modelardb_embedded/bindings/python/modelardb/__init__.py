@@ -305,6 +305,7 @@ class ModelarDB:
             static int RETURN_SUCCESS;
             static int RETURN_FAILURE;
 
+            void* modelardb_embedded_open_memory();
             void* modelardb_embedded_open_local(char* data_folder_path_ptr);
             void* modelardb_embedded_open_s3(char* endpoint_ptr,
                                              char* bucket_name_ptr,
@@ -406,6 +407,24 @@ class ModelarDB:
     # __library is a class variable to ensure the dynamic library's interface is
     # only defined once by ffi.cdef() and that it is loaded by ffi.dlopen() once.
     __library = __find_and_load_library()
+
+    @classmethod
+    def open_memory(cls):
+        """
+        Create a :obj:`ModelarDB` data folder that manages data in memory.
+
+        :return: The constructed :obj:`ModelarDB`.
+        :rtype: ModelarDB
+        """
+        self: ModelarDB = cls()
+
+        self.__modelardb_ptr = self.__library.modelardb_embedded_open_memory()
+        self.__is_data_folder = True
+
+        if self.__modelardb_ptr == ffi.NULL:
+            raise ValueError("Failed to read from or write to memory data folder.")
+
+        return self
 
     @classmethod
     def open_local(cls, data_folder_path: str):
@@ -933,6 +952,16 @@ class ModelarDB:
                 )
             case _:
                 raise ValueError("Unknown return code.")
+
+
+def open_memory() -> ModelarDB:
+    """
+    Create a :obj:`ModelarDB` data folder that manages data in memory.
+
+    :return: The constructed :obj:`ModelarDB`.
+    :rtype: ModelarDB
+    """
+    return ModelarDB.open_memory()
 
 
 def open_local(data_folder_path: str) -> ModelarDB:
