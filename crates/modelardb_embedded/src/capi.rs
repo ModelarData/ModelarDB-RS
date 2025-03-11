@@ -77,6 +77,19 @@ thread_local! {
     static THREAD_LAST_ERROR_CSTRING: RefCell<Option<CString>> = const { RefCell::new(None) } ;
 }
 
+/// Creates a [`DataFolder`] that manages data in memory and returns a pointer to the [`DataFolder`]
+/// or a zero-initialized pointer if an error occurs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn modelardb_embedded_open_memory() -> *const c_void {
+    let maybe_data_folder = unsafe { open_memory() };
+    set_error_and_return_value_ptr(maybe_data_folder)
+}
+
+/// See documentation for [`modelardb_embedded_open_memory`].
+unsafe fn open_memory() -> Result<DataFolder> {
+    TOKIO_RUNTIME.block_on(DataFolder::open_memory())
+}
+
 /// Creates a [`DataFolder`] that manages data in the local folder at `data_folder_path_path` and
 /// returns a pointer to the [`DataFolder`] or a zero-initialized pointer if an error occurs.
 /// Assumes `data_folder_path_ptr` points to a valid C string.
