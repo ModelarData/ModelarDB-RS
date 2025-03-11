@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::{debug_assert, iter};
 
 use arrow::array::{
-    ArrayBuilder, ArrayRef, BinaryBuilder, Float32Builder, StringArray, UInt8Builder, UInt16Array,
+    ArrayBuilder, ArrayRef, BinaryBuilder, Float32Builder, Int8Builder, Int16Array, StringArray,
 };
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
@@ -147,7 +147,7 @@ impl ModelBuilder {
 /// A compressed segment being built from metadata and a model.
 pub(crate) struct CompressedSegmentBuilder {
     /// Id of the model type that created the model in this segment.
-    pub model_type_id: u8,
+    pub model_type_id: i8,
     /// Index of the first data point in the `UncompressedDataBuffer` that this segment represents.
     pub start_index: usize,
     /// Index of the last data point in the `UncompressedDataBuffer` that this segment represents.
@@ -167,7 +167,7 @@ pub(crate) struct CompressedSegmentBuilder {
 
 impl CompressedSegmentBuilder {
     fn new(
-        model_type_id: u8,
+        model_type_id: i8,
         start_index: usize,
         end_index: usize,
         min_value: Value,
@@ -405,9 +405,9 @@ pub(crate) struct CompressedSegmentBatchBuilder {
     /// Tag values for the time series the compressed segments in the batch belong to.
     tag_values: Vec<String>,
     /// Index of the field column the compressed segments in the batch belong to.
-    field_column_index: u16,
+    field_column_index: i16,
     /// Model type id of each compressed segment in the batch.
-    model_type_ids: UInt8Builder,
+    model_type_ids: Int8Builder,
     /// First timestamp of each compressed segment in the batch.
     start_times: TimestampBuilder,
     /// Last timestamp of each compressed segment in the batch.
@@ -435,14 +435,14 @@ impl CompressedSegmentBatchBuilder {
     pub(crate) fn new(
         compressed_schema: Arc<Schema>,
         tag_values: Vec<String>,
-        field_column_index: u16,
+        field_column_index: i16,
         capacity: usize,
     ) -> Self {
         Self {
             compressed_schema,
             tag_values,
             field_column_index,
-            model_type_ids: UInt8Builder::with_capacity(capacity),
+            model_type_ids: Int8Builder::with_capacity(capacity),
             start_times: TimestampBuilder::with_capacity(capacity),
             end_times: TimestampBuilder::with_capacity(capacity),
             timestamps: BinaryBuilder::with_capacity(capacity, capacity),
@@ -457,7 +457,7 @@ impl CompressedSegmentBatchBuilder {
     /// Append a compressed segment to the builder.
     pub(crate) fn append_compressed_segment(
         &mut self,
-        model_type_id: u8,
+        model_type_id: i8,
         start_time: Timestamp,
         end_time: Timestamp,
         timestamps: &[u8],
@@ -481,7 +481,7 @@ impl CompressedSegmentBatchBuilder {
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
     pub(crate) fn finish(mut self) -> RecordBatch {
         let batch_length = self.model_type_ids.len();
-        let field_column_array: UInt16Array = iter::repeat(self.field_column_index)
+        let field_column_array: Int16Array = iter::repeat(self.field_column_index)
             .take(batch_length)
             .collect();
 
@@ -778,7 +778,7 @@ mod tests {
 
     fn create_and_assert_expected_segment(
         uncompressed_values: &ValueArray,
-        expected_model_type_id: u8,
+        expected_model_type_id: i8,
         expected_model_end_index: usize,
         expected_model_min_value: Value,
         expected_model_max_value: Value,

@@ -1,4 +1,4 @@
-# Copyright 2024 The ModelarDB Contributors
+# Copyright 2025 The ModelarDB Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,31 +13,22 @@
 # limitations under the License.
 
 [package]
-name = "modelardb_storage"
+name = "modelardb_bulkloader"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2024"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
-[dependencies]
-arrow-flight.workspace = true
-arrow.workspace = true
-async-trait.workspace = true
-bytes.workspace = true
-datafusion.workspace = true
-deltalake = { workspace = true, features = ["datafusion", "s3"] }
-futures.workspace = true
-modelardb_common = { path = "../modelardb_common" }
-modelardb_compression = { path = "../modelardb_compression" }
-modelardb_types = { path = "../modelardb_types" }
-object_store = { workspace = true, features = ["aws", "azure"] }
-sqlparser.workspace = true
-tokio = { workspace = true }
-tonic.workspace = true
-url.workspace = true
-uuid.workspace = true
+[[bin]]
+name = "modelardbb"
+path = "src/main.rs"
 
-[dev-dependencies]
+[dependencies]
+arrow = { workspace = true, features = ["ffi"] }
+datafusion.workspace = true
+deltalake.workspace = true
 futures.workspace = true
-tempfile.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
+modelardb_embedded = { path = "../modelardb_embedded" }
+modelardb_storage = { path = "../modelardb_storage" }
+sysinfo.workspace = true
+tokio.workspace = true

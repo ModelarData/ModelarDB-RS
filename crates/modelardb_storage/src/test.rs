@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use arrow::array::{BinaryArray, Float32Array, RecordBatch, StringArray, UInt8Array, UInt16Array};
+use arrow::array::{BinaryArray, Float32Array, Int8Array, Int16Array, RecordBatch, StringArray};
 use arrow::compute::concat_batches;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
@@ -143,7 +143,7 @@ pub fn compressed_segments_record_batch() -> RecordBatch {
 /// range is from `time_ms` to `time_ms` + 3, while the value range is from`offset` + 5.2 to
 /// `offset` + 34.2.
 pub fn compressed_segments_record_batch_with_time(
-    field_column: u16,
+    field_column: i16,
     time_ms: i64,
     offset: f32,
 ) -> RecordBatch {
@@ -152,7 +152,7 @@ pub fn compressed_segments_record_batch_with_time(
     let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];
     let max_values = vec![offset + 20.2, offset + 12.2, offset + 34.2];
 
-    let model_type_id = UInt8Array::from(vec![1, 1, 2]);
+    let model_type_id = Int8Array::from(vec![1, 1, 2]);
     let start_time = TimestampArray::from(start_times);
     let end_time = TimestampArray::from(end_times);
     let timestamps = BinaryArray::from_vec(vec![b"", b"", b""]);
@@ -161,7 +161,7 @@ pub fn compressed_segments_record_batch_with_time(
     let values = BinaryArray::from_vec(vec![b"", b"", b""]);
     let residuals = BinaryArray::from_vec(vec![b"", b"", b""]);
     let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
-    let field_column = UInt16Array::from(vec![field_column, field_column, field_column]);
+    let field_column = Int16Array::from(vec![field_column, field_column, field_column]);
     let tag_column = StringArray::from(vec!["tag", "tag", "tag"]);
 
     RecordBatch::try_new(

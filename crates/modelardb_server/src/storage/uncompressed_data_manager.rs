@@ -593,7 +593,7 @@ impl UncompressedDataManager {
                     error_bound,
                     model_table_metadata.compressed_schema.clone(),
                     tag_values.clone(),
-                    *field_column_index as u16,
+                    *field_column_index as i16,
                 )
                 .unwrap()
             })

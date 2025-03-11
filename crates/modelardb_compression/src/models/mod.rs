@@ -33,9 +33,9 @@ use crate::types::CompressedSegmentBuilder;
 /// Unique ids for each model type. Constant values are used instead of an enum so the stored model
 /// type ids can be used in match expressions without being converted to an enum first. Any changes
 /// to the ids must be reflected in all statements matching on them.
-pub const PMC_MEAN_ID: u8 = 0;
-pub const SWING_ID: u8 = 1;
-pub const GORILLA_ID: u8 = 2;
+pub const PMC_MEAN_ID: i8 = 0;
+pub const SWING_ID: i8 = 1;
+pub const GORILLA_ID: i8 = 2;
 
 /// Number of implemented model types. It is usize instead of u8 as it is used as an array length.
 pub const MODEL_TYPE_COUNT: usize = 3;
@@ -124,7 +124,7 @@ pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usi
 /// Compute the sum of the values for a compressed segment whose values are represented by a model
 /// and residuals.
 pub fn sum(
-    model_type_id: u8,
+    model_type_id: i8,
     start_time: Timestamp,
     end_time: Timestamp,
     timestamps: &[u8],
@@ -184,7 +184,7 @@ pub fn sum(
 /// residuals. Each data point is split into its two components and appended to `timestamp_builder`
 /// and `value_builder`.
 pub fn grid(
-    model_type_id: u8,
+    model_type_id: i8,
     start_time: Timestamp,
     end_time: Timestamp,
     timestamps: &[u8],
