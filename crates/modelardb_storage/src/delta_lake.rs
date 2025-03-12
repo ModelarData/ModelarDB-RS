@@ -35,16 +35,16 @@ use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_common::arguments;
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
+use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
-use object_store::ObjectStore;
 use url::Url;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::{apache_parquet_writer_properties, METADATA_FOLDER, TABLE_FOLDER};
+use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
 pub struct DeltaLake {

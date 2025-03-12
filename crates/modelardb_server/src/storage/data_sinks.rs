@@ -66,7 +66,7 @@ impl DataSink for NormalTableDataSink {
         self
     }
 
-    /// Returns the [`DataSink`]'s schema.
+    /// Return the [`DataSink's`](DataSink) schema.
     fn schema(&self) -> &Arc<Schema> {
         &self.schema
     }
@@ -147,7 +147,7 @@ impl DataSink for ModelTableDataSink {
         self
     }
 
-    /// Returns the [`DataSink`]'s schema.
+    /// Return the [`DataSink's`](DataSink) schema.
     fn schema(&self) -> &Arc<Schema> {
         &self.model_table_metadata.schema
     }

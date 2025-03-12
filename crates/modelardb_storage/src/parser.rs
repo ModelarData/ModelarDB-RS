@@ -31,8 +31,8 @@ use datafusion::execution::context::ExecutionProps;
 use datafusion::functions;
 use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSource, WindowUDF};
 use datafusion::physical_expr::planner;
-use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use datafusion::sql::TableReference;
+use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use modelardb_types::functions::normalize_name; // Fully imported to not conflict.
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 use sqlparser::ast::{
@@ -42,7 +42,7 @@ use sqlparser::ast::{
     Value,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
-use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
+use sqlparser::keywords::{ALL_KEYWORDS, Keyword};
 use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::{Span, Token};
 
@@ -1161,60 +1161,74 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_create() {
-        assert!(tokenize_and_parse_sql_statement(
-            "MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_create_model_space() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATEMODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATEMODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_model() {
         // Tracks if sqlparser at some point can parse fields/tags in a TABLE.
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD,
-                 field_one FIELD(10.5), field_two FIELD(1%), tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD,
+             field_one FIELD(10.5), field_two FIELD(1%), tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_model_table_space() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODELTABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODELTABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_table_name() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE(timestamp TIMESTAMP, field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_table_table_name_space() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_start_parentheses() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name timestamp TIMESTAMP, field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1227,59 +1241,73 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_sql_types() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field REAL, tag VARCHAR)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field REAL, tag VARCHAR)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_column_name() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(TIMESTAMP, field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_timestamps() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP AS (37), field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP AS (37), field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_tags() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG AS (37))",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG AS (37))",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_parentheses() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_start_parentheses()
     {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37), tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37), tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_end_parentheses() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS (37, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS (37, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1302,26 +1330,32 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_column_type() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp, field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(timestamp, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_comma() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP field FIELD, tag TAG)",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_end_parentheses() {
-        assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG",
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1456,28 +1490,34 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_settings_with_click_house_dialect() {
-        assert!(Parser::parse_sql(
-            &ClickHouseDialect {},
-            "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true"
+        assert!(
+            Parser::parse_sql(
+                &ClickHouseDialect {},
+                "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true"
+            )
+            .is_ok()
         )
-        .is_ok())
     }
 
     #[test]
     fn test_tokenize_and_parse_settings_with_modelardb_dialect() {
-        assert!(Parser::parse_sql(
-            &ModelarDbDialect::new(),
-            "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true"
+        assert!(
+            Parser::parse_sql(
+                &ModelarDbDialect::new(),
+                "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true"
+            )
+            .is_err()
         )
-        .is_err())
     }
 
     #[test]
     fn test_tokenize_and_parse_include_one_address_select() {
-        assert!(tokenize_and_parse_sql_statement(
-            "INCLUDE 'grpc://192.168.1.2:9999' SELECT * FROM table_name",
-        )
-        .is_ok());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "INCLUDE 'grpc://192.168.1.2:9999' SELECT * FROM table_name",
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1490,18 +1530,20 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_include_one_double_quoted_address_select() {
-        assert!(tokenize_and_parse_sql_statement(
-            "INCLUDE \"grpc://192.168.1.2:9999\" SELECT * FROM table_name",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "INCLUDE \"grpc://192.168.1.2:9999\" SELECT * FROM table_name",
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_one_address_select() {
-        assert!(tokenize_and_parse_sql_statement(
-            "'grpc://192.168.1.2:9999' SELECT * FROM table_name",
-        )
-        .is_err());
+        assert!(
+            tokenize_and_parse_sql_statement("'grpc://192.168.1.2:9999' SELECT * FROM table_name",)
+                .is_err()
+        );
     }
 
     #[test]

@@ -282,7 +282,7 @@ fn try_new_aggregate_exec(
     )?))
 }
 
-/// Return [`()`] if no predicates have been pushed to `grid_exec_child`, otherwise
+/// Return [`Ok`] if no predicates have been pushed to `grid_exec_child`, otherwise
 /// [`DataFusionError`] is returned.
 fn can_rewrite_aggregate(grid_exec_child: &Arc<dyn ExecutionPlan>) -> DataFusionResult<()> {
     if let Some(data_source_exec) = grid_exec_child.as_any().downcast_ref::<DataSourceExec>() {

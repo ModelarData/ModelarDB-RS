@@ -411,8 +411,8 @@ mod test {
         assert!(result.is_err());
     }
 
-    fn model_table_schema_error_bounds_and_generated_columns(
-    ) -> (Arc<Schema>, Vec<ErrorBound>, Vec<Option<GeneratedColumn>>) {
+    fn model_table_schema_error_bounds_and_generated_columns()
+    -> (Arc<Schema>, Vec<ErrorBound>, Vec<Option<GeneratedColumn>>) {
         (
             Arc::new(Schema::new(vec![
                 Field::new("location", DataType::Utf8, false),

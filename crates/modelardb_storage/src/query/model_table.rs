@@ -37,10 +37,10 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
-use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
+use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator, utils};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{
-    planner, LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement,
+    LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement, planner,
 };
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
