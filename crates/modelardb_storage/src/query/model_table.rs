@@ -28,18 +28,19 @@ use arrow::datatypes::DataType::Utf8;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, TimeUnit};
 use datafusion::catalog::Session;
-use datafusion::common::{Statistics, ToDFSchema};
+use datafusion::common::ToDFSchema;
+use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
-use datafusion::datasource::physical_plan::{FileScanConfig, ParquetExec};
+use datafusion::datasource::physical_plan::{FileScanConfig, ParquetSource};
 use datafusion::datasource::provider::TableProviderFilterPushDown;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
-use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator, utils};
+use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{
-    LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement, planner,
+    planner, LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement,
 };
 use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
@@ -68,17 +69,19 @@ pub(crate) struct ModelTable {
     fallback_field_column: u16,
     /// Schema of the compressed segments stored on disk.
     query_compressed_schema: Arc<Schema>,
-    /// The sort order [`ParquetExec`] guarantees for the segments it produces. It is guaranteed by
-    /// [`ParquetExec`] because the storage engine uses this sort order for each Apache Parquet file
-    /// in this model table and these files are read sequentially by [`ParquetExec`].
+    /// The sort order [`DataSourceExec`] guarantees for the segments it produces. It is guaranteed
+    /// by [`DataSourceExec`] because the storage engine uses this sort order for each Apache
+    /// Parquet file in this model table and these files are read sequentially by
+    /// [`DataSourceExec`].
     query_order_segment: LexOrdering,
     /// The sort order that [`GridExec`] requires for the segments it receives as its input.
     query_requirement_segment: LexRequirement,
     /// Schema used to reconstruct the data points from each field column in the compressed segments.
     grid_schema: Arc<Schema>,
     /// The sort order [`GridExec`] guarantees for the data points it produces. It is guaranteed by
-    /// [`GridExec`] because it receives segments sorted by `query_order_segment` from [`ParquetExec`]
-    /// and because these segments cannot contain data points for overlapping time intervals.
+    /// [`GridExec`] because it receives segments sorted by `query_order_segment` from
+    /// [`DataSourceExec`] and because these segments cannot contain data points for overlapping
+    /// time intervals.
     query_order_data_point: LexOrdering,
     /// The sort order that [`SortedJoinExec`] requires for the data points it receives as its input.
     query_requirement_data_point: LexRequirement,
@@ -392,7 +395,7 @@ fn convert_logical_expr_to_physical_expr(
 /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
 /// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError`] if the necessary
 /// metadata cannot be retrieved from the metadata Delta Lake.
-fn new_apache_parquet_exec(
+fn new_data_source_exec(
     delta_table: &DeltaTable,
     partition_filters: &[PartitionFilter],
     maybe_limit: Option<usize>,
@@ -416,29 +419,25 @@ fn new_apache_parquet_exec(
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
 
     let log_store = delta_table.log_store();
-    let file_scan_config = FileScanConfig {
-        object_store_url: log_store.object_store_url(),
-        file_schema: file_schema.clone(),
-        file_groups: vec![partitioned_files],
-        statistics: Statistics::new_unknown(&file_schema),
-        projection: None,
-        limit: maybe_limit,
-        table_partition_cols: vec![],
-        output_ordering,
-    };
-
-    let apache_parquet_exec_builder = if let Some(parquet_filters) = maybe_parquet_filters {
-        ParquetExec::builder(file_scan_config).with_predicate(parquet_filters.clone())
+    let mut table_parquet_options = TableParquetOptions::new();
+    table_parquet_options.global.pushdown_filters = true;
+    table_parquet_options.global.reorder_filters = true;
+    let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
+        Arc::new(
+            ParquetSource::default()
+                .with_predicate(file_schema.clone(), parquet_filters.to_owned()),
+        )
     } else {
-        ParquetExec::builder(file_scan_config)
+        Arc::new(ParquetSource::default())
     };
 
-    let apache_parquet_exec = apache_parquet_exec_builder
-        .build()
-        .with_pushdown_filters(true)
-        .with_reorder_filters(true);
+    let file_scan_config =
+        FileScanConfig::new(log_store.object_store_url(), file_schema, file_source)
+            .with_file_group(partitioned_files)
+            .with_limit(maybe_limit)
+            .with_output_ordering(output_ordering);
 
-    Ok(Arc::new(apache_parquet_exec))
+    Ok(file_scan_config.build())
 }
 
 /// Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
@@ -616,7 +615,7 @@ impl TableProvider for ModelTable {
         for field_column_index in stored_field_columns_in_projection {
             partition_filters[0].value = PartitionValue::Equal(field_column_index.to_string());
 
-            let parquet_exec = new_apache_parquet_exec(
+            let data_source_exec = new_data_source_exec(
                 &delta_table,
                 &partition_filters,
                 limit,
@@ -629,7 +628,7 @@ impl TableProvider for ModelTable {
                 self.grid_schema.clone(),
                 maybe_physical_grid_filters.clone(),
                 limit,
-                parquet_exec,
+                data_source_exec,
                 self.query_requirement_segment.clone(),
                 self.query_order_data_point.clone(),
             );
@@ -679,13 +678,7 @@ impl TableProvider for ModelTable {
         input: Arc<dyn ExecutionPlan>,
         _insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let data_sink_exec = Arc::new(DataSinkExec::new(
-            input,
-            self.data_sink.clone(),
-            self.model_table_metadata.schema.clone(),
-            None,
-        ));
-
+        let data_sink_exec = Arc::new(DataSinkExec::new(input, self.data_sink.clone(), None));
         Ok(data_sink_exec)
     }
 }

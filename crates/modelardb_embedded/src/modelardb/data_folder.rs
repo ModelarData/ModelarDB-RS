@@ -47,14 +47,30 @@ use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::modelardb::{generate_read_model_table_sql, try_new_model_table_metadata, ModelarDB};
 use crate::{Aggregate, TableType};
 
-/// [`DataSink`] for rejecting INSERT statements passed to [`DataFolder.read()`].
-struct DataFolderDataSink {}
+/// [`DataSink`] that rejects INSERT statements passed to [`DataFolder.read()`].
+struct DataFolderDataSink {
+    // The schema of the data sink is empty since it rejects everything.
+    schema: Arc<Schema>,
+}
+
+impl DataFolderDataSink {
+    fn new() -> Self {
+        Self {
+            schema: Arc::new(Schema::empty()),
+        }
+    }
+}
 
 #[async_trait]
 impl DataSink for DataFolderDataSink {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    /// Returns the [`DataSink`]'s schema.
+    fn schema(&self) -> &Arc<Schema> {
+        &self.schema
     }
 
     /// Return [`None`] as the [`DataSink`] collects no metrics.
@@ -193,7 +209,7 @@ impl DataFolder {
         };
 
         // Register normal tables.
-        let data_sink = Arc::new(DataFolderDataSink {});
+        let data_sink = Arc::new(DataFolderDataSink::new());
 
         for normal_table_name in data_folder
             .table_metadata_manager
@@ -416,7 +432,7 @@ impl ModelarDB for DataFolder {
                     .save_normal_table_metadata(table_name)
                     .await?;
 
-                let data_sink = Arc::new(DataFolderDataSink {});
+                let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_normal_table(
                     &self.session_context,
@@ -442,7 +458,7 @@ impl ModelarDB for DataFolder {
                     .save_model_table_metadata(&model_table_metadata)
                     .await?;
 
-                let data_sink = Arc::new(DataFolderDataSink {});
+                let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_model_table(
                     &self.session_context,
@@ -579,7 +595,9 @@ impl ModelarDB for DataFolder {
             .as_any()
             .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument("to_modelardb is not a data folder.".to_owned())
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "to_modelardb is not a data folder.".to_owned(),
+                )
             })?;
 
         // DataFolder.copy_model_table() interface is designed for model tables.
@@ -587,14 +605,18 @@ impl ModelarDB for DataFolder {
             .model_table_metadata(from_table_name)
             .await
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(format!("{from_table_name} is not a model table."))
+                ModelarDbEmbeddedError::InvalidArgument(format!(
+                    "{from_table_name} is not a model table."
+                ))
             })?;
 
         let to_model_table_metadata = to_data_folder
             .model_table_metadata(to_table_name)
             .await
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(format!("{to_table_name} is not a model table."))
+                ModelarDbEmbeddedError::InvalidArgument(format!(
+                    "{to_table_name} is not a model table."
+                ))
             })?;
 
         // Check if the schemas of the model tables match.
@@ -671,14 +693,18 @@ impl ModelarDB for DataFolder {
             .as_any()
             .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument("to_modelardb is not a data folder.".to_owned())
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "to_modelardb is not a data folder.".to_owned(),
+                )
             })?;
 
         let to_normal_table_schema = to_data_folder
             .normal_table_schema(to_table_name)
             .await
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(format!("{to_table_name} is not a normal table."))
+                ModelarDbEmbeddedError::InvalidArgument(format!(
+                    "{to_table_name} is not a normal table."
+                ))
             })?;
 
         let record_batch_stream = self.read(sql).await?;
@@ -748,7 +774,9 @@ impl ModelarDB for DataFolder {
             .as_any()
             .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument("to_modelardb is not a data folder.".to_owned())
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "to_modelardb is not a data folder.".to_owned(),
+                )
             })?;
 
         let schema_mismatch_error = ModelarDbEmbeddedError::InvalidArgument(format!(

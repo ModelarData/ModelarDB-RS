@@ -29,7 +29,7 @@ use deltalake::delta_datafusion::DeltaDataChecker;
 use deltalake::kernel::{Action, Add, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::operations::transaction::{CommitBuilder, CommitProperties};
-use deltalake::operations::writer::{DeltaWriter, WriterConfig};
+use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
 use deltalake::protocol::{DeltaOperation, SaveMode};
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
