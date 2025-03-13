@@ -55,6 +55,10 @@ pub struct DeltaLake {
     storage_options: HashMap<String, String>,
     /// [`ObjectStore`] to access the root of the Delta Lake.
     object_store: Arc<dyn ObjectStore>,
+    /// Map from Delta table name to an in-memory object store that points at the Delta table root.
+    /// It is required since the Delta tables cannot be opened using the location and storage
+    /// options when using an in-memory object store.
+    maybe_in_memory_object_stores: Option<HashMap<String, Arc<InMemory>>>,
 }
 
 impl DeltaLake {
@@ -79,6 +83,7 @@ impl DeltaLake {
             location: "memory://modelardb".to_owned(),
             storage_options: HashMap::new(),
             object_store: Arc::new(InMemory::new()),
+            maybe_in_memory_object_stores: Some(HashMap::new()),
         }
     }
 
@@ -103,6 +108,7 @@ impl DeltaLake {
             location,
             storage_options: HashMap::new(),
             object_store: Arc::new(object_store),
+            maybe_in_memory_object_stores: None,
         })
     }
 
@@ -189,6 +195,7 @@ impl DeltaLake {
             location,
             storage_options,
             object_store: Arc::new(object_store),
+            maybe_in_memory_object_stores: None,
         })
     }
 
@@ -216,6 +223,7 @@ impl DeltaLake {
             location,
             storage_options,
             object_store: Arc::new(object_store),
+            maybe_in_memory_object_stores: None,
         })
     }
 
