@@ -55,8 +55,6 @@ pub struct DeltaLake {
     storage_options: HashMap<String, String>,
     /// [`ObjectStore`] to access the root of the Delta Lake.
     object_store: Arc<dyn ObjectStore>,
-    /// [`LocalFileSystem`] to access the root of the Delta Lake.
-    maybe_local_file_system: Option<Arc<LocalFileSystem>>,
 }
 
 impl DeltaLake {
@@ -81,7 +79,6 @@ impl DeltaLake {
             location: "memory://modelardb".to_owned(),
             storage_options: HashMap::new(),
             object_store: Arc::new(InMemory::new()),
-            maybe_local_file_system: None,
         }
     }
 
@@ -93,11 +90,9 @@ impl DeltaLake {
             .map_err(|error| DeltaTableError::generic(error.to_string()))?;
 
         // Use with_automatic_cleanup to ensure empty directories are deleted automatically.
-        let local_file_system = Arc::new(
-            LocalFileSystem::new_with_prefix(data_folder_path)
-                .map_err(|error| DeltaTableError::generic(error.to_string()))?
-                .with_automatic_cleanup(true),
-        );
+        let object_store = LocalFileSystem::new_with_prefix(data_folder_path)
+            .map_err(|error| DeltaTableError::generic(error.to_string()))?
+            .with_automatic_cleanup(true);
 
         let location = data_folder_path
             .to_str()
@@ -107,8 +102,7 @@ impl DeltaLake {
         Ok(Self {
             location,
             storage_options: HashMap::new(),
-            object_store: local_file_system.clone(),
-            maybe_local_file_system: Some(local_file_system),
+            object_store: Arc::new(object_store),
         })
     }
 
@@ -195,7 +189,6 @@ impl DeltaLake {
             location,
             storage_options,
             object_store: Arc::new(object_store),
-            maybe_local_file_system: None,
         })
     }
 
@@ -223,19 +216,12 @@ impl DeltaLake {
             location,
             storage_options,
             object_store: Arc::new(object_store),
-            maybe_local_file_system: None,
         })
     }
 
     /// Return an [`ObjectStore`] to access the root of the Delta Lake.
     pub fn object_store(&self) -> Arc<dyn ObjectStore> {
         self.object_store.clone()
-    }
-
-    /// Return a [`LocalFileSystem`] to access the root of the Delta Lake if it uses a local data
-    /// folder.
-    pub fn local_file_system(&self) -> Option<Arc<LocalFileSystem>> {
-        self.maybe_local_file_system.clone()
     }
 
     /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
