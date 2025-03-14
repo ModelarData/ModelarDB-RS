@@ -280,7 +280,6 @@ mod test {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::common::ToDFSchema;
     use datafusion::logical_expr::col;
-    use datafusion::logical_expr::expr::WildcardOptions;
     use modelardb_common::test::ERROR_BOUND_ZERO;
 
     use crate::test;
@@ -390,28 +389,14 @@ mod test {
         let (query_schema, error_bounds, mut generated_columns) =
             model_table_schema_error_bounds_and_generated_columns();
 
-        let wild_card_options = Box::new(WildcardOptions {
-            ilike: None,
-            exclude: None,
-            except: None,
-            replace: None,
-            rename: None,
-        });
-
         generated_columns[5] = Some(GeneratedColumn {
-            expr: Expr::Wildcard {
-                qualifier: None,
-                options: wild_card_options.clone(),
-            },
+            expr: Expr::Column("".into()),
             source_columns: vec![],
             original_expr: "".to_owned(),
         });
 
         generated_columns[6] = Some(GeneratedColumn {
-            expr: Expr::Wildcard {
-                qualifier: None,
-                options: wild_card_options,
-            },
+            expr: Expr::Column("".into()),
             source_columns: vec![5],
             original_expr: "".to_owned(),
         });

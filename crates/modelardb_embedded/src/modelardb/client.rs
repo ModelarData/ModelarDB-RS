@@ -32,12 +32,12 @@ use async_trait::async_trait;
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use futures::{stream, StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt, stream};
 use tonic::transport::Channel;
 use tonic::{Request, Status};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::modelardb::{generate_read_model_table_sql, try_new_model_table_metadata, ModelarDB};
+use crate::modelardb::{ModelarDB, generate_read_model_table_sql, try_new_model_table_metadata};
 use crate::{Aggregate, TableType};
 
 /// Types of nodes that can be connected to by [`Client`].

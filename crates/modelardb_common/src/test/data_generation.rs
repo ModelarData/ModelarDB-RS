@@ -24,7 +24,7 @@ use std::sync::LazyLock;
 use modelardb_types::types::{
     Timestamp, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
 };
-use rand::distributions::Uniform;
+use rand::distr::Uniform;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -164,8 +164,8 @@ pub fn generate_multivariate_time_series(
         for (index, uncompressed_values_builder) in
             uncompressed_values_builders.iter_mut().enumerate()
         {
-            let segment_length = std_rng.gen_range(segment_length_range.clone());
-            let values_structure_index = std_rng.gen_range(0..values_structures.len());
+            let segment_length = std_rng.random_range(segment_length_range.clone());
+            let values_structure_index = std_rng.random_range(0..values_structures.len());
             let values_structure = &values_structures[values_structure_index];
 
             let uncompressed_values_builder_len = uncompressed_values_builder.values_slice().len();
@@ -212,7 +212,7 @@ pub fn generate_timestamps(length: usize, irregular: bool) -> TimestampArray {
         let mut next_timestamp: i64 = 0;
         for _ in 0..length {
             timestamps.append_value(next_timestamp);
-            next_timestamp += std_rng.sample(Uniform::from(100..200));
+            next_timestamp += std_rng.sample(Uniform::try_from(100..200).unwrap());
         }
         timestamps.finish()
     } else {
@@ -237,7 +237,7 @@ pub fn generate_values(
     match values_structure {
         // Generates constant values.
         ValuesStructure::Constant(maybe_add_noise_range) => {
-            let mut values = iter::repeat(std_rng.r#gen()).take(uncompressed_timestamps.len());
+            let mut values = iter::repeat(std_rng.random()).take(uncompressed_timestamps.len());
             randomize_and_collect_iterator(maybe_add_noise_range, &mut values)
         }
         // Generates linear values.
@@ -245,9 +245,9 @@ pub fn generate_values(
             // The variable slope is regenerated if it is 0, to avoid generating constant data.
             let mut slope: i64 = 0;
             while slope == 0 {
-                slope = std_rng.gen_range(-10..10);
+                slope = std_rng.random_range(-10..10);
             }
-            let intercept: i64 = std_rng.gen_range(1..50);
+            let intercept: i64 = std_rng.random_range(1..50);
 
             let mut values = uncompressed_timestamps
                 .iter()
@@ -257,7 +257,7 @@ pub fn generate_values(
         }
         // Generates random values.
         ValuesStructure::Random(min_max) => {
-            let distribution = Uniform::from(min_max);
+            let distribution = Uniform::try_from(min_max).unwrap();
             uncompressed_timestamps
                 .iter()
                 .map(|_| std_rng.sample(distribution))
@@ -274,7 +274,7 @@ fn randomize_and_collect_iterator(
 ) -> ValueArray {
     let mut std_rng = create_random_number_generator();
     if let Some(noise_range) = maybe_noise_range {
-        let distribution = Uniform::from(noise_range);
+        let distribution = Uniform::try_from(noise_range).unwrap();
         values
             .map(|value| value + std_rng.sample(distribution))
             .collect()

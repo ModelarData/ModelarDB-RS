@@ -35,7 +35,7 @@ use datafusion::physical_plan::expressions::Column;
 use datafusion::physical_plan::insert::DataSink;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::sorts::sort;
-use datafusion::physical_plan::{common, DisplayAs, DisplayFormatType};
+use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
 use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
@@ -44,17 +44,33 @@ use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::TimestampArray;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::modelardb::{generate_read_model_table_sql, try_new_model_table_metadata, ModelarDB};
+use crate::modelardb::{ModelarDB, generate_read_model_table_sql, try_new_model_table_metadata};
 use crate::{Aggregate, TableType};
 
-/// [`DataSink`] for rejecting INSERT statements passed to [`DataFolder.read()`].
-struct DataFolderDataSink {}
+/// [`DataSink`] that rejects INSERT statements passed to [`DataFolder.read()`].
+struct DataFolderDataSink {
+    /// The schema of the data sink is empty since it rejects everything.
+    schema: Arc<Schema>,
+}
+
+impl DataFolderDataSink {
+    fn new() -> Self {
+        Self {
+            schema: Arc::new(Schema::empty()),
+        }
+    }
+}
 
 #[async_trait]
 impl DataSink for DataFolderDataSink {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    /// Return the [`DataSink's`](DataSink) schema.
+    fn schema(&self) -> &Arc<Schema> {
+        &self.schema
     }
 
     /// Return [`None`] as the [`DataSink`] collects no metrics.
@@ -193,7 +209,7 @@ impl DataFolder {
         };
 
         // Register normal tables.
-        let data_sink = Arc::new(DataFolderDataSink {});
+        let data_sink = Arc::new(DataFolderDataSink::new());
 
         for normal_table_name in data_folder
             .table_metadata_manager
@@ -416,7 +432,7 @@ impl ModelarDB for DataFolder {
                     .save_normal_table_metadata(table_name)
                     .await?;
 
-                let data_sink = Arc::new(DataFolderDataSink {});
+                let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_normal_table(
                     &self.session_context,
@@ -442,7 +458,7 @@ impl ModelarDB for DataFolder {
                     .save_model_table_metadata(&model_table_metadata)
                     .await?;
 
-                let data_sink = Arc::new(DataFolderDataSink {});
+                let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_model_table(
                     &self.session_context,
@@ -579,7 +595,9 @@ impl ModelarDB for DataFolder {
             .as_any()
             .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument("to_modelardb is not a data folder.".to_owned())
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "to_modelardb is not a data folder.".to_owned(),
+                )
             })?;
 
         // DataFolder.copy_model_table() interface is designed for model tables.
@@ -587,14 +605,18 @@ impl ModelarDB for DataFolder {
             .model_table_metadata(from_table_name)
             .await
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(format!("{from_table_name} is not a model table."))
+                ModelarDbEmbeddedError::InvalidArgument(format!(
+                    "{from_table_name} is not a model table."
+                ))
             })?;
 
         let to_model_table_metadata = to_data_folder
             .model_table_metadata(to_table_name)
             .await
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(format!("{to_table_name} is not a model table."))
+                ModelarDbEmbeddedError::InvalidArgument(format!(
+                    "{to_table_name} is not a model table."
+                ))
             })?;
 
         // Check if the schemas of the model tables match.
@@ -671,14 +693,18 @@ impl ModelarDB for DataFolder {
             .as_any()
             .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument("to_modelardb is not a data folder.".to_owned())
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "to_modelardb is not a data folder.".to_owned(),
+                )
             })?;
 
         let to_normal_table_schema = to_data_folder
             .normal_table_schema(to_table_name)
             .await
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(format!("{to_table_name} is not a normal table."))
+                ModelarDbEmbeddedError::InvalidArgument(format!(
+                    "{to_table_name} is not a normal table."
+                ))
             })?;
 
         let record_batch_stream = self.read(sql).await?;
@@ -748,7 +774,9 @@ impl ModelarDB for DataFolder {
             .as_any()
             .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument("to_modelardb is not a data folder.".to_owned())
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "to_modelardb is not a data folder.".to_owned(),
+                )
             })?;
 
         let schema_mismatch_error = ModelarDbEmbeddedError::InvalidArgument(format!(
@@ -875,7 +903,7 @@ fn schemas_are_compatible(from_schema: &Schema, to_schema: &Schema) -> bool {
 mod tests {
     use super::*;
 
-    use arrow::array::{Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array};
+    use arrow::array::{Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array};
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
     use datafusion::datasource::TableProvider;
@@ -923,14 +951,18 @@ mod tests {
 
         // Create a new data folder and verify that the existing normal tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-        assert!(new_data_folder
-            .session_context
-            .table_exist("normal_table_1")
-            .unwrap());
-        assert!(new_data_folder
-            .session_context
-            .table_exist("normal_table_2")
-            .unwrap());
+        assert!(
+            new_data_folder
+                .session_context
+                .table_exist("normal_table_1")
+                .unwrap()
+        );
+        assert!(
+            new_data_folder
+                .session_context
+                .table_exist("normal_table_2")
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1071,14 +1103,18 @@ mod tests {
 
         // Create a new data folder and verify that the existing model tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-        assert!(new_data_folder
-            .session_context
-            .table_exist("model_table_1")
-            .unwrap());
-        assert!(new_data_folder
-            .session_context
-            .table_exist("model_table_2")
-            .unwrap());
+        assert!(
+            new_data_folder
+                .session_context
+                .table_exist("model_table_1")
+                .unwrap()
+        );
+        assert!(
+            new_data_folder
+                .session_context
+                .table_exist("model_table_2")
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2297,64 +2333,80 @@ mod tests {
     async fn test_drop_normal_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
 
-        assert!(data_folder
-            .session_context
-            .table_exist(NORMAL_TABLE_NAME)
-            .unwrap());
+        assert!(
+            data_folder
+                .session_context
+                .table_exist(NORMAL_TABLE_NAME)
+                .unwrap()
+        );
 
         data_folder.drop(NORMAL_TABLE_NAME).await.unwrap();
 
         // Verify that the normal table was deregistered from Apache DataFusion.
-        assert!(!data_folder
-            .session_context
-            .table_exist(NORMAL_TABLE_NAME)
-            .unwrap());
+        assert!(
+            !data_folder
+                .session_context
+                .table_exist(NORMAL_TABLE_NAME)
+                .unwrap()
+        );
 
         // Verify that the normal table was dropped from the metadata Delta Lake.
-        assert!(!data_folder
-            .table_metadata_manager
-            .is_normal_table(NORMAL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            !data_folder
+                .table_metadata_manager
+                .is_normal_table(NORMAL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // Verify that the normal table was dropped from the Delta Lake.
-        assert!(data_folder
-            .delta_lake
-            .delta_table(NORMAL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            data_folder
+                .delta_lake
+                .delta_table(NORMAL_TABLE_NAME)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn test_drop_model_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
 
-        assert!(data_folder
-            .session_context
-            .table_exist(MODEL_TABLE_NAME)
-            .unwrap());
+        assert!(
+            data_folder
+                .session_context
+                .table_exist(MODEL_TABLE_NAME)
+                .unwrap()
+        );
 
         data_folder.drop(MODEL_TABLE_NAME).await.unwrap();
 
         // Verify that the model table was deregistered from Apache DataFusion.
-        assert!(!data_folder
-            .session_context
-            .table_exist(MODEL_TABLE_NAME)
-            .unwrap());
+        assert!(
+            !data_folder
+                .session_context
+                .table_exist(MODEL_TABLE_NAME)
+                .unwrap()
+        );
 
         // Verify that the model table was dropped from the metadata Delta Lake.
-        assert!(!data_folder
-            .table_metadata_manager
-            .is_model_table(MODEL_TABLE_NAME)
-            .await
-            .unwrap());
+        assert!(
+            !data_folder
+                .table_metadata_manager
+                .is_model_table(MODEL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // Verify that the model table was dropped from the Delta Lake.
-        assert!(data_folder
-            .delta_lake
-            .delta_table(MODEL_TABLE_NAME)
-            .await
-            .is_err());
+        assert!(
+            data_folder
+                .delta_lake
+                .delta_table(MODEL_TABLE_NAME)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -2495,11 +2547,13 @@ mod tests {
         assert_eq!(actual_schema, Arc::new(expected_schema));
 
         // Verify that the normal table exists in the metadata Delta Lake.
-        assert!(data_folder
-            .table_metadata_manager
-            .is_normal_table(table_name)
-            .await
-            .unwrap());
+        assert!(
+            data_folder
+                .table_metadata_manager
+                .is_normal_table(table_name)
+                .await
+                .unwrap()
+        );
 
         // Verify that the normal table is registered with Apache DataFusion.
         assert!(data_folder.session_context.table_exist(table_name).unwrap())

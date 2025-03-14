@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
-use datafusion::catalog::SchemaProvider;
+use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::prelude::SessionContext;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
@@ -212,6 +212,7 @@ impl Context {
 
         let normal_table_data_sink = Arc::new(NormalTableDataSink::new(
             table_name.to_owned(),
+            TableProvider::schema(&delta_table),
             self.storage_engine.clone(),
         ));
 

@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::common::arrow::datatypes::Schema;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::TaskContext;
 use datafusion::physical_plan::insert::DataSink;
@@ -38,14 +39,21 @@ use crate::storage::StorageEngine;
 pub struct NormalTableDataSink {
     /// The name of the normal table inserted data will be written to.
     table_name: String,
+    /// The schema of the normal table inserted data will be written to.
+    schema: Arc<Schema>,
     /// Manages all uncompressed and compressed data in the system.
     storage_engine: Arc<RwLock<StorageEngine>>,
 }
 
 impl NormalTableDataSink {
-    pub fn new(table_name: String, storage_engine: Arc<RwLock<StorageEngine>>) -> Self {
+    pub fn new(
+        table_name: String,
+        schema: Arc<Schema>,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) -> Self {
         Self {
             table_name,
+            schema,
             storage_engine,
         }
     }
@@ -56,6 +64,11 @@ impl DataSink for NormalTableDataSink {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    /// Return the [`DataSink's`](DataSink) schema.
+    fn schema(&self) -> &Arc<Schema> {
+        &self.schema
     }
 
     /// Return a snapshot of the set of metrics being collected by the [`DataSink`].
@@ -132,6 +145,11 @@ impl DataSink for ModelTableDataSink {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    /// Return the [`DataSink's`](DataSink) schema.
+    fn schema(&self) -> &Arc<Schema> {
+        &self.model_table_metadata.schema
     }
 
     /// Return a snapshot of the set of metrics being collected by the [`DataSink`].
