@@ -20,6 +20,7 @@ use std::sync::Arc;
 use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::ServerMode;
+use tracing::warn;
 
 use crate::ClusterMode;
 use crate::Result;
@@ -44,6 +45,13 @@ impl DataFolder {
         let delta_lake = DeltaLake::try_from_local_url(local_url)?;
         let table_metadata_manager =
             TableMetadataManager::try_from_local_url(local_url, None).await?;
+
+        if local_url.starts_with("memory://") {
+            warn!(
+                "The local data folder is in memory. Data will not be persisted. Spilling data will \
+                 not decrease memory usage. Configured memory limitations may be exceeded."
+            );
+        };
 
         Ok(Self {
             delta_lake: Arc::new(delta_lake),
