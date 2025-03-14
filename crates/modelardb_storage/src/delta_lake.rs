@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use arrow::array::{ArrayRef, RecordBatch};
 use arrow::datatypes::{DataType, Field, Schema};
+use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
@@ -55,10 +56,8 @@ pub struct DeltaLake {
     storage_options: HashMap<String, String>,
     /// [`ObjectStore`] to access the root of the Delta Lake.
     object_store: Arc<dyn ObjectStore>,
-    /// Map from Delta table name to an in-memory object store that points at the Delta table root.
-    /// It is required since the Delta tables cannot be opened using the location and storage
-    /// options when using an in-memory object store.
-    maybe_in_memory_object_stores: Option<HashMap<String, Arc<InMemory>>>,
+    /// Cache of Delta tables to avoid opening the same table multiple times.
+    delta_table_cache: DashMap<String, DeltaTable>,
 }
 
 impl DeltaLake {
@@ -83,7 +82,7 @@ impl DeltaLake {
             location: "memory://modelardb".to_owned(),
             storage_options: HashMap::new(),
             object_store: Arc::new(InMemory::new()),
-            maybe_in_memory_object_stores: Some(HashMap::new()),
+            delta_table_cache: DashMap::new(),
         }
     }
 
@@ -108,7 +107,7 @@ impl DeltaLake {
             location,
             storage_options: HashMap::new(),
             object_store: Arc::new(object_store),
-            maybe_in_memory_object_stores: None,
+            delta_table_cache: DashMap::new(),
         })
     }
 
@@ -195,7 +194,7 @@ impl DeltaLake {
             location,
             storage_options,
             object_store: Arc::new(object_store),
-            maybe_in_memory_object_stores: None,
+            delta_table_cache: DashMap::new(),
         })
     }
 
@@ -223,7 +222,7 @@ impl DeltaLake {
             location,
             storage_options,
             object_store: Arc::new(object_store),
-            maybe_in_memory_object_stores: None,
+            delta_table_cache: DashMap::new(),
         })
     }
 
@@ -272,9 +271,23 @@ impl DeltaLake {
     /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
     async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
-        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone())
-            .await
-            .map_err(|error| error.into())
+        // Use the cache if possible and load to get the latest table data.
+        if let Some(mut delta_table) = self.delta_table_cache.get_mut(table_path) {
+            delta_table.load().await?;
+            Ok(delta_table.clone())
+        } else {
+            // If the table is not in the cache, open it and add it to the cache before returning.
+            let delta_table = deltalake::open_table_with_storage_options(
+                &table_path,
+                self.storage_options.clone(),
+            )
+            .await?;
+
+            self.delta_table_cache
+                .insert(table_path.to_owned(), delta_table.clone());
+
+            Ok(delta_table)
+        }
     }
 
     /// Return a [`DeltaTableWriter`] for writing to the model table with `delta_table` in the Delta
@@ -395,15 +408,19 @@ impl DeltaLake {
             columns.push(struct_field);
         }
 
-        CreateBuilder::new()
+        let delta_table = CreateBuilder::new()
             .with_storage_options(self.storage_options.clone())
             .with_table_name(table_name)
-            .with_location(location)
+            .with_location(location.clone())
             .with_columns(columns)
             .with_partition_columns(partition_columns)
             .with_save_mode(save_mode)
-            .await
-            .map_err(|error| error.into())
+            .await?;
+
+        // If the table was created successfully, add it to the cache.
+        self.delta_table_cache.insert(location, delta_table.clone());
+
+        Ok(delta_table)
     }
 
     /// Drop the metadata Delta Lake table with `table_name` from the Delta Lake by deleting every
@@ -440,6 +457,10 @@ impl DeltaLake {
             .delete_stream(file_locations)
             .try_collect::<Vec<Path>>()
             .await?;
+
+        // Remove the table from the cache.
+        let delta_table_path = format!("{}/{}", self.location, table_path);
+        self.delta_table_cache.remove(&delta_table_path);
 
         Ok(deleted_paths)
     }

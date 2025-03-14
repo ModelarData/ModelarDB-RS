@@ -24,6 +24,7 @@ arrow-flight.workspace = true
 arrow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
+dashmap.workspace = true
 datafusion.workspace = true
 deltalake = { workspace = true, features = ["datafusion", "s3"] }
 futures.workspace = true
