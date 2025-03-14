@@ -556,7 +556,8 @@ mod tests {
         ));
 
         // Create a local data folder and save a single model table to the metadata Delta Lake.
-        let local_data_folder = DataFolder::try_from_path(temp_dir.path()).await.unwrap();
+        let temp_dir_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
 
         let model_table_metadata = test::model_table_metadata();
         local_data_folder

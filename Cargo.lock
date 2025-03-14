@@ -3069,6 +3069,7 @@ dependencies = [
  "arrow-flight",
  "async-trait",
  "bytes",
+ "dashmap",
  "datafusion",
  "deltalake",
  "futures",

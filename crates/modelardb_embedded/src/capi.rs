@@ -19,9 +19,10 @@
 //! returning data, it is generally written to one or more pointers provided by the caller. This is
 //! to allow an error code to be returned to the caller and allow multiple types of data to be
 //! provided to the caller, e.g., an array and a schema. It is also recommended in the documentation
-//! for Apache Arrow's [C Data Interface]. [`modelardb_embedded_open_local()`],
-//! [`modelardb_embedded_open_s3()`], [`modelardb_embedded_open_azure()`], and
-//! [`modelardb_embedded_connect()`] are exceptions as their object's size is only known in Rust.
+//! for Apache Arrow's [C Data Interface]. [`modelardb_embedded_open_memory()`],
+//! [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
+//! [`modelardb_embedded_open_azure()`], and [`modelardb_embedded_connect()`] are exceptions as
+//! their object's size is only known in Rust.
 //!
 //! Throughout the C-API, bool is used instead of c_bool as [c_bool does not exist].
 //!
@@ -75,6 +76,19 @@ thread_local! {
     /// memory. However, the lifetime of the [`*const c_char`] returned by
     /// [`modelardb_embedded_error()`] ends when [`modelardb_embedded_error()`] is called again.
     static THREAD_LAST_ERROR_CSTRING: RefCell<Option<CString>> = const { RefCell::new(None) } ;
+}
+
+/// Creates a [`DataFolder`] that manages data in memory and returns a pointer to the [`DataFolder`]
+/// or a zero-initialized pointer if an error occurs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn modelardb_embedded_open_memory() -> *const c_void {
+    let maybe_data_folder = open_memory();
+    set_error_and_return_value_ptr(maybe_data_folder)
+}
+
+/// See documentation for [`modelardb_embedded_open_memory`].
+fn open_memory() -> Result<DataFolder> {
+    TOKIO_RUNTIME.block_on(DataFolder::open_memory())
 }
 
 /// Creates a [`DataFolder`] that manages data in the local folder at `data_folder_path_path` and
@@ -211,9 +225,8 @@ fn set_error_and_return_value_ptr<T>(maybe_value: Result<T>) -> *const c_void {
 }
 
 /// Converts `maybe_modelardb_ptr` to a [`DataFolder`] or [`Client`] and deallocates it if
-/// `maybe_modelardb_ptr` is not null or unaligned. Assumes `maybe_modelardb_ptr` is a pointer
-/// returned by [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`].
+/// `maybe_modelardb_ptr` is not null or unaligned. Assumes `maybe_modelardb_ptr` points to a
+/// [`DataFolder`] or [`Client`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_close(
     maybe_modelardb_ptr: *mut c_void,
@@ -242,9 +255,7 @@ pub unsafe extern "C" fn modelardb_embedded_close(
 
 /// Creates a table with the name in `table_name_ptr`, the schema in `schema_ptr`, and the error
 /// bounds in `error_bounds_ptr` in the [`DataFolder`] or [`Client`] in `maybe_modelardb_ptr`.
-/// Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`] and was returned by
-/// [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; `table_name_ptr`
+/// Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; `table_name_ptr`
 /// points to a valid C string; `schema_ptr` points to an Apache Arrow [`Schema`];
 /// `error_bounds_array_ptr` and `error_bounds_array_schema_ptr` point to a [`MapArray`] that maps
 /// from field column names to error bounds; and `generated_columns_array_ptr` and
@@ -355,9 +366,7 @@ fn error_bounds_array_to_error_bounds(
 
 /// Writes the name of all tables to `tables_array_ptr` and `tables_array_schema_ptr` in the
 /// [`DataFolder`] or [`Client`] in `maybe_modelardb_ptr`. Assumes `maybe_modelardb_ptr` points to a
-/// [`DataFolder`] or [`Client`] and was returned by [`modelardb_embedded_open_local()`],
-/// [`modelardb_embedded_open_s3()`], [`modelardb_embedded_open_azure()`], or
-/// [`modelardb_embedded_connect()`]; `table_array_ptr` is a valid pointer to enough memory for an
+/// [`DataFolder`] or [`Client`]; `table_array_ptr` is a valid pointer to enough memory for an
 /// Apache Arrow C Data Interface Array; and `tables_array_schema_ptr` is a valid pointer to enough
 /// memory for an Apache Arrow C Data Interface Schema.
 #[unsafe(no_mangle)]
@@ -402,12 +411,10 @@ unsafe fn tables(
 /// Writes the [`Schema`] of the table with the name in `table_name_ptr` in the [`DataFolder`] or
 /// [`Client`] in `maybe_modelardb_ptr` to `schema_struct_array_ptr` and
 /// `schema_struct_array_schema_ptr`. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or
-/// [`Client`] and was returned by [`modelardb_embedded_open_local()`],
-/// [`modelardb_embedded_open_s3()`], [`modelardb_embedded_open_azure()`], or
-/// [`modelardb_embedded_connect()`]; table_name_ptr` points to a valid C string;
-/// schema_struct_array_ptr` is a valid pointer to enough memory for an Apache Arrow C Data
-/// Interface Array; and `schema_struct_array_schema_ptr` is a valid pointer to enough memory for an
-/// Apache Arrow C Data Interface Schema.
+/// [`Client`]; table_name_ptr` points to a valid C string; schema_struct_array_ptr` is a valid
+/// pointer to enough memory for an Apache Arrow C Data Interface Array; and
+/// `schema_struct_array_schema_ptr` is a valid pointer to enough memory for an Apache Arrow C Data
+/// Interface Schema.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_schema(
     maybe_modelardb_ptr: *mut c_void,
@@ -455,12 +462,10 @@ unsafe fn schema(
 
 /// Writes the data in `struct_array_ptr` and `struct_array_schema_ptr` to the table with the table
 /// name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in `maybe_modelardb_ptr`. Assumes
-/// `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`] and was returned by
-/// [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; `table_name_ptr`
-/// points to a valid C string; `struct_array_ptr` is a valid pointer to enough memory for an Apache
-/// Arrow C Data Interface Array; and `struct_array_schema_ptr` is a valid pointer to enough memory
-/// for an Apache Arrow C Data Interface Schema.
+/// `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; `table_name_ptr` points to a
+/// valid C string; `struct_array_ptr` is a valid pointer to enough memory for an Apache Arrow C
+/// Data Interface Array; and `struct_array_schema_ptr` is a valid pointer to enough memory for an
+/// Apache Arrow C Data Interface Schema.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_write(
     maybe_modelardb_ptr: *mut c_void,
@@ -502,11 +507,9 @@ unsafe fn write(
 /// Reads data from the model table with the table name in `table_name_ptr` in the [`DataFolder`] or
 /// [`Client`] in `maybe_modelardb_ptr` and writes it to `decompressed_struct_array_ptr` and
 /// `decompressed_struct_array_schema_ptr`. The remaining parameters optionally specify which subset
-/// of the data to read. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`] and
-/// was returned by [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; `table_name_ptr`
-/// points to a valid C string; `columns_array_ptr` and `columns_array_schema_ptr` points to a
-/// [`StructArray`]; `group_by_array_ptr` and `group_by_array_schema_ptr` points to a
+/// of the data to read. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`];
+/// `table_name_ptr` points to a valid C string; `columns_array_ptr` and `columns_array_schema_ptr`
+/// points to a [`StructArray`]; `group_by_array_ptr` and `group_by_array_schema_ptr` points to a
 /// [`StringArray`]; `start_time_ptr` points to a valid C string with an ISO 8601 timestamp;
 /// `end_time_ptr` points to a valid C string with an ISO 8601 timestamp; `tags_array_ptr` and
 /// `tags_array_schema_ptr` points to a [`MapArray`]; decompressed_struct_array_ptr` is a valid
@@ -641,16 +644,12 @@ fn columns_array_to_columns(columns_array: &StructArray) -> Result<Vec<(String, 
 /// [`Client`] in `maybe_from_modelardb_ptr` to the model table with the name in `to_table_name_ptr`
 /// in the [`DataFolder`] or [`Client`] in `maybe_to_modelardb_ptr`. `maybe_from_modelardb_ptr` and
 /// `maybe_to_modelardb_ptr` cannot be different types. The remaining parameters optionally specify
-/// which subset of the data to copy. Duplicate data is not dropped. Assumes
-/// `maybe_from_modelardb_ptr` points to a [`DataFolder`] or [`Client`] and was returned by
-/// [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; `from_table_name_ptr`
-/// points to a valid C string; `maybe_to_modelardb_ptr` points to a [`DataFolder`] or [`Client`]
-/// and was returned by [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; and
-/// `to_table_name_ptr` points to a valid C string; `start_time_ptr` points to a valid C string with
-/// an ISO 8601 timestamp; `end_time_ptr` points to a valid C string with an ISO 8601 timestamp; and
-/// `tags_array_ptr` and `tags_array_schema_ptr` points to a [`MapArray`].
+/// which subset of the data to copy. Duplicate data is not dropped. Assumes `maybe_from_modelardb_ptr`
+/// points to a [`DataFolder`] or [`Client`]; `from_table_name_ptr` points to a valid C string;
+/// `maybe_to_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; and `to_table_name_ptr` points
+/// to a valid C string; `start_time_ptr` points to a valid C string with an ISO 8601 timestamp;
+/// `end_time_ptr` points to a valid C string with an ISO 8601 timestamp; and `tags_array_ptr` and
+/// `tags_array_schema_ptr` points to a [`MapArray`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_copy_model_table(
     maybe_from_modelardb_ptr: *mut c_void,
@@ -745,9 +744,7 @@ fn map_array_to_map_of_string_to_string(map_array: &MapArray) -> HashMap<String,
 
 /// Executes the SQL in `sql_ptr` in the [`DataFolder`] or [`Client`] in `maybe_modelardb_ptr` and
 /// writes the result to `decompressed_struct_array_ptr` and `decompressed_struct_array_schema_ptr`.
-/// Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`] and was returned by
-/// [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; `sql_ptr` points to a
+/// Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; `sql_ptr` points to a
 /// valid C string; `decompressed_struct_array_ptr` is a valid pointer to enough memory for an
 /// Apache Arrow C Data Interface Array; and `decompressed_struct_array_schema_ptr` is a valid
 /// pointer to enough memory for an Apache Arrow C Data Interface Schema.
@@ -799,12 +796,8 @@ unsafe fn read(
 
 /// Executes the SQL in `sql_ptr` in the [`DataFolder`] or [`Client`] in `maybe_from_modelardb_ptr`
 /// and copies the result to the normal table in `maybe_to_modelardb_ptr`. Assumes
-/// `maybe_from_modelardb_ptr` points to a [`DataFolder`] or [`Client`] and was returned by
-/// [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; `sql_ptr` points to a
-/// valid C string; `maybe_to_modelardb_ptr` points to a [`DataFolder`] or [`Client`] and was
-/// returned by [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; and
+/// `maybe_from_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; `sql_ptr` points to a
+/// valid C string; `maybe_to_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; and
 /// `to_table_name_ptr` points to a valid C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_copy_normal_table(
@@ -845,10 +838,8 @@ unsafe fn copy_normal_table(
 }
 
 /// Drops the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
-/// `maybe_modelardb_ptr`. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`]
-/// and was returned by [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; and `table_name_ptr`
-/// points to a valid C string.
+/// `maybe_modelardb_ptr`. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`];
+/// and `table_name_ptr` points to a valid C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_drop(
     maybe_modelardb_ptr: *mut c_void,
@@ -872,10 +863,8 @@ unsafe fn drop(
 }
 
 /// Truncates the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
-/// `maybe_modelardb_ptr`. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`]
-/// and was returned by [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; and `table_name_ptr`
-/// points to a valid C string.
+/// `maybe_modelardb_ptr`. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`];
+/// and `table_name_ptr` points to a valid C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_truncate(
     maybe_modelardb_ptr: *mut c_void,
@@ -901,13 +890,9 @@ unsafe fn truncate(
 /// Move all data from the table with the name in `from_table_name_ptr` in the [`DataFolder`] or
 /// [`Client`] in `maybe_from_modelardb_ptr` to the table with the name in `to_table_name_ptr` in
 /// the [`DataFolder`] or [`Client`] in `maybe_to_modelardb_ptr`. Assumes `maybe_from_modelardb_ptr`
-/// points to a [`DataFolder`] or [`Client`] and was returned by
-/// [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; `from_table_name_ptr`
-/// points to a valid C string; `maybe_to_modelardb_ptr` points to a [`DataFolder`] or [`Client`]
-/// and was returned by [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`]; and
-/// `to_table_name_ptr` points to a valid C string.
+/// points to a [`DataFolder`] or [`Client`]; `from_table_name_ptr` points to a valid C string;
+/// `maybe_to_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; and `to_table_name_ptr`
+/// points to a valid C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_move(
     maybe_from_modelardb_ptr: *mut c_void,
@@ -974,10 +959,8 @@ pub unsafe extern "C" fn modelardb_embedded_error() -> *const c_char {
 
 /// Returns a [`&mut DataFolder`] if `maybe_modelardb_ptr` is a valid pointer to a [`DataFolder`] or
 /// a [`&mut Client`] if `maybe_modelardb_ptr` is a valid pointer to a [`Client`]. Returns
-/// [`ModelarDbEmbeddedError`] if `maybe_modelardb_ptr` is null or unaligned. Assumes
-/// `maybe_modelardb_ptr` is a pointer returned by [`modelardb_embedded_open_local()`], [`modelardb_embedded_open_s3()`],
-/// [`modelardb_embedded_open_azure()`], or [`modelardb_embedded_connect()`], and that multiple mutable references to the
-/// same [`DataFolder`] or [`Client`] are not created.
+/// [`ModelarDbEmbeddedError`] if `maybe_modelardb_ptr` is null or unaligned. Assumes that multiple
+/// mutable references to the same [`DataFolder`] or [`Client`] are not created.
 unsafe fn c_void_to_modelardb<'a>(
     maybe_modelardb_ptr: *mut c_void,
     is_data_folder: bool,

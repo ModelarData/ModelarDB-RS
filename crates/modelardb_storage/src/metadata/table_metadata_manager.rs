@@ -52,6 +52,45 @@ pub struct TableMetadataManager {
 }
 
 impl TableMetadataManager {
+    /// Create a new [`TableMetadataManager`] that saves the metadata to an object store given by
+    /// `local_url` and initialize the metadata tables. If `local_url` could not be parsed or the
+    /// metadata tables could not be created, return [`ModelarDbStorageError`].
+    pub async fn try_from_local_url(
+        local_url: &str,
+        maybe_session_context: Option<Arc<SessionContext>>,
+    ) -> Result<Self> {
+        let table_metadata_manager = Self {
+            delta_lake: DeltaLake::try_from_local_url(local_url)?,
+            session_context: maybe_session_context
+                .unwrap_or_else(|| Arc::new(SessionContext::new())),
+        };
+
+        table_metadata_manager
+            .create_and_register_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// Create a new [`TableMetadataManager`] that saves the metadata to an in-memory Delta Lake and
+    /// initialize the metadata tables. If the metadata tables could not be created, return
+    /// [`ModelarDbStorageError`].
+    pub async fn try_new_in_memory(
+        maybe_session_context: Option<Arc<SessionContext>>,
+    ) -> Result<Self> {
+        let table_metadata_manager = Self {
+            delta_lake: DeltaLake::new_in_memory(),
+            session_context: maybe_session_context
+                .unwrap_or_else(|| Arc::new(SessionContext::new())),
+        };
+
+        table_metadata_manager
+            .create_and_register_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
     /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and
     /// initialize the metadata tables. If the metadata tables could not be created, return
     /// [`ModelarDbStorageError`].
