@@ -21,11 +21,11 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from typing import Self
 
 import pyarrow
 from pyarrow import MapArray, RecordBatch, Schema, StringArray, Array
 from pyarrow.cffi import ffi
-from typing_extensions import Self
 
 
 @dataclass

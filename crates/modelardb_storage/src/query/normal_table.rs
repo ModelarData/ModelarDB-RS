@@ -136,13 +136,7 @@ impl TableProvider for NormalTable {
         input: Arc<dyn ExecutionPlan>,
         _insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let file_sink = Arc::new(DataSinkExec::new(
-            input,
-            self.data_sink.clone(),
-            self.schema(),
-            None,
-        ));
-
+        let file_sink = Arc::new(DataSinkExec::new(input, self.data_sink.clone(), None));
         Ok(file_sink)
     }
 }

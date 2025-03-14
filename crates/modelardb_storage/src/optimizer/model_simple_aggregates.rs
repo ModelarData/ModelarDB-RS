@@ -26,7 +26,8 @@ use datafusion::arrow::array::{ArrayRef, BinaryArray, Int8Array};
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType};
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
-use datafusion::datasource::physical_plan::parquet::ParquetExec;
+use datafusion::datasource::memory::DataSourceExec;
+use datafusion::datasource::physical_plan::{FileScanConfig, ParquetSource};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{self, Volatility};
 use datafusion::physical_expr::aggregate::AggregateExprBuilder;
@@ -198,9 +199,9 @@ impl PhysicalOptimizerRule for ModelSimpleAggregates {
 }
 
 /// Matches the pattern [`AggregateExpr`] <- [RepartitionExec] (if it exists) <- [`SortedJoinExec`]
-/// <- [`GridExec`](crate::query::grid_exec::GridExec) <- [`ParquetExec`] and rewrites it to
-/// [`AggregateExpr`] <- [`ParquetExec`] if [`AggregateExpr`] only computes aggregates for a single
-/// FIELD column and no filtering is performed by [`ParquetExec`].
+/// <- [`GridExec`](crate::query::grid_exec::GridExec) <- [`DataSourceExec`] and rewrites it to
+/// [`AggregateExpr`] <- [`DataSourceExec`] if [`AggregateExpr`] only computes aggregates for a
+/// single FIELD column and no filtering is performed by [`DataSourceExec`].
 fn rewrite_aggregates_to_use_segments(
     execution_plan: Arc<dyn ExecutionPlan>,
 ) -> DataFusionResult<Transformed<Arc<dyn ExecutionPlan>>> {
@@ -268,18 +269,7 @@ fn try_new_aggregate_exec(
 
     // A GridExec can only have one child, so it is not necessary to check it.
     let grid_exec_child = grid_execs[0].children().remove(0);
-    if let Some(parquet_exec) = grid_exec_child.as_any().downcast_ref::<ParquetExec>() {
-        if parquet_exec.predicate().is_some() || parquet_exec.pruning_predicate().is_some() {
-            return Err(DataFusionError::NotImplemented(
-                "Predicates cannot be pushed before the aggregate.".to_owned(),
-            ));
-        }
-    } else {
-        return Err(DataFusionError::Plan(
-            "The input to GridExec must be a ParquetExec.".to_owned(),
-        ));
-    }
-
+    can_rewrite_aggregate(grid_exec_child)?;
     let model_based_aggregate_exprs = try_rewrite_aggregate_exprs(aggregate_exec)?;
 
     Ok(Arc::new(AggregateExec::try_new(
@@ -290,6 +280,34 @@ fn try_new_aggregate_exec(
         grid_execs[0].children()[0].clone(),
         aggregate_exec.schema(),
     )?))
+}
+
+/// Return [`Ok`] if no predicates have been pushed to `grid_exec_child`, otherwise
+/// [`DataFusionError`] is returned.
+fn can_rewrite_aggregate(grid_exec_child: &Arc<dyn ExecutionPlan>) -> DataFusionResult<()> {
+    if let Some(data_source_exec) = grid_exec_child.as_any().downcast_ref::<DataSourceExec>() {
+        if let Some(file_scan_config) = data_source_exec
+            .data_source()
+            .as_any()
+            .downcast_ref::<FileScanConfig>()
+        {
+            if let Some(parquet_source) = file_scan_config
+                .file_source
+                .as_any()
+                .downcast_ref::<ParquetSource>()
+            {
+                if parquet_source.predicate().is_none()
+                    && parquet_source.pruning_predicate().is_none()
+                {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    Err(DataFusionError::Plan(
+        "The input to GridExec must be a DataSourceExec without predicates.".to_owned(),
+    ))
 }
 
 /// Return [`AggregateFunctionExprs`](AggregateFunctionExpr) that computes the same aggregates as
@@ -615,7 +633,7 @@ mod tests {
     use std::any::{Any, TypeId};
     use std::fmt::{Debug, Formatter, Result as FmtResult};
 
-    use datafusion::datasource::physical_plan::parquet::ParquetExec;
+    use datafusion::arrow::datatypes::Schema;
     use datafusion::execution::session_state::SessionStateBuilder;
     use datafusion::execution::{SendableRecordBatchStream, TaskContext};
     use datafusion::physical_plan::aggregates::AggregateExec;
@@ -641,6 +659,10 @@ mod tests {
     #[async_trait]
     impl DataSink for NoOpDataSink {
         fn as_any(&self) -> &dyn Any {
+            unimplemented!();
+        }
+
+        fn schema(&self) -> &Arc<Schema> {
             unimplemented!();
         }
 
@@ -680,7 +702,7 @@ mod tests {
             vec![TypeId::of::<AggregateExec>()],
             vec![TypeId::of::<CoalescePartitionsExec>()],
             vec![TypeId::of::<AggregateExec>()],
-            vec![TypeId::of::<ParquetExec>()],
+            vec![TypeId::of::<DataSourceExec>()],
         ];
 
         assert_eq_physical_plan_expected(physical_plan, &expected_plan);
@@ -700,7 +722,7 @@ mod tests {
             vec![TypeId::of::<AggregateExec>()],
             vec![TypeId::of::<CoalescePartitionsExec>()],
             vec![TypeId::of::<AggregateExec>()],
-            vec![TypeId::of::<ParquetExec>()],
+            vec![TypeId::of::<DataSourceExec>()],
         ];
 
         for query in [query_no_avg, query_only_avg] {
@@ -729,7 +751,7 @@ mod tests {
             vec![TypeId::of::<RepartitionExec>()],
             vec![TypeId::of::<SortedJoinExec>()],
             vec![TypeId::of::<GridExec>()],
-            vec![TypeId::of::<ParquetExec>()],
+            vec![TypeId::of::<DataSourceExec>()],
         ];
 
         assert_eq_physical_plan_expected(physical_plan, &expected_plan);
@@ -751,7 +773,10 @@ mod tests {
             vec![TypeId::of::<RepartitionExec>()],
             vec![TypeId::of::<SortedJoinExec>()],
             vec![TypeId::of::<GridExec>(), TypeId::of::<GridExec>()],
-            vec![TypeId::of::<ParquetExec>(), TypeId::of::<ParquetExec>()],
+            vec![
+                TypeId::of::<DataSourceExec>(),
+                TypeId::of::<DataSourceExec>(),
+            ],
         ];
 
         assert_eq_physical_plan_expected(physical_plan, &expected_plan);

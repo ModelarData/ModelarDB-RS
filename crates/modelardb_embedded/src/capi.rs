@@ -31,7 +31,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::Path as StdPath;
 use std::ptr;
 use std::sync::{Arc, LazyLock};
@@ -43,9 +43,9 @@ use modelardb_types::types::ErrorBound;
 use tokio::runtime::Runtime;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
+use crate::modelardb::ModelarDB;
 use crate::modelardb::client::{Client, Node};
 use crate::modelardb::data_folder::DataFolder;
-use crate::modelardb::ModelarDB;
 use crate::record_batch_stream_to_record_batch;
 use crate::{Aggregate, TableType};
 

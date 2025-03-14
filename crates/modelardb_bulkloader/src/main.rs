@@ -38,8 +38,8 @@ use deltalake::storage::object_store::local::LocalFileSystem;
 use deltalake::{ObjectStore, Path};
 use futures::stream::StreamExt;
 use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
-use modelardb_embedded::modelardb::data_folder::DataFolder;
 use modelardb_embedded::modelardb::ModelarDB;
+use modelardb_embedded::modelardb::data_folder::DataFolder;
 use modelardb_storage::delta_lake::DeltaTableWriter;
 use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use sysinfo::System;
@@ -119,7 +119,8 @@ fn print_usage_and_exit_with_error() -> ! {
     // The errors are consciously ignored as the client is terminating.
     let binary_path = env::current_exe().unwrap();
     let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-    eprintln!("Usage: {binary_name} operation [flags]\n\n\
+    eprintln!(
+        "Usage: {binary_name} operation [flags]\n\n\
             operations\n \
             import parquet_folder data_folder table_name   imports data from parquet_folder to the table with table_name in data_folder\n \
             export data_folder parquet_folder table_name   exports data from the table with table_name in data_folder to parquet_folder\n\n\
@@ -127,7 +128,8 @@ fn print_usage_and_exit_with_error() -> ! {
             --pre-sql statements                           one or more quoted SQL statements run before any operation, e.g, CREATE MODEL TABLE\n \
             --partition-by columns                         columns to partition the output data by when exporting to Apache Parquet files\n \
             --post-sql statements                          one or more quoted SQL statements run after a successful operation, e.g, DROP TABLE\n \
-            --cast-double-to-float                         cast double to float, which may be a lossy cast, to simplify loading model tables");
+            --cast-double-to-float                         cast double to float, which may be a lossy cast, to simplify loading model tables"
+    );
     process::exit(1);
 }
 
@@ -152,7 +154,8 @@ async fn import(
     let mut data_folder = create_data_folder(output_path).await?;
 
     // Ensure the operations that will be performed is as the user expects.
-    println!("Import\n- Pre-SQL: {}\n- Read From: {input_path}\n- Write To: {table_name} In {output_path}\n- With Cast Double To Float: {cast_double_to_float}\n- Post-SQL: {}",
+    println!(
+        "Import\n- Pre-SQL: {}\n- Read From: {input_path}\n- Write To: {table_name} In {output_path}\n- With Cast Double To Float: {cast_double_to_float}\n- Post-SQL: {}",
         pre_sql.join("; "),
         post_sql.join("; ")
     );
@@ -214,14 +217,15 @@ async fn import_model_table(
         // possible. The amount of available memory is reduced by 20% for other variables.
         system.refresh_memory();
         if current_batch_size > (system.available_memory() as usize / 10 * 8) {
-           if let Err(write_error) = import_and_clear_model_table_batch(
+            if let Err(write_error) = import_and_clear_model_table_batch(
                 data_folder,
                 &mut delta_table_writer,
                 model_table_metadata,
                 &mut current_batch,
                 &mut current_batch_size,
             )
-            .await {
+            .await
+            {
                 delta_table_writer.rollback().await?;
                 return Err(write_error);
             }
@@ -235,7 +239,8 @@ async fn import_model_table(
         &mut current_batch,
         &mut current_batch_size,
     )
-    .await {
+    .await
+    {
         delta_table_writer.rollback().await?;
         return Err(write_error);
     }
@@ -420,7 +425,8 @@ async fn export(
     let mut data_folder = create_data_folder(input_path).await?;
 
     // Ensure the operations that will be performed is as the user expects.
-    println!("Export\n- Pre-SQL: {}\n- Read From: {table_name} In {input_path}\n- Write To: {output_path}\n- With Partition By: {}\n- Post-SQL: {}",
+    println!(
+        "Export\n- Pre-SQL: {}\n- Read From: {table_name} In {input_path}\n- Write To: {output_path}\n- With Partition By: {}\n- Post-SQL: {}",
         pre_sql.join("; "),
         partition_by.join(", "),
         post_sql.join("; ")

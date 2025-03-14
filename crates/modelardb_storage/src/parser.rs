@@ -36,10 +36,10 @@ use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use modelardb_types::functions::normalize_name; // Fully imported to not conflict.
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType, Expr,
-    GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectType, Query, Setting,
-    Statement, TableEngine, TimezoneInfo, TruncateCascadeOption, TruncateIdentityOption,
-    TruncateTableTarget, Value,
+    CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType,
+    Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectType, Query,
+    Setting, Statement, TableEngine, TimezoneInfo, TruncateIdentityOption, TruncateTableTarget,
+    Value,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{ALL_KEYWORDS, Keyword};
@@ -1064,7 +1064,7 @@ fn semantic_checks_for_truncate(
     table: bool,
     only: bool,
     identity: Option<TruncateIdentityOption>,
-    cascade: Option<TruncateCascadeOption>,
+    cascade: Option<CascadeOption>,
     on_cluster: Option<Ident>,
 ) -> StdResult<Vec<String>, ParserError> {
     if partitions.is_some()
@@ -1185,7 +1185,7 @@ mod tests {
         assert!(
             tokenize_and_parse_sql_statement(
                 "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD,
-                 field_one FIELD(10.5), field_two FIELD(1%), tag TAG)",
+             field_one FIELD(10.5), field_two FIELD(1%), tag TAG)",
             )
             .is_err()
         );

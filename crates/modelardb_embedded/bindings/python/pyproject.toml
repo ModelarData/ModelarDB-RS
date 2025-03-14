@@ -20,11 +20,10 @@ license = { text="Apache-2.0" }
 authors = [
   { name="Soeren Kejser Jensen",  email="devel@kejserjensen.dk" }
 ]
-requires-python = ">=3.7"
+requires-python = ">=3.11"
 dependencies = [
     "pyarrow",
     "cffi",
-    "typing-extensions"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
