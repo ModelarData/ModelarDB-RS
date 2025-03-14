@@ -82,12 +82,12 @@ thread_local! {
 /// or a zero-initialized pointer if an error occurs.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_open_memory() -> *const c_void {
-    let maybe_data_folder = unsafe { open_memory() };
+    let maybe_data_folder = open_memory();
     set_error_and_return_value_ptr(maybe_data_folder)
 }
 
 /// See documentation for [`modelardb_embedded_open_memory`].
-unsafe fn open_memory() -> Result<DataFolder> {
+fn open_memory() -> Result<DataFolder> {
     TOKIO_RUNTIME.block_on(DataFolder::open_memory())
 }
 

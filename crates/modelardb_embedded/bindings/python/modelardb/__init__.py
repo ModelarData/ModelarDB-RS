@@ -410,8 +410,7 @@ class ModelarDB:
 
     @classmethod
     def open_memory(cls):
-        """
-        Create a :obj:`ModelarDB` data folder that manages data in memory.
+        """Create a :obj:`ModelarDB` data folder that manages data in memory.
 
         :return: The constructed :obj:`ModelarDB`.
         :rtype: ModelarDB
@@ -955,8 +954,7 @@ class ModelarDB:
 
 
 def open_memory() -> ModelarDB:
-    """
-    Create a :obj:`ModelarDB` data folder that manages data in memory.
+    """Create a :obj:`ModelarDB` data folder that manages data in memory.
 
     :return: The constructed :obj:`ModelarDB`.
     :rtype: ModelarDB

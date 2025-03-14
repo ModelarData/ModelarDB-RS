@@ -561,7 +561,9 @@ mod tests {
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
         let target_dir_url = target_dir.path().to_str().unwrap();
-        let remote_data_folder = DataFolder::try_from_local_url(target_dir_url).await.unwrap();
+        let remote_data_folder = DataFolder::try_from_local_url(target_dir_url)
+            .await
+            .unwrap();
 
         // Set the transfer batch size so that data is transferred if three batches are written.
         let data_transfer = DataTransfer::try_new(

@@ -52,7 +52,7 @@ pub struct TableMetadataManager {
 }
 
 impl TableMetadataManager {
-    /// Create a new [`TableMetadataManager`] that saves the metadata an object store given by
+    /// Create a new [`TableMetadataManager`] that saves the metadata to an object store given by
     /// `local_url` and initialize the metadata tables. If `local_url` could not be parsed or the
     /// metadata tables could not be created, return [`ModelarDbStorageError`].
     pub async fn try_from_local_url(
