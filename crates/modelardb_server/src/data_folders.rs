@@ -43,8 +43,7 @@ impl DataFolder {
     /// metadata tables could not be created, [`ModelarDbServerError`] is returned.
     pub async fn try_from_local_url(local_url: &str) -> Result<Self> {
         let delta_lake = DeltaLake::try_from_local_url(local_url)?;
-        let table_metadata_manager =
-            TableMetadataManager::try_from_local_url(local_url, None).await?;
+        let table_metadata_manager = TableMetadataManager::try_from_local_url(local_url).await?;
 
         if local_url.starts_with("memory://") {
             warn!(
@@ -66,7 +65,7 @@ impl DataFolder {
         let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info)?;
 
         let remote_table_metadata_manager =
-            TableMetadataManager::try_from_connection_info(connection_info, None).await?;
+            TableMetadataManager::try_from_connection_info(connection_info).await?;
 
         Ok(Self {
             delta_lake: Arc::new(remote_delta_lake),

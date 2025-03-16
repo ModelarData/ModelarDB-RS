@@ -421,7 +421,7 @@ class ModelarDB:
         self.__is_data_folder = True
 
         if self.__modelardb_ptr == ffi.NULL:
-            raise ValueError("Failed to read from or write to memory data folder.")
+            raise ValueError("Failed to create memory data folder.")
 
         return self
 
@@ -444,7 +444,7 @@ class ModelarDB:
         self.__is_data_folder = True
 
         if self.__modelardb_ptr == ffi.NULL:
-            raise ValueError("Failed to read from or write to local data folder.")
+            raise ValueError("Failed to create local data folder.")
 
         return self
 
@@ -478,7 +478,7 @@ class ModelarDB:
         self.__is_data_folder = True
 
         if self.__modelardb_ptr == ffi.NULL:
-            raise ValueError("Failed to read from or write to S3 data folder.")
+            raise ValueError("Failed to create S3 data folder.")
 
         return self
 
@@ -507,7 +507,7 @@ class ModelarDB:
         self.__is_data_folder = True
 
         if self.__modelardb_ptr == ffi.NULL:
-            raise ValueError("Failed to read from or write to Azure data folder.")
+            raise ValueError("Failed to create Azure data folder.")
 
         return self
 

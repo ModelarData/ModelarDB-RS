@@ -55,14 +55,10 @@ impl TableMetadataManager {
     /// Create a new [`TableMetadataManager`] that saves the metadata to an object store given by
     /// `local_url` and initialize the metadata tables. If `local_url` could not be parsed or the
     /// metadata tables could not be created, return [`ModelarDbStorageError`].
-    pub async fn try_from_local_url(
-        local_url: &str,
-        maybe_session_context: Option<Arc<SessionContext>>,
-    ) -> Result<Self> {
+    pub async fn try_from_local_url(local_url: &str) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::try_from_local_url(local_url)?,
-            session_context: maybe_session_context
-                .unwrap_or_else(|| Arc::new(SessionContext::new())),
+            session_context: Arc::new(SessionContext::new()),
         };
 
         table_metadata_manager
@@ -75,13 +71,10 @@ impl TableMetadataManager {
     /// Create a new [`TableMetadataManager`] that saves the metadata to an in-memory Delta Lake and
     /// initialize the metadata tables. If the metadata tables could not be created, return
     /// [`ModelarDbStorageError`].
-    pub async fn try_new_in_memory(
-        maybe_session_context: Option<Arc<SessionContext>>,
-    ) -> Result<Self> {
+    pub async fn try_new_in_memory() -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::new_in_memory(),
-            session_context: maybe_session_context
-                .unwrap_or_else(|| Arc::new(SessionContext::new())),
+            session_context: Arc::new(SessionContext::new()),
         };
 
         table_metadata_manager
@@ -94,14 +87,10 @@ impl TableMetadataManager {
     /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and
     /// initialize the metadata tables. If the metadata tables could not be created, return
     /// [`ModelarDbStorageError`].
-    pub async fn try_from_path(
-        folder_path: &StdPath,
-        maybe_session_context: Option<Arc<SessionContext>>,
-    ) -> Result<Self> {
+    pub async fn try_from_path(folder_path: &StdPath) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::try_from_local_path(folder_path)?,
-            session_context: maybe_session_context
-                .unwrap_or_else(|| Arc::new(SessionContext::new())),
+            session_context: Arc::new(SessionContext::new()),
         };
 
         table_metadata_manager
@@ -115,14 +104,10 @@ impl TableMetadataManager {
     /// by `connection_info` and initialize the metadata tables. If `connection_info` could not be
     /// parsed, the connection cannot be made, or the metadata tables could not be created, return
     /// [`ModelarDbStorageError`].
-    pub async fn try_from_connection_info(
-        connection_info: &[u8],
-        maybe_session_context: Option<Arc<SessionContext>>,
-    ) -> Result<Self> {
+    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
-            session_context: maybe_session_context
-                .unwrap_or_else(|| Arc::new(SessionContext::new())),
+            session_context: Arc::new(SessionContext::new()),
         };
 
         table_metadata_manager
@@ -607,7 +592,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_metadata_delta_lake_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
             .await
             .unwrap();
 
@@ -832,7 +817,7 @@ mod tests {
 
     async fn create_metadata_manager_and_save_normal_tables() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
             .await
             .unwrap();
 
@@ -907,7 +892,7 @@ mod tests {
     #[tokio::test]
     async fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
             .await
             .unwrap();
 
@@ -976,7 +961,7 @@ mod tests {
 
     async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path(), None)
+        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
             .await
             .unwrap();
 

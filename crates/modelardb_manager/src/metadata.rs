@@ -51,16 +51,11 @@ impl MetadataManager {
     /// parsed or the metadata tables could not be created, return
     /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<MetadataManager> {
-        let session_context = Arc::new(SessionContext::new());
-
         let metadata_manager = Self {
             delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
-            table_metadata_manager: TableMetadataManager::try_from_connection_info(
-                connection_info,
-                Some(session_context.clone()),
-            )
-            .await?,
-            session_context,
+            table_metadata_manager: TableMetadataManager::try_from_connection_info(connection_info)
+                .await?,
+            session_context: Arc::new(SessionContext::new()),
         };
 
         // Create the necessary tables in the metadata Delta Lake.
@@ -329,16 +324,14 @@ mod tests {
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let session_context = Arc::new(SessionContext::new());
-        let table_metadata_manager =
-            TableMetadataManager::try_from_path(temp_dir.path(), Some(session_context.clone()))
-                .await
-                .unwrap();
+        let table_metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+            .await
+            .unwrap();
 
         let metadata_manager = MetadataManager {
             delta_lake: DeltaLake::try_from_local_path(temp_dir.path()).unwrap(),
             table_metadata_manager,
-            session_context,
+            session_context: Arc::new(SessionContext::new()),
         };
 
         metadata_manager

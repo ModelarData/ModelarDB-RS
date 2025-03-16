@@ -122,7 +122,7 @@ impl DataFolder {
     /// could not be created, [`ModelarDbEmbeddedError`] is returned.
     pub async fn open_memory() -> Result<Self> {
         let delta_lake = DeltaLake::new_in_memory();
-        let table_metadata_manager = Arc::new(TableMetadataManager::try_new_in_memory(None).await?);
+        let table_metadata_manager = Arc::new(TableMetadataManager::try_new_in_memory().await?);
 
         Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
     }
@@ -134,7 +134,7 @@ impl DataFolder {
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
 
         let table_metadata_manager =
-            Arc::new(TableMetadataManager::try_from_path(data_folder_path, None).await?);
+            Arc::new(TableMetadataManager::try_from_path(data_folder_path).await?);
 
         Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
     }

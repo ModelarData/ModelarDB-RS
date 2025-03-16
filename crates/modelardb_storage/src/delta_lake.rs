@@ -61,7 +61,7 @@ pub struct DeltaLake {
 }
 
 impl DeltaLake {
-    /// Create a new [`DeltaLake`] that manages the Delta tables in `local_url`. If `local_url` has
+    /// Create a new [`DeltaLake`] that manages the Delta tables at `local_url`. If `local_url` has
     /// the schema `file` or no schema, the Delta tables are managed in a local data folder. If
     /// `local_url` has the schema `memory`, the Delta tables are managed in memory. Return
     /// [`ModelarDbStorageError`] if `local_url` cannot be parsed.
