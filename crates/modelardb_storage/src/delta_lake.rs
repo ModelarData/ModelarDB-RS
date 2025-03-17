@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use arrow::array::{ArrayRef, RecordBatch};
 use arrow::datatypes::{DataType, Field, Schema};
+use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
@@ -38,6 +39,7 @@ use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
+use object_store::memory::InMemory;
 use object_store::path::Path;
 use url::Url;
 use uuid::Uuid;
@@ -54,11 +56,36 @@ pub struct DeltaLake {
     storage_options: HashMap<String, String>,
     /// [`ObjectStore`] to access the root of the Delta Lake.
     object_store: Arc<dyn ObjectStore>,
-    /// [`LocalFileSystem`] to access the root of the Delta Lake.
-    maybe_local_file_system: Option<Arc<LocalFileSystem>>,
+    /// Cache of Delta tables to avoid opening the same table multiple times.
+    delta_table_cache: DashMap<String, DeltaTable>,
 }
 
 impl DeltaLake {
+    /// Create a new [`DeltaLake`] that manages the Delta tables at `local_url`. If `local_url` has
+    /// the schema `file` or no schema, the Delta tables are managed in a local data folder. If
+    /// `local_url` has the schema `memory`, the Delta tables are managed in memory. Return
+    /// [`ModelarDbStorageError`] if `local_url` cannot be parsed.
+    pub fn try_from_local_url(local_url: &str) -> Result<Self> {
+        match local_url.split_once("://") {
+            Some(("file", local_path)) => Self::try_from_local_path(StdPath::new(local_path)),
+            None => Self::try_from_local_path(StdPath::new(local_url)),
+            Some(("memory", _)) => Ok(Self::new_in_memory()),
+            _ => Err(ModelarDbStorageError::InvalidArgument(format!(
+                "{local_url} is not a valid local URL."
+            ))),
+        }
+    }
+
+    /// Create a new [`DeltaLake`] that manages the Delta tables in memory.
+    pub fn new_in_memory() -> Self {
+        Self {
+            location: "memory://modelardb".to_owned(),
+            storage_options: HashMap::new(),
+            object_store: Arc::new(InMemory::new()),
+            delta_table_cache: DashMap::new(),
+        }
+    }
+
     /// Create a new [`DeltaLake`] that manages the Delta tables in `data_folder_path`. Returns a
     /// [`ModelarDbStorageError`] if `data_folder_path` does not exist and could not be created.
     pub fn try_from_local_path(data_folder_path: &StdPath) -> Result<Self> {
@@ -67,11 +94,9 @@ impl DeltaLake {
             .map_err(|error| DeltaTableError::generic(error.to_string()))?;
 
         // Use with_automatic_cleanup to ensure empty directories are deleted automatically.
-        let local_file_system = Arc::new(
-            LocalFileSystem::new_with_prefix(data_folder_path)
-                .map_err(|error| DeltaTableError::generic(error.to_string()))?
-                .with_automatic_cleanup(true),
-        );
+        let object_store = LocalFileSystem::new_with_prefix(data_folder_path)
+            .map_err(|error| DeltaTableError::generic(error.to_string()))?
+            .with_automatic_cleanup(true);
 
         let location = data_folder_path
             .to_str()
@@ -81,8 +106,8 @@ impl DeltaLake {
         Ok(Self {
             location,
             storage_options: HashMap::new(),
-            object_store: local_file_system.clone(),
-            maybe_local_file_system: Some(local_file_system),
+            object_store: Arc::new(object_store),
+            delta_table_cache: DashMap::new(),
         })
     }
 
@@ -169,7 +194,7 @@ impl DeltaLake {
             location,
             storage_options,
             object_store: Arc::new(object_store),
-            maybe_local_file_system: None,
+            delta_table_cache: DashMap::new(),
         })
     }
 
@@ -197,19 +222,13 @@ impl DeltaLake {
             location,
             storage_options,
             object_store: Arc::new(object_store),
-            maybe_local_file_system: None,
+            delta_table_cache: DashMap::new(),
         })
     }
 
     /// Return an [`ObjectStore`] to access the root of the Delta Lake.
     pub fn object_store(&self) -> Arc<dyn ObjectStore> {
         self.object_store.clone()
-    }
-
-    /// Return a [`LocalFileSystem`] to access the root of the Delta Lake if it uses a local data
-    /// folder.
-    pub fn local_file_system(&self) -> Option<Arc<LocalFileSystem>> {
-        self.maybe_local_file_system.clone()
     }
 
     /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
@@ -252,9 +271,23 @@ impl DeltaLake {
     /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
     async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
-        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone())
-            .await
-            .map_err(|error| error.into())
+        // Use the cache if possible and load to get the latest table data.
+        if let Some(mut delta_table) = self.delta_table_cache.get_mut(table_path) {
+            delta_table.load().await?;
+            Ok(delta_table.clone())
+        } else {
+            // If the table is not in the cache, open it and add it to the cache before returning.
+            let delta_table = deltalake::open_table_with_storage_options(
+                &table_path,
+                self.storage_options.clone(),
+            )
+            .await?;
+
+            self.delta_table_cache
+                .insert(table_path.to_owned(), delta_table.clone());
+
+            Ok(delta_table)
+        }
     }
 
     /// Return a [`DeltaTableWriter`] for writing to the model table with `delta_table` in the Delta
@@ -375,15 +408,19 @@ impl DeltaLake {
             columns.push(struct_field);
         }
 
-        CreateBuilder::new()
+        let delta_table = CreateBuilder::new()
             .with_storage_options(self.storage_options.clone())
             .with_table_name(table_name)
-            .with_location(location)
+            .with_location(location.clone())
             .with_columns(columns)
             .with_partition_columns(partition_columns)
             .with_save_mode(save_mode)
-            .await
-            .map_err(|error| error.into())
+            .await?;
+
+        // If the table was created successfully, add it to the cache.
+        self.delta_table_cache.insert(location, delta_table.clone());
+
+        Ok(delta_table)
     }
 
     /// Drop the metadata Delta Lake table with `table_name` from the Delta Lake by deleting every
@@ -420,6 +457,10 @@ impl DeltaLake {
             .delete_stream(file_locations)
             .try_collect::<Vec<Path>>()
             .await?;
+
+        // Remove the table from the cache.
+        let delta_table_path = format!("{}/{}", self.location, table_path);
+        self.delta_table_cache.remove(&delta_table_path);
 
         Ok(deleted_paths)
     }

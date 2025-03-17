@@ -19,3 +19,6 @@ proptest-regressions
 .idea
 *.log
 /data/
+
+/crates/modelardb_embedded/bindings/python/modelardb.egg-info/
+/crates/modelardb_embedded/bindings/python/build/

@@ -118,14 +118,23 @@ pub struct DataFolder {
 }
 
 impl DataFolder {
+    /// Creates a [`DataFolder`] that manages data in memory and returns it. If the metadata tables
+    /// could not be created, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn open_memory() -> Result<Self> {
+        let delta_lake = DeltaLake::new_in_memory();
+        let table_metadata_manager = Arc::new(TableMetadataManager::try_new_in_memory().await?);
+
+        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
+    }
+
     /// Creates a [`DataFolder`] that manages data in the local folder at `data_folder_path` and
     /// returns it. If the folder does not exist and could not be created or the metadata tables
     /// could not be created, [`ModelarDbEmbeddedError`] is returned.
-    pub async fn open_local(data_folder_path: &StdPath) -> Result<DataFolder> {
+    pub async fn open_local(data_folder_path: &StdPath) -> Result<Self> {
         let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
 
         let table_metadata_manager =
-            Arc::new(TableMetadataManager::try_from_path(data_folder_path, None).await?);
+            Arc::new(TableMetadataManager::try_from_path(data_folder_path).await?);
 
         Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
     }
@@ -138,7 +147,7 @@ impl DataFolder {
         bucket_name: String,
         access_key_id: String,
         secret_access_key: String,
-    ) -> Result<DataFolder> {
+    ) -> Result<Self> {
         // Register the S3 storage handlers to allow the use of Amazon S3 object stores. This is
         // required at runtime to initialize the S3 storage implementation in the deltalake_aws
         // storage subcrate. It is safe to call this function multiple times as the handlers are
@@ -173,7 +182,7 @@ impl DataFolder {
         account_name: String,
         access_key: String,
         container_name: String,
-    ) -> Result<DataFolder> {
+    ) -> Result<Self> {
         let delta_lake = DeltaLake::try_from_azure_configuration(
             account_name.clone(),
             access_key.clone(),
