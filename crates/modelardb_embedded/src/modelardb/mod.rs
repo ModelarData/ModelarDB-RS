@@ -15,7 +15,7 @@
 
 //! Operations for interacting with ModelarDB Apache Arrow Flight servers and data folders.
 
-pub(crate) mod client;
+pub mod client;
 pub mod data_folder;
 
 use std::any::Any;
