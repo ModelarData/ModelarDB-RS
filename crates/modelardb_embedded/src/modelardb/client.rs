@@ -41,6 +41,7 @@ use crate::modelardb::{ModelarDB, generate_read_model_table_sql, try_new_model_t
 use crate::{Aggregate, TableType};
 
 /// Types of nodes that can be connected to by [`Client`].
+#[derive(Clone)]
 pub enum Node {
     /// The Apache Arrow Flight server URL of a ModelarDB server node.
     Server(String),
