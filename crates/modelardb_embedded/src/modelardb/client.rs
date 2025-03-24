@@ -50,6 +50,14 @@ pub enum Node {
 }
 
 impl Node {
+    /// Returns the URL of the node.
+    pub fn url(&self) -> &str {
+        match self {
+            Node::Server(url) => url,
+            Node::Manager(url) => url,
+        }
+    }
+
     /// Returns the type of the node.
     pub fn node_type(&self) -> &str {
         match self {
