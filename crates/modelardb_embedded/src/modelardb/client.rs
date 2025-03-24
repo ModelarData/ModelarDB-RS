@@ -80,13 +80,8 @@ impl Client {
     /// connection to the node could not be established or if the actual type of the node does not
     /// match `node`, [`ModelarDbEmbeddedError`] is returned.
     pub async fn connect(node: Node) -> Result<Client> {
-        let node_url = match &node {
-            Node::Server(url) => url,
-            Node::Manager(url) => url,
-        };
-
         // Retrieve the actual type of the node to ensure it matches the expected type.
-        let mut flight_client = FlightServiceClient::connect(node_url.to_owned()).await?;
+        let mut flight_client = FlightServiceClient::connect(node.url().to_owned()).await?;
 
         let action = Action {
             r#type: "NodeType".to_owned(),
