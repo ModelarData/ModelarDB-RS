@@ -34,6 +34,7 @@ use modelardb_types::types::ErrorBound;
 use crate::error::Result;
 
 /// Types of tables supported by [`create()`](modelardb::ModelarDB::create).
+#[derive(Clone)]
 pub enum TableType {
     NormalTable(Schema),
     ModelTable(Schema, HashMap<String, ErrorBound>, HashMap<String, String>),
