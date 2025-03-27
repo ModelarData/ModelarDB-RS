@@ -112,6 +112,12 @@ impl Client {
         }
     }
 
+    /// Return the Apache Arrow Flight client connected to the Apache Arrow Flight server of the
+    /// ModelarDB node.
+    pub fn flight_client(&self) -> FlightServiceClient<Channel> {
+        self.flight_client.clone()
+    }
+
     /// Returns the client that should be used to execute the given command. If the client is
     /// connected to a server, this will be the same client. If the client is connected to a
     /// manager, this will be a cloud node in the cluster. If the cluster does not have at least one
