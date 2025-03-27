@@ -68,6 +68,7 @@ impl Node {
 }
 
 /// Client for connecting to ModelarDB Apache Arrow Flight servers.
+#[derive(Clone)]
 pub struct Client {
     /// The node that the client is connected to.
     pub(crate) node: Node,
