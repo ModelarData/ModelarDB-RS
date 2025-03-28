@@ -38,7 +38,7 @@ use crate::{Aggregate, TableType};
 /// folder.
 #[async_trait]
 pub trait Operations: Sync + Send {
-    /// Returns the [`ModelarDB`] instance as [`Any`] so that it can be downcast to a specific
+    /// Returns the [`Operations`] instance as [`Any`] so that it can be downcast to a specific
     /// implementation.
     fn as_any(&self) -> &dyn Any;
 
