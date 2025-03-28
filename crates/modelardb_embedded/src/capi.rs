@@ -43,9 +43,9 @@ use modelardb_types::types::ErrorBound;
 use tokio::runtime::Runtime;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::modelardb::ModelarDB;
-use crate::modelardb::client::{Client, Node};
-use crate::modelardb::data_folder::DataFolder;
+use crate::operations::Operations;
+use crate::operations::client::{Client, Node};
+use crate::operations::data_folder::DataFolder;
 use crate::record_batch_stream_to_record_batch;
 use crate::{Aggregate, TableType};
 
@@ -504,6 +504,101 @@ unsafe fn write(
     TOKIO_RUNTIME.block_on(modelardb.write(table_name, uncompressed_data))
 }
 
+/// Executes the SQL in `sql_ptr` in the [`DataFolder`] or [`Client`] in `maybe_modelardb_ptr` and
+/// writes the result to `decompressed_struct_array_ptr` and `decompressed_struct_array_schema_ptr`.
+/// Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; `sql_ptr` points to a
+/// valid C string; `decompressed_struct_array_ptr` is a valid pointer to enough memory for an
+/// Apache Arrow C Data Interface Array; and `decompressed_struct_array_schema_ptr` is a valid
+/// pointer to enough memory for an Apache Arrow C Data Interface Schema.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn modelardb_embedded_read(
+    maybe_modelardb_ptr: *mut c_void,
+    is_data_folder: bool,
+    sql_ptr: *const c_char,
+    decompressed_struct_array_ptr: *mut FFI_ArrowArray,
+    decompressed_struct_array_schema_ptr: *mut FFI_ArrowSchema,
+) -> c_int {
+    let maybe_unit = unsafe {
+        read(
+            maybe_modelardb_ptr,
+            is_data_folder,
+            sql_ptr,
+            decompressed_struct_array_ptr,
+            decompressed_struct_array_schema_ptr,
+        )
+    };
+
+    set_error_and_return_code(maybe_unit)
+}
+
+/// See documentation for [`modelardb_embedded_read`].
+unsafe fn read(
+    maybe_modelardb_ptr: *mut c_void,
+    is_data_folder: bool,
+    sql_ptr: *const c_char,
+    decompressed_struct_array_ptr: *mut FFI_ArrowArray,
+    decompressed_struct_array_schema_ptr: *mut FFI_ArrowSchema,
+) -> Result<()> {
+    let modelardb = unsafe { c_void_to_modelardb(maybe_modelardb_ptr, is_data_folder)? };
+    let sql = unsafe { c_char_ptr_to_str(sql_ptr)? };
+
+    let decompressed_data_stream = TOKIO_RUNTIME.block_on(modelardb.read(sql))?;
+    let decompressed_data = TOKIO_RUNTIME.block_on(record_batch_stream_to_record_batch(
+        decompressed_data_stream,
+    ))?;
+
+    unsafe {
+        record_batch_to_pointers(
+            decompressed_data,
+            decompressed_struct_array_ptr,
+            decompressed_struct_array_schema_ptr,
+        )
+    }
+}
+
+/// Executes the SQL in `sql_ptr` in the [`DataFolder`] or [`Client`] in `maybe_from_modelardb_ptr`
+/// and copies the result to the normal table in `maybe_to_modelardb_ptr`. Assumes
+/// `maybe_from_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; `sql_ptr` points to a
+/// valid C string; `maybe_to_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; and
+/// `to_table_name_ptr` points to a valid C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn modelardb_embedded_copy(
+    maybe_from_modelardb_ptr: *mut c_void,
+    is_data_folder: bool,
+    sql_ptr: *const c_char,
+    maybe_to_modelardb_ptr: *mut c_void,
+    to_table_name_ptr: *const c_char,
+) -> c_int {
+    let maybe_unit = unsafe {
+        copy(
+            maybe_from_modelardb_ptr,
+            is_data_folder,
+            sql_ptr,
+            maybe_to_modelardb_ptr,
+            to_table_name_ptr,
+        )
+    };
+
+    set_error_and_return_code(maybe_unit)
+}
+
+/// See documentation for [`modelardb_embedded_copy`].
+unsafe fn copy(
+    maybe_from_modelardb_ptr: *mut c_void,
+    is_data_folder: bool,
+    sql_ptr: *const c_char,
+    maybe_to_modelardb_ptr: *mut c_void,
+    to_table_name_ptr: *const c_char,
+) -> Result<()> {
+    let from_modelardb = unsafe { c_void_to_modelardb(maybe_from_modelardb_ptr, is_data_folder)? };
+    let sql = unsafe { c_char_ptr_to_str(sql_ptr)? };
+
+    let to_modelardb = unsafe { c_void_to_modelardb(maybe_to_modelardb_ptr, is_data_folder)? };
+    let to_table_name = unsafe { c_char_ptr_to_str(to_table_name_ptr)? };
+
+    TOKIO_RUNTIME.block_on(from_modelardb.copy(sql, to_modelardb, to_table_name))
+}
+
 /// Reads data from the model table with the table name in `table_name_ptr` in the [`DataFolder`] or
 /// [`Client`] in `maybe_modelardb_ptr` and writes it to `decompressed_struct_array_ptr` and
 /// `decompressed_struct_array_schema_ptr`. The remaining parameters optionally specify which subset
@@ -742,151 +837,6 @@ fn map_array_to_map_of_string_to_string(map_array: &MapArray) -> HashMap<String,
     map
 }
 
-/// Executes the SQL in `sql_ptr` in the [`DataFolder`] or [`Client`] in `maybe_modelardb_ptr` and
-/// writes the result to `decompressed_struct_array_ptr` and `decompressed_struct_array_schema_ptr`.
-/// Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; `sql_ptr` points to a
-/// valid C string; `decompressed_struct_array_ptr` is a valid pointer to enough memory for an
-/// Apache Arrow C Data Interface Array; and `decompressed_struct_array_schema_ptr` is a valid
-/// pointer to enough memory for an Apache Arrow C Data Interface Schema.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn modelardb_embedded_read(
-    maybe_modelardb_ptr: *mut c_void,
-    is_data_folder: bool,
-    sql_ptr: *const c_char,
-    decompressed_struct_array_ptr: *mut FFI_ArrowArray,
-    decompressed_struct_array_schema_ptr: *mut FFI_ArrowSchema,
-) -> c_int {
-    let maybe_unit = unsafe {
-        read(
-            maybe_modelardb_ptr,
-            is_data_folder,
-            sql_ptr,
-            decompressed_struct_array_ptr,
-            decompressed_struct_array_schema_ptr,
-        )
-    };
-
-    set_error_and_return_code(maybe_unit)
-}
-
-/// See documentation for [`modelardb_embedded_read`].
-unsafe fn read(
-    maybe_modelardb_ptr: *mut c_void,
-    is_data_folder: bool,
-    sql_ptr: *const c_char,
-    decompressed_struct_array_ptr: *mut FFI_ArrowArray,
-    decompressed_struct_array_schema_ptr: *mut FFI_ArrowSchema,
-) -> Result<()> {
-    let modelardb = unsafe { c_void_to_modelardb(maybe_modelardb_ptr, is_data_folder)? };
-    let sql = unsafe { c_char_ptr_to_str(sql_ptr)? };
-
-    let decompressed_data_stream = TOKIO_RUNTIME.block_on(modelardb.read(sql))?;
-    let decompressed_data = TOKIO_RUNTIME.block_on(record_batch_stream_to_record_batch(
-        decompressed_data_stream,
-    ))?;
-
-    unsafe {
-        record_batch_to_pointers(
-            decompressed_data,
-            decompressed_struct_array_ptr,
-            decompressed_struct_array_schema_ptr,
-        )
-    }
-}
-
-/// Executes the SQL in `sql_ptr` in the [`DataFolder`] or [`Client`] in `maybe_from_modelardb_ptr`
-/// and copies the result to the normal table in `maybe_to_modelardb_ptr`. Assumes
-/// `maybe_from_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; `sql_ptr` points to a
-/// valid C string; `maybe_to_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; and
-/// `to_table_name_ptr` points to a valid C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn modelardb_embedded_copy_normal_table(
-    maybe_from_modelardb_ptr: *mut c_void,
-    is_data_folder: bool,
-    sql_ptr: *const c_char,
-    maybe_to_modelardb_ptr: *mut c_void,
-    to_table_name_ptr: *const c_char,
-) -> c_int {
-    let maybe_unit = unsafe {
-        copy_normal_table(
-            maybe_from_modelardb_ptr,
-            is_data_folder,
-            sql_ptr,
-            maybe_to_modelardb_ptr,
-            to_table_name_ptr,
-        )
-    };
-
-    set_error_and_return_code(maybe_unit)
-}
-
-/// See documentation for [`modelardb_embedded_copy_normal_table`].
-unsafe fn copy_normal_table(
-    maybe_from_modelardb_ptr: *mut c_void,
-    is_data_folder: bool,
-    sql_ptr: *const c_char,
-    maybe_to_modelardb_ptr: *mut c_void,
-    to_table_name_ptr: *const c_char,
-) -> Result<()> {
-    let from_modelardb = unsafe { c_void_to_modelardb(maybe_from_modelardb_ptr, is_data_folder)? };
-    let sql = unsafe { c_char_ptr_to_str(sql_ptr)? };
-
-    let to_modelardb = unsafe { c_void_to_modelardb(maybe_to_modelardb_ptr, is_data_folder)? };
-    let to_table_name = unsafe { c_char_ptr_to_str(to_table_name_ptr)? };
-
-    TOKIO_RUNTIME.block_on(from_modelardb.copy_normal_table(sql, to_modelardb, to_table_name))
-}
-
-/// Drops the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
-/// `maybe_modelardb_ptr`. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`];
-/// and `table_name_ptr` points to a valid C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn modelardb_embedded_drop(
-    maybe_modelardb_ptr: *mut c_void,
-    is_data_folder: bool,
-    table_name_ptr: *const c_char,
-) -> c_int {
-    let maybe_unit = unsafe { drop(maybe_modelardb_ptr, is_data_folder, table_name_ptr) };
-    set_error_and_return_code(maybe_unit)
-}
-
-/// See documentation for [`modelardb_embedded_drop`].
-unsafe fn drop(
-    maybe_modelardb_ptr: *mut c_void,
-    is_data_folder: bool,
-    table_name_ptr: *const c_char,
-) -> Result<()> {
-    let modelardb = unsafe { c_void_to_modelardb(maybe_modelardb_ptr, is_data_folder)? };
-    let table_name = unsafe { c_char_ptr_to_str(table_name_ptr)? };
-
-    TOKIO_RUNTIME.block_on(modelardb.drop(table_name))
-}
-
-/// Truncates the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
-/// `maybe_modelardb_ptr`. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`];
-/// and `table_name_ptr` points to a valid C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn modelardb_embedded_truncate(
-    maybe_modelardb_ptr: *mut c_void,
-    is_data_folder: bool,
-    table_name_ptr: *const c_char,
-) -> c_int {
-    let maybe_unit = unsafe { truncate(maybe_modelardb_ptr, is_data_folder, table_name_ptr) };
-    set_error_and_return_code(maybe_unit)
-}
-
-/// See documentation for [`modelardb_embedded_truncate`].
-unsafe fn truncate(
-    maybe_modelardb_ptr: *mut c_void,
-    is_data_folder: bool,
-    table_name_ptr: *const c_char,
-) -> Result<()> {
-    let modelardb = unsafe { c_void_to_modelardb(maybe_modelardb_ptr, is_data_folder)? };
-    let table_name = unsafe { c_char_ptr_to_str(table_name_ptr)? };
-
-    TOKIO_RUNTIME.block_on(modelardb.truncate(table_name))
-}
-
 /// Move all data from the table with the name in `from_table_name_ptr` in the [`DataFolder`] or
 /// [`Client`] in `maybe_from_modelardb_ptr` to the table with the name in `to_table_name_ptr` in
 /// the [`DataFolder`] or [`Client`] in `maybe_to_modelardb_ptr`. Assumes `maybe_from_modelardb_ptr`
@@ -931,6 +881,56 @@ unsafe fn r#move(
     TOKIO_RUNTIME.block_on(from_modelardb.r#move(from_table_name, to_modelardb, to_table_name))
 }
 
+/// Truncates the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
+/// `maybe_modelardb_ptr`. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`];
+/// and `table_name_ptr` points to a valid C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn modelardb_embedded_truncate(
+    maybe_modelardb_ptr: *mut c_void,
+    is_data_folder: bool,
+    table_name_ptr: *const c_char,
+) -> c_int {
+    let maybe_unit = unsafe { truncate(maybe_modelardb_ptr, is_data_folder, table_name_ptr) };
+    set_error_and_return_code(maybe_unit)
+}
+
+/// See documentation for [`modelardb_embedded_truncate`].
+unsafe fn truncate(
+    maybe_modelardb_ptr: *mut c_void,
+    is_data_folder: bool,
+    table_name_ptr: *const c_char,
+) -> Result<()> {
+    let modelardb = unsafe { c_void_to_modelardb(maybe_modelardb_ptr, is_data_folder)? };
+    let table_name = unsafe { c_char_ptr_to_str(table_name_ptr)? };
+
+    TOKIO_RUNTIME.block_on(modelardb.truncate(table_name))
+}
+
+/// Drops the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
+/// `maybe_modelardb_ptr`. Assumes `maybe_modelardb_ptr` points to a [`DataFolder`] or [`Client`];
+/// and `table_name_ptr` points to a valid C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn modelardb_embedded_drop(
+    maybe_modelardb_ptr: *mut c_void,
+    is_data_folder: bool,
+    table_name_ptr: *const c_char,
+) -> c_int {
+    let maybe_unit = unsafe { drop(maybe_modelardb_ptr, is_data_folder, table_name_ptr) };
+    set_error_and_return_code(maybe_unit)
+}
+
+/// See documentation for [`modelardb_embedded_drop`].
+unsafe fn drop(
+    maybe_modelardb_ptr: *mut c_void,
+    is_data_folder: bool,
+    table_name_ptr: *const c_char,
+) -> Result<()> {
+    let modelardb = unsafe { c_void_to_modelardb(maybe_modelardb_ptr, is_data_folder)? };
+    let table_name = unsafe { c_char_ptr_to_str(table_name_ptr)? };
+
+    TOKIO_RUNTIME.block_on(modelardb.drop(table_name))
+}
+
 /// Return a read-only [`*const c_char`] with a human-readable representation of the last error the
 /// current thread encountered. The lifetime of the returned [`*const c_char`] ends when
 /// [`modelardb_embedded_error()`] is called again. If no errors have occurred, a zero-initialized
@@ -964,7 +964,7 @@ pub unsafe extern "C" fn modelardb_embedded_error() -> *const c_char {
 unsafe fn c_void_to_modelardb<'a>(
     maybe_modelardb_ptr: *mut c_void,
     is_data_folder: bool,
-) -> Result<&'a mut dyn ModelarDB> {
+) -> Result<&'a mut dyn Operations> {
     if is_data_folder {
         let maybe_data_folder_ptr: *mut DataFolder = maybe_modelardb_ptr.cast();
         if !maybe_data_folder_ptr.is_null() && maybe_data_folder_ptr.is_aligned() {

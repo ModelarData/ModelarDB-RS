@@ -348,6 +348,18 @@ class ModelarDB:
                                          struct ArrowArray* uncompressed_struct_ptr,
                                          struct ArrowSchema* uncompressed_struct_schema_ptr);
 
+            int modelardb_embedded_read(void* maybe_modelardb_ptr,
+                                        bool is_data_folder,
+                                        char* sql_ptr,
+                                        struct ArrowArray* decompressed_struct_ptr,
+                                        struct ArrowSchema* decompressed_struct_schema_ptr);
+
+            int modelardb_embedded_copy(void* maybe_from_modelardb_ptr,
+                                        bool is_data_folder,
+                                        char* sql_ptr,
+                                        void* maybe_to_modelardb_ptr,
+                                        char* to_table_name_ptr);
+
             int modelardb_embedded_read_model_table(void* maybe_modelardb_ptr,
                                                     bool is_data_folder,
                                                     char* table_name_ptr,
@@ -372,31 +384,19 @@ class ModelarDB:
                                                     struct ArrowArray* tags_array_ptr,
                                                     struct ArrowSchema* tags_array_schema_ptr);
 
-            int modelardb_embedded_read(void* maybe_modelardb_ptr,
-                                        bool is_data_folder,
-                                        char* sql_ptr,
-                                        struct ArrowArray* decompressed_struct_ptr,
-                                        struct ArrowSchema* decompressed_struct_schema_ptr);
-
-            int modelardb_embedded_copy_normal_table(void* maybe_from_modelardb_ptr,
-                                                     bool is_data_folder,
-                                                     char* sql_ptr,
-                                                     void* maybe_to_modelardb_ptr,
-                                                     char* to_table_name_ptr);
-
-            int modelardb_embedded_drop(void* maybe_modelardb_ptr,
-                                        bool is_data_folder,
-                                        char* table_name_ptr);
-
-            int modelardb_embedded_truncate(void* maybe_modelardb_ptr,
-                                            bool is_data_folder,
-                                            char* table_name_ptr);
-
             int modelardb_embedded_move(void* maybe_from_modelardb_ptr,
                                         bool is_data_folder,
                                         char* from_table_name_ptr,
                                         void* maybe_to_modelardb_ptr,
                                         char* to_table_name_ptr);
+
+            int modelardb_embedded_truncate(void* maybe_modelardb_ptr,
+                                            bool is_data_folder,
+                                            char* table_name_ptr);
+
+            int modelardb_embedded_drop(void* maybe_modelardb_ptr,
+                                        bool is_data_folder,
+                                        char* table_name_ptr);
 
             char* modelardb_embedded_error();
             """
@@ -666,6 +666,58 @@ class ModelarDB:
         )
         self.__check_return_code_and_raise_error(return_code)
 
+    def read(self, sql: str) -> RecordBatch:
+        """Executes an `sql` statement and returns the result.
+
+        :param sql: An SQL statement.
+        :type sql: str
+        :return: The result of executing `sql`.
+        :rtype: RecordBatch
+        :raises ValueError: If incorrect arguments are provided.
+        """
+        sql_ptr = ffi.new("char[]", bytes(sql, "UTF-8"))
+
+        decompressed_batch_ffi = FFIArray.from_type(RecordBatch)
+
+        return_code = self.__library.modelardb_embedded_read(
+            self.__modelardb_ptr,
+            self.__is_data_folder,
+            sql_ptr,
+            decompressed_batch_ffi.array_ptr,
+            decompressed_batch_ffi.schema_ptr,
+        )
+        self.__check_return_code_and_raise_error(return_code)
+
+        return decompressed_batch_ffi.array()
+
+    def copy(self, sql: str, to_modelardb: Self, to_table_name: str):
+        """Executes an `sql` statement and copies the result to the normal
+        table with `to_table_name` in `to_modelardb`. Data can be copied from
+        both normal tables and model tables but only to normal tables. Duplicate
+        data is not dropped. This is to not lossy compress data multiple times.
+
+        :param sql: An SQL statement.
+        :type sql: str
+        :param to_modelardb: :obj:`ModelarDB` to write data from `self` to.
+        :type to_modelardb: ModelarDB
+        :param to_table_name: Name of the normal table to write data to.
+        :type to_table_name: str
+        :raises ValueError: If incorrect arguments are provided.
+        """
+        sql_ptr = ffi.new("char[]", bytes(sql, "UTF-8"))
+
+        to_modelardb = to_modelardb.__modelardb_ptr
+        to_table_name = ffi.new("char[]", bytes(to_table_name, "UTF-8"))
+
+        return_code = self.__library.modelardb_embedded_copy(
+            self.__modelardb_ptr,
+            self.__is_data_folder,
+            sql_ptr,
+            to_modelardb,
+            to_table_name,
+        )
+        self.__check_return_code_and_raise_error(return_code)
+
     def read_model_table(
         self,
         table_name: str,
@@ -823,58 +875,6 @@ class ModelarDB:
         else:
             return ffi.NULL
 
-    def read(self, sql: str) -> RecordBatch:
-        """Executes an `sql` statement and returns the result.
-
-        :param sql: An SQL statement.
-        :type sql: str
-        :return: The result of executing `sql`.
-        :rtype: RecordBatch
-        :raises ValueError: If incorrect arguments are provided.
-        """
-        sql_ptr = ffi.new("char[]", bytes(sql, "UTF-8"))
-
-        decompressed_batch_ffi = FFIArray.from_type(RecordBatch)
-
-        return_code = self.__library.modelardb_embedded_read(
-            self.__modelardb_ptr,
-            self.__is_data_folder,
-            sql_ptr,
-            decompressed_batch_ffi.array_ptr,
-            decompressed_batch_ffi.schema_ptr,
-        )
-        self.__check_return_code_and_raise_error(return_code)
-
-        return decompressed_batch_ffi.array()
-
-    def copy_normal_table(self, sql: str, to_modelardb: Self, to_table_name: str):
-        """Executes an `sql` statement and copies the result to the normal
-        table with `to_table_name` in `to_modelardb`. Data can be copied from
-        both normal tables and model tables but only to normal tables. Duplicate
-        data is not dropped.
-
-        :param sql: An SQL statement.
-        :type sql: str
-        :param to_modelardb: :obj:`ModelarDB` to write data from `self` to.
-        :type to_modelardb: ModelarDB
-        :param to_table_name: Name of the normal table to write data to.
-        :type to_table_name: str
-        :raises ValueError: If incorrect arguments are provided.
-        """
-        sql_ptr = ffi.new("char[]", bytes(sql, "UTF-8"))
-
-        to_modelardb = to_modelardb.__modelardb_ptr
-        to_table_name = ffi.new("char[]", bytes(to_table_name, "UTF-8"))
-
-        return_code = self.__library.modelardb_embedded_copy_normal_table(
-            self.__modelardb_ptr,
-            self.__is_data_folder,
-            sql_ptr,
-            to_modelardb,
-            to_table_name,
-        )
-        self.__check_return_code_and_raise_error(return_code)
-
     def move(
         self,
         from_table_name: str,
@@ -907,19 +907,6 @@ class ModelarDB:
         )
         self.__check_return_code_and_raise_error(return_code)
 
-    def drop(self, table_name: str):
-        """Drops the table with `table_name`.
-
-        :param table_name: The name of the table to drop.
-        :type table_name: str
-        :raises ValueError: If incorrect arguments are provided.
-        """
-        table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
-        return_code = self.__library.modelardb_embedded_drop(
-            self.__modelardb_ptr, self.__is_data_folder, table_name_ptr
-        )
-        self.__check_return_code_and_raise_error(return_code)
-
     def truncate(self, table_name: str):
         """Truncates the table with `table_name`.
 
@@ -929,6 +916,19 @@ class ModelarDB:
         """
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
         return_code = self.__library.modelardb_embedded_truncate(
+            self.__modelardb_ptr, self.__is_data_folder, table_name_ptr
+        )
+        self.__check_return_code_and_raise_error(return_code)
+
+    def drop(self, table_name: str):
+        """Drops the table with `table_name`.
+
+        :param table_name: The name of the table to drop.
+        :type table_name: str
+        :raises ValueError: If incorrect arguments are provided.
+        """
+        table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
+        return_code = self.__library.modelardb_embedded_drop(
             self.__modelardb_ptr, self.__is_data_folder, table_name_ptr
         )
         self.__check_return_code_and_raise_error(return_code)

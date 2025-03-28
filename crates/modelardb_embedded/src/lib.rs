@@ -17,7 +17,7 @@
 
 mod capi;
 pub mod error; // Public because public functions return ModelarDbEmbeddedError.
-pub mod modelardb;
+pub mod operations;
 
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -33,13 +33,13 @@ use modelardb_types::types::ErrorBound;
 
 use crate::error::Result;
 
-/// Types of tables supported by [`create()`](modelardb::ModelarDB::create).
+/// Types of tables supported by [`create()`](operations::Operations::create).
 pub enum TableType {
     NormalTable(Schema),
     ModelTable(Schema, HashMap<String, ErrorBound>, HashMap<String, String>),
 }
 
-/// Aggregate operations supported by [`read_model_table()`](modelardb::ModelarDB::read_model_table).
+/// Aggregate operations supported by [`read_model_table()`](operations::Operations::read_model_table).
 #[derive(Debug)]
 pub enum Aggregate {
     None,

@@ -44,7 +44,7 @@ use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::TimestampArray;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::modelardb::{ModelarDB, generate_read_model_table_sql, try_new_model_table_metadata};
+use crate::operations::{Operations, generate_read_model_table_sql, try_new_model_table_metadata};
 use crate::{Aggregate, TableType};
 
 /// [`DataSink`] that rejects INSERT statements passed to [`DataFolder.read()`].
@@ -420,7 +420,7 @@ impl DataFolder {
 }
 
 #[async_trait]
-impl ModelarDB for DataFolder {
+impl Operations for DataFolder {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
@@ -550,6 +550,64 @@ impl ModelarDB for DataFolder {
         Ok(())
     }
 
+    /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`]. If the SQL
+    /// could not be executed, [`ModelarDbEmbeddedError`] is returned.
+    async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
+        let data_frame = self.session_context.sql(sql).await?;
+
+        data_frame
+            .execute_stream()
+            .await
+            .map_err(|error| error.into())
+    }
+
+    /// Executes the SQL in `sql` and writes the result to the normal table with the name in
+    /// `to_table_name` in `to_modelardb`. Note that data can be copied from both normal tables and
+    /// model tables but only to normal tables. This is to not lossy compress data multiple
+    /// times. If `to_modelardb` is not a data folder, the data could not be queried, or the result
+    /// could not be written to the normal table, [`ModelarDbEmbeddedError`] is returned.
+    async fn copy(
+        &mut self,
+        sql: &str,
+        to_modelardb: &mut dyn Operations,
+        to_table_name: &str,
+    ) -> Result<()> {
+        let to_data_folder = to_modelardb
+            .as_any()
+            .downcast_ref::<DataFolder>()
+            .ok_or_else(|| {
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "to_modelardb is not a data folder.".to_owned(),
+                )
+            })?;
+
+        let to_normal_table_schema = to_data_folder
+            .normal_table_schema(to_table_name)
+            .await
+            .ok_or_else(|| {
+                ModelarDbEmbeddedError::InvalidArgument(format!(
+                    "{to_table_name} is not a normal table."
+                ))
+            })?;
+
+        let record_batch_stream = self.read(sql).await?;
+
+        if record_batch_stream.schema() != to_normal_table_schema.into() {
+            Err(ModelarDbEmbeddedError::InvalidArgument(format!(
+                "The schema of the data to copy does not match the schema of {to_table_name}."
+            )))
+        } else {
+            let record_batches = common::collect(record_batch_stream).await?;
+
+            to_data_folder
+                .delta_lake
+                .write_record_batches_to_normal_table(to_table_name, record_batches)
+                .await?;
+
+            Ok(())
+        }
+    }
+
     /// Reads data from the model table with the table name in `table_name` and returns it as a
     /// [`RecordBatchStream`]. The remaining parameters optionally specify which subset of the data
     /// to read. If the table is not a model table or the data could not be read,
@@ -594,7 +652,7 @@ impl ModelarDB for DataFolder {
     async fn copy_model_table(
         &self,
         from_table_name: &str,
-        to_modelardb: &dyn ModelarDB,
+        to_modelardb: &dyn Operations,
         to_table_name: &str,
         maybe_start_time: Option<&str>,
         maybe_end_time: Option<&str>,
@@ -676,99 +734,6 @@ impl ModelarDB for DataFolder {
         Ok(())
     }
 
-    /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`]. If the SQL
-    /// could not be executed, [`ModelarDbEmbeddedError`] is returned.
-    async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
-        let data_frame = self.session_context.sql(sql).await?;
-
-        data_frame
-            .execute_stream()
-            .await
-            .map_err(|error| error.into())
-    }
-
-    /// Executes the SQL in `sql` and writes the result to the normal table with the name in
-    /// `to_table_name` in `to_modelardb`. Note that data can be copied from both normal tables and
-    /// model tables but only to normal tables. If `to_modelardb` is not a data folder, the data
-    /// could not be queried, or the result could not be written to the normal table,
-    /// [`ModelarDbEmbeddedError`] is returned.
-    async fn copy_normal_table(
-        &mut self,
-        sql: &str,
-        to_modelardb: &mut dyn ModelarDB,
-        to_table_name: &str,
-    ) -> Result<()> {
-        let to_data_folder = to_modelardb
-            .as_any()
-            .downcast_ref::<DataFolder>()
-            .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(
-                    "to_modelardb is not a data folder.".to_owned(),
-                )
-            })?;
-
-        let to_normal_table_schema = to_data_folder
-            .normal_table_schema(to_table_name)
-            .await
-            .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{to_table_name} is not a normal table."
-                ))
-            })?;
-
-        let record_batch_stream = self.read(sql).await?;
-
-        if record_batch_stream.schema() != to_normal_table_schema.into() {
-            Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                "The schema of the data to copy does not match the schema of {to_table_name}."
-            )))
-        } else {
-            let record_batches = common::collect(record_batch_stream).await?;
-
-            to_data_folder
-                .delta_lake
-                .write_record_batches_to_normal_table(to_table_name, record_batches)
-                .await?;
-
-            Ok(())
-        }
-    }
-
-    /// Drop the table with the name in `table_name` by deregistering the table from the Apache
-    /// Arrow DataFusion session, deleting all the table files from the data Delta Lake, and
-    /// deleting the table metadata from the metadata Delta Lake. If the table could not be
-    /// deregistered or the metadata or data could not be dropped, [`ModelarDbEmbeddedError`] is
-    /// returned.
-    async fn drop(&mut self, table_name: &str) -> Result<()> {
-        // Drop the table from the Apache Arrow DataFusion session.
-        self.session_context.deregister_table(table_name)?;
-
-        // Delete the table metadata from the metadata Delta Lake.
-        self.table_metadata_manager
-            .drop_table_metadata(table_name)
-            .await?;
-
-        // Drop the table from the Delta Lake.
-        self.delta_lake.drop_table(table_name).await?;
-
-        Ok(())
-    }
-
-    /// Truncate the table with the name in `table_name` by deleting the table data in the data
-    /// Delta Lake. If the data could not be deleted, [`ModelarDbEmbeddedError`] is returned.
-    async fn truncate(&mut self, table_name: &str) -> Result<()> {
-        if self.tables().await?.contains(&table_name.to_owned()) {
-            self.delta_lake
-                .truncate_table(table_name)
-                .await
-                .map_err(|error| error.into())
-        } else {
-            Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                "Table with name '{table_name}' does not exist."
-            )))
-        }
-    }
-
     /// Move all data from the table with the name in `from_table_name` in `self` to the table with
     /// the name in `to_table_name` in `to_modelardb`. If `to_modelardb` is not a data folder, the
     /// schemas of the tables do not match, or the data could not be moved,
@@ -776,7 +741,7 @@ impl ModelarDB for DataFolder {
     async fn r#move(
         &mut self,
         from_table_name: &str,
-        to_modelardb: &dyn ModelarDB,
+        to_modelardb: &dyn Operations,
         to_table_name: &str,
     ) -> Result<()> {
         let to_data_folder = to_modelardb
@@ -840,6 +805,41 @@ impl ModelarDB for DataFolder {
         // Truncate the table after moving the data. This will also delete the tag hash metadata
         // if the table is a model table.
         self.truncate(from_table_name).await?;
+
+        Ok(())
+    }
+
+    /// Truncate the table with the name in `table_name` by deleting the table data in the data
+    /// Delta Lake. If the data could not be deleted, [`ModelarDbEmbeddedError`] is returned.
+    async fn truncate(&mut self, table_name: &str) -> Result<()> {
+        if self.tables().await?.contains(&table_name.to_owned()) {
+            self.delta_lake
+                .truncate_table(table_name)
+                .await
+                .map_err(|error| error.into())
+        } else {
+            Err(ModelarDbEmbeddedError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
+        }
+    }
+
+    /// Drop the table with the name in `table_name` by deregistering the table from the Apache
+    /// Arrow DataFusion session, deleting all the table files from the data Delta Lake, and
+    /// deleting the table metadata from the metadata Delta Lake. If the table could not be
+    /// deregistered or the metadata or data could not be dropped, [`ModelarDbEmbeddedError`] is
+    /// returned.
+    async fn drop(&mut self, table_name: &str) -> Result<()> {
+        // Drop the table from the Apache Arrow DataFusion session.
+        self.session_context.deregister_table(table_name)?;
+
+        // Delete the table metadata from the metadata Delta Lake.
+        self.table_metadata_manager
+            .drop_table_metadata(table_name)
+            .await?;
+
+        // Drop the table from the Delta Lake.
+        self.delta_lake.drop_table(table_name).await?;
 
         Ok(())
     }
@@ -922,7 +922,7 @@ mod tests {
     use tempfile::TempDir;
     use tonic::transport::Channel;
 
-    use crate::modelardb::client::{Client, Node};
+    use crate::operations::client::{Client, Node};
     use crate::record_batch_stream_to_record_batch;
 
     const NORMAL_TABLE_NAME: &str = "normal_table";
@@ -2142,7 +2142,7 @@ mod tests {
 
         let copy_sql = format!("SELECT * FROM {} LIMIT 3", NORMAL_TABLE_NAME);
         from_data_folder
-            .copy_normal_table(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
+            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -2177,7 +2177,7 @@ mod tests {
 
         let copy_sql = format!("SELECT id, name FROM {}", NORMAL_TABLE_NAME);
         from_data_folder
-            .copy_normal_table(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
+            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -2203,7 +2203,7 @@ mod tests {
 
         let copy_sql = format!("SELECT id, name FROM {}", NORMAL_TABLE_NAME);
         let result = from_data_folder
-            .copy_normal_table(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
+            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2242,7 +2242,7 @@ mod tests {
 
         let copy_sql = format!("SELECT * FROM {}", MODEL_TABLE_NAME);
         from_data_folder
-            .copy_normal_table(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
+            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -2269,7 +2269,7 @@ mod tests {
 
         let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
         let result = from_data_folder
-            .copy_normal_table(&copy_sql, &mut to_data_folder, MODEL_TABLE_NAME)
+            .copy(&copy_sql, &mut to_data_folder, MODEL_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2292,7 +2292,7 @@ mod tests {
 
         let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
         let result = from_data_folder
-            .copy_normal_table(&copy_sql, &mut to_data_folder, MISSING_TABLE_NAME)
+            .copy(&copy_sql, &mut to_data_folder, MISSING_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2310,7 +2310,7 @@ mod tests {
 
         let copy_sql = format!("SELECT * FROM {}", MISSING_TABLE_NAME);
         let result = from_data_folder
-            .copy_normal_table(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
+            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2329,7 +2329,7 @@ mod tests {
 
         let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
         let result = from_data_folder
-            .copy_normal_table(&copy_sql, &mut to_client, NORMAL_TABLE_NAME)
+            .copy(&copy_sql, &mut to_client, NORMAL_TABLE_NAME)
             .await;
 
         assert_eq!(
