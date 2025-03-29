@@ -1007,7 +1007,7 @@ def open_azure(account_name: str, access_key: str, container_name: str) -> Model
     return ModelarDB.open_azure(account_name, access_key, container_name)
 
 
-def connect(node: Server | Manager):
+def connect(node: Server | Manager) -> ModelarDB:
     """Create a connection to a :obj:`ModelarDB` node.
 
     :param node: The ModelarDB node to connect to.
