@@ -230,6 +230,67 @@ class ModelarDBPythonTest(unittest.TestCase):
             )
             self.assertEqual(error_message, str(context.exception))
 
+    def test_data_folder_read(self):
+        with TemporaryDirectory() as temp_dir:
+            data_folder = ModelarDB.open_local(temp_dir)
+            create_tables_in_data_folder(data_folder)
+
+            data_folder.write(MODEL_TABLE_NAME, model_table_data())
+
+            actual_result = data_folder.read(f"SELECT * FROM {MODEL_TABLE_NAME}")
+            self.assertEqual(
+                actual_result, sorted_model_table_data_with_generated_column()
+            )
+
+    def test_data_folder_read_error(self):
+        with TemporaryDirectory() as temp_dir:
+            data_folder = ModelarDB.open_local(temp_dir)
+
+            with self.assertRaises(RuntimeError) as context:
+                data_folder.read(f"SELECT * FROM {MISSING_TABLE_NAME}")
+
+            error_message = (
+                f"DataFusion Error: Error during planning: table 'datafusion.public.{MISSING_TABLE_NAME}' "
+                f"not found"
+            )
+            self.assertEqual(error_message, str(context.exception))
+
+    def test_data_folder_copy(self):
+        with TemporaryDirectory() as from_temp_dir:
+            with TemporaryDirectory() as to_temp_dir:
+                from_data_folder = ModelarDB.open_local(from_temp_dir)
+                create_tables_in_data_folder(from_data_folder)
+
+                expected_result = normal_table_data()
+                from_data_folder.write(NORMAL_TABLE_NAME, expected_result)
+
+                to_data_folder = ModelarDB.open_local(to_temp_dir)
+                create_tables_in_data_folder(to_data_folder)
+
+                sql = f"SELECT * FROM {NORMAL_TABLE_NAME}"
+                from_data_folder.copy(
+                    sql, to_data_folder, NORMAL_TABLE_NAME
+                )
+
+                # After copying the data it should also be in to_table.
+                self.assertEqual(from_data_folder.read(sql), expected_result)
+                self.assertEqual(to_data_folder.read(sql), expected_result)
+
+    def test_data_folder_copy_error(self):
+        with TemporaryDirectory() as from_temp_dir:
+            with TemporaryDirectory() as to_temp_dir:
+                from_data_folder = ModelarDB.open_local(from_temp_dir)
+                to_data_folder = ModelarDB.open_local(to_temp_dir)
+
+                with self.assertRaises(RuntimeError) as context:
+                    sql = f"SELECT * FROM {MISSING_TABLE_NAME}"
+                    from_data_folder.copy(
+                        sql, to_data_folder, MISSING_TABLE_NAME
+                    )
+
+                error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a normal table."
+                self.assertEqual(error_message, str(context.exception))
+
     def test_data_folder_read_model_table(self):
         with TemporaryDirectory() as temp_dir:
             data_folder = ModelarDB.open_local(temp_dir)
@@ -373,67 +434,6 @@ class ModelarDBPythonTest(unittest.TestCase):
                 error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table."
                 self.assertEqual(error_message, str(context.exception))
 
-    def test_data_folder_read(self):
-        with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
-            create_tables_in_data_folder(data_folder)
-
-            data_folder.write(MODEL_TABLE_NAME, model_table_data())
-
-            actual_result = data_folder.read(f"SELECT * FROM {MODEL_TABLE_NAME}")
-            self.assertEqual(
-                actual_result, sorted_model_table_data_with_generated_column()
-            )
-
-    def test_data_folder_read_error(self):
-        with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
-
-            with self.assertRaises(RuntimeError) as context:
-                data_folder.read(f"SELECT * FROM {MISSING_TABLE_NAME}")
-
-            error_message = (
-                f"DataFusion Error: Error during planning: table 'datafusion.public.{MISSING_TABLE_NAME}' "
-                f"not found"
-            )
-            self.assertEqual(error_message, str(context.exception))
-
-    def test_data_folder_copy_normal_table(self):
-        with TemporaryDirectory() as from_temp_dir:
-            with TemporaryDirectory() as to_temp_dir:
-                from_data_folder = ModelarDB.open_local(from_temp_dir)
-                create_tables_in_data_folder(from_data_folder)
-
-                expected_result = normal_table_data()
-                from_data_folder.write(NORMAL_TABLE_NAME, expected_result)
-
-                to_data_folder = ModelarDB.open_local(to_temp_dir)
-                create_tables_in_data_folder(to_data_folder)
-
-                sql = f"SELECT * FROM {NORMAL_TABLE_NAME}"
-                from_data_folder.copy_normal_table(
-                    sql, to_data_folder, NORMAL_TABLE_NAME
-                )
-
-                # After copying the data it should also be in to_table.
-                self.assertEqual(from_data_folder.read(sql), expected_result)
-                self.assertEqual(to_data_folder.read(sql), expected_result)
-
-    def test_data_folder_copy_normal_table_error(self):
-        with TemporaryDirectory() as from_temp_dir:
-            with TemporaryDirectory() as to_temp_dir:
-                from_data_folder = ModelarDB.open_local(from_temp_dir)
-                to_data_folder = ModelarDB.open_local(to_temp_dir)
-
-                with self.assertRaises(RuntimeError) as context:
-                    sql = f"SELECT * FROM {MISSING_TABLE_NAME}"
-                    from_data_folder.copy_normal_table(
-                        sql, to_data_folder, MISSING_TABLE_NAME
-                    )
-
-                error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a normal table."
-                self.assertEqual(error_message, str(context.exception))
-
     def test_data_folder_move(self):
         with TemporaryDirectory() as from_temp_dir:
             with TemporaryDirectory() as to_temp_dir:
@@ -475,6 +475,28 @@ class ModelarDBPythonTest(unittest.TestCase):
                 )
                 self.assertEqual(error_message, str(context.exception))
 
+    def test_data_folder_truncate(self):
+        with TemporaryDirectory() as temp_dir:
+            data_folder = ModelarDB.open_local(temp_dir)
+            create_tables_in_data_folder(data_folder)
+
+            data_folder.write(MODEL_TABLE_NAME, model_table_data())
+
+            data_folder.truncate(MODEL_TABLE_NAME)
+
+            self.assertTrue(MODEL_TABLE_NAME in data_folder.tables())
+            self.assertEqual(data_folder.read_model_table(MODEL_TABLE_NAME).num_rows, 0)
+
+    def test_data_folder_truncate_error(self):
+        with TemporaryDirectory() as temp_dir:
+            data_folder = ModelarDB.open_local(temp_dir)
+
+            with self.assertRaises(RuntimeError) as context:
+                data_folder.truncate(MISSING_TABLE_NAME)
+
+            error_message = f"Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' does not exist."
+            self.assertEqual(error_message, str(context.exception))
+
     def test_data_folder_drop(self):
         with TemporaryDirectory() as temp_dir:
             data_folder = ModelarDB.open_local(temp_dir)
@@ -499,28 +521,6 @@ class ModelarDBPythonTest(unittest.TestCase):
                 f"ModelarDB Storage Error: Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' "
                 f"does not exist."
             )
-            self.assertEqual(error_message, str(context.exception))
-
-    def test_data_folder_truncate(self):
-        with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
-            create_tables_in_data_folder(data_folder)
-
-            data_folder.write(MODEL_TABLE_NAME, model_table_data())
-
-            data_folder.truncate(MODEL_TABLE_NAME)
-
-            self.assertTrue(MODEL_TABLE_NAME in data_folder.tables())
-            self.assertEqual(data_folder.read_model_table(MODEL_TABLE_NAME).num_rows, 0)
-
-    def test_data_folder_truncate_error(self):
-        with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
-
-            with self.assertRaises(RuntimeError) as context:
-                data_folder.truncate(MISSING_TABLE_NAME)
-
-            error_message = f"Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' does not exist."
             self.assertEqual(error_message, str(context.exception))
 
 
