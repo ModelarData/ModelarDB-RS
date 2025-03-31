@@ -669,7 +669,7 @@ mod tests {
     use crate::{ClusterMode, DataFolders};
 
     const TAG_VALUE: &str = "tag";
-    const TAG_HASH: u64 = 10828528714290431980;
+    const TAG_HASH: u64 = 14957893031159457585;
 
     // Tests for UncompressedDataManager.
     #[tokio::test]
