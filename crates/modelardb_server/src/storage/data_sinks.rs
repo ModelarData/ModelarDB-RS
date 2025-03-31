@@ -29,7 +29,7 @@ use datafusion::physical_plan::insert::DataSink;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, SendableRecordBatchStream};
 use futures::StreamExt;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
@@ -123,14 +123,14 @@ impl DisplayAs for NormalTableDataSink {
 /// checking the schema.
 pub struct ModelTableDataSink {
     /// Metadata for the model table inserted data will be written to.
-    model_table_metadata: Arc<ModelTableMetadata>,
+    model_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Manages all uncompressed and compressed data in the system.
     storage_engine: Arc<RwLock<StorageEngine>>,
 }
 
 impl ModelTableDataSink {
     pub fn new(
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Self {
         Self {

@@ -30,7 +30,7 @@ use modelardb_types::types::ErrorBound;
 
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 use crate::{
     register_metadata_table, sql_and_concat, try_convert_bytes_to_schema,
     try_convert_schema_to_bytes,
@@ -305,7 +305,7 @@ impl TableMetadataManager {
     /// each field column.
     pub async fn save_model_table_metadata(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        model_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
         // Convert the query schema to bytes, so it can be saved in the metadata Delta Lake.
         let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
@@ -422,13 +422,13 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Return the [`ModelTableMetadata`] of each model table currently in the metadata Delta Lake.
-    /// If the [`ModelTableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is returned.
-    pub async fn model_table_metadata(&self) -> Result<Vec<Arc<ModelTableMetadata>>> {
+    /// Return the [`TimeSeriesTableMetadata`] of each model table currently in the metadata Delta Lake.
+    /// If the [`TimeSeriesTableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is returned.
+    pub async fn model_table_metadata(&self) -> Result<Vec<Arc<TimeSeriesTableMetadata>>> {
         let sql = "SELECT table_name, query_schema FROM model_table_metadata";
         let batch = sql_and_concat(&self.session_context, sql).await?;
 
-        let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
+        let mut model_table_metadata: Vec<Arc<TimeSeriesTableMetadata>> = vec![];
         let table_name_array = modelardb_types::array!(batch, 0, StringArray);
         let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryArray);
 
@@ -446,13 +446,13 @@ impl TableMetadataManager {
         Ok(model_table_metadata)
     }
 
-    /// Return the [`ModelTableMetadata`] for the model table with `table_name` in the metadata
-    /// Delta Lake. If the [`ModelTableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is
+    /// Return the [`TimeSeriesTableMetadata`] for the model table with `table_name` in the metadata
+    /// Delta Lake. If the [`TimeSeriesTableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is
     /// returned.
     pub async fn model_table_metadata_for_model_table(
         &self,
         table_name: &str,
-    ) -> Result<ModelTableMetadata> {
+    ) -> Result<TimeSeriesTableMetadata> {
         let sql = format!(
             "SELECT table_name, query_schema FROM model_table_metadata WHERE table_name = '{table_name}'"
         );
@@ -475,13 +475,13 @@ impl TableMetadataManager {
     }
 
     /// Convert a row from the table "model_table_metadata" to an instance of
-    /// [`ModelTableMetadata`]. Returns [`ModelarDbStorageError`] if a model table with `table_name`
+    /// [`TimeSeriesTableMetadata`]. Returns [`ModelarDbStorageError`] if a model table with `table_name`
     /// does not exist or the bytes in `query_schema_bytes` are not a valid schema.
     async fn model_table_metadata_row_to_model_table_metadata(
         &self,
         table_name: &str,
         query_schema_bytes: &[u8],
-    ) -> Result<ModelTableMetadata> {
+    ) -> Result<TimeSeriesTableMetadata> {
         let query_schema = try_convert_bytes_to_schema(query_schema_bytes.into())?;
 
         let error_bounds = self
@@ -491,7 +491,7 @@ impl TableMetadataManager {
         let df_query_schema = query_schema.clone().to_dfschema()?;
         let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
 
-        ModelTableMetadata::try_new(
+        TimeSeriesTableMetadata::try_new(
             table_name.to_owned(),
             Arc::new(query_schema),
             error_bounds,
@@ -925,7 +925,7 @@ mod tests {
         let expected_generated_columns =
             vec![None, None, None, None, plus_one_column, addition_column];
 
-        let model_table_metadata = ModelTableMetadata::try_new(
+        let model_table_metadata = TimeSeriesTableMetadata::try_new(
             "generated_columns_table".to_owned(),
             query_schema,
             error_bounds,

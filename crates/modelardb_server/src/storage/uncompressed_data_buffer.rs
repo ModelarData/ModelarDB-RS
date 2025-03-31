@@ -25,7 +25,7 @@ use std::{iter, mem};
 use datafusion::arrow::array::{Array, ArrayBuilder, StringArray};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_types::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 use object_store::ObjectStore;
 use object_store::path::Path;
@@ -41,14 +41,14 @@ const RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED: u64 = 1;
 /// Ingested data points from one or more time series to be inserted into a model table.
 pub(super) struct IngestedDataBuffer {
     /// Metadata of the model table to insert the data points into.
-    pub(super) model_table_metadata: Arc<ModelTableMetadata>,
+    pub(super) model_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Uncompressed data points to insert.
     pub(super) data_points: RecordBatch,
 }
 
 impl IngestedDataBuffer {
     pub(super) fn new(
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         data_points: RecordBatch,
     ) -> Self {
         Self {
@@ -73,7 +73,7 @@ pub(super) struct UncompressedInMemoryDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points for.
     tag_hash: u64,
     /// Metadata of the model table the buffer stores data for.
-    model_table_metadata: Arc<ModelTableMetadata>,
+    model_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Index of the last batch that caused the buffer to be updated.
     updated_by_batch_index: u64,
     /// Builder that timestamps are appended to.
@@ -88,7 +88,7 @@ impl UncompressedInMemoryDataBuffer {
     pub(super) fn new(
         tag_hash: u64,
         tag_values: Vec<String>,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         current_batch_index: u64,
     ) -> Self {
         let timestamps = TimestampBuilder::with_capacity(*UNCOMPRESSED_DATA_BUFFER_CAPACITY);
@@ -191,7 +191,7 @@ impl UncompressedInMemoryDataBuffer {
     }
 
     /// Return the metadata for the model table the buffer stores data points for.
-    pub(super) fn model_table_metadata(&self) -> &Arc<ModelTableMetadata> {
+    pub(super) fn model_table_metadata(&self) -> &Arc<TimeSeriesTableMetadata> {
         &self.model_table_metadata
     }
 
@@ -245,7 +245,7 @@ pub(super) struct UncompressedOnDiskDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points for.
     tag_hash: u64,
     /// Metadata of the model table the buffer stores data for.
-    model_table_metadata: Arc<ModelTableMetadata>,
+    model_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Index of the last batch that added data points to this buffer.
     updated_by_batch_index: u64,
     /// Location for storing spilled buffers at `file_path`.
@@ -262,7 +262,7 @@ impl UncompressedOnDiskDataBuffer {
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(super) async fn try_spill(
         tag_hash: u64,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         updated_by_batch_index: u64,
         local_data_folder: Arc<dyn ObjectStore>,
         data_points: RecordBatch,
@@ -298,7 +298,7 @@ impl UncompressedOnDiskDataBuffer {
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) is returned.
     pub(super) fn try_new(
         tag_hash: u64,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         updated_by_batch_index: u64,
         local_data_folder: Arc<dyn ObjectStore>,
         file_name: &str,
@@ -331,7 +331,7 @@ impl UncompressedOnDiskDataBuffer {
     }
 
     /// Return the metadata for the model table the buffer stores data points for.
-    pub(super) fn model_table_metadata(&self) -> &Arc<ModelTableMetadata> {
+    pub(super) fn model_table_metadata(&self) -> &Arc<TimeSeriesTableMetadata> {
         &self.model_table_metadata
     }
 

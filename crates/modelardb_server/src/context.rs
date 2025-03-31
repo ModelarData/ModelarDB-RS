@@ -21,7 +21,7 @@ use std::sync::Arc;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::prelude::SessionContext;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -139,7 +139,7 @@ impl Context {
     /// model table could not be created.
     pub(crate) async fn create_model_table(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        model_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
         self.check_if_table_exists(&model_table_metadata.name)
             .await?;
@@ -154,7 +154,7 @@ impl Context {
     /// the Delta Lake, return [`ModelarDbServerError`] error.
     async fn register_and_save_model_table(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        model_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
@@ -253,7 +253,7 @@ impl Context {
     /// [`ModelarDbServerError`].
     async fn register_model_table(
         &self,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
     ) -> Result<()> {
         let delta_table = self
             .data_folders
@@ -352,16 +352,16 @@ impl Context {
         Ok(())
     }
 
-    /// Lookup the [`ModelTableMetadata`] of the model table with name `table_name` if it exists.
+    /// Lookup the [`TimeSeriesTableMetadata`] of the model table with name `table_name` if it exists.
     /// Specifically, the method returns:
-    /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
+    /// * [`TimeSeriesTableMetadata`] if a model table with the name `table_name` exists.
     /// * [`None`] if a normal table with the name `table_name` exists.
     /// * [`ModelarDbServerError`] if the default catalog, the default schema, a normal table with
     ///   the name `table_name`, or a model table with the name `table_name` does not exist.
     pub async fn model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,
-    ) -> Result<Option<Arc<ModelTableMetadata>>> {
+    ) -> Result<Option<Arc<TimeSeriesTableMetadata>>> {
         let database_schema = self.default_database_schema()?;
 
         let maybe_model_table = database_schema.table(table_name).await?.ok_or_else(|| {

@@ -45,7 +45,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
@@ -366,7 +366,7 @@ impl DeltaLake {
     /// [`ModelarDbStorageError`] if it could not.
     pub async fn create_model_table(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        model_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<DeltaTable> {
         self.create_table(
             &model_table_metadata.name,

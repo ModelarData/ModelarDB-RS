@@ -26,7 +26,7 @@ use modelardb_types::types::{
     ArrowTimestamp, ArrowValue, ErrorBound, Timestamp, TimestampArray, Value, ValueArray,
 };
 
-use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use crate::{model_table_metadata_to_record_batch, normal_table_metadata_to_record_batch};
 
 /// SQL to create a normal table with a timestamp column and two floating point columns.
@@ -81,9 +81,9 @@ pub fn normal_table_record_batch() -> RecordBatch {
     .unwrap()
 }
 
-/// Return [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
+/// Return [`TimeSeriesTableMetadata`] for a model table with a schema containing a tag column, a
 /// timestamp column, and two field columns.
-pub fn model_table_metadata() -> ModelTableMetadata {
+pub fn model_table_metadata() -> TimeSeriesTableMetadata {
     let query_schema = Arc::new(Schema::new(vec![
         Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
         Field::new("field_1", ArrowValue::DATA_TYPE, false),
@@ -100,7 +100,7 @@ pub fn model_table_metadata() -> ModelTableMetadata {
 
     let generated_columns = vec![None, None, None, None];
 
-    ModelTableMetadata::try_new(
+    TimeSeriesTableMetadata::try_new(
         MODEL_TABLE_NAME.to_owned(),
         query_schema,
         error_bounds,
@@ -109,9 +109,9 @@ pub fn model_table_metadata() -> ModelTableMetadata {
     .unwrap()
 }
 
-/// Return [`ModelTableMetadata`] in an [`Arc`] for a model table with a schema containing a tag
+/// Return [`TimeSeriesTableMetadata`] in an [`Arc`] for a model table with a schema containing a tag
 /// column, a timestamp column, and two field columns.
-pub fn model_table_metadata_arc() -> Arc<ModelTableMetadata> {
+pub fn model_table_metadata_arc() -> Arc<TimeSeriesTableMetadata> {
     Arc::new(model_table_metadata())
 }
 

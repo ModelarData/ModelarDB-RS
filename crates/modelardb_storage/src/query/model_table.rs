@@ -49,7 +49,7 @@ use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, Partit
 use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue};
 
-use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
@@ -62,7 +62,7 @@ pub(crate) struct ModelTable {
     /// Access to the Delta Lake table.
     delta_table: DeltaTable,
     /// Metadata for the model table.
-    model_table_metadata: Arc<ModelTableMetadata>,
+    model_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Where data should be written to.
     data_sink: Arc<dyn DataSink>,
     /// Field column to use for queries that do not include fields.
@@ -90,7 +90,7 @@ pub(crate) struct ModelTable {
 impl ModelTable {
     pub(crate) fn new(
         delta_table: DeltaTable,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         data_sink: Arc<dyn DataSink>,
     ) -> Arc<Self> {
         // Compute the index of the first stored field column in the model table's query schema. It
@@ -159,8 +159,8 @@ impl ModelTable {
         })
     }
 
-    /// Return the [`ModelTableMetadata`] for the model table.
-    pub(crate) fn model_table_metadata(&self) -> Arc<ModelTableMetadata> {
+    /// Return the [`TimeSeriesTableMetadata`] for the model table.
+    pub(crate) fn model_table_metadata(&self) -> Arc<TimeSeriesTableMetadata> {
         self.model_table_metadata.clone()
     }
 
@@ -212,7 +212,7 @@ impl fmt::Debug for ModelTable {
 /// Return a [`LexOrdering`] and [`LexRequirement`] that sort by the tag columns from
 /// `model_table_metadata` in `schema` first and then by `time_column`.
 fn query_order_and_requirement(
-    model_table_metadata: &ModelTableMetadata,
+    model_table_metadata: &TimeSeriesTableMetadata,
     schema: &Schema,
     time_column: Column,
 ) -> (LexOrdering, LexRequirement) {

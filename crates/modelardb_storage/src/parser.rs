@@ -47,7 +47,7 @@ use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::{Span, Token};
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 
 /// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, etc.) that have been tokenized,
 /// parsed, and for which semantic checks have verified that it is compatible with ModelarDB.
@@ -56,7 +56,7 @@ pub enum ModelarDbStatement {
     /// CREATE TABLE.
     CreateNormalTable { name: String, schema: Schema },
     /// CREATE MODEL TABLE.
-    CreateModelTable(Arc<ModelTableMetadata>),
+    CreateModelTable(Arc<TimeSeriesTableMetadata>),
     /// INSERT, EXPLAIN, SELECT.
     Statement(Statement),
     /// INCLUDE addresses SELECT.
@@ -663,7 +663,7 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
 fn semantic_checks_for_create_model_table(
     name: String,
     column_defs: Vec<ColumnDef>,
-) -> StdResult<ModelTableMetadata, ParserError> {
+) -> StdResult<TimeSeriesTableMetadata, ParserError> {
     // Extract the error bounds for all columns. It is here to keep the parser types in the parser.
     let error_bounds = extract_error_bounds_for_all_columns(&column_defs)?;
 
@@ -676,7 +676,7 @@ fn semantic_checks_for_create_model_table(
         .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
     // Return the metadata required to create a model table.
-    let model_table_metadata = ModelTableMetadata::try_new(
+    let model_table_metadata = TimeSeriesTableMetadata::try_new(
         name,
         Arc::new(query_schema),
         error_bounds,

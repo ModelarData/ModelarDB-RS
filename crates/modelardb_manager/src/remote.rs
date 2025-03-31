@@ -37,7 +37,7 @@ use futures::{Stream, stream};
 use modelardb_common::arguments;
 use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
@@ -211,7 +211,7 @@ impl FlightServiceHandler {
     /// created for each node, return [`Status`].
     async fn save_and_create_cluster_model_table(
         &self,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
     ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context

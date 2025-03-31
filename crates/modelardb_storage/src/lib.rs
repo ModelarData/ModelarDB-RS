@@ -62,7 +62,7 @@ use object_store::path::Path;
 use sqlparser::ast::Statement;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 use crate::query::metadata_table::MetadataTable;
 use crate::query::model_table::ModelTable;
 use crate::query::normal_table::NormalTable;
@@ -126,7 +126,7 @@ pub fn register_normal_table(
 pub fn register_model_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,
-    model_table_metadata: Arc<ModelTableMetadata>,
+    model_table_metadata: Arc<TimeSeriesTableMetadata>,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
     let model_table = ModelTable::new(delta_table, model_table_metadata.clone(), data_sink);
@@ -136,11 +136,11 @@ pub fn register_model_table(
     Ok(())
 }
 
-/// Return the [`Arc<ModelTableMetadata>`] of the table `maybe_model_table` if it is a model table,
+/// Return the [`Arc<TimeSeriesTableMetadata>`] of the table `maybe_model_table` if it is a model table,
 /// otherwise [`None`] is returned.
 pub fn maybe_table_provider_to_model_table_metadata(
     maybe_model_table: Arc<dyn TableProvider>,
-) -> Option<Arc<ModelTableMetadata>> {
+) -> Option<Arc<TimeSeriesTableMetadata>> {
     maybe_model_table
         .as_any()
         .downcast_ref::<ModelTable>()
@@ -343,7 +343,7 @@ pub fn normal_table_metadata_to_record_batch(
 /// could not be converted to bytes or the [`RecordBatch`] could not be created, return
 /// [`ModelarDbStorageError`].
 pub fn model_table_metadata_to_record_batch(
-    model_table_metadata: &ModelTableMetadata,
+    model_table_metadata: &TimeSeriesTableMetadata,
 ) -> Result<RecordBatch> {
     // Since the model table metadata does not include error bounds for the generated columns,
     // lossless error bounds are added for each generated column.
@@ -421,7 +421,7 @@ fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn
 #[allow(clippy::type_complexity)]
 pub fn table_metadata_from_record_batch(
     record_batch: &RecordBatch,
-) -> Result<(Vec<(String, Schema)>, Vec<ModelTableMetadata>)> {
+) -> Result<(Vec<(String, Schema)>, Vec<TimeSeriesTableMetadata>)> {
     if record_batch.schema() != TABLE_METADATA_SCHEMA.0 {
         return Err(ModelarDbStorageError::InvalidArgument(
             "Record batch does not contain the expected table metadata.".to_owned(),
@@ -450,7 +450,7 @@ pub fn table_metadata_from_record_batch(
                 &schema.clone().to_dfschema()?,
             )?;
 
-            let metadata = ModelTableMetadata::try_new(
+            let metadata = TimeSeriesTableMetadata::try_new(
                 table_name,
                 Arc::new(schema),
                 error_bounds,

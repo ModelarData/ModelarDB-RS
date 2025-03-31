@@ -43,7 +43,7 @@ use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_common::{arguments, remote};
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::functions;
 use modelardb_types::schemas::CONFIGURATION_SCHEMA;
@@ -301,7 +301,7 @@ impl FlightServiceHandler {
     /// While there is still more data to receive, ingest the data into the storage engine.
     async fn ingest_into_model_table(
         &self,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.

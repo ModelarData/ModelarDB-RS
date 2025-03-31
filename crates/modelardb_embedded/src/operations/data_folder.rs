@@ -39,7 +39,7 @@ use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
 use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::TimestampArray;
 
@@ -261,7 +261,7 @@ impl DataFolder {
     /// resulting segments.
     pub async fn compress_all(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        model_table_metadata: &TimeSeriesTableMetadata,
         uncompressed_data: &RecordBatch,
     ) -> Result<Vec<RecordBatch>> {
         // Sort by all tags and then time to simplify splitting the data into time series.
@@ -334,7 +334,7 @@ impl DataFolder {
     /// data points in `uncompressed_time_series` have the same tags as in `tag_values`.
     async fn compress(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        model_table_metadata: &TimeSeriesTableMetadata,
         uncompressed_time_series: &RecordBatch,
         tag_values: &[String],
         compressed_data: &mut Vec<RecordBatch>,
@@ -411,9 +411,9 @@ impl DataFolder {
         }
     }
 
-    /// Return [`ModelTableMetadata`] for the table with `table_name` if it exists, is registered
+    /// Return [`TimeSeriesTableMetadata`] for the table with `table_name` if it exists, is registered
     /// with Apache DataFusion, and is a model table.
-    pub async fn model_table_metadata(&self, table_name: &str) -> Option<Arc<ModelTableMetadata>> {
+    pub async fn model_table_metadata(&self, table_name: &str) -> Option<Arc<TimeSeriesTableMetadata>> {
         let table_provider = self.session_context.table_provider(table_name).await.ok()?;
         modelardb_storage::maybe_table_provider_to_model_table_metadata(table_provider)
     }
@@ -848,7 +848,7 @@ impl Operations for DataFolder {
 /// Sort the `uncompressed_data` from the model table with `model_table_metadata` according to its
 /// tags and then timestamps.
 fn sort_record_batch_by_tags_and_time(
-    model_table_metadata: &ModelTableMetadata,
+    model_table_metadata: &TimeSeriesTableMetadata,
     uncompressed_data: &RecordBatch,
 ) -> Result<RecordBatch> {
     let mut physical_sort_exprs = vec![];
@@ -917,7 +917,7 @@ mod tests {
     use arrow_flight::flight_service_client::FlightServiceClient;
     use datafusion::datasource::TableProvider;
     use datafusion::logical_expr::col;
-    use modelardb_storage::metadata::model_table_metadata::GeneratedColumn;
+    use modelardb_storage::metadata::time_series_table_metadata::GeneratedColumn;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ValueArray};
     use tempfile::TempDir;
     use tonic::transport::Channel;
@@ -2763,7 +2763,7 @@ mod tests {
         data_folder: &DataFolder,
         table_name: &str,
         expected_schema: Schema,
-    ) -> ModelTableMetadata {
+    ) -> TimeSeriesTableMetadata {
         // Verify that the model table exists in the Delta Lake.
         assert!(data_folder.delta_lake.delta_table(table_name).await.is_ok());
 

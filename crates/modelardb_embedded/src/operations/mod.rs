@@ -28,7 +28,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::DFSchema;
 use datafusion::execution::RecordBatchStream;
-use modelardb_storage::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use modelardb_storage::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 use modelardb_types::types::ErrorBound;
 
 use crate::error::Result;
@@ -110,14 +110,14 @@ pub trait Operations: Sync + Send {
 }
 
 /// Use the model table metadata in `table_name`, `schema`, `error_bounds`, and `generated_columns`
-/// to create [`ModelTableMetadata`]. If the metadata is valid, return [`ModelTableMetadata`],
+/// to create [`TimeSeriesTableMetadata`]. If the metadata is valid, return [`TimeSeriesTableMetadata`],
 /// otherwise return [`ModelarDbEmbeddedError`].
 fn try_new_model_table_metadata(
     table_name: &str,
     schema: Schema,
     mut error_bounds: HashMap<String, ErrorBound>,
     generated_columns: HashMap<String, String>,
-) -> Result<ModelTableMetadata> {
+) -> Result<TimeSeriesTableMetadata> {
     let schema = Arc::new(schema);
     let df_schema: DFSchema = schema.clone().try_into()?;
 
@@ -138,7 +138,7 @@ fn try_new_model_table_metadata(
         }
     }
 
-    ModelTableMetadata::try_new(
+    TimeSeriesTableMetadata::try_new(
         table_name.to_owned(),
         schema,
         error_bounds_all,

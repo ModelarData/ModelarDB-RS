@@ -34,7 +34,7 @@ use std::sync::{Arc, LazyLock};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::error;
@@ -253,7 +253,7 @@ impl StorageEngine {
     /// were successfully inserted, otherwise return [`ModelarDbServerError`].
     pub(super) async fn insert_data_points(
         &mut self,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         multivariate_data_points: RecordBatch,
     ) -> Result<()> {
         // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.

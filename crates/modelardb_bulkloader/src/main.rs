@@ -41,7 +41,7 @@ use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
 use modelardb_embedded::operations::Operations;
 use modelardb_embedded::operations::data_folder::DataFolder;
 use modelardb_storage::delta_lake::DeltaTableWriter;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use sysinfo::System;
 
 #[tokio::main]
@@ -198,7 +198,7 @@ async fn import(
 /// [`ModelarDbEmbeddedError`] is returned.
 async fn import_model_table(
     mut input_stream: Pin<Box<dyn RecordBatchStream>>,
-    model_table_metadata: &ModelTableMetadata,
+    model_table_metadata: &TimeSeriesTableMetadata,
     data_folder: &mut DataFolder,
     cast_double_to_float: bool,
 ) -> Result<()> {
@@ -390,7 +390,7 @@ fn cast_record_batch(record_batch: RecordBatch, cast_double_to_float: bool) -> R
 async fn import_and_clear_model_table_batch(
     data_folder: &DataFolder,
     delta_table_writer: &mut DeltaTableWriter,
-    model_table_metadata: &ModelTableMetadata,
+    model_table_metadata: &TimeSeriesTableMetadata,
     current_batch: &mut Vec<RecordBatch>,
     current_batch_size: &mut usize,
 ) -> Result<()> {

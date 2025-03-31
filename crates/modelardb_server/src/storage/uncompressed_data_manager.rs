@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use futures::StreamExt;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_types::types::{Timestamp, Value};
 use object_store::path::{Path, PathPart};
 use tokio::runtime::Runtime;
@@ -225,7 +225,7 @@ impl UncompressedDataManager {
         tag_values: Vec<String>,
         timestamp: Timestamp,
         values: &mut dyn Iterator<Item = Value>,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         current_batch_index: u64,
     ) -> Result<bool> {
         let tag_hash = calculate_tag_hash(&model_table_metadata.name, &tag_values);
@@ -1242,7 +1242,7 @@ mod tests {
     async fn insert_data_points(
         count: usize,
         data_manager: &mut UncompressedDataManager,
-        model_table_metadata: &Arc<ModelTableMetadata>,
+        model_table_metadata: &Arc<TimeSeriesTableMetadata>,
         tag_value: &str,
     ) {
         let values: &[Value] = &[37.0, 73.0];
@@ -1266,7 +1266,7 @@ mod tests {
     /// with a folder that is deleted once the test is finished.
     async fn create_managers(
         temp_dir: &TempDir,
-    ) -> (UncompressedDataManager, Arc<ModelTableMetadata>) {
+    ) -> (UncompressedDataManager, Arc<TimeSeriesTableMetadata>) {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
 

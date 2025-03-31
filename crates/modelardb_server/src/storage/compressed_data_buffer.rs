@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 
 use crate::error::{ModelarDbServerError, Result};
 
@@ -27,14 +27,14 @@ use crate::error::{ModelarDbServerError, Result};
 #[derive(Clone, Debug)]
 pub(super) struct CompressedSegmentBatch {
     /// Metadata of the model table to insert the data points into.
-    pub(super) model_table_metadata: Arc<ModelTableMetadata>,
+    pub(super) model_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Compressed segments representing the data points to insert.
     pub(super) compressed_segments: Vec<RecordBatch>,
 }
 
 impl CompressedSegmentBatch {
     pub(super) fn new(
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: Arc<TimeSeriesTableMetadata>,
         compressed_segments: Vec<RecordBatch>,
     ) -> Self {
         Self {
@@ -54,7 +54,7 @@ impl CompressedSegmentBatch {
 /// for appending segments and saving all segments to a single Apache Parquet file.
 pub(super) struct CompressedDataBuffer {
     /// Metadata of the model table the buffer stores compressed segments for.
-    model_table_metadata: Arc<ModelTableMetadata>,
+    model_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Compressed segments that make up the compressed data in the [`CompressedDataBuffer`].
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
@@ -62,7 +62,7 @@ pub(super) struct CompressedDataBuffer {
 }
 
 impl CompressedDataBuffer {
-    pub(super) fn new(model_table_metadata: Arc<ModelTableMetadata>) -> Self {
+    pub(super) fn new(model_table_metadata: Arc<TimeSeriesTableMetadata>) -> Self {
         Self {
             model_table_metadata,
             compressed_segments: vec![],
