@@ -456,7 +456,7 @@ impl FlightService for FlightServiceHandler {
                 self.save_and_create_cluster_normal_table(&name, &schema)
                     .await?;
             }
-            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+            ModelarDbStatement::CreateTimeSeriesTable(model_table_metadata) => {
                 self.check_if_table_exists(&model_table_metadata.name)
                     .await?;
                 self.save_and_create_cluster_model_table(model_table_metadata)

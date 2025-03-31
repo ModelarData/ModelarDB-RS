@@ -447,7 +447,7 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(empty_record_batch_stream())
             }
-            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+            ModelarDbStatement::CreateTimeSeriesTable(model_table_metadata) => {
                 self.validate_request(request.metadata()).await?;
 
                 self.context

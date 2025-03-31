@@ -37,7 +37,7 @@ pub const NORMAL_TABLE_SQL: &str =
 pub const NORMAL_TABLE_NAME: &str = "normal_table";
 
 /// SQL to create a time series table with a timestamp column, two field columns, and a tag column.
-pub const TIME_SERIES_TABLE_SQL: &str = "CREATE MODEL TABLE time_series_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
+pub const TIME_SERIES_TABLE_SQL: &str = "CREATE TIME SERIES TABLE time_series_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
 
 /// Name of the time series table used in tests.
 pub const TIME_SERIES_TABLE_NAME: &str = "time_series_table";
