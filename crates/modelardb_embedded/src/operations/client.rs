@@ -41,6 +41,7 @@ use crate::operations::{Operations, generate_read_model_table_sql, try_new_model
 use crate::{Aggregate, TableType};
 
 /// Types of nodes that can be connected to by [`Client`].
+#[derive(Clone)]
 pub enum Node {
     /// The Apache Arrow Flight server URL of a ModelarDB server node.
     Server(String),
@@ -49,6 +50,14 @@ pub enum Node {
 }
 
 impl Node {
+    /// Returns the URL of the node.
+    pub fn url(&self) -> &str {
+        match self {
+            Node::Server(url) => url,
+            Node::Manager(url) => url,
+        }
+    }
+
     /// Returns the type of the node.
     pub fn node_type(&self) -> &str {
         match self {
@@ -59,6 +68,7 @@ impl Node {
 }
 
 /// Client for connecting to ModelarDB Apache Arrow Flight servers.
+#[derive(Clone)]
 pub struct Client {
     /// The node that the client is connected to.
     pub(crate) node: Node,
@@ -71,13 +81,8 @@ impl Client {
     /// connection to the node could not be established or if the actual type of the node does not
     /// match `node`, [`ModelarDbEmbeddedError`] is returned.
     pub async fn connect(node: Node) -> Result<Client> {
-        let node_url = match &node {
-            Node::Server(url) => url,
-            Node::Manager(url) => url,
-        };
-
         // Retrieve the actual type of the node to ensure it matches the expected type.
-        let mut flight_client = FlightServiceClient::connect(node_url.to_owned()).await?;
+        let mut flight_client = FlightServiceClient::connect(node.url().to_owned()).await?;
 
         let action = Action {
             r#type: "NodeType".to_owned(),
