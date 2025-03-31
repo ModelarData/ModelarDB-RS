@@ -37,8 +37,8 @@ use crate::{Aggregate, TableType};
 /// Trait for interacting with ModelarDB, either through an Apache Arrow Flight server or a data
 /// folder.
 #[async_trait]
-pub trait ModelarDB: Sync + Send {
-    /// Returns the [`ModelarDB`] instance as [`Any`] so that it can be downcast to a specific
+pub trait Operations: Sync + Send {
+    /// Returns the [`Operations`] instance as [`Any`] so that it can be downcast to a specific
     /// implementation.
     fn as_any(&self) -> &dyn Any;
 
@@ -53,6 +53,19 @@ pub trait ModelarDB: Sync + Send {
 
     /// Writes the data in `uncompressed_data` to the table with the name in `table_name`.
     async fn write(&mut self, table_name: &str, uncompressed_data: RecordBatch) -> Result<()>;
+
+    /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`].
+    async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>>;
+
+    /// Executes the SQL in `sql` and writes the result to the normal table with the name in
+    /// `to_table_name` in `to_modelardb`. Note that data can be copied from both normal tables and
+    /// model tables but only to normal tables. This is to not lossy compress data multiple times.
+    async fn copy(
+        &mut self,
+        sql: &str,
+        to_modelardb: &mut dyn Operations,
+        to_table_name: &str,
+    ) -> Result<()>;
 
     /// Reads data from the model table with the name in `table_name` and returns it as a
     /// [`RecordBatchStream`]. The remaining parameters optionally specify which subset of the data
@@ -73,40 +86,27 @@ pub trait ModelarDB: Sync + Send {
     async fn copy_model_table(
         &self,
         from_table_name: &str,
-        to_modelardb: &dyn ModelarDB,
+        to_modelardb: &dyn Operations,
         to_table_name: &str,
         maybe_start_time: Option<&str>,
         maybe_end_time: Option<&str>,
         tags: HashMap<String, String>,
     ) -> Result<()>;
 
-    /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`].
-    async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>>;
-
-    /// Executes the SQL in `sql` and writes the result to the normal table with the name in
-    /// `to_table_name` in `to_modelardb`. Note that data can be copied from both normal tables and
-    /// model tables but only to normal tables.
-    async fn copy_normal_table(
-        &mut self,
-        sql: &str,
-        to_modelardb: &mut dyn ModelarDB,
-        to_table_name: &str,
-    ) -> Result<()>;
-
-    /// Drop the table with the name in `table_name`.
-    async fn drop(&mut self, table_name: &str) -> Result<()>;
-
-    /// Truncate the table with the name in `table_name`.
-    async fn truncate(&mut self, table_name: &str) -> Result<()>;
-
     /// Move all data from the table with the name in `from_table_name` in `self` to the table with
     /// the name in `to_table_name` in `to_modelardb`.
     async fn r#move(
         &mut self,
         from_table_name: &str,
-        to_modelardb: &dyn ModelarDB,
+        to_modelardb: &dyn Operations,
         to_table_name: &str,
     ) -> Result<()>;
+
+    /// Truncate the table with the name in `table_name`.
+    async fn truncate(&mut self, table_name: &str) -> Result<()>;
+
+    /// Drop the table with the name in `table_name`.
+    async fn drop(&mut self, table_name: &str) -> Result<()>;
 }
 
 /// Use the model table metadata in `table_name`, `schema`, `error_bounds`, and `generated_columns`

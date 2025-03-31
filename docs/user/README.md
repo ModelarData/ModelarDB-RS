@@ -251,7 +251,7 @@ modelardb
 
 Be aware that the REPL currently does not support splitting SQL statements over multiple lines, thus SQL statements do
 not need to end with a `;`. In addition to `CREATE MODEL TABLE`, ModelarDB also extends SQL with an `INCLUDE` clause
-with the format `INCLUDE address[, address]+`. When this clause is prepended to a `SELECT` statement, a `modelardbd`
+with the format `INCLUDE address[, address]*`. When this clause is prepended to a `SELECT` statement, a `modelardbd`
 instance executes the `SELECT` statement on the data it manages and forwards the statement to `modelardbd` instances at
 the provided addresses. Afterwards, the `modelardbd` instance that initially received the query, unions the result from
 all `modelardbd` instances and returns it to the client. As an example, this can be used to execute a `SELECT` statement

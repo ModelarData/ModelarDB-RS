@@ -37,7 +37,7 @@ use tonic::transport::Channel;
 use tonic::{Request, Status};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::modelardb::{ModelarDB, generate_read_model_table_sql, try_new_model_table_metadata};
+use crate::operations::{Operations, generate_read_model_table_sql, try_new_model_table_metadata};
 use crate::{Aggregate, TableType};
 
 /// Types of nodes that can be connected to by [`Client`].
@@ -139,7 +139,7 @@ impl Client {
 }
 
 #[async_trait]
-impl ModelarDB for Client {
+impl Operations for Client {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
@@ -238,6 +238,47 @@ impl ModelarDB for Client {
         Ok(())
     }
 
+    /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`]. If the SQL
+    /// could not be executed, [`ModelarDbEmbeddedError`] is returned.
+    async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
+        let mut sql_client = self.client_for_command(sql).await?;
+
+        let ticket = Ticket::new(sql.to_owned());
+        let stream = sql_client.do_get(ticket).await?.into_inner();
+
+        let record_batch_stream = FlightRecordBatchStream::new_from_flight_data(
+            // Convert tonic::Status to FlightError.
+            stream.map_err(|error| error.into()),
+        );
+
+        // The schema cannot be extracted from the record batch stream so we use an empty schema.
+        // The schema can be empty since the schema is extracted from the record batches in
+        // record_batch_stream_to_record_batch and not from the stream itself.
+        Ok(Box::pin(RecordBatchStreamAdapter::new(
+            Arc::new(Schema::empty()),
+            record_batch_stream.map_err(|error| DataFusionError::Execution(error.to_string())),
+        )))
+    }
+
+    /// Executes the SQL in `sql` and writes the result to the normal table with the name in
+    /// `to_table_name` in `to_modelardb`. Note that if copying data to a model table, the data is
+    /// compressed again. If the SQL could not be executed or the data could not be written to the
+    /// table, [`ModelarDbEmbeddedError`] is returned.
+    async fn copy(
+        &mut self,
+        sql: &str,
+        to_modelardb: &mut dyn Operations,
+        to_table_name: &str,
+    ) -> Result<()> {
+        let mut record_batch_stream = self.read(sql).await?;
+
+        while let Some(record_batch) = record_batch_stream.next().await {
+            to_modelardb.write(to_table_name, record_batch?).await?;
+        }
+
+        Ok(())
+    }
+
     /// Reads data from the model table with the table name in `table_name` and returns it as a
     /// [`RecordBatchStream`]. The remaining parameters optionally specify which subset of the data
     /// to read. If the data could not be read from the table, [`ModelarDbEmbeddedError`] is
@@ -270,7 +311,7 @@ impl ModelarDB for Client {
     async fn copy_model_table(
         &self,
         _from_table_name: &str,
-        _to_modelardb: &dyn ModelarDB,
+        _to_modelardb: &dyn Operations,
         _to_table_name: &str,
         _maybe_start_time: Option<&str>,
         _maybe_end_time: Option<&str>,
@@ -281,54 +322,15 @@ impl ModelarDB for Client {
         ))
     }
 
-    /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`]. If the SQL
-    /// could not be executed, [`ModelarDbEmbeddedError`] is returned.
-    async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
-        let mut sql_client = self.client_for_command(sql).await?;
-
-        let ticket = Ticket::new(sql.to_owned());
-        let stream = sql_client.do_get(ticket).await?.into_inner();
-
-        let record_batch_stream = FlightRecordBatchStream::new_from_flight_data(
-            // Convert tonic::Status to FlightError.
-            stream.map_err(|error| error.into()),
-        );
-
-        // The schema cannot be extracted from the record batch stream so we use an empty schema.
-        // The schema can be empty since the schema is extracted from the record batches in
-        // record_batch_stream_to_record_batch and not from the stream itself.
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
-            Arc::new(Schema::empty()),
-            record_batch_stream.map_err(|error| DataFusionError::Execution(error.to_string())),
-        )))
-    }
-
-    /// Executes the SQL in `sql` and writes the result to the normal table with the name in
-    /// `to_table_name` in `to_modelardb`. Note that if copying data to a model table, the data is
-    /// compressed again. If the SQL could not be executed or the data could not be written to the
-    /// table, [`ModelarDbEmbeddedError`] is returned.
-    async fn copy_normal_table(
+    async fn r#move(
         &mut self,
-        sql: &str,
-        to_modelardb: &mut dyn ModelarDB,
-        to_table_name: &str,
+        _from_table_name: &str,
+        _to_modelardb: &dyn Operations,
+        _to_table_name: &str,
     ) -> Result<()> {
-        let mut record_batch_stream = self.read(sql).await?;
-
-        while let Some(record_batch) = record_batch_stream.next().await {
-            to_modelardb.write(to_table_name, record_batch?).await?;
-        }
-
-        Ok(())
-    }
-
-    /// Drop the table with the name in `table_name`. If the table could not be dropped,
-    /// [`ModelarDbEmbeddedError`] is returned.
-    async fn drop(&mut self, table_name: &str) -> Result<()> {
-        let ticket = Ticket::new(format!("DROP TABLE {table_name}"));
-        self.flight_client.do_get(ticket).await?;
-
-        Ok(())
+        Err(ModelarDbEmbeddedError::Unimplemented(
+            "The ModelarDB client does not support moving tables.".to_owned(),
+        ))
     }
 
     /// Truncate the table with the name in `table_name`. If the table could not be truncated,
@@ -340,14 +342,12 @@ impl ModelarDB for Client {
         Ok(())
     }
 
-    async fn r#move(
-        &mut self,
-        _from_table_name: &str,
-        _to_modelardb: &dyn ModelarDB,
-        _to_table_name: &str,
-    ) -> Result<()> {
-        Err(ModelarDbEmbeddedError::Unimplemented(
-            "The ModelarDB client does not support moving tables.".to_owned(),
-        ))
+    /// Drop the table with the name in `table_name`. If the table could not be dropped,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    async fn drop(&mut self, table_name: &str) -> Result<()> {
+        let ticket = Ticket::new(format!("DROP TABLE {table_name}"));
+        self.flight_client.do_get(ticket).await?;
+
+        Ok(())
     }
 }
