@@ -455,7 +455,7 @@ mod tests {
 
         assert!(
             context
-                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .check_if_table_exists(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         );
@@ -526,7 +526,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::model_table_metadata())
+            .create_model_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -541,13 +541,13 @@ mod tests {
 
         assert_eq!(
             model_table_metadata.first().unwrap().name,
-            test::model_table_metadata().name
+            test::time_series_table_metadata().name
         );
 
         // The model table should be registered in the Apache DataFusion catalog.
         assert!(
             context
-                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .check_if_table_exists(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         );
@@ -560,14 +560,14 @@ mod tests {
 
         assert!(
             context
-                .create_model_table(&test::model_table_metadata())
+                .create_model_table(&test::time_series_table_metadata())
                 .await
                 .is_ok()
         );
 
         assert!(
             context
-                .create_model_table(&test::model_table_metadata())
+                .create_model_table(&test::time_series_table_metadata())
                 .await
                 .is_err()
         );
@@ -602,7 +602,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::model_table_metadata())
+            .create_model_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -661,23 +661,23 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::model_table_metadata())
+            .create_model_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
         assert!(
             context
-                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .check_if_table_exists(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         );
 
-        context.drop_table(test::MODEL_TABLE_NAME).await.unwrap();
+        context.drop_table(test::TIME_SERIES_TABLE_NAME).await.unwrap();
 
         // The model table should be deregistered from the Apache DataFusion session context.
         assert!(
             context
-                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .check_if_table_exists(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_ok()
         );
@@ -688,7 +688,7 @@ mod tests {
                 .data_folders
                 .local_data_folder
                 .table_metadata_manager
-                .is_model_table(test::MODEL_TABLE_NAME)
+                .is_model_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -702,7 +702,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context.drop_table(test::MODEL_TABLE_NAME).await.is_err());
+        assert!(context.drop_table(test::TIME_SERIES_TABLE_NAME).await.is_err());
     }
 
     #[tokio::test]
@@ -760,14 +760,14 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::model_table_metadata())
+            .create_model_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
         let local_data_folder = &context.data_folders.local_data_folder;
         let mut delta_table = local_data_folder
             .delta_lake
-            .delta_table(test::MODEL_TABLE_NAME)
+            .delta_table(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -775,7 +775,7 @@ mod tests {
         let record_batch = test::compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .write_compressed_segments_to_model_table(test::MODEL_TABLE_NAME, vec![record_batch])
+            .write_compressed_segments_to_model_table(test::TIME_SERIES_TABLE_NAME, vec![record_batch])
             .await
             .unwrap();
 
@@ -783,7 +783,7 @@ mod tests {
         assert_eq!(delta_table.get_files_count(), 1);
 
         context
-            .truncate_table(test::MODEL_TABLE_NAME)
+            .truncate_table(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -791,7 +791,7 @@ mod tests {
         assert!(
             local_data_folder
                 .table_metadata_manager
-                .is_model_table(test::MODEL_TABLE_NAME)
+                .is_model_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -808,7 +808,7 @@ mod tests {
 
         assert!(
             context
-                .truncate_table(test::MODEL_TABLE_NAME)
+                .truncate_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         );
@@ -820,17 +820,17 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::model_table_metadata())
+            .create_model_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
         let metadata = context
-            .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
+            .model_table_metadata_from_default_database_schema(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap()
             .unwrap();
 
-        assert_eq!(metadata.name, test::model_table_metadata().name);
+        assert_eq!(metadata.name, test::time_series_table_metadata().name);
     }
 
     #[tokio::test]
@@ -859,7 +859,7 @@ mod tests {
 
         assert!(
             context
-                .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
+                .model_table_metadata_from_default_database_schema(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         );
@@ -871,13 +871,13 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::model_table_metadata())
+            .create_model_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
         assert!(
             context
-                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .check_if_table_exists(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         );
@@ -890,7 +890,7 @@ mod tests {
 
         assert!(
             context
-                .check_if_table_exists(test::MODEL_TABLE_NAME)
+                .check_if_table_exists(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_ok()
         );
@@ -902,16 +902,16 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::model_table_metadata())
+            .create_model_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
         let schema = context
-            .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
+            .schema_of_table_in_default_database_schema(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
-        assert_eq!(schema, test::model_table_metadata().schema)
+        assert_eq!(schema, test::time_series_table_metadata().schema)
     }
 
     #[tokio::test]
@@ -921,7 +921,7 @@ mod tests {
 
         assert!(
             context
-                .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
+                .schema_of_table_in_default_database_schema(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         )

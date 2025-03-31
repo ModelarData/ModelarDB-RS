@@ -339,36 +339,39 @@ pub fn normal_table_metadata_to_record_batch(
     .map_err(|error| error.into())
 }
 
-/// Return a [`RecordBatch`] constructed from the metadata in `model_table_metadata`. If the schema
-/// could not be converted to bytes or the [`RecordBatch`] could not be created, return
+/// Return a [`RecordBatch`] constructed from the metadata in `time_series_table_metadata`. If the
+/// schema could not be converted to bytes or the [`RecordBatch`] could not be created, return
 /// [`ModelarDbStorageError`].
-pub fn model_table_metadata_to_record_batch(
-    model_table_metadata: &TimeSeriesTableMetadata,
+pub fn time_series_table_metadata_to_record_batch(
+    time_series_table_metadata: &TimeSeriesTableMetadata,
 ) -> Result<RecordBatch> {
     // Since the model table metadata does not include error bounds for the generated columns,
     // lossless error bounds are added for each generated column.
-    let mut error_bounds_all = Vec::with_capacity(model_table_metadata.query_schema.fields().len());
+    let mut error_bounds_all =
+        Vec::with_capacity(time_series_table_metadata.query_schema.fields().len());
 
     let lossless = ErrorBound::try_new_absolute(0.0)?;
 
-    for field in model_table_metadata.query_schema.fields() {
-        if let Ok(field_index) = model_table_metadata.schema.index_of(field.name()) {
-            error_bounds_all.push(model_table_metadata.error_bounds[field_index]);
+    for field in time_series_table_metadata.query_schema.fields() {
+        if let Ok(field_index) = time_series_table_metadata.schema.index_of(field.name()) {
+            error_bounds_all.push(time_series_table_metadata.error_bounds[field_index]);
         } else {
             error_bounds_all.push(lossless);
         }
     }
 
-    let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
+    let query_schema_bytes = try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?;
     let error_bounds_array = error_bounds_to_list_array(error_bounds_all);
     let generated_columns_array =
-        generated_columns_to_list_array(model_table_metadata.generated_columns.clone());
+        generated_columns_to_list_array(time_series_table_metadata.generated_columns.clone());
 
     RecordBatch::try_new(
         TABLE_METADATA_SCHEMA.0.clone(),
         vec![
             Arc::new(BooleanArray::from(vec![true])),
-            Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+            Arc::new(StringArray::from(vec![
+                time_series_table_metadata.name.clone(),
+            ])),
             Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
             Arc::new(error_bounds_array),
             Arc::new(generated_columns_array),
@@ -699,13 +702,14 @@ mod tests {
 
     #[test]
     fn test_model_table_metadata_to_record_batch() {
-        let model_table_metadata = test::model_table_metadata();
-        let record_batch = model_table_metadata_to_record_batch(&model_table_metadata).unwrap();
+        let model_table_metadata = test::time_series_table_metadata();
+        let record_batch =
+            time_series_table_metadata_to_record_batch(&model_table_metadata).unwrap();
 
         assert_eq!(**record_batch.column(0), BooleanArray::from(vec![true]));
         assert_eq!(
             **record_batch.column(1),
-            StringArray::from(vec![test::MODEL_TABLE_NAME])
+            StringArray::from(vec![test::TIME_SERIES_TABLE_NAME])
         );
 
         let expected_schema_bytes =
@@ -738,7 +742,7 @@ mod tests {
         assert_eq!(normal_table_metadata[0].0, test::NORMAL_TABLE_NAME);
         assert_eq!(normal_table_metadata[0].1, test::normal_table_schema());
 
-        let metadata = test::model_table_metadata();
+        let metadata = test::time_series_table_metadata();
         assert_eq!(model_table_metadata.len(), 1);
         assert_eq!(model_table_metadata[0].name, metadata.name);
         assert_eq!(model_table_metadata[0].query_schema, metadata.query_schema);

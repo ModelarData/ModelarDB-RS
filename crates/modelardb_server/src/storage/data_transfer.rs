@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
             model_table_files_size
         );
@@ -323,7 +323,7 @@ mod tests {
 
         assert!(
             data_transfer
-                .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
+                .increase_table_size(test::TIME_SERIES_TABLE_NAME, model_table_files_size)
                 .await
                 .is_ok()
         );
@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
             EXPECTED_MODEL_TABLE_FILE_SIZE
         );
@@ -347,18 +347,18 @@ mod tests {
             write_batches_to_tables(&local_data_folder, 1).await;
 
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
+            .increase_table_size(test::TIME_SERIES_TABLE_NAME, model_table_files_size)
             .await
             .unwrap();
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
+            .increase_table_size(test::TIME_SERIES_TABLE_NAME, model_table_files_size)
             .await
             .unwrap();
 
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
             EXPECTED_MODEL_TABLE_FILE_SIZE * 2
         );
@@ -371,11 +371,11 @@ mod tests {
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
 
-        data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
+        data_transfer.mark_table_as_dropped(test::TIME_SERIES_TABLE_NAME);
         assert!(
             data_transfer
                 .dropped_tables
-                .contains(test::MODEL_TABLE_NAME)
+                .contains(test::TIME_SERIES_TABLE_NAME)
         );
     }
 
@@ -389,14 +389,14 @@ mod tests {
             write_batches_to_tables(&local_data_folder, 1).await;
 
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
+            .increase_table_size(test::TIME_SERIES_TABLE_NAME, model_table_files_size)
             .await
             .unwrap();
 
-        data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
+        data_transfer.mark_table_as_dropped(test::TIME_SERIES_TABLE_NAME);
 
         assert_eq!(
-            data_transfer.clear_table(test::MODEL_TABLE_NAME),
+            data_transfer.clear_table(test::TIME_SERIES_TABLE_NAME),
             EXPECTED_MODEL_TABLE_FILE_SIZE
         );
 
@@ -405,7 +405,7 @@ mod tests {
         assert!(
             !data_transfer
                 .table_size_in_bytes
-                .contains_key(test::MODEL_TABLE_NAME)
+                .contains_key(test::TIME_SERIES_TABLE_NAME)
         );
 
         assert!(data_transfer.dropped_tables.is_empty());
@@ -432,7 +432,7 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
             EXPECTED_MODEL_TABLE_FILE_SIZE * 2
         );
@@ -461,7 +461,7 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
             EXPECTED_MODEL_TABLE_FILE_SIZE * 2
         );
@@ -488,7 +488,7 @@ mod tests {
             .unwrap();
 
         // Create a model table.
-        let model_table_metadata = test::model_table_metadata();
+        let model_table_metadata = test::time_series_table_metadata();
         local_data_folder
             .delta_lake
             .create_model_table(&model_table_metadata)
@@ -525,7 +525,7 @@ mod tests {
             local_data_folder
                 .delta_lake
                 .write_compressed_segments_to_model_table(
-                    test::MODEL_TABLE_NAME,
+                    test::TIME_SERIES_TABLE_NAME,
                     vec![test::compressed_segments_record_batch()],
                 )
                 .await
@@ -534,7 +534,7 @@ mod tests {
 
         (
             table_files_size(local_data_folder, test::NORMAL_TABLE_NAME).await,
-            table_files_size(local_data_folder, test::MODEL_TABLE_NAME).await,
+            table_files_size(local_data_folder, test::TIME_SERIES_TABLE_NAME).await,
         )
     }
 

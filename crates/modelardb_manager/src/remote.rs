@@ -232,7 +232,7 @@ impl FlightServiceHandler {
 
         // Register and save the model table to each node in the cluster.
         let record_batch =
-            modelardb_storage::model_table_metadata_to_record_batch(&model_table_metadata)
+            modelardb_storage::time_series_table_metadata_to_record_batch(&model_table_metadata)
                 .map_err(error_to_status_internal)?;
 
         self.context
@@ -609,7 +609,7 @@ impl FlightService for FlightServiceHandler {
                             .await
                             .map_err(error_to_status_internal)?;
 
-                        modelardb_storage::model_table_metadata_to_record_batch(
+                        modelardb_storage::time_series_table_metadata_to_record_batch(
                             &model_table_metadata,
                         )
                         .map_err(error_to_status_internal)?

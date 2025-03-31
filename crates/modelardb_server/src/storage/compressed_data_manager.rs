@@ -332,7 +332,7 @@ mod tests {
     async fn test_can_insert_compressed_segment_into_new_compressed_data_buffer() {
         let segments = compressed_segments_record_batch();
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-        let key = test::MODEL_TABLE_NAME;
+        let key = test::TIME_SERIES_TABLE_NAME;
 
         data_manager
             .insert_compressed_segments(segments)
@@ -362,7 +362,7 @@ mod tests {
             .unwrap();
         let previous_size = data_manager
             .compressed_data_buffers
-            .get(test::MODEL_TABLE_NAME)
+            .get(test::TIME_SERIES_TABLE_NAME)
             .unwrap()
             .size_in_bytes;
 
@@ -374,7 +374,7 @@ mod tests {
         assert!(
             data_manager
                 .compressed_data_buffers
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap()
                 .size_in_bytes
                 > previous_size
@@ -388,7 +388,7 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_model_table(&test::model_table_metadata())
+            .create_model_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -559,7 +559,7 @@ mod tests {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
 
-        let model_table_metadata = test::model_table_metadata();
+        let model_table_metadata = test::time_series_table_metadata();
         local_data_folder
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata)
@@ -588,7 +588,7 @@ mod tests {
     /// value range is from `offset` + 5.2 to `offset` + 34.2.
     fn compressed_segment_batch_with_time(time_ms: i64, offset: f32) -> CompressedSegmentBatch {
         CompressedSegmentBatch::new(
-            test::model_table_metadata_arc(),
+            test::time_series_table_metadata_arc(),
             vec![
                 test::compressed_segments_record_batch_with_time(COLUMN_INDEX, time_ms, offset),
                 test::compressed_segments_record_batch_with_time(COLUMN_INDEX + 1, time_ms, offset),

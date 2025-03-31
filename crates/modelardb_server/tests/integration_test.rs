@@ -1283,7 +1283,7 @@ async fn test_can_create_tables() {
     assert_eq!(
         retrieved_table_names,
         vec![
-            modelardb_storage::test::MODEL_TABLE_NAME.to_owned(),
+            modelardb_storage::test::TIME_SERIES_TABLE_NAME.to_owned(),
             modelardb_storage::test::NORMAL_TABLE_NAME.to_owned(),
         ]
     );

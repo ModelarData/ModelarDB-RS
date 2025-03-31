@@ -167,7 +167,7 @@ impl Operations for Client {
                     generated_columns,
                 )?;
 
-                modelardb_storage::model_table_metadata_to_record_batch(&model_table_metadata)?
+                modelardb_storage::time_series_table_metadata_to_record_batch(&model_table_metadata)?
             }
         };
 

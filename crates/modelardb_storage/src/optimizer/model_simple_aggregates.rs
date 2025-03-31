@@ -695,7 +695,7 @@ mod tests {
     #[tokio::test]
     async fn test_rewrite_aggregate_on_one_column_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let query = &format!("SELECT COUNT(field_1) FROM {}", test::MODEL_TABLE_NAME);
+        let query = &format!("SELECT COUNT(field_1) FROM {}", test::TIME_SERIES_TABLE_NAME);
         let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
@@ -714,9 +714,9 @@ mod tests {
         // computed in the same query, so for now, multiple queries are used for the test.
         let query_no_avg = &format!(
             "SELECT COUNT(field_1), MIN(field_1), MAX(field_1), SUM(field_1) FROM {}",
-            test::MODEL_TABLE_NAME
+            test::TIME_SERIES_TABLE_NAME
         );
-        let query_only_avg = &format!("SELECT AVG(field_1) FROM {}", test::MODEL_TABLE_NAME);
+        let query_only_avg = &format!("SELECT AVG(field_1) FROM {}", test::TIME_SERIES_TABLE_NAME);
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -738,7 +738,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = &format!(
             "SELECT COUNT(field_1) FROM {} WHERE field_1 = 37.0",
-            test::MODEL_TABLE_NAME
+            test::TIME_SERIES_TABLE_NAME
         );
         let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
@@ -762,7 +762,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = &format!(
             "SELECT COUNT(field_1), COUNT(field_2) FROM {}",
-            test::MODEL_TABLE_NAME
+            test::TIME_SERIES_TABLE_NAME
         );
         let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
@@ -804,7 +804,7 @@ mod tests {
         let session_context = SessionContext::new_with_state(session_state);
 
         // Create model table.
-        let model_table_metadata = test::model_table_metadata_arc();
+        let model_table_metadata = test::time_series_table_metadata_arc();
 
         let delta_table = delta_lake
             .create_model_table(&model_table_metadata)
@@ -820,7 +820,7 @@ mod tests {
         );
 
         session_context
-            .register_table(test::MODEL_TABLE_NAME, model_table)
+            .register_table(test::TIME_SERIES_TABLE_NAME, model_table)
             .unwrap();
 
         session_context

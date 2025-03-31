@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn test_can_append_valid_compressed_segments() {
         let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
+            CompressedDataBuffer::new(test::time_series_table_metadata_arc());
 
         compressed_data_buffer
             .append_compressed_segments(vec![
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn test_compressed_data_buffer_size_updated_when_appending() {
         let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
+            CompressedDataBuffer::new(test::time_series_table_metadata_arc());
 
         compressed_data_buffer
             .append_compressed_segments(vec![
@@ -162,7 +162,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_record_batches_from_compressed_data_buffer() {
         let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
+            CompressedDataBuffer::new(test::time_series_table_metadata_arc());
 
         let compressed_segments = vec![
             test::compressed_segments_record_batch(),

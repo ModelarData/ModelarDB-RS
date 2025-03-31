@@ -27,7 +27,7 @@ use modelardb_types::types::{
 };
 
 use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
-use crate::{model_table_metadata_to_record_batch, normal_table_metadata_to_record_batch};
+use crate::{normal_table_metadata_to_record_batch, time_series_table_metadata_to_record_batch};
 
 /// SQL to create a normal table with a timestamp column and two floating point columns.
 pub const NORMAL_TABLE_SQL: &str =
@@ -36,24 +36,24 @@ pub const NORMAL_TABLE_SQL: &str =
 /// Name of the normal table used in tests.
 pub const NORMAL_TABLE_NAME: &str = "normal_table";
 
-/// SQL to create a model table with a timestamp column, two field columns, and a tag column.
-pub const MODEL_TABLE_SQL: &str =
-    "CREATE MODEL TABLE model_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
+/// SQL to create a time series table with a timestamp column, two field columns, and a tag column.
+pub const TIME_SERIES_TABLE_SQL: &str = "CREATE MODEL TABLE time_series_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
 
-/// Name of the model table used in tests.
-pub const MODEL_TABLE_NAME: &str = "model_table";
+/// Name of the time series table used in tests.
+pub const TIME_SERIES_TABLE_NAME: &str = "time_series_table";
 
-/// Return a [`RecordBatch`] containing metadata for a normal table and a model table.
+/// Return a [`RecordBatch`] containing metadata for a normal table and a time series table.
 pub fn table_metadata_record_batch() -> RecordBatch {
     let normal_table_record_batch =
         normal_table_metadata_to_record_batch(NORMAL_TABLE_NAME, &normal_table_schema()).unwrap();
 
-    let metadata = model_table_metadata();
-    let model_table_record_batch = model_table_metadata_to_record_batch(&metadata).unwrap();
+    let metadata = time_series_table_metadata();
+    let time_series_table_record_batch =
+        time_series_table_metadata_to_record_batch(&metadata).unwrap();
 
     concat_batches(
         &TABLE_METADATA_SCHEMA.0,
-        &vec![normal_table_record_batch, model_table_record_batch],
+        &vec![normal_table_record_batch, time_series_table_record_batch],
     )
     .unwrap()
 }
@@ -81,9 +81,9 @@ pub fn normal_table_record_batch() -> RecordBatch {
     .unwrap()
 }
 
-/// Return [`TimeSeriesTableMetadata`] for a model table with a schema containing a tag column, a
-/// timestamp column, and two field columns.
-pub fn model_table_metadata() -> TimeSeriesTableMetadata {
+/// Return [`TimeSeriesTableMetadata`] for a time series table with a schema containing a tag column,
+/// a timestamp column, and two field columns.
+pub fn time_series_table_metadata() -> TimeSeriesTableMetadata {
     let query_schema = Arc::new(Schema::new(vec![
         Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
         Field::new("field_1", ArrowValue::DATA_TYPE, false),
@@ -101,7 +101,7 @@ pub fn model_table_metadata() -> TimeSeriesTableMetadata {
     let generated_columns = vec![None, None, None, None];
 
     TimeSeriesTableMetadata::try_new(
-        MODEL_TABLE_NAME.to_owned(),
+        TIME_SERIES_TABLE_NAME.to_owned(),
         query_schema,
         error_bounds,
         generated_columns,
@@ -109,21 +109,21 @@ pub fn model_table_metadata() -> TimeSeriesTableMetadata {
     .unwrap()
 }
 
-/// Return [`TimeSeriesTableMetadata`] in an [`Arc`] for a model table with a schema containing a tag
-/// column, a timestamp column, and two field columns.
-pub fn model_table_metadata_arc() -> Arc<TimeSeriesTableMetadata> {
-    Arc::new(model_table_metadata())
+/// Return [`TimeSeriesTableMetadata`] in an [`Arc`] for a time series table with a schema containing
+/// a tag column, a timestamp column, and two field columns.
+pub fn time_series_table_metadata_arc() -> Arc<TimeSeriesTableMetadata> {
+    Arc::new(time_series_table_metadata())
 }
 
 /// Create a [`RecordBatch`] with data that resembles uncompressed data with a single tag and two
 /// field columns. The returned data has `row_count` rows, with a different tag for each row.
-pub fn uncompressed_model_table_record_batch(row_count: usize) -> RecordBatch {
+pub fn uncompressed_time_series_table_record_batch(row_count: usize) -> RecordBatch {
     let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
     let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
     let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
 
     RecordBatch::try_new(
-        model_table_metadata().schema.clone(),
+        time_series_table_metadata().schema.clone(),
         vec![
             Arc::new(TimestampArray::from(timestamps)),
             Arc::new(ValueArray::from(values.clone())),
@@ -165,7 +165,7 @@ pub fn compressed_segments_record_batch_with_time(
     let tag_column = StringArray::from(vec!["tag", "tag", "tag"]);
 
     RecordBatch::try_new(
-        model_table_metadata().compressed_schema,
+        time_series_table_metadata().compressed_schema,
         vec![
             Arc::new(model_type_id),
             Arc::new(start_time),

@@ -288,9 +288,9 @@ mod test {
     #[test]
     fn test_can_create_model_table_metadata() {
         let (query_schema, error_bounds, generated_columns) =
-            model_table_schema_error_bounds_and_generated_columns();
+            time_series_table_schema_error_bounds_and_generated_columns();
         let result = TimeSeriesTableMetadata::try_new(
-            test::MODEL_TABLE_NAME.to_owned(),
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
             query_schema,
             error_bounds,
             generated_columns,
@@ -349,7 +349,7 @@ mod test {
     /// Return metadata for a time series table with one tag column and the timestamp column at index 1.
     fn create_simple_model_table_metadata(query_schema: Schema) -> Result<TimeSeriesTableMetadata> {
         TimeSeriesTableMetadata::try_new(
-            test::MODEL_TABLE_NAME.to_owned(),
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
             Arc::new(query_schema),
             vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap()],
             vec![None],
@@ -359,9 +359,9 @@ mod test {
     #[test]
     fn test_cannot_create_model_table_metadata_with_missing_or_too_many_error_bounds() {
         let (query_schema, _error_bounds, generated_columns) =
-            model_table_schema_error_bounds_and_generated_columns();
+            time_series_table_schema_error_bounds_and_generated_columns();
         let result = TimeSeriesTableMetadata::try_new(
-            test::MODEL_TABLE_NAME.to_owned(),
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
             query_schema,
             vec![],
             generated_columns,
@@ -373,9 +373,9 @@ mod test {
     #[test]
     fn test_cannot_create_model_table_metadata_with_missing_or_too_many_generated_columns() {
         let (query_schema, error_bounds, _generated_columns) =
-            model_table_schema_error_bounds_and_generated_columns();
+            time_series_table_schema_error_bounds_and_generated_columns();
         let result = TimeSeriesTableMetadata::try_new(
-            test::MODEL_TABLE_NAME.to_owned(),
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
             query_schema,
             error_bounds,
             vec![],
@@ -387,7 +387,7 @@ mod test {
     #[test]
     fn test_cannot_create_model_table_metadata_with_generated_columns_using_generated_columns() {
         let (query_schema, error_bounds, mut generated_columns) =
-            model_table_schema_error_bounds_and_generated_columns();
+            time_series_table_schema_error_bounds_and_generated_columns();
 
         generated_columns[5] = Some(GeneratedColumn {
             expr: Expr::Column("".into()),
@@ -402,7 +402,7 @@ mod test {
         });
 
         let result = TimeSeriesTableMetadata::try_new(
-            test::MODEL_TABLE_NAME.to_owned(),
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
             query_schema,
             error_bounds,
             generated_columns,
@@ -411,7 +411,7 @@ mod test {
         assert!(result.is_err());
     }
 
-    fn model_table_schema_error_bounds_and_generated_columns()
+    fn time_series_table_schema_error_bounds_and_generated_columns()
     -> (Arc<Schema>, Vec<ErrorBound>, Vec<Option<GeneratedColumn>>) {
         (
             Arc::new(Schema::new(vec![
@@ -452,7 +452,7 @@ mod test {
         let generated_columns = vec![None, None, None];
 
         let result = TimeSeriesTableMetadata::try_new(
-            test::MODEL_TABLE_NAME.to_owned(),
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
             Arc::new(Schema::new(fields)),
             error_bounds,
             generated_columns,
@@ -463,7 +463,7 @@ mod test {
 
     #[test]
     fn test_is_timestamp() {
-        let model_table_metadata = test::model_table_metadata();
+        let model_table_metadata = test::time_series_table_metadata();
 
         assert!(model_table_metadata.is_timestamp(0));
         assert!(!model_table_metadata.is_timestamp(1));
@@ -473,7 +473,7 @@ mod test {
 
     #[test]
     fn test_is_field() {
-        let model_table_metadata = test::model_table_metadata();
+        let model_table_metadata = test::time_series_table_metadata();
 
         assert!(!model_table_metadata.is_field(0));
         assert!(model_table_metadata.is_field(1));
@@ -483,7 +483,7 @@ mod test {
 
     #[test]
     fn test_is_tag() {
-        let model_table_metadata = test::model_table_metadata();
+        let model_table_metadata = test::time_series_table_metadata();
 
         assert!(!model_table_metadata.is_tag(0));
         assert!(!model_table_metadata.is_tag(1));
@@ -493,8 +493,8 @@ mod test {
 
     #[test]
     fn test_column_arrays() {
-        let model_table_metadata = test::model_table_metadata();
-        let record_batch = test::uncompressed_model_table_record_batch(1);
+        let model_table_metadata = test::time_series_table_metadata();
+        let record_batch = test::uncompressed_time_series_table_record_batch(1);
 
         let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
             model_table_metadata.column_arrays(&record_batch).unwrap();
@@ -519,7 +519,7 @@ mod test {
 
     #[test]
     fn test_column_arrays_with_invalid_schema() {
-        let model_table_metadata = test::model_table_metadata();
+        let model_table_metadata = test::time_series_table_metadata();
         let record_batch = test::normal_table_record_batch();
 
         let result = model_table_metadata.column_arrays(&record_batch);

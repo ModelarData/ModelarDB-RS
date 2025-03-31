@@ -637,7 +637,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
         assert!(
             !metadata_manager
-                .is_normal_table(test::MODEL_TABLE_NAME)
+                .is_normal_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -648,7 +648,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
         assert!(
             metadata_manager
-                .is_model_table(test::MODEL_TABLE_NAME)
+                .is_model_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -669,7 +669,7 @@ mod tests {
     async fn test_table_names() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
-        let model_table_metadata = test::model_table_metadata();
+        let model_table_metadata = test::time_series_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .await
@@ -678,7 +678,7 @@ mod tests {
         let table_names = metadata_manager.table_names().await.unwrap();
         assert_eq!(
             table_names,
-            vec!["normal_table_2", "normal_table_1", test::MODEL_TABLE_NAME]
+            vec!["normal_table_2", "normal_table_1", test::TIME_SERIES_TABLE_NAME]
         );
     }
 
@@ -695,7 +695,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_names = metadata_manager.model_table_names().await.unwrap();
-        assert_eq!(model_table_names, vec![test::MODEL_TABLE_NAME]);
+        assert_eq!(model_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
     }
 
     #[tokio::test]
@@ -726,12 +726,12 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![test::MODEL_TABLE_NAME])
+            StringArray::from(vec![test::TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
             BinaryArray::from_vec(vec![
-                &try_convert_schema_to_bytes(&test::model_table_metadata().query_schema).unwrap()
+                &try_convert_schema_to_bytes(&test::time_series_table_metadata().query_schema).unwrap()
             ])
         );
 
@@ -744,7 +744,7 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![test::MODEL_TABLE_NAME, test::MODEL_TABLE_NAME])
+            StringArray::from(vec![test::TIME_SERIES_TABLE_NAME, test::TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
@@ -782,7 +782,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         metadata_manager
-            .drop_table_metadata(test::MODEL_TABLE_NAME)
+            .drop_table_metadata(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -842,7 +842,7 @@ mod tests {
 
         assert_eq!(
             model_table_metadata.first().unwrap().name,
-            test::model_table_metadata().name,
+            test::time_series_table_metadata().name,
         );
     }
 
@@ -851,11 +851,11 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = metadata_manager
-            .model_table_metadata_for_model_table(test::MODEL_TABLE_NAME)
+            .model_table_metadata_for_model_table(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
-        assert_eq!(model_table_metadata.name, test::model_table_metadata().name,);
+        assert_eq!(model_table_metadata.name, test::time_series_table_metadata().name,);
     }
 
     #[tokio::test]
@@ -874,7 +874,7 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let error_bounds = metadata_manager
-            .error_bounds(test::MODEL_TABLE_NAME, 4)
+            .error_bounds(test::TIME_SERIES_TABLE_NAME, 4)
             .await
             .unwrap();
 
@@ -966,7 +966,7 @@ mod tests {
             .unwrap();
 
         // Save a model table to the metadata Delta Lake.
-        let model_table_metadata = test::model_table_metadata();
+        let model_table_metadata = test::time_series_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .await
