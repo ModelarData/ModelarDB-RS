@@ -82,15 +82,15 @@ impl Context {
             &TABLE_METADATA_SCHEMA.0.clone(),
         )?;
 
-        let (normal_table_metadata, model_table_metadata) =
+        let (normal_table_metadata, time_series_table_metadata) =
             modelardb_storage::table_metadata_from_record_batch(&record_batch)?;
 
         for (table_name, schema) in normal_table_metadata {
             self.create_normal_table(&table_name, &schema).await?;
         }
 
-        for metadata in model_table_metadata {
-            self.create_model_table(&metadata).await?;
+        for metadata in time_series_table_metadata {
+            self.create_time_series_table(&metadata).await?;
         }
 
         Ok(())
@@ -135,46 +135,46 @@ impl Context {
         Ok(())
     }
 
-    /// Create a model table with `model_table_metadata`. Returns [`ModelarDbServerError`] if the
-    /// model table could not be created.
-    pub(crate) async fn create_model_table(
+    /// Create a time series table with `time_series_table_metadata`. Returns
+    /// [`ModelarDbServerError`] if the time series table could not be created.
+    pub(crate) async fn create_time_series_table(
         &self,
-        model_table_metadata: &TimeSeriesTableMetadata,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
-        self.check_if_table_exists(&model_table_metadata.name)
+        self.check_if_table_exists(&time_series_table_metadata.name)
             .await?;
-        self.register_and_save_model_table(model_table_metadata)
+        self.register_and_save_time_series_table(time_series_table_metadata)
             .await?;
 
         Ok(())
     }
 
-    /// Create a model table, register it in Apache DataFusion, and save it to the Delta Lake. If
-    /// the model table exists, cannot be registered with Apache DataFusion, or cannot be saved to
-    /// the Delta Lake, return [`ModelarDbServerError`] error.
-    async fn register_and_save_model_table(
+    /// Create a time series table, register it in Apache DataFusion, and save it to the Delta Lake.
+    /// If the time series table exists, cannot be registered with Apache DataFusion, or cannot be
+    /// saved to the Delta Lake, return [`ModelarDbServerError`] error.
+    async fn register_and_save_time_series_table(
         &self,
-        model_table_metadata: &TimeSeriesTableMetadata,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
             .delta_lake
-            .create_time_series_table(model_table_metadata)
+            .create_time_series_table(time_series_table_metadata)
             .await?;
 
-        // Register the model table with Apache DataFusion.
-        self.register_model_table(Arc::new(model_table_metadata.clone()))
+        // Register the time series table with Apache DataFusion.
+        self.register_time_series_table(Arc::new(time_series_table_metadata.clone()))
             .await?;
 
-        // Persist the new model table to the metadata Delta Lake.
+        // Persist the new time series table to the metadata Delta Lake.
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .save_time_series_table_metadata(model_table_metadata)
+            .save_time_series_table_metadata(time_series_table_metadata)
             .await?;
 
-        info!("Created model table '{}'.", model_table_metadata.name);
+        info!("Created time series table '{}'.", time_series_table_metadata.name);
 
         Ok(())
     }
@@ -228,53 +228,53 @@ impl Context {
         Ok(())
     }
 
-    /// For each model table saved in the metadata Delta Lake, register the model table in Apache
-    /// DataFusion. If the model tables could not be retrieved from the metadata Delta Lake or a
-    /// model table could not be registered, return [`ModelarDbServerError`].
-    pub async fn register_model_tables(&self) -> Result<()> {
-        // We register the model tables in the local data folder to avoid registering tables that
-        // ModelTableDataSink cannot write data to.
-        let model_table_metadata = self
+    /// For each time series table saved in the metadata Delta Lake, register the time series table
+    /// in Apache DataFusion. If the time series tables could not be retrieved from the metadata
+    /// Delta Lake or a time series table could not be registered, return [`ModelarDbServerError`].
+    pub async fn register_time_series_tables(&self) -> Result<()> {
+        // We register the time series tables in the local data folder to avoid registering tables
+        // that TimeSeriesTableDataSink cannot write data to.
+        let time_series_table_metadata = self
             .data_folders
             .local_data_folder
             .table_metadata_manager
             .time_series_table_metadata()
             .await?;
 
-        for metadata in model_table_metadata {
-            self.register_model_table(metadata).await?;
+        for metadata in time_series_table_metadata {
+            self.register_time_series_table(metadata).await?;
         }
 
         Ok(())
     }
 
-    /// Register the model table with `model_table_metadata` in Apache DataFusion. If the model
-    /// table does not exist or could not be registered with Apache DataFusion, return
+    /// Register the time series table with `time_series_table_metadata` in Apache DataFusion. If the
+    /// time series table does not exist or could not be registered with Apache DataFusion, return
     /// [`ModelarDbServerError`].
-    async fn register_model_table(
+    async fn register_time_series_table(
         &self,
-        model_table_metadata: Arc<TimeSeriesTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     ) -> Result<()> {
         let delta_table = self
             .data_folders
             .query_data_folder
             .delta_lake
-            .delta_table(&model_table_metadata.name)
+            .delta_table(&time_series_table_metadata.name)
             .await?;
 
-        let model_table_data_sink = Arc::new(ModelTableDataSink::new(
-            model_table_metadata.clone(),
+        let time_series_table_data_sink = Arc::new(ModelTableDataSink::new(
+            time_series_table_metadata.clone(),
             self.storage_engine.clone(),
         ));
 
         modelardb_storage::register_model_table(
             &self.session_context,
             delta_table,
-            model_table_metadata.clone(),
-            model_table_data_sink,
+            time_series_table_metadata.clone(),
+            time_series_table_data_sink,
         )?;
 
-        info!("Registered model table '{}'.", &model_table_metadata.name);
+        info!("Registered time series table '{}'.", &time_series_table_metadata.name);
 
         Ok(())
     }
@@ -352,28 +352,28 @@ impl Context {
         Ok(())
     }
 
-    /// Lookup the [`TimeSeriesTableMetadata`] of the model table with name `table_name` if it exists.
-    /// Specifically, the method returns:
-    /// * [`TimeSeriesTableMetadata`] if a model table with the name `table_name` exists.
+    /// Lookup the [`TimeSeriesTableMetadata`] of the time series table with name `table_name` if it
+    /// exists. Specifically, the method returns:
+    /// * [`TimeSeriesTableMetadata`] if a time series table with the name `table_name` exists.
     /// * [`None`] if a normal table with the name `table_name` exists.
     /// * [`ModelarDbServerError`] if the default catalog, the default schema, a normal table with
-    ///   the name `table_name`, or a model table with the name `table_name` does not exist.
-    pub async fn model_table_metadata_from_default_database_schema(
+    ///   the name `table_name`, or a time series table with the name `table_name` does not exist.
+    pub async fn time_series_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,
     ) -> Result<Option<Arc<TimeSeriesTableMetadata>>> {
         let database_schema = self.default_database_schema()?;
 
-        let maybe_model_table = database_schema.table(table_name).await?.ok_or_else(|| {
+        let maybe_time_series_table = database_schema.table(table_name).await?.ok_or_else(|| {
             ModelarDbServerError::InvalidArgument(format!(
                 "Table with name '{table_name}' does not exist."
             ))
         })?;
 
-        let maybe_model_table_metadata =
-            modelardb_storage::maybe_table_provider_to_model_table_metadata(maybe_model_table);
+        let maybe_time_series_table_metadata =
+            modelardb_storage::maybe_table_provider_to_model_table_metadata(maybe_time_series_table);
 
-        Ok(maybe_model_table_metadata)
+        Ok(maybe_time_series_table_metadata)
     }
 
     /// Return [`ModelarDbServerError`] if a table named `table_name` exists in the default catalog.
@@ -445,7 +445,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Both a normal table and a model table should be created.
+        // Both a normal table and a time series table should be created.
         assert!(
             context
                 .check_if_table_exists(test::NORMAL_TABLE_NAME)
@@ -521,17 +521,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_model_table() {
+    async fn test_create_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
-        // The model table should be saved to the metadata Delta Lake.
-        let model_table_metadata = context
+        // The time series table should be saved to the metadata Delta Lake.
+        let time_series_table_metadata = context
             .data_folders
             .local_data_folder
             .table_metadata_manager
@@ -540,11 +540,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            model_table_metadata.first().unwrap().name,
+            time_series_table_metadata.first().unwrap().name,
             test::time_series_table_metadata().name
         );
 
-        // The model table should be registered in the Apache DataFusion catalog.
+        // The time series table should be registered in the Apache DataFusion catalog.
         assert!(
             context
                 .check_if_table_exists(test::TIME_SERIES_TABLE_NAME)
@@ -554,20 +554,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_existing_model_table() {
+    async fn test_create_existing_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
         assert!(
             context
-                .create_model_table(&test::time_series_table_metadata())
+                .create_time_series_table(&test::time_series_table_metadata())
                 .await
                 .is_ok()
         );
 
         assert!(
             context
-                .create_model_table(&test::time_series_table_metadata())
+                .create_time_series_table(&test::time_series_table_metadata())
                 .await
                 .is_err()
         );
@@ -594,23 +594,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_register_model_tables() {
+    async fn test_register_time_series_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
-        // Save a model table to the metadata Delta Lake.
+        // Save a time series table to the metadata Delta Lake.
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
         // Create a new context to clear the Apache Datafusion catalog.
         let context_2 = create_context(&temp_dir).await;
 
-        // Register the model table with Apache DataFusion.
-        context_2.register_model_tables().await.unwrap();
+        // Register the time series table with Apache DataFusion.
+        context_2.register_time_series_tables().await.unwrap();
     }
 
     #[tokio::test]
@@ -656,12 +656,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_model_table() {
+    async fn test_drop_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -674,7 +674,7 @@ mod tests {
 
         context.drop_table(test::TIME_SERIES_TABLE_NAME).await.unwrap();
 
-        // The model table should be deregistered from the Apache DataFusion session context.
+        // The time series table should be deregistered from the Apache DataFusion session context.
         assert!(
             context
                 .check_if_table_exists(test::TIME_SERIES_TABLE_NAME)
@@ -682,7 +682,7 @@ mod tests {
                 .is_ok()
         );
 
-        // The model table should be deleted from the metadata Delta Lake.
+        // The time series table should be deleted from the metadata Delta Lake.
         assert!(
             !context
                 .data_folders
@@ -693,7 +693,7 @@ mod tests {
                 .unwrap()
         );
 
-        // The model table should be deleted from the Delta Lake.
+        // The time series table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
     }
 
@@ -755,12 +755,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_truncate_model_table() {
+    async fn test_truncate_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -771,7 +771,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Write data to the model table that should be deleted when the table is truncated.
+        // Write data to the time series table that should be deleted when the table is truncated.
         let record_batch = test::compressed_segments_record_batch();
         local_data_folder
             .delta_lake
@@ -787,7 +787,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The model table should not be deleted from the metadata Delta Lake.
+        // The time series table should not be deleted from the metadata Delta Lake.
         assert!(
             local_data_folder
                 .table_metadata_manager
@@ -796,7 +796,7 @@ mod tests {
                 .unwrap()
         );
 
-        // The model table data should be deleted from the Delta Lake.
+        // The time series table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
     }
@@ -815,17 +815,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_model_table_metadata_from_default_database_schema() {
+    async fn test_time_series_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
         let metadata = context
-            .model_table_metadata_from_default_database_schema(test::TIME_SERIES_TABLE_NAME)
+            .time_series_table_metadata_from_default_database_schema(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap()
             .unwrap();
@@ -834,7 +834,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_normal_table_model_table_metadata_from_default_database_schema() {
+    async fn test_normal_table_time_series_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -845,7 +845,7 @@ mod tests {
 
         assert!(
             context
-                .model_table_metadata_from_default_database_schema(test::NORMAL_TABLE_NAME)
+                .time_series_table_metadata_from_default_database_schema(test::NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
                 .is_none()
@@ -853,13 +853,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_missing_model_table_metadata_from_default_database_schema() {
+    async fn test_missing_time_series_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
         assert!(
             context
-                .model_table_metadata_from_default_database_schema(test::TIME_SERIES_TABLE_NAME)
+                .time_series_table_metadata_from_default_database_schema(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         );
@@ -871,7 +871,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -902,7 +902,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_model_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 

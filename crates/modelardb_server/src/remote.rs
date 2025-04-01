@@ -451,7 +451,7 @@ impl FlightService for FlightServiceHandler {
                 self.validate_request(request.metadata()).await?;
 
                 self.context
-                    .create_model_table(&model_table_metadata)
+                    .create_time_series_table(&model_table_metadata)
                     .await
                     .map_err(error_to_status_invalid_argument)?;
 
@@ -542,7 +542,7 @@ impl FlightService for FlightServiceHandler {
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table_metadata) = self
             .context
-            .model_table_metadata_from_default_database_schema(&normalized_table_name)
+            .time_series_table_metadata_from_default_database_schema(&normalized_table_name)
             .await
             .map_err(error_to_status_invalid_argument)?
         {

@@ -88,7 +88,7 @@ fn main() -> Result<()> {
 
     // Register normal tables and model tables.
     runtime.block_on(context.register_normal_tables())?;
-    runtime.block_on(context.register_model_tables())?;
+    runtime.block_on(context.register_time_series_tables())?;
 
     if let ClusterMode::MultiNode(manager) = &cluster_mode {
         runtime.block_on(manager.retrieve_and_create_tables(&context))?;
