@@ -253,7 +253,7 @@ impl StorageEngine {
     /// were successfully inserted, otherwise return [`ModelarDbServerError`].
     pub(super) async fn insert_data_points(
         &mut self,
-        model_table_metadata: Arc<TimeSeriesTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         multivariate_data_points: RecordBatch,
     ) -> Result<()> {
         // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
@@ -263,7 +263,7 @@ impl StorageEngine {
         self.channels
             .ingested_data_sender
             .send(Message::Data(IngestedDataBuffer::new(
-                model_table_metadata,
+                time_series_table_metadata,
                 multivariate_data_points,
             )))
             .map_err(|error| error.into())

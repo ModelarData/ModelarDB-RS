@@ -695,7 +695,10 @@ mod tests {
     #[tokio::test]
     async fn test_rewrite_aggregate_on_one_column_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let query = &format!("SELECT COUNT(field_1) FROM {}", test::TIME_SERIES_TABLE_NAME);
+        let query = &format!(
+            "SELECT COUNT(field_1) FROM {}",
+            test::TIME_SERIES_TABLE_NAME
+        );
         let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
@@ -804,23 +807,23 @@ mod tests {
         let session_context = SessionContext::new_with_state(session_state);
 
         // Create time series table.
-        let model_table_metadata = test::time_series_table_metadata_arc();
+        let time_series_table_metadata = test::time_series_table_metadata_arc();
 
         let delta_table = delta_lake
-            .create_time_series_table(&model_table_metadata)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 
-        let model_table_data_sink = Arc::new(NoOpDataSink {});
+        let time_series_table_data_sink = Arc::new(NoOpDataSink {});
 
-        let model_table = TimeSeriesTable::new(
+        let time_series_table = TimeSeriesTable::new(
             delta_table,
-            model_table_metadata.clone(),
-            model_table_data_sink,
+            time_series_table_metadata.clone(),
+            time_series_table_data_sink,
         );
 
         session_context
-            .register_table(test::TIME_SERIES_TABLE_NAME, model_table)
+            .register_table(test::TIME_SERIES_TABLE_NAME, time_series_table)
             .unwrap();
 
         session_context
