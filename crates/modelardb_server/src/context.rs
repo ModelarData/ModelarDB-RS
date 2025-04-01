@@ -267,7 +267,7 @@ impl Context {
             self.storage_engine.clone(),
         ));
 
-        modelardb_storage::register_model_table(
+        modelardb_storage::register_time_series_table(
             &self.session_context,
             delta_table,
             time_series_table_metadata.clone(),

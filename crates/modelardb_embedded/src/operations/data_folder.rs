@@ -246,7 +246,7 @@ impl DataFolder {
         {
             let delta_table = data_folder.delta_lake.delta_table(&metadata.name).await?;
 
-            modelardb_storage::register_model_table(
+            modelardb_storage::register_time_series_table(
                 &data_folder.session_context,
                 delta_table,
                 metadata,
@@ -469,7 +469,7 @@ impl Operations for DataFolder {
 
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
-                modelardb_storage::register_model_table(
+                modelardb_storage::register_time_series_table(
                     &self.session_context,
                     delta_table,
                     model_table_metadata,
