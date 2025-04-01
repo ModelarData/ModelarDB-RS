@@ -67,8 +67,8 @@ data folders from programming languages.
 storage.
   - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the tables' schema and compressed
   data.
-  - **Optimizer** - Rules for rewriting Apache DataFusion's physical plans for model tables so aggregates are computed
-  from compressed segments instead of from reconstructed data points.
+  - **Optimizer** - Rules for rewriting Apache DataFusion's physical plans for time series tables so aggregates are 
+  computed from compressed segments instead of from reconstructed data points.
   - **Query** - Types that implement traits provided by Apache DataFusion so SQL queries can be executed for ModelarDB
   tables.
   - **Delta Lake** - Module providing functionality for reading from and writing to a delta lake.
@@ -115,9 +115,9 @@ The following terminology must be used throughout the ModelarDB project.
 value.
 - **normal table** - A relational table that stores data directly in Apache Parquet files managed by Delta Lake and thus
 uses the same schema at the logical and physical layer.
-- **model table** - A relational table that stores time series data as compressed segments containing metadata and models
+- **time series table** - A relational table that stores time series data as compressed segments containing metadata and models
 in Apache Parquet files managed by Delta Lake and thus uses different schemas at the logical and physical layer.
-- **table** - A normal table or a model table, e.g., used when a function or method accepts both types of tables.
+- **table** - A normal table or a time series table, e.g., used when a function or method accepts both types of tables.
 - **metadata table** - A table that stores metadata in Apache Parquet files managed by Delta Lake, e.g., information about
 the tables and the cluster.
 
