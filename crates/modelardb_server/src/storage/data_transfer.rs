@@ -248,7 +248,7 @@ impl DataTransfer {
         if self
             .local_data_folder
             .table_metadata_manager
-            .is_model_table(table_name)
+            .is_time_series_table(table_name)
             .await?
         {
             self.remote_data_folder
@@ -497,7 +497,7 @@ mod tests {
 
         local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_time_series_table_metadata(&model_table_metadata)
             .await
             .unwrap();
 

@@ -562,7 +562,7 @@ mod tests {
         let time_series_table_metadata = test::time_series_table_metadata();
         local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&time_series_table_metadata)
+            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
 

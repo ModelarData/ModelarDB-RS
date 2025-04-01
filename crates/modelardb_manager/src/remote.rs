@@ -123,12 +123,12 @@ impl FlightServiceHandler {
 
             Ok(Arc::new(schema))
         } else if table_metadata_manager
-            .is_model_table(table_name)
+            .is_time_series_table(table_name)
             .await
             .map_err(error_to_status_internal)?
         {
             let model_table_metadata = table_metadata_manager
-                .model_table_metadata_for_model_table(table_name)
+                .time_series_table_metadata_for_time_series_table(table_name)
                 .await
                 .map_err(error_to_status_internal)?;
 
@@ -226,7 +226,7 @@ impl FlightServiceHandler {
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_time_series_table_metadata(&model_table_metadata)
             .await
             .map_err(error_to_status_internal)?;
 
@@ -605,7 +605,7 @@ impl FlightService for FlightServiceHandler {
                             .map_err(error_to_status_internal)?
                     } else {
                         let model_table_metadata = table_metadata_manager
-                            .model_table_metadata_for_model_table(table)
+                            .time_series_table_metadata_for_time_series_table(table)
                             .await
                             .map_err(error_to_status_internal)?;
 

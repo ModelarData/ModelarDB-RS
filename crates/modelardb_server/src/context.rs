@@ -171,7 +171,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(model_table_metadata)
+            .save_time_series_table_metadata(model_table_metadata)
             .await?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
@@ -238,7 +238,7 @@ impl Context {
             .data_folders
             .local_data_folder
             .table_metadata_manager
-            .model_table_metadata()
+            .time_series_table_metadata()
             .await?;
 
         for metadata in model_table_metadata {
@@ -535,7 +535,7 @@ mod tests {
             .data_folders
             .local_data_folder
             .table_metadata_manager
-            .model_table_metadata()
+            .time_series_table_metadata()
             .await
             .unwrap();
 
@@ -688,7 +688,7 @@ mod tests {
                 .data_folders
                 .local_data_folder
                 .table_metadata_manager
-                .is_model_table(test::TIME_SERIES_TABLE_NAME)
+                .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -791,7 +791,7 @@ mod tests {
         assert!(
             local_data_folder
                 .table_metadata_manager
-                .is_model_table(test::TIME_SERIES_TABLE_NAME)
+                .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );

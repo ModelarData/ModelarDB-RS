@@ -241,7 +241,7 @@ impl DataFolder {
         // Register model tables.
         for metadata in data_folder
             .table_metadata_manager
-            .model_table_metadata()
+            .time_series_table_metadata()
             .await?
         {
             let delta_table = data_folder.delta_lake.delta_table(&metadata.name).await?;
@@ -464,7 +464,7 @@ impl Operations for DataFolder {
                     .await?;
 
                 self.table_metadata_manager
-                    .save_model_table_metadata(&model_table_metadata)
+                    .save_time_series_table_metadata(&model_table_metadata)
                     .await?;
 
                 let data_sink = Arc::new(DataFolderDataSink::new());
@@ -2403,7 +2403,7 @@ mod tests {
         assert!(
             !data_folder
                 .table_metadata_manager
-                .is_model_table(MODEL_TABLE_NAME)
+                .is_time_series_table(MODEL_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -2770,7 +2770,7 @@ mod tests {
         // Verify that the model table exists in the metadata Delta Lake with the correct schema.
         let model_table_metadata = data_folder
             .table_metadata_manager
-            .model_table_metadata_for_model_table(table_name)
+            .time_series_table_metadata_for_time_series_table(table_name)
             .await
             .unwrap();
 

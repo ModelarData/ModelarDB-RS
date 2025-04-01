@@ -39,11 +39,11 @@ use crate::{
 /// Types of tables supported by ModelarDB.
 enum TableType {
     NormalTable,
-    ModelTable,
+    TimeSeriesTable,
 }
 
-/// Stores the metadata required for reading from and writing to the normal tables and model tables.
-/// The data that needs to be persisted is stored in the metadata Delta Lake.
+/// Stores the metadata required for reading from and writing to the normal tables and time series
+/// tables. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub struct TableMetadataManager {
     /// Delta Lake with functionality to read and write to and from the metadata tables.
     delta_lake: DeltaLake,
@@ -168,11 +168,12 @@ impl TableMetadataManager {
     }
 
     /// If they do not already exist, create the tables in the metadata Delta Lake for normal table
-    /// and model table metadata and register them with the Apache DataFusion session context.
+    /// and time series table metadata and register them with the Apache DataFusion session context.
     /// * The `normal_table_metadata` table contains the metadata for normal tables.
-    /// * The `model_table_metadata` table contains the main metadata for model tables.
-    /// * The `model_table_field_columns` table contains the name, index, error bound value, whether
-    ///   error bound is relative, and generation expression of the field columns in each model table.
+    /// * The `time_series_table_metadata` table contains the main metadata for time series tables.
+    /// * The `time_series_table_field_columns` table contains the name, index, error bound value,
+    ///   whether error bound is relative, and generation expression of the field columns in each
+    ///   time series table.
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return
     /// [`ModelarDbStorageError`].
@@ -188,11 +189,11 @@ impl TableMetadataManager {
 
         register_metadata_table(&self.session_context, "normal_table_metadata", delta_table)?;
 
-        // Create and register the model_table_metadata table if it does not exist.
+        // Create and register the time_series_table_metadata table if it does not exist.
         let delta_table = self
             .delta_lake
             .create_metadata_table(
-                "model_table_metadata",
+                "time_series_table_metadata",
                 &Schema::new(vec![
                     Field::new("table_name", DataType::Utf8, false),
                     Field::new("query_schema", DataType::Binary, false),
@@ -200,15 +201,19 @@ impl TableMetadataManager {
             )
             .await?;
 
-        register_metadata_table(&self.session_context, "model_table_metadata", delta_table)?;
+        register_metadata_table(
+            &self.session_context,
+            "time_series_table_metadata",
+            delta_table,
+        )?;
 
-        // Create and register the model_table_field_columns table if it does not exist. Note that
-        // column_index will only use a maximum of 10 bits. generated_column_expr is NULL if the
-        // fields are stored as segments.
+        // Create and register the time_series_table_field_columns table if it does not exist. Note
+        // that column_index will only use a maximum of 10 bits. generated_column_expr is NULL if
+        // the fields are stored as segments.
         let delta_table = self
             .delta_lake
             .create_metadata_table(
-                "model_table_field_columns",
+                "time_series_table_field_columns",
                 &Schema::new(vec![
                     Field::new("table_name", DataType::Utf8, false),
                     Field::new("column_name", DataType::Utf8, false),
@@ -222,7 +227,7 @@ impl TableMetadataManager {
 
         register_metadata_table(
             &self.session_context,
-            "model_table_field_columns",
+            "time_series_table_field_columns",
             delta_table,
         )?;
 
@@ -237,10 +242,10 @@ impl TableMetadataManager {
             .contains(&table_name.to_owned()))
     }
 
-    /// Return `true` if the table with `table_name` is a model table, otherwise return `false`.
-    pub async fn is_model_table(&self, table_name: &str) -> Result<bool> {
+    /// Return `true` if the table with `table_name` is a time series table, otherwise return `false`.
+    pub async fn is_time_series_table(&self, table_name: &str) -> Result<bool> {
         Ok(self
-            .model_table_names()
+            .time_series_table_names()
             .await?
             .contains(&table_name.to_owned()))
     }
@@ -249,26 +254,26 @@ impl TableMetadataManager {
     /// cannot be retrieved, [`ModelarDbStorageError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>> {
         let normal_table_names = self.normal_table_names().await?;
-        let model_table_names = self.model_table_names().await?;
+        let time_series_table_names = self.time_series_table_names().await?;
 
         let mut table_names = normal_table_names;
-        table_names.extend(model_table_names);
+        table_names.extend(time_series_table_names);
 
         Ok(table_names)
     }
 
     /// Return the name of each normal table currently in the metadata Delta Lake. Note that this
-    /// does not include model tables. If the normal table names cannot be retrieved,
+    /// does not include time series tables. If the normal table names cannot be retrieved,
     /// [`ModelarDbStorageError`] is returned.
     pub async fn normal_table_names(&self) -> Result<Vec<String>> {
         self.table_names_of_type(TableType::NormalTable).await
     }
 
-    /// Return the name of each model table currently in the metadata Delta Lake. Note that this
-    /// does not include normal tables. If the model table names cannot be retrieved,
+    /// Return the name of each time series table currently in the metadata Delta Lake. Note that
+    /// this does not include normal tables. If the time series table names cannot be retrieved,
     /// [`ModelarDbStorageError`] is returned.
-    pub async fn model_table_names(&self) -> Result<Vec<String>> {
-        self.table_names_of_type(TableType::ModelTable).await
+    pub async fn time_series_table_names(&self) -> Result<Vec<String>> {
+        self.table_names_of_type(TableType::TimeSeriesTable).await
     }
 
     /// Return the name of tables of `table_type`. Returns [`ModelarDbStorageError`] if the table
@@ -276,7 +281,7 @@ impl TableMetadataManager {
     async fn table_names_of_type(&self, table_type: TableType) -> Result<Vec<String>> {
         let table_type = match table_type {
             TableType::NormalTable => "normal_table",
-            TableType::ModelTable => "model_table",
+            TableType::TimeSeriesTable => "time_series_table",
         };
 
         let sql = format!("SELECT table_name FROM {table_type}_metadata");
@@ -300,58 +305,64 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Save the created model table to the metadata Delta Lake. This includes adding a row to the
-    /// `model_table_metadata` table and adding a row to the `model_table_field_columns` table for
-    /// each field column.
-    pub async fn save_model_table_metadata(
+    /// Save the created time series table to the metadata Delta Lake. This includes adding a row to
+    /// the `time_series_table_metadata` table and adding a row to the `time_series_table_field_columns`
+    /// table for each field column.
+    pub async fn save_time_series_table_metadata(
         &self,
-        model_table_metadata: &TimeSeriesTableMetadata,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
         // Convert the query schema to bytes, so it can be saved in the metadata Delta Lake.
-        let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
+        let query_schema_bytes =
+            try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?;
 
-        // Add a new row in the model_table_metadata table to persist the model table.
+        // Add a new row in the time_series_table_metadata table to persist the time series table.
         self.delta_lake
             .write_columns_to_metadata_table(
-                "model_table_metadata",
+                "time_series_table_metadata",
                 vec![
-                    Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+                    Arc::new(StringArray::from(vec![
+                        time_series_table_metadata.name.clone(),
+                    ])),
                     Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
                 ],
             )
             .await?;
 
-        // Add a row for each field column to the model_table_field_columns table.
-        for (query_schema_index, field) in model_table_metadata
+        // Add a row for each field column to the time_series_table_field_columns table.
+        for (query_schema_index, field) in time_series_table_metadata
             .query_schema
             .fields()
             .iter()
             .enumerate()
         {
-            if model_table_metadata.is_field(query_schema_index) {
-                let maybe_generated_column_expr = model_table_metadata.generated_columns
+            if time_series_table_metadata.is_field(query_schema_index) {
+                let maybe_generated_column_expr = time_series_table_metadata.generated_columns
                     [query_schema_index]
                     .as_ref()
                     .map(|generated_column| generated_column.original_expr.clone());
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
-                // bound during ingestion as it occurs far more often than creation of model tables.
-                let (error_bound_value, error_bound_is_relative) =
-                    if let Ok(schema_index) = model_table_metadata.schema.index_of(field.name()) {
-                        match model_table_metadata.error_bounds[schema_index] {
-                            ErrorBound::Absolute(value) => (value, false),
-                            ErrorBound::Relative(value) => (value, true),
-                        }
-                    } else {
-                        (0.0, false)
-                    };
+                // bound during ingestion as it occurs far more often than creation of time series tables.
+                let (error_bound_value, error_bound_is_relative) = if let Ok(schema_index) =
+                    time_series_table_metadata.schema.index_of(field.name())
+                {
+                    match time_series_table_metadata.error_bounds[schema_index] {
+                        ErrorBound::Absolute(value) => (value, false),
+                        ErrorBound::Relative(value) => (value, true),
+                    }
+                } else {
+                    (0.0, false)
+                };
 
-                // query_schema_index is simply cast as a model table contains at most 32767 columns.
+                // query_schema_index is simply cast as a time series table contains at most 32767 columns.
                 self.delta_lake
                     .write_columns_to_metadata_table(
-                        "model_table_field_columns",
+                        "time_series_table_field_columns",
                         vec![
-                            Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+                            Arc::new(StringArray::from(vec![
+                                time_series_table_metadata.name.clone(),
+                            ])),
                             Arc::new(StringArray::from(vec![field.name().clone()])),
                             Arc::new(Int16Array::from(vec![query_schema_index as i16])),
                             Arc::new(Float32Array::from(vec![error_bound_value])),
@@ -367,13 +378,13 @@ impl TableMetadataManager {
     }
 
     /// Depending on the type of the table with `table_name`, drop either the normal table
-    /// metadata or the model table metadata from the metadata Delta Lake. If the table does not
-    /// exist or the metadata could not be dropped, [`ModelarDbStorageError`] is returned.
+    /// metadata or the time series table metadata from the metadata Delta Lake. If the table does
+    /// not exist or the metadata could not be dropped, [`ModelarDbStorageError`] is returned.
     pub async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
         if self.is_normal_table(table_name).await? {
             self.drop_normal_table_metadata(table_name).await
-        } else if self.is_model_table(table_name).await? {
-            self.drop_model_table_metadata(table_name).await
+        } else if self.is_time_series_table(table_name).await? {
+            self.drop_time_series_table_metadata(table_name).await
         } else {
             Err(ModelarDbStorageError::InvalidArgument(format!(
                 "Table with name '{table_name}' does not exist."
@@ -398,22 +409,22 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Drop the metadata for the model table with `table_name` from the metadata Delta Lake.
-    /// This includes deleting a row from the `model_table_metadata` table and deleting a row from
-    /// the `model_table_field_columns` table for each field column. If the metadata could not be
-    /// dropped, [`ModelarDbStorageError`] is returned.
-    async fn drop_model_table_metadata(&self, table_name: &str) -> Result<()> {
-        // Delete the table metadata from the model_table_metadata table.
+    /// Drop the metadata for the time series table with `table_name` from the metadata Delta Lake.
+    /// This includes deleting a row from the `time_series_table_metadata` table and deleting a row
+    /// from the `time_series_table_field_columns` table for each field column. If the metadata
+    /// could not be dropped, [`ModelarDbStorageError`] is returned.
+    async fn drop_time_series_table_metadata(&self, table_name: &str) -> Result<()> {
+        // Delete the table metadata from the time_series_table_metadata table.
         self.delta_lake
-            .metadata_delta_ops("model_table_metadata")
+            .metadata_delta_ops("time_series_table_metadata")
             .await?
             .delete()
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
 
-        // Delete the column metadata from the model_table_field_columns table.
+        // Delete the column metadata from the time_series_table_field_columns table.
         self.delta_lake
-            .metadata_delta_ops("model_table_field_columns")
+            .metadata_delta_ops("time_series_table_field_columns")
             .await?
             .delete()
             .with_predicate(col("table_name").eq(lit(table_name)))
@@ -422,13 +433,14 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Return the [`TimeSeriesTableMetadata`] of each model table currently in the metadata Delta Lake.
-    /// If the [`TimeSeriesTableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is returned.
-    pub async fn model_table_metadata(&self) -> Result<Vec<Arc<TimeSeriesTableMetadata>>> {
-        let sql = "SELECT table_name, query_schema FROM model_table_metadata";
+    /// Return the [`TimeSeriesTableMetadata`] of each time series table currently in the metadata
+    /// Delta Lake. If the [`TimeSeriesTableMetadata`] cannot be retrieved,
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn time_series_table_metadata(&self) -> Result<Vec<Arc<TimeSeriesTableMetadata>>> {
+        let sql = "SELECT table_name, query_schema FROM time_series_table_metadata";
         let batch = sql_and_concat(&self.session_context, sql).await?;
 
-        let mut model_table_metadata: Vec<Arc<TimeSeriesTableMetadata>> = vec![];
+        let mut time_series_table_metadata: Vec<Arc<TimeSeriesTableMetadata>> = vec![];
         let table_name_array = modelardb_types::array!(batch, 0, StringArray);
         let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryArray);
 
@@ -437,30 +449,33 @@ impl TableMetadataManager {
             let query_schema_bytes = query_schema_bytes_array.value(row_index);
 
             let metadata = self
-                .model_table_metadata_row_to_model_table_metadata(table_name, query_schema_bytes)
+                .time_series_table_metadata_row_to_time_series_table_metadata(
+                    table_name,
+                    query_schema_bytes,
+                )
                 .await?;
 
-            model_table_metadata.push(Arc::new(metadata))
+            time_series_table_metadata.push(Arc::new(metadata))
         }
 
-        Ok(model_table_metadata)
+        Ok(time_series_table_metadata)
     }
 
-    /// Return the [`TimeSeriesTableMetadata`] for the model table with `table_name` in the metadata
-    /// Delta Lake. If the [`TimeSeriesTableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is
-    /// returned.
-    pub async fn model_table_metadata_for_model_table(
+    /// Return the [`TimeSeriesTableMetadata`] for the time series table with `table_name` in the
+    /// metadata Delta Lake. If the [`TimeSeriesTableMetadata`] cannot be retrieved,
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn time_series_table_metadata_for_time_series_table(
         &self,
         table_name: &str,
     ) -> Result<TimeSeriesTableMetadata> {
         let sql = format!(
-            "SELECT table_name, query_schema FROM model_table_metadata WHERE table_name = '{table_name}'"
+            "SELECT table_name, query_schema FROM time_series_table_metadata WHERE table_name = '{table_name}'"
         );
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
         if batch.num_rows() == 0 {
             return Err(ModelarDbStorageError::InvalidArgument(format!(
-                "No metadata for model table named '{table_name}'."
+                "No metadata for time series table named '{table_name}'."
             )));
         }
 
@@ -470,14 +485,17 @@ impl TableMetadataManager {
         let table_name = table_name_array.value(0);
         let query_schema_bytes = query_schema_bytes_array.value(0);
 
-        self.model_table_metadata_row_to_model_table_metadata(table_name, query_schema_bytes)
-            .await
+        self.time_series_table_metadata_row_to_time_series_table_metadata(
+            table_name,
+            query_schema_bytes,
+        )
+        .await
     }
 
-    /// Convert a row from the table "model_table_metadata" to an instance of
-    /// [`TimeSeriesTableMetadata`]. Returns [`ModelarDbStorageError`] if a model table with `table_name`
-    /// does not exist or the bytes in `query_schema_bytes` are not a valid schema.
-    async fn model_table_metadata_row_to_model_table_metadata(
+    /// Convert a row from the table "time_series_table_metadata" to an instance of
+    /// [`TimeSeriesTableMetadata`]. Returns [`ModelarDbStorageError`] if a time_series table with
+    /// `table_name` does not exist or the bytes in `query_schema_bytes` are not a valid schema.
+    async fn time_series_table_metadata_row_to_time_series_table_metadata(
         &self,
         table_name: &str,
         query_schema_bytes: &[u8],
@@ -499,8 +517,8 @@ impl TableMetadataManager {
         )
     }
 
-    /// Return the error bounds for the columns in the model table with `table_name`. If a model
-    /// table with `table_name` does not exist, [`ModelarDbStorageError`] is returned.
+    /// Return the error bounds for the columns in the time series table with `table_name`. If a
+    /// time series table with `table_name` does not exist, [`ModelarDbStorageError`] is returned.
     async fn error_bounds(
         &self,
         table_name: &str,
@@ -508,7 +526,7 @@ impl TableMetadataManager {
     ) -> Result<Vec<ErrorBound>> {
         let sql = format!(
             "SELECT column_index, error_bound_value, error_bound_is_relative
-             FROM model_table_field_columns
+             FROM time_series_table_field_columns
              WHERE table_name = '{table_name}'
              ORDER BY column_index"
         );
@@ -538,8 +556,8 @@ impl TableMetadataManager {
         Ok(column_to_error_bound)
     }
 
-    /// Return the generated columns for the model table with `table_name` and `df_schema`. If a
-    /// model table with `table_name` does not exist, [`ModelarDbStorageError`] is returned.
+    /// Return the generated columns for the time series table with `table_name` and `df_schema`. If
+    /// a time series table with `table_name` does not exist, [`ModelarDbStorageError`] is returned.
     async fn generated_columns(
         &self,
         table_name: &str,
@@ -547,7 +565,7 @@ impl TableMetadataManager {
     ) -> Result<Vec<Option<GeneratedColumn>>> {
         let sql = format!(
             "SELECT column_index, generated_column_expr
-             FROM model_table_field_columns
+             FROM time_series_table_field_columns
              WHERE table_name = '{table_name}'
              ORDER BY column_index"
         );
@@ -608,7 +626,7 @@ mod tests {
         assert!(
             metadata_manager
                 .session_context
-                .sql("SELECT table_name, query_schema FROM model_table_metadata")
+                .sql("SELECT table_name, query_schema FROM time_series_table_metadata")
                 .await
                 .is_ok()
         );
@@ -616,7 +634,7 @@ mod tests {
         assert!(metadata_manager
             .session_context
             .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                  generated_column_expr FROM model_table_field_columns")
+                  generated_column_expr FROM time_series_table_field_columns")
             .await
             .is_ok());
     }
@@ -633,8 +651,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_model_table_is_not_normal_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+    async fn test_time_series_table_is_not_normal_table() {
+        let (_temp_dir, metadata_manager) =
+            create_metadata_manager_and_save_time_series_table().await;
         assert!(
             !metadata_manager
                 .is_normal_table(test::TIME_SERIES_TABLE_NAME)
@@ -644,22 +663,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_model_table_is_model_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+    async fn test_time_series_table_is_time_series_table() {
+        let (_temp_dir, metadata_manager) =
+            create_metadata_manager_and_save_time_series_table().await;
         assert!(
             metadata_manager
-                .is_model_table(test::TIME_SERIES_TABLE_NAME)
+                .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
     }
 
     #[tokio::test]
-    async fn test_normal_table_is_not_model_table() {
+    async fn test_normal_table_is_not_time_series_table() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
         assert!(
             !metadata_manager
-                .is_model_table("normal_table_1")
+                .is_time_series_table("normal_table_1")
                 .await
                 .unwrap()
         );
@@ -669,16 +689,20 @@ mod tests {
     async fn test_table_names() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
-        let model_table_metadata = test::time_series_table_metadata();
+        let time_series_table_metadata = test::time_series_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
 
         let table_names = metadata_manager.table_names().await.unwrap();
         assert_eq!(
             table_names,
-            vec!["normal_table_2", "normal_table_1", test::TIME_SERIES_TABLE_NAME]
+            vec![
+                "normal_table_2",
+                "normal_table_1",
+                test::TIME_SERIES_TABLE_NAME
+            ]
         );
     }
 
@@ -691,11 +715,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_model_table_names() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+    async fn test_time_series_table_names() {
+        let (_temp_dir, metadata_manager) =
+            create_metadata_manager_and_save_time_series_table().await;
 
-        let model_table_names = metadata_manager.model_table_names().await.unwrap();
-        assert_eq!(model_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
+        let time_series_table_names = metadata_manager.time_series_table_names().await.unwrap();
+        assert_eq!(time_series_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
     }
 
     #[tokio::test]
@@ -715,11 +740,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_model_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+    async fn test_save_time_series_table_metadata() {
+        let (_temp_dir, metadata_manager) =
+            create_metadata_manager_and_save_time_series_table().await;
 
-        // Check that a row has been added to the model_table_metadata table.
-        let sql = "SELECT table_name, query_schema FROM model_table_metadata";
+        // Check that a row has been added to the time_series_table_metadata table.
+        let sql = "SELECT table_name, query_schema FROM time_series_table_metadata";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
@@ -731,20 +757,24 @@ mod tests {
         assert_eq!(
             **batch.column(1),
             BinaryArray::from_vec(vec![
-                &try_convert_schema_to_bytes(&test::time_series_table_metadata().query_schema).unwrap()
+                &try_convert_schema_to_bytes(&test::time_series_table_metadata().query_schema)
+                    .unwrap()
             ])
         );
 
-        // Check that a row has been added to the model_table_field_columns table for each field column.
+        // Check that a row has been added to the time_series_table_field_columns table for each field column.
         let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                   generated_column_expr FROM model_table_field_columns ORDER BY column_name";
+                   generated_column_expr FROM time_series_table_field_columns ORDER BY column_name";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![test::TIME_SERIES_TABLE_NAME, test::TIME_SERIES_TABLE_NAME])
+            StringArray::from(vec![
+                test::TIME_SERIES_TABLE_NAME,
+                test::TIME_SERIES_TABLE_NAME
+            ])
         );
         assert_eq!(
             **batch.column(1),
@@ -778,24 +808,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_model_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+    async fn test_drop_time_series_table_metadata() {
+        let (_temp_dir, metadata_manager) =
+            create_metadata_manager_and_save_time_series_table().await;
 
         metadata_manager
             .drop_table_metadata(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
-        // Verify that the model table was deleted from the model_table_metadata table.
-        let sql = "SELECT table_name FROM model_table_metadata";
+        // Verify that the time series table was deleted from the time_series_table_metadata table.
+        let sql = "SELECT table_name FROM time_series_table_metadata";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
 
         assert_eq!(batch.num_rows(), 0);
 
-        // Verify that the field columns were deleted from the model_table_field_columns table.
-        let sql = "SELECT table_name FROM model_table_field_columns";
+        // Verify that the field columns were deleted from the time_series_table_field_columns table.
+        let sql = "SELECT table_name FROM time_series_table_field_columns";
         let batch = sql_and_concat(&metadata_manager.session_context, sql)
             .await
             .unwrap();
@@ -835,43 +866,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_model_table_metadata() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+    async fn test_time_series_table_metadata() {
+        let (_temp_dir, metadata_manager) =
+            create_metadata_manager_and_save_time_series_table().await;
 
-        let model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
+        let time_series_table_metadata =
+            metadata_manager.time_series_table_metadata().await.unwrap();
 
         assert_eq!(
-            model_table_metadata.first().unwrap().name,
+            time_series_table_metadata.first().unwrap().name,
             test::time_series_table_metadata().name,
         );
     }
 
     #[tokio::test]
-    async fn test_model_table_metadata_for_existing_model_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+    async fn test_time_series_table_metadata_for_existing_time_series_table() {
+        let (_temp_dir, metadata_manager) =
+            create_metadata_manager_and_save_time_series_table().await;
 
-        let model_table_metadata = metadata_manager
-            .model_table_metadata_for_model_table(test::TIME_SERIES_TABLE_NAME)
+        let time_series_table_metadata = metadata_manager
+            .time_series_table_metadata_for_time_series_table(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
-        assert_eq!(model_table_metadata.name, test::time_series_table_metadata().name,);
+        assert_eq!(
+            time_series_table_metadata.name,
+            test::time_series_table_metadata().name,
+        );
     }
 
     #[tokio::test]
-    async fn test_model_table_metadata_for_missing_model_table() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+    async fn test_time_series_table_metadata_for_missing_time_series_table() {
+        let (_temp_dir, metadata_manager) =
+            create_metadata_manager_and_save_time_series_table().await;
 
-        let model_table_metadata = metadata_manager
-            .model_table_metadata_for_model_table("missing_table")
+        let time_series_table_metadata = metadata_manager
+            .time_series_table_metadata_for_time_series_table("missing_table")
             .await;
 
-        assert!(model_table_metadata.is_err());
+        assert!(time_series_table_metadata.is_err());
     }
 
     #[tokio::test]
     async fn test_error_bound() {
-        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let (_temp_dir, metadata_manager) =
+            create_metadata_manager_and_save_time_series_table().await;
 
         let error_bounds = metadata_manager
             .error_bounds(test::TIME_SERIES_TABLE_NAME, 4)
@@ -925,7 +964,7 @@ mod tests {
         let expected_generated_columns =
             vec![None, None, None, None, plus_one_column, addition_column];
 
-        let model_table_metadata = TimeSeriesTableMetadata::try_new(
+        let time_series_table_metadata = TimeSeriesTableMetadata::try_new(
             "generated_columns_table".to_owned(),
             query_schema,
             error_bounds,
@@ -934,11 +973,14 @@ mod tests {
         .unwrap();
 
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
 
-        let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
+        let df_schema = time_series_table_metadata
+            .query_schema
+            .to_dfschema()
+            .unwrap();
         let generated_columns = metadata_manager
             .generated_columns("generated_columns_table", &df_schema)
             .await
@@ -959,16 +1001,17 @@ mod tests {
         );
     }
 
-    async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
+    async fn create_metadata_manager_and_save_time_series_table() -> (TempDir, TableMetadataManager)
+    {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
             .await
             .unwrap();
 
-        // Save a model table to the metadata Delta Lake.
-        let model_table_metadata = test::time_series_table_metadata();
+        // Save a time series table to the metadata Delta Lake.
+        let time_series_table_metadata = test::time_series_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
 
