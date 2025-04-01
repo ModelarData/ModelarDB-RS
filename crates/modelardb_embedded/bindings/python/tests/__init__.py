@@ -21,7 +21,7 @@ import modelardb
 import pyarrow
 from modelardb import (
     AbsoluteErrorBound,
-    ModelTable,
+    TimeSeriesTable,
     NormalTable,
     ModelarDB,
     FFIArray,
@@ -31,7 +31,7 @@ from pyarrow import Int64Array, RecordBatch, Schema
 from pyarrow.cffi import ffi
 
 NORMAL_TABLE_NAME = "normal_table"
-MODEL_TABLE_NAME = "model_table"
+TIME_SERIES_TABLE_NAME = "time_series_table"
 MISSING_TABLE_NAME = "missing_table"
 
 
@@ -77,21 +77,21 @@ class ModelarDBPythonTest(unittest.TestCase):
     def test_cannot_create_relative_error_bound_with_nan(self):
         self.assertRaises(ValueError, lambda: RelativeErrorBound(float("nan")))
 
-    # Tests for ModelTable.
+    # Tests for TimeSeriesTable.
     def test_cannot_specify_error_bound_for_missing_columns(self):
-        schema = model_table_query_schema()
+        schema = time_series_table_query_schema()
         self.assertRaises(
             ValueError,
-            lambda: ModelTable(
+            lambda: TimeSeriesTable(
                 schema, {"field_that_does_not_exist": AbsoluteErrorBound(0)}
             ),
         )
 
     def test_cannot_specify_generated_column_for_missing_columns(self):
-        schema = model_table_query_schema()
+        schema = time_series_table_query_schema()
         self.assertRaises(
             ValueError,
-            lambda: ModelTable(
+            lambda: TimeSeriesTable(
                 schema, {}, {"field_that_does_not_exist": "field_one + field_two"}
             ),
         )
@@ -140,12 +140,12 @@ class ModelarDBPythonTest(unittest.TestCase):
             self.assertTrue(os.path.exists(table_folder))
             self.assertEqual(len(os.listdir(table_folder)), 1)
 
-    def test_data_folder_create_model_table(self):
+    def test_data_folder_create_time_series_table(self):
         with TemporaryDirectory() as temp_dir:
             data_folder = ModelarDB.open_local(temp_dir)
 
-            expected_schema = model_table_query_schema()
-            model_table_type = modelardb.ModelTable(
+            expected_schema = time_series_table_query_schema()
+            time_series_table_type = modelardb.TimeSeriesTable(
                 expected_schema,
                 {
                     "field_one": modelardb.AbsoluteErrorBound(1),
@@ -154,13 +154,13 @@ class ModelarDBPythonTest(unittest.TestCase):
                 {"field_three": "field_one + field_two"},
             )
 
-            model_table_folder = os.path.join(temp_dir, "tables", MODEL_TABLE_NAME)
-            self.assertFalse(os.path.exists(model_table_folder))
+            time_series_table_folder = os.path.join(temp_dir, "tables", TIME_SERIES_TABLE_NAME)
+            self.assertFalse(os.path.exists(time_series_table_folder))
 
-            data_folder.create(MODEL_TABLE_NAME, model_table_type)
+            data_folder.create(TIME_SERIES_TABLE_NAME, time_series_table_type)
 
-            self.assertTrue(os.path.exists(model_table_folder))
-            self.assertEqual(len(os.listdir(model_table_folder)), 1)
+            self.assertTrue(os.path.exists(time_series_table_folder))
+            self.assertEqual(len(os.listdir(time_series_table_folder)), 1)
 
     def test_data_folder_create_error(self):
         with TemporaryDirectory() as temp_dir:
@@ -181,7 +181,7 @@ class ModelarDBPythonTest(unittest.TestCase):
             create_tables_in_data_folder(data_folder)
 
             self.assertEqual(
-                data_folder.tables(), [NORMAL_TABLE_NAME, MODEL_TABLE_NAME]
+                data_folder.tables(), [NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME]
             )
 
     def test_data_folder_schema(self):
@@ -192,8 +192,8 @@ class ModelarDBPythonTest(unittest.TestCase):
             actual_normal_table_schema = data_folder.schema(NORMAL_TABLE_NAME)
             self.assertEqual(actual_normal_table_schema, normal_table_schema())
 
-            actual_model_table_schema = data_folder.schema(MODEL_TABLE_NAME)
-            self.assertEqual(actual_model_table_schema, model_table_query_schema())
+            actual_time_series_table_schema = data_folder.schema(TIME_SERIES_TABLE_NAME)
+            self.assertEqual(actual_time_series_table_schema, time_series_table_query_schema())
 
     def test_data_folder_schema_error(self):
         with TemporaryDirectory() as temp_dir:
@@ -212,18 +212,18 @@ class ModelarDBPythonTest(unittest.TestCase):
             data_folder = ModelarDB.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            model_table_folder = os.path.join(temp_dir, "tables", MODEL_TABLE_NAME)
-            self.assertEqual(len(os.listdir(model_table_folder)), 1)
+            time_series_table_folder = os.path.join(temp_dir, "tables", TIME_SERIES_TABLE_NAME)
+            self.assertEqual(len(os.listdir(time_series_table_folder)), 1)
 
-            data_folder.write(MODEL_TABLE_NAME, model_table_data())
-            self.assertEqual(len(os.listdir(model_table_folder)), 3)
+            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            self.assertEqual(len(os.listdir(time_series_table_folder)), 3)
 
     def test_data_folder_write_error(self):
         with TemporaryDirectory() as temp_dir:
             data_folder = ModelarDB.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
-                data_folder.write(MISSING_TABLE_NAME, model_table_data())
+                data_folder.write(MISSING_TABLE_NAME, time_series_table_data())
 
             error_message = (
                 f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a table."
@@ -235,11 +235,11 @@ class ModelarDBPythonTest(unittest.TestCase):
             data_folder = ModelarDB.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(MODEL_TABLE_NAME, model_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
-            actual_result = data_folder.read(f"SELECT * FROM {MODEL_TABLE_NAME}")
+            actual_result = data_folder.read(f"SELECT * FROM {TIME_SERIES_TABLE_NAME}")
             self.assertEqual(
-                actual_result, sorted_model_table_data_with_generated_column()
+                actual_result, sorted_time_series_table_data_with_generated_column()
             )
 
     def test_data_folder_read_error(self):
@@ -291,99 +291,99 @@ class ModelarDBPythonTest(unittest.TestCase):
                 error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a normal table."
                 self.assertEqual(error_message, str(context.exception))
 
-    def test_data_folder_read_model_table(self):
+    def test_data_folder_read_time_series_table(self):
         with TemporaryDirectory() as temp_dir:
             data_folder = ModelarDB.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(MODEL_TABLE_NAME, model_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
-            actual_result = data_folder.read_model_table(MODEL_TABLE_NAME)
+            actual_result = data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME)
             self.assertEqual(
-                actual_result, sorted_model_table_data_with_generated_column()
+                actual_result, sorted_time_series_table_data_with_generated_column()
             )
 
-    def test_data_folder_read_model_table_with_columns_tags_timestamps(self):
+    def test_data_folder_read_time_series_table_with_columns_tags_timestamps(self):
         with TemporaryDirectory() as temp_dir:
             data_folder = ModelarDB.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(MODEL_TABLE_NAME, model_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
             end_time = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
-            actual_result = data_folder.read_model_table(
-                MODEL_TABLE_NAME,
+            actual_result = data_folder.read_time_series_table(
+                TIME_SERIES_TABLE_NAME,
                 columns=["tag", "field_one"],
                 tags={"tag": "tag_one"},
                 start_time="1970-01-01T00:00:00.000150",
                 end_time=end_time + datetime.timedelta(microseconds=250),
             )
-            expected_result = sorted_model_table_data_with_generated_column()
+            expected_result = sorted_time_series_table_data_with_generated_column()
             self.assertEqual(
                 actual_result, expected_result.select(["tag", "field_one"]).slice(1, 1)
             )
 
-    def test_data_folder_read_model_table_with_aggregates(self):
+    def test_data_folder_read_time_series_table_with_aggregates(self):
         with TemporaryDirectory() as temp_dir:
             data_folder = ModelarDB.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(MODEL_TABLE_NAME, model_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
             columns = [
                 ("tag", modelardb.Aggregate.NONE),
                 ("field_one", modelardb.Aggregate.SUM),
             ]
-            actual_result = data_folder.read_model_table(
-                MODEL_TABLE_NAME, columns, ["tag"]
+            actual_result = data_folder.read_time_series_table(
+                TIME_SERIES_TABLE_NAME, columns, ["tag"]
             )
 
             expected_result = [
-                {"tag": "tag_one", f"sum({MODEL_TABLE_NAME}.field_one)": 111.0},
-                {"tag": "tag_two", f"sum({MODEL_TABLE_NAME}.field_one)": 219.0},
+                {"tag": "tag_one", f"sum({TIME_SERIES_TABLE_NAME}.field_one)": 111.0},
+                {"tag": "tag_two", f"sum({TIME_SERIES_TABLE_NAME}.field_one)": 219.0},
             ]
             self.assertEqual(
                 sorted(actual_result.to_pylist(), key=lambda x: x["tag"]),
                 expected_result,
             )
 
-    def test_data_folder_read_model_table_error(self):
+    def test_data_folder_read_time_series_table_error(self):
         with TemporaryDirectory() as temp_dir:
             data_folder = ModelarDB.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
-                data_folder.read_model_table(MISSING_TABLE_NAME)
+                data_folder.read_time_series_table(MISSING_TABLE_NAME)
 
             error_message = (
-                f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table."
+                f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a time series table."
             )
             self.assertEqual(error_message, str(context.exception))
 
-    def test_data_folder_copy_model_table(self):
+    def test_data_folder_copy_time_series_table(self):
         with TemporaryDirectory() as from_temp_dir:
             with TemporaryDirectory() as to_temp_dir:
                 from_data_folder = ModelarDB.open_local(from_temp_dir)
                 create_tables_in_data_folder(from_data_folder)
 
-                from_data_folder.write(MODEL_TABLE_NAME, model_table_data())
+                from_data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
                 to_data_folder = ModelarDB.open_local(to_temp_dir)
                 create_tables_in_data_folder(to_data_folder)
 
-                from_data_folder.copy_model_table(
-                    MODEL_TABLE_NAME, to_data_folder, MODEL_TABLE_NAME
+                from_data_folder.copy_time_series_table(
+                    TIME_SERIES_TABLE_NAME, to_data_folder, TIME_SERIES_TABLE_NAME
                 )
 
                 # After copying the data it should also be in to_table.
-                expected_result = sorted_model_table_data_with_generated_column()
+                expected_result = sorted_time_series_table_data_with_generated_column()
                 self.assertEqual(
-                    from_data_folder.read_model_table(MODEL_TABLE_NAME), expected_result
+                    from_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
                 )
                 self.assertEqual(
-                    to_data_folder.read_model_table(MODEL_TABLE_NAME), expected_result
+                    to_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
                 )
 
-    def test_data_folder_copy_model_table_with_timestamps(self):
+    def test_data_folder_copy_time_series_table_with_timestamps(self):
         with TemporaryDirectory() as from_temp_dir:
             with TemporaryDirectory() as to_temp_dir:
                 from_data_folder = ModelarDB.open_local(from_temp_dir)
@@ -392,46 +392,46 @@ class ModelarDBPythonTest(unittest.TestCase):
                 # Force the physical data to have multiple segments by writing the data in three parts.
                 for i in range(3):
                     from_data_folder.write(
-                        MODEL_TABLE_NAME, model_table_data().slice(i * 2, 2)
+                        TIME_SERIES_TABLE_NAME, time_series_table_data().slice(i * 2, 2)
                     )
 
                 to_data_folder = ModelarDB.open_local(to_temp_dir)
                 create_tables_in_data_folder(to_data_folder)
 
                 end_time = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
-                from_data_folder.copy_model_table(
-                    MODEL_TABLE_NAME,
+                from_data_folder.copy_time_series_table(
+                    TIME_SERIES_TABLE_NAME,
                     to_data_folder,
-                    MODEL_TABLE_NAME,
+                    TIME_SERIES_TABLE_NAME,
                     start_time="1970-01-01T00:00:00.000150",
                     end_time=end_time + datetime.timedelta(microseconds=250),
                 )
 
                 # After copying the data it should also be in to_table.
-                from_expected_result = model_table_data_with_generated_column()
+                from_expected_result = time_series_table_data_with_generated_column()
                 self.assertEqual(
-                    from_data_folder.read_model_table(MODEL_TABLE_NAME),
+                    from_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
                     from_expected_result,
                 )
 
                 to_expected_result = from_expected_result.slice(2, 2)
                 self.assertEqual(
-                    to_data_folder.read_model_table(MODEL_TABLE_NAME),
+                    to_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
                     to_expected_result,
                 )
 
-    def test_data_folder_copy_model_table_error(self):
+    def test_data_folder_copy_time_series_table_error(self):
         with TemporaryDirectory() as from_temp_dir:
             with TemporaryDirectory() as to_temp_dir:
                 from_data_folder = ModelarDB.open_local(from_temp_dir)
                 to_data_folder = ModelarDB.open_local(to_temp_dir)
 
                 with self.assertRaises(RuntimeError) as context:
-                    from_data_folder.copy_model_table(
+                    from_data_folder.copy_time_series_table(
                         MISSING_TABLE_NAME, to_data_folder, MISSING_TABLE_NAME
                     )
 
-                error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table."
+                error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a time series table."
                 self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_move(self):
@@ -440,22 +440,22 @@ class ModelarDBPythonTest(unittest.TestCase):
                 from_data_folder = ModelarDB.open_local(from_temp_dir)
                 create_tables_in_data_folder(from_data_folder)
 
-                from_data_folder.write(MODEL_TABLE_NAME, model_table_data())
+                from_data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
                 to_data_folder = ModelarDB.open_local(to_temp_dir)
                 create_tables_in_data_folder(to_data_folder)
 
                 from_data_folder.move(
-                    MODEL_TABLE_NAME, to_data_folder, MODEL_TABLE_NAME
+                    TIME_SERIES_TABLE_NAME, to_data_folder, TIME_SERIES_TABLE_NAME
                 )
 
                 self.assertEqual(
-                    from_data_folder.read_model_table(MODEL_TABLE_NAME).num_rows, 0
+                    from_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME).num_rows, 0
                 )
 
-                expected_result = sorted_model_table_data_with_generated_column()
+                expected_result = sorted_time_series_table_data_with_generated_column()
                 self.assertEqual(
-                    to_data_folder.read_model_table(MODEL_TABLE_NAME), expected_result
+                    to_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
                 )
 
     def test_data_folder_move_error(self):
@@ -471,7 +471,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
                 error_message = (
                     f"Invalid Argument Error: {MISSING_TABLE_NAME} and {MISSING_TABLE_NAME} are not both "
-                    f"normal tables or model tables."
+                    f"normal tables or time series tables."
                 )
                 self.assertEqual(error_message, str(context.exception))
 
@@ -480,12 +480,12 @@ class ModelarDBPythonTest(unittest.TestCase):
             data_folder = ModelarDB.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(MODEL_TABLE_NAME, model_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
-            data_folder.truncate(MODEL_TABLE_NAME)
+            data_folder.truncate(TIME_SERIES_TABLE_NAME)
 
-            self.assertTrue(MODEL_TABLE_NAME in data_folder.tables())
-            self.assertEqual(data_folder.read_model_table(MODEL_TABLE_NAME).num_rows, 0)
+            self.assertTrue(TIME_SERIES_TABLE_NAME in data_folder.tables())
+            self.assertEqual(data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME).num_rows, 0)
 
     def test_data_folder_truncate_error(self):
         with TemporaryDirectory() as temp_dir:
@@ -501,14 +501,14 @@ class ModelarDBPythonTest(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             data_folder = ModelarDB.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
-            self.assertTrue(MODEL_TABLE_NAME in data_folder.tables())
+            self.assertTrue(TIME_SERIES_TABLE_NAME in data_folder.tables())
 
-            data_folder.drop(MODEL_TABLE_NAME)
+            data_folder.drop(TIME_SERIES_TABLE_NAME)
 
             self.assertFalse(
-                os.path.exists(os.path.join(temp_dir, "tables", MODEL_TABLE_NAME))
+                os.path.exists(os.path.join(temp_dir, "tables", TIME_SERIES_TABLE_NAME))
             )
-            self.assertFalse(MODEL_TABLE_NAME in data_folder.tables())
+            self.assertFalse(TIME_SERIES_TABLE_NAME in data_folder.tables())
 
     def test_data_folder_drop_error(self):
         with TemporaryDirectory() as temp_dir:
@@ -528,15 +528,15 @@ def create_tables_in_data_folder(data_folder: ModelarDB):
     table_type = NormalTable(normal_table_schema())
     data_folder.create(NORMAL_TABLE_NAME, table_type)
 
-    model_table_type = modelardb.ModelTable(
-        model_table_query_schema(),
+    time_series_table_type = modelardb.TimeSeriesTable(
+        time_series_table_query_schema(),
         {
             "field_one": modelardb.AbsoluteErrorBound(1),
             "field_two": modelardb.RelativeErrorBound(10),
         },
         {"field_three": "field_one + field_two"},
     )
-    data_folder.create(MODEL_TABLE_NAME, model_table_type)
+    data_folder.create(TIME_SERIES_TABLE_NAME, time_series_table_type)
 
 
 def normal_table_schema() -> Schema:
@@ -559,7 +559,7 @@ def normal_table_data() -> RecordBatch:
     )
 
 
-def model_table_schema() -> Schema:
+def time_series_table_schema() -> Schema:
     return pyarrow.schema(
         [
             ("timestamp", pyarrow.timestamp("us")),
@@ -570,7 +570,7 @@ def model_table_schema() -> Schema:
     )
 
 
-def model_table_query_schema() -> Schema:
+def time_series_table_query_schema() -> Schema:
     return pyarrow.schema(
         [
             ("timestamp", pyarrow.timestamp("us")),
@@ -582,13 +582,13 @@ def model_table_query_schema() -> Schema:
     )
 
 
-def sorted_model_table_data_with_generated_column() -> RecordBatch:
-    unsorted_data = model_table_data_with_generated_column()
+def sorted_time_series_table_data_with_generated_column() -> RecordBatch:
+    unsorted_data = time_series_table_data_with_generated_column()
     return unsorted_data.sort_by([("tag", "ascending"), ("timestamp", "ascending")])
 
 
-def model_table_data_with_generated_column() -> RecordBatch:
-    data = model_table_data()
+def time_series_table_data_with_generated_column() -> RecordBatch:
+    data = time_series_table_data()
 
     generated_column_array = pyarrow.array(
         [74, 146, 74, 146, 74, 146], pyarrow.float32()
@@ -596,7 +596,7 @@ def model_table_data_with_generated_column() -> RecordBatch:
     return data.append_column("field_three", generated_column_array)
 
 
-def model_table_data() -> RecordBatch:
+def time_series_table_data() -> RecordBatch:
     return pyarrow.RecordBatch.from_pylist(
         [
             {
@@ -636,5 +636,5 @@ def model_table_data() -> RecordBatch:
                 "tag": "tag_two",
             },
         ],
-        model_table_schema(),
+        time_series_table_schema(),
     )
