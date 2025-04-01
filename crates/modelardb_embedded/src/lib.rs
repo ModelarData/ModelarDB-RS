@@ -37,10 +37,10 @@ use crate::error::Result;
 #[derive(Clone)]
 pub enum TableType {
     NormalTable(Schema),
-    ModelTable(Schema, HashMap<String, ErrorBound>, HashMap<String, String>),
+    TimeSeriesTable(Schema, HashMap<String, ErrorBound>, HashMap<String, String>),
 }
 
-/// Aggregate operations supported by [`read_model_table()`](operations::Operations::read_model_table).
+/// Aggregate operations supported by [`read_model_table()`](operations::Operations::read_time_series_table).
 #[derive(Debug)]
 pub enum Aggregate {
     None,

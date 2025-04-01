@@ -44,7 +44,7 @@ use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::TimestampArray;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::operations::{Operations, generate_read_model_table_sql, try_new_model_table_metadata};
+use crate::operations::{Operations, generate_read_time_series_table_sql, try_new_time_series_table_metadata};
 use crate::{Aggregate, TableType};
 
 /// [`DataSink`] that rejects INSERT statements passed to [`DataFolder.read()`].
@@ -450,8 +450,8 @@ impl Operations for DataFolder {
                     data_sink.clone(),
                 )?;
             }
-            TableType::ModelTable(schema, error_bounds, generated_columns) => {
-                let model_table_metadata = Arc::new(try_new_model_table_metadata(
+            TableType::TimeSeriesTable(schema, error_bounds, generated_columns) => {
+                let model_table_metadata = Arc::new(try_new_time_series_table_metadata(
                     table_name,
                     schema,
                     error_bounds,
@@ -612,7 +612,7 @@ impl Operations for DataFolder {
     /// [`RecordBatchStream`]. The remaining parameters optionally specify which subset of the data
     /// to read. If the table is not a model table or the data could not be read,
     /// [`ModelarDbEmbeddedError`] is returned.
-    async fn read_model_table(
+    async fn read_time_series_table(
         &mut self,
         table_name: &str,
         columns: &[(String, Aggregate)],
@@ -631,7 +631,7 @@ impl Operations for DataFolder {
                 )));
             };
 
-        let sql = generate_read_model_table_sql(
+        let sql = generate_read_time_series_table_sql(
             table_name,
             &model_table_medata.query_schema,
             columns,
@@ -649,7 +649,7 @@ impl Operations for DataFolder {
     /// deleted. If `to_modelardb` is not a data folder, the schemas of the model tables do not
     /// match, or the data could not be copied, [`ModelarDbEmbeddedError`] is returned.
     #[allow(clippy::too_many_arguments)]
-    async fn copy_model_table(
+    async fn copy_time_series_table(
         &self,
         from_table_name: &str,
         to_modelardb: &dyn Operations,
@@ -1039,7 +1039,7 @@ mod tests {
             ),
         ]);
 
-        let table_type = TableType::ModelTable(model_table_schema(), error_bounds, HashMap::new());
+        let table_type = TableType::TimeSeriesTable(model_table_schema(), error_bounds, HashMap::new());
         data_folder
             .create(MODEL_TABLE_NAME, table_type)
             .await
@@ -1097,7 +1097,7 @@ mod tests {
         data_folder
             .create(
                 "model_table_1",
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                TableType::TimeSeriesTable(model_table_schema(), HashMap::new(), HashMap::new()),
             )
             .await
             .unwrap();
@@ -1105,7 +1105,7 @@ mod tests {
         data_folder
             .create(
                 "model_table_2",
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                TableType::TimeSeriesTable(model_table_schema(), HashMap::new(), HashMap::new()),
             )
             .await
             .unwrap();
@@ -1134,7 +1134,7 @@ mod tests {
         let result = data_folder
             .create(
                 MODEL_TABLE_NAME,
-                TableType::ModelTable(Schema::empty(), HashMap::new(), HashMap::new()),
+                TableType::TimeSeriesTable(Schema::empty(), HashMap::new(), HashMap::new()),
             )
             .await;
 
@@ -1153,7 +1153,7 @@ mod tests {
         let result = data_folder
             .create(
                 MODEL_TABLE_NAME,
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                TableType::TimeSeriesTable(model_table_schema(), HashMap::new(), HashMap::new()),
             )
             .await;
         assert!(result.is_ok());
@@ -1161,7 +1161,7 @@ mod tests {
         let result = data_folder
             .create(
                 MODEL_TABLE_NAME,
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                TableType::TimeSeriesTable(model_table_schema(), HashMap::new(), HashMap::new()),
             )
             .await;
 
@@ -1191,7 +1191,7 @@ mod tests {
         data_folder
             .create(
                 MODEL_TABLE_NAME,
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                TableType::TimeSeriesTable(model_table_schema(), HashMap::new(), HashMap::new()),
             )
             .await
             .unwrap();
@@ -1728,7 +1728,7 @@ mod tests {
         tags: HashMap<String, String>,
     ) -> Result<RecordBatch> {
         let record_batch_stream = data_folder
-            .read_model_table(
+            .read_time_series_table(
                 table_name,
                 columns,
                 group_by,
@@ -1752,7 +1752,7 @@ mod tests {
             .unwrap();
 
         let result = from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 NORMAL_TABLE_NAME,
                 &to_data_folder,
                 MODEL_TABLE_NAME,
@@ -1779,7 +1779,7 @@ mod tests {
             .unwrap();
 
         let result = from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MODEL_TABLE_NAME,
                 &to_data_folder,
                 NORMAL_TABLE_NAME,
@@ -1803,7 +1803,7 @@ mod tests {
         let (_temp_dir, to_data_folder) = create_data_folder_with_model_table().await;
 
         let result = from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MISSING_TABLE_NAME,
                 &to_data_folder,
                 MODEL_TABLE_NAME,
@@ -1832,7 +1832,7 @@ mod tests {
             .unwrap();
 
         let result = from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MODEL_TABLE_NAME,
                 &to_data_folder,
                 MISSING_TABLE_NAME,
@@ -1861,14 +1861,14 @@ mod tests {
         let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let table_type =
-            TableType::ModelTable(invalid_table_schema(), HashMap::new(), HashMap::new());
+            TableType::TimeSeriesTable(invalid_table_schema(), HashMap::new(), HashMap::new());
         to_data_folder
             .create(MODEL_TABLE_NAME, table_type)
             .await
             .unwrap();
 
         let result = from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MODEL_TABLE_NAME,
                 &to_data_folder,
                 MODEL_TABLE_NAME,
@@ -1902,7 +1902,7 @@ mod tests {
             .unwrap();
 
         from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MODEL_TABLE_NAME,
                 &to_data_folder,
                 MODEL_TABLE_NAME,
@@ -1938,7 +1938,7 @@ mod tests {
         }
 
         from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MODEL_TABLE_NAME,
                 &to_data_folder,
                 MODEL_TABLE_NAME,
@@ -1968,7 +1968,7 @@ mod tests {
 
         let invalid_start_time = "01/01/1970T00:00:00.000150";
         let result = from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MODEL_TABLE_NAME,
                 &to_data_folder,
                 MODEL_TABLE_NAME,
@@ -2006,7 +2006,7 @@ mod tests {
 
         // Even though the query schemas are different, the data should still be copied.
         from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MODEL_TABLE_NAME,
                 &to_data_folder,
                 MODEL_TABLE_WITH_GENERATED_COLUMN_NAME,
@@ -2036,7 +2036,7 @@ mod tests {
         let to_client = lazy_modelardb_client();
 
         let result = from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MODEL_TABLE_NAME,
                 &to_client,
                 MODEL_TABLE_NAME,
@@ -2808,7 +2808,7 @@ mod tests {
         to_data_folder
             .create(
                 MODEL_TABLE_NAME,
-                TableType::ModelTable(invalid_table_schema(), HashMap::new(), HashMap::new()),
+                TableType::TimeSeriesTable(invalid_table_schema(), HashMap::new(), HashMap::new()),
             )
             .await
             .unwrap();
@@ -3025,7 +3025,7 @@ mod tests {
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let table_type =
-            TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new());
+            TableType::TimeSeriesTable(model_table_schema(), HashMap::new(), HashMap::new());
 
         data_folder
             .create(MODEL_TABLE_NAME, table_type)
@@ -3099,7 +3099,7 @@ mod tests {
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let generated_columns = vec![("generated".to_owned(), "field_1 + field_2".to_owned())];
-        let table_type = TableType::ModelTable(
+        let table_type = TableType::TimeSeriesTable(
             model_table_with_generated_column_schema(),
             HashMap::new(),
             generated_columns.into_iter().collect(),

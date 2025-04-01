@@ -328,7 +328,7 @@ unsafe fn create(
         let error_bounds = error_bounds_array_to_error_bounds(&error_bounds_array);
         let generated_columns_array: MapArray = generated_columns_array_data.into();
         let generated_columns = map_array_to_map_of_string_to_string(&generated_columns_array);
-        TableType::ModelTable(schema, error_bounds, generated_columns)
+        TableType::TimeSeriesTable(schema, error_bounds, generated_columns)
     } else {
         TableType::NormalTable(schema)
     };
@@ -685,7 +685,7 @@ unsafe fn read_model_table(
     let tags_array: MapArray = tags_array_data.into();
     let tags = map_array_to_map_of_string_to_string(&tags_array);
 
-    let decompressed_data_stream = TOKIO_RUNTIME.block_on(modelardb.read_model_table(
+    let decompressed_data_stream = TOKIO_RUNTIME.block_on(modelardb.read_time_series_table(
         table_name,
         &columns,
         &group_by,
@@ -802,7 +802,7 @@ unsafe fn copy_model_table(
     let tags_array: MapArray = tags_array_data.into();
     let tags = map_array_to_map_of_string_to_string(&tags_array);
 
-    TOKIO_RUNTIME.block_on(from_modelardb.copy_model_table(
+    TOKIO_RUNTIME.block_on(from_modelardb.copy_time_series_table(
         from_table_name,
         to_modelardb,
         to_table_name,
