@@ -168,7 +168,7 @@ async fn import(
         data_folder.read(sql).await?;
     }
 
-    if let Some(model_table_metadata) = data_folder.model_table_metadata(table_name).await {
+    if let Some(model_table_metadata) = data_folder.time_series_table_metadata(table_name).await {
         import_model_table(
             input_stream,
             &model_table_metadata,
