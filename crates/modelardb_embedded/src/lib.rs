@@ -40,7 +40,7 @@ pub enum TableType {
     TimeSeriesTable(Schema, HashMap<String, ErrorBound>, HashMap<String, String>),
 }
 
-/// Aggregate operations supported by [`read_model_table()`](operations::Operations::read_time_series_table).
+/// Aggregate operations supported by [`read_time_series_table()`](operations::Operations::read_time_series_table).
 #[derive(Debug)]
 pub enum Aggregate {
     None,
