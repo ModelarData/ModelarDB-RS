@@ -253,7 +253,7 @@ impl DataTransfer {
         {
             self.remote_data_folder
                 .delta_lake
-                .write_compressed_segments_to_model_table(table_name, record_batches)
+                .write_compressed_segments_to_time_series_table(table_name, record_batches)
                 .await?;
         } else {
             self.remote_data_folder
@@ -491,7 +491,7 @@ mod tests {
         let model_table_metadata = test::time_series_table_metadata();
         local_data_folder
             .delta_lake
-            .create_model_table(&model_table_metadata)
+            .create_time_series_table(&model_table_metadata)
             .await
             .unwrap();
 
@@ -524,7 +524,7 @@ mod tests {
             // Write to the model table.
             local_data_folder
                 .delta_lake
-                .write_compressed_segments_to_model_table(
+                .write_compressed_segments_to_time_series_table(
                     test::TIME_SERIES_TABLE_NAME,
                     vec![test::compressed_segments_record_batch()],
                 )

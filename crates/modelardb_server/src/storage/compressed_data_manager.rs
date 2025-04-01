@@ -244,7 +244,7 @@ impl CompressedDataManager {
         let compressed_segments = compressed_data_buffer.record_batches();
         self.local_data_folder
             .delta_lake
-            .write_compressed_segments_to_model_table(table_name, compressed_segments)
+            .write_compressed_segments_to_time_series_table(table_name, compressed_segments)
             .await?;
 
         // Inform the data transfer component about the new data if a remote data folder was
@@ -388,7 +388,7 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_model_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -448,7 +448,7 @@ mod tests {
         let segments = compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .create_model_table(&segments.time_series_table_metadata)
+            .create_time_series_table(&segments.time_series_table_metadata)
             .await
             .unwrap();
 
@@ -504,7 +504,7 @@ mod tests {
         let segments = compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .create_model_table(&segments.time_series_table_metadata)
+            .create_time_series_table(&segments.time_series_table_metadata)
             .await
             .unwrap();
         data_manager

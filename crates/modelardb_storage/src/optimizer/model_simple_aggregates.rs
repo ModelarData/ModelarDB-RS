@@ -807,7 +807,7 @@ mod tests {
         let model_table_metadata = test::time_series_table_metadata_arc();
 
         let delta_table = delta_lake
-            .create_model_table(&model_table_metadata)
+            .create_time_series_table(&model_table_metadata)
             .await
             .unwrap();
 

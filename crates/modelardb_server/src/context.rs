@@ -160,7 +160,7 @@ impl Context {
         self.data_folders
             .local_data_folder
             .delta_lake
-            .create_model_table(model_table_metadata)
+            .create_time_series_table(model_table_metadata)
             .await?;
 
         // Register the model table with Apache DataFusion.
@@ -775,7 +775,7 @@ mod tests {
         let record_batch = test::compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .write_compressed_segments_to_model_table(test::TIME_SERIES_TABLE_NAME, vec![record_batch])
+            .write_compressed_segments_to_time_series_table(test::TIME_SERIES_TABLE_NAME, vec![record_batch])
             .await
             .unwrap();
 

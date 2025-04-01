@@ -378,7 +378,7 @@ impl DataFolder {
         let delta_table = self.delta_lake.delta_table(table_name).await?;
         if self.model_table_metadata(table_name).await.is_some() {
             self.delta_lake
-                .model_table_writer(delta_table)
+                .time_series_table_writer(delta_table)
                 .await
                 .map_err(|error| error.into())
         } else {
@@ -460,7 +460,7 @@ impl Operations for DataFolder {
 
                 let delta_table = self
                     .delta_lake
-                    .create_model_table(&model_table_metadata)
+                    .create_time_series_table(&model_table_metadata)
                     .await?;
 
                 self.table_metadata_manager
@@ -530,7 +530,7 @@ impl Operations for DataFolder {
                 .await?;
 
             self.delta_lake
-                .write_compressed_segments_to_model_table(table_name, compressed_data)
+                .write_compressed_segments_to_time_series_table(table_name, compressed_data)
                 .await?;
         } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
             // Normal table.
@@ -728,7 +728,7 @@ impl Operations for DataFolder {
         // Write read data to to_table_name in to_data_folder.
         to_data_folder
             .delta_lake
-            .write_compressed_segments_to_model_table(to_table_name, record_batches)
+            .write_compressed_segments_to_time_series_table(to_table_name, record_batches)
             .await?;
 
         Ok(())
@@ -776,7 +776,7 @@ impl Operations for DataFolder {
 
             to_data_folder
                 .delta_lake
-                .write_compressed_segments_to_model_table(to_table_name, record_batches)
+                .write_compressed_segments_to_time_series_table(to_table_name, record_batches)
                 .await?;
         } else if let (Some(from_normal_table_schema), Some(to_normal_table_schema)) = (
             self.normal_table_schema(from_table_name).await,
