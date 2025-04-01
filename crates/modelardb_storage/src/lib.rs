@@ -64,7 +64,7 @@ use sqlparser::ast::Statement;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 use crate::query::metadata_table::MetadataTable;
-use crate::query::model_table::ModelTable;
+use crate::query::time_series_table::TimeSeriesTable;
 use crate::query::normal_table::NormalTable;
 
 /// The folder storing compressed table data in the data folders.
@@ -129,7 +129,7 @@ pub fn register_time_series_table(
     time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
-    let time_series_table = ModelTable::new(delta_table, time_series_table_metadata.clone(), data_sink);
+    let time_series_table = TimeSeriesTable::new(delta_table, time_series_table_metadata.clone(), data_sink);
 
     session_context.register_table(&time_series_table_metadata.name, time_series_table)?;
 
@@ -143,8 +143,8 @@ pub fn maybe_table_provider_to_time_series_table_metadata(
 ) -> Option<Arc<TimeSeriesTableMetadata>> {
     maybe_time_series_table
         .as_any()
-        .downcast_ref::<ModelTable>()
-        .map(|time_series_table| time_series_table.model_table_metadata())
+        .downcast_ref::<TimeSeriesTable>()
+        .map(|time_series_table| time_series_table.time_series_table_metadata())
 }
 
 /// Execute `statement` in `session_context` and return the result as a

@@ -650,7 +650,7 @@ mod tests {
     use crate::delta_lake::DeltaLake;
     use crate::optimizer;
     use crate::query::grid_exec::GridExec;
-    use crate::query::model_table::ModelTable;
+    use crate::query::time_series_table::TimeSeriesTable;
     use crate::test;
 
     // DataSink for testing.
@@ -813,7 +813,7 @@ mod tests {
 
         let model_table_data_sink = Arc::new(NoOpDataSink {});
 
-        let model_table = ModelTable::new(
+        let model_table = TimeSeriesTable::new(
             delta_table,
             model_table_metadata.clone(),
             model_table_data_sink,

@@ -13,15 +13,15 @@
  * limitations under the License.
  */
 
-//! Implementation of types which allow normal tables, metadata tables, and model tables to be added
-//! to Apache DataFusion. This allows them to be queried and small amounts of data to be added with
-//! INSERT.
+//! Implementation of types which allow normal tables, metadata tables, and time series tables to be
+//! added to Apache DataFusion. This allows them to be queried and small amounts of data to be added
+//! with INSERT.
 
 // grid_exec and sorted_join_exec are pub(crate) so the rules added to Apache DataFusion's physical
 // optimizer can access them.
 mod generated_as_exec;
 pub(crate) mod grid_exec;
 pub(crate) mod metadata_table;
-pub(crate) mod model_table;
+pub(crate) mod time_series_table;
 pub(crate) mod normal_table;
 pub(crate) mod sorted_join_exec;

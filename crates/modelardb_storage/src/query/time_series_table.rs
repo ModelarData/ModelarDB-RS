@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Implementation of [`ModelTable`] which allows model tables to be queried through Apache
+//! Implementation of [`TimeSeriesTable`] which allows time series tables to be queried through Apache
 //! DataFusion. It takes the projection, filters as [`Exprs`](Expr), and limit of a query as input
 //! and returns a physical query plan that produces all the data points required for the query.
 
@@ -54,15 +54,15 @@ use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
 
-/// A queryable representation of a model table which stores multivariate time series as segments
-/// containing metadata and models. [`ModelTable`] implements [`TableProvider`] so it can be
+/// A queryable representation of a time series table which stores multivariate time series as segments
+/// containing metadata and models. [`TimeSeriesTable`] implements [`TableProvider`] so it can be
 /// registered with Apache DataFusion and the multivariate time series queried as multiple
 /// univariate time series.
-pub(crate) struct ModelTable {
+pub(crate) struct TimeSeriesTable {
     /// Access to the Delta Lake table.
     delta_table: DeltaTable,
-    /// Metadata for the model table.
-    model_table_metadata: Arc<TimeSeriesTableMetadata>,
+    /// Metadata for the time series table.
+    time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Where data should be written to.
     data_sink: Arc<dyn DataSink>,
     /// Field column to use for queries that do not include fields.
@@ -71,7 +71,7 @@ pub(crate) struct ModelTable {
     query_compressed_schema: Arc<Schema>,
     /// The sort order [`DataSourceExec`] guarantees for the segments it produces. It is guaranteed
     /// by [`DataSourceExec`] because the storage engine uses this sort order for each Apache
-    /// Parquet file in this model table and these files are read sequentially by
+    /// Parquet file in this time series table and these files are read sequentially by
     /// [`DataSourceExec`].
     query_order_segment: LexOrdering,
     /// The sort order that [`GridExec`] requires for the segments it receives as its input.
@@ -87,67 +87,68 @@ pub(crate) struct ModelTable {
     query_requirement_data_point: LexRequirement,
 }
 
-impl ModelTable {
+impl TimeSeriesTable {
     pub(crate) fn new(
         delta_table: DeltaTable,
-        model_table_metadata: Arc<TimeSeriesTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         data_sink: Arc<dyn DataSink>,
     ) -> Arc<Self> {
-        // Compute the index of the first stored field column in the model table's query schema. It
-        // is used for queries without fields as tags, timestamps, and values are stored together.
+        // Compute the index of the first stored field column in the time series table's query schema.
+        // It is used for queries without fields as tags, timestamps, and values are stored together.
         let fallback_field_column = {
-            model_table_metadata
+            // unwrap() is safe as all time series tables contain at least one field.
+            time_series_table_metadata
                 .query_schema
                 .fields()
                 .iter()
                 .enumerate()
                 .position(|(index, field)| {
-                    model_table_metadata.generated_columns[index].is_none()
+                    time_series_table_metadata.generated_columns[index].is_none()
                         && field.data_type() == &ArrowValue::DATA_TYPE
                 })
-                .unwrap() as u16 // unwrap() is safe as all model tables contain at least one field.
+                .unwrap() as u16
         };
 
         // Add the tag columns to the base schema for queryable compressed segments.
         let mut query_compressed_schema_fields = Vec::with_capacity(
-            QUERY_COMPRESSED_SCHEMA.0.fields.len() + model_table_metadata.tag_column_indices.len(),
+            QUERY_COMPRESSED_SCHEMA.0.fields.len() + time_series_table_metadata.tag_column_indices.len(),
         );
 
         query_compressed_schema_fields.extend(QUERY_COMPRESSED_SCHEMA.0.fields.clone().to_vec());
-        for index in &model_table_metadata.tag_column_indices {
+        for index in &time_series_table_metadata.tag_column_indices {
             query_compressed_schema_fields
-                .push(Arc::new(model_table_metadata.schema.field(*index).clone()));
+                .push(Arc::new(time_series_table_metadata.schema.field(*index).clone()));
         }
 
         let query_compressed_schema = Arc::new(Schema::new(query_compressed_schema_fields));
 
         let (query_order_segment, query_requirement_segment) = query_order_and_requirement(
-            &model_table_metadata,
+            &time_series_table_metadata,
             &query_compressed_schema,
             Column::new("start_time", 1),
         );
 
         // Add the tag columns to the base schema for data points.
         let mut grid_schema_fields = Vec::with_capacity(
-            GRID_SCHEMA.0.fields.len() + model_table_metadata.tag_column_indices.len(),
+            GRID_SCHEMA.0.fields.len() + time_series_table_metadata.tag_column_indices.len(),
         );
 
         grid_schema_fields.extend(GRID_SCHEMA.0.fields.clone().to_vec());
-        for index in &model_table_metadata.tag_column_indices {
-            grid_schema_fields.push(Arc::new(model_table_metadata.schema.field(*index).clone()));
+        for index in &time_series_table_metadata.tag_column_indices {
+            grid_schema_fields.push(Arc::new(time_series_table_metadata.schema.field(*index).clone()));
         }
 
         let grid_schema = Arc::new(Schema::new(grid_schema_fields));
 
         let (query_order_data_point, query_requirement_data_point) = query_order_and_requirement(
-            &model_table_metadata,
+            &time_series_table_metadata,
             &grid_schema,
             Column::new("timestamp", 0),
         );
 
-        Arc::new(ModelTable {
+        Arc::new(TimeSeriesTable {
             delta_table,
-            model_table_metadata,
+            time_series_table_metadata,
             data_sink,
             fallback_field_column,
             query_compressed_schema,
@@ -159,9 +160,9 @@ impl ModelTable {
         })
     }
 
-    /// Return the [`TimeSeriesTableMetadata`] for the model table.
-    pub(crate) fn model_table_metadata(&self) -> Arc<TimeSeriesTableMetadata> {
-        self.model_table_metadata.clone()
+    /// Return the [`TimeSeriesTableMetadata`] for the time series table.
+    pub(crate) fn time_series_table_metadata(&self) -> Arc<TimeSeriesTableMetadata> {
+        self.time_series_table_metadata.clone()
     }
 
     /// Compute the schema that contains the stored columns in `projection`.
@@ -169,9 +170,9 @@ impl ModelTable {
         let columns = projection
             .iter()
             .filter_map(|query_schema_index| {
-                if self.model_table_metadata.generated_columns[*query_schema_index].is_none() {
+                if self.time_series_table_metadata.generated_columns[*query_schema_index].is_none() {
                     Some(
-                        self.model_table_metadata
+                        self.time_series_table_metadata
                             .query_schema
                             .field(*query_schema_index)
                             .clone(),
@@ -192,27 +193,27 @@ impl ModelTable {
         &self,
         query_schema_index: usize,
     ) -> DataFusionResult<usize> {
-        let query_schema = &self.model_table_metadata.query_schema;
+        let query_schema = &self.time_series_table_metadata.query_schema;
         let column_name = query_schema.field(query_schema_index).name();
-        Ok(self.model_table_metadata.schema.index_of(column_name)?)
+        Ok(self.time_series_table_metadata.schema.index_of(column_name)?)
     }
 }
 
 /// The implementation is not derived as many instance variables does not implement [`fmt::Debug`].
-impl fmt::Debug for ModelTable {
+impl fmt::Debug for TimeSeriesTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "ModelTable: {}\n {:?}",
-            self.model_table_metadata.name, self.model_table_metadata
+            "TimeSeriesTable: {}\n {:?}",
+            self.time_series_table_metadata.name, self.time_series_table_metadata
         )
     }
 }
 
 /// Return a [`LexOrdering`] and [`LexRequirement`] that sort by the tag columns from
-/// `model_table_metadata` in `schema` first and then by `time_column`.
+/// `time_series_table_metadata` in `schema` first and then by `time_column`.
 fn query_order_and_requirement(
-    model_table_metadata: &TimeSeriesTableMetadata,
+    time_series_table_metadata: &TimeSeriesTableMetadata,
     schema: &Schema,
     time_column: Column,
 ) -> (LexOrdering, LexRequirement) {
@@ -222,9 +223,9 @@ fn query_order_and_requirement(
     };
 
     let mut physical_sort_exprs =
-        Vec::with_capacity(model_table_metadata.tag_column_indices.len() + 1);
-    for index in &model_table_metadata.tag_column_indices {
-        let tag_column_name = model_table_metadata.schema.field(*index).name();
+        Vec::with_capacity(time_series_table_metadata.tag_column_indices.len() + 1);
+    for index in &time_series_table_metadata.tag_column_indices {
+        let tag_column_name = time_series_table_metadata.schema.field(*index).name();
 
         // unwrap() is safe as the tag columns are always present in the schema.
         let schema_index = schema.index_of(tag_column_name).unwrap();
@@ -252,7 +253,7 @@ fn query_order_and_requirement(
     )
 }
 
-/// Rewrite and combine the `filters` that are written in terms of the model table's query schema,
+/// Rewrite and combine the `filters` that are written in terms of the time series table's query schema,
 /// to a filter that is written in terms of the schema used for compressed segments by the storage
 /// engine and a filter that is written in terms of the schema used for univariate time series by
 /// [`GridExec`] for its output. If the filters cannot be rewritten an empty [`None`] is returned.
@@ -273,7 +274,7 @@ fn rewrite_and_combine_filters(schema: &Schema, filters: &[Expr]) -> (Option<Exp
     )
 }
 
-/// Rewrite the `filter` that is written in terms of the model table's query schema, to a filter
+/// Rewrite the `filter` that is written in terms of the time series table's query schema, to a filter
 /// that is written in terms of the schema used for compressed segments by the storage engine and a
 /// filter that is written in terms of the schema used for univariate time series by [`GridExec`].
 /// If the filter cannot be rewritten, [`None`] is returned.
@@ -470,24 +471,24 @@ fn logical_file_to_partitioned_file(
 }
 
 #[async_trait]
-impl TableProvider for ModelTable {
+impl TableProvider for TimeSeriesTable {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
-    /// Return the query schema of the model table registered with Apache DataFusion.
+    /// Return the query schema of the time series table registered with Apache DataFusion.
     fn schema(&self) -> Arc<Schema> {
-        self.model_table_metadata.query_schema.clone()
+        self.time_series_table_metadata.query_schema.clone()
     }
 
-    /// Specify that model tables are base tables and not views or temporary tables.
+    /// Specify that time series tables are base tables and not views or temporary tables.
     fn table_type(&self) -> TableType {
         TableType::Base
     }
 
-    /// Create an [`ExecutionPlan`] that will scan the model table. Returns a [`DataFusionError::Plan`]
-    /// if the necessary metadata cannot be retrieved.
+    /// Create an [`ExecutionPlan`] that will scan the time series table. Returns a
+    /// [`DataFusionError::Plan`] if the necessary metadata cannot be retrieved.
     async fn scan(
         &self,
         state: &dyn Session,
@@ -496,10 +497,10 @@ impl TableProvider for ModelTable {
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // Create shorthands for the metadata used during planning to improve readability.
-        let schema = &self.model_table_metadata.schema;
-        let tag_column_indices = &self.model_table_metadata.tag_column_indices;
-        let query_schema = &self.model_table_metadata.query_schema;
-        let generated_columns = &self.model_table_metadata.generated_columns;
+        let schema = &self.time_series_table_metadata.schema;
+        let tag_column_indices = &self.time_series_table_metadata.tag_column_indices;
+        let query_schema = &self.time_series_table_metadata.query_schema;
+        let generated_columns = &self.time_series_table_metadata.generated_columns;
 
         // Clone the Delta Lake table and update it to the latest version. self.delta_lake.load(
         // &mut self) is not an option due to TypeProvider::scan(&self, ...). Storing the DeltaTable
@@ -655,7 +656,7 @@ impl TableProvider for ModelTable {
         }
     }
 
-    /// Specify that model tables perform inexact predicate push-down.
+    /// Specify that time series tables perform inexact predicate push-down.
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
@@ -666,8 +667,8 @@ impl TableProvider for ModelTable {
             .collect())
     }
 
-    /// Create an [`ExecutionPlan`] that will insert the result of `input` into the model table.
-    /// `inputs` must include generated columns to match the query schema returned by
+    /// Create an [`ExecutionPlan`] that will insert the result of `input` into the time series
+    /// table. `inputs` must include generated columns to match the query schema returned by
     /// [`TableProvider::schema()`]. The generated columns are immediately dropped. Generally,
     /// [`arrow_flight::flight_service_server::FlightService::do_put()`] should be used instead of
     /// this method as it is more efficient. This method cannot fail, but it must return a
