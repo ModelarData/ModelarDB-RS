@@ -30,7 +30,7 @@ use tracing::info;
 use crate::configuration::ConfigurationManager;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
-use crate::storage::data_sinks::{TimeSeriesTableDataSink, NormalTableDataSink};
+use crate::storage::data_sinks::{NormalTableDataSink, TimeSeriesTableDataSink};
 use crate::{ClusterMode, DataFolders};
 
 /// Provides access to the system's configuration and components.
@@ -174,7 +174,10 @@ impl Context {
             .save_time_series_table_metadata(time_series_table_metadata)
             .await?;
 
-        info!("Created time series table '{}'.", time_series_table_metadata.name);
+        info!(
+            "Created time series table '{}'.",
+            time_series_table_metadata.name
+        );
 
         Ok(())
     }
@@ -274,7 +277,10 @@ impl Context {
             time_series_table_data_sink,
         )?;
 
-        info!("Registered time series table '{}'.", &time_series_table_metadata.name);
+        info!(
+            "Registered time series table '{}'.",
+            &time_series_table_metadata.name
+        );
 
         Ok(())
     }
@@ -364,14 +370,17 @@ impl Context {
     ) -> Result<Option<Arc<TimeSeriesTableMetadata>>> {
         let database_schema = self.default_database_schema()?;
 
-        let maybe_time_series_table = database_schema.table(table_name).await?.ok_or_else(|| {
-            ModelarDbServerError::InvalidArgument(format!(
-                "Table with name '{table_name}' does not exist."
-            ))
-        })?;
+        let maybe_time_series_table =
+            database_schema.table(table_name).await?.ok_or_else(|| {
+                ModelarDbServerError::InvalidArgument(format!(
+                    "Table with name '{table_name}' does not exist."
+                ))
+            })?;
 
         let maybe_time_series_table_metadata =
-            modelardb_storage::maybe_table_provider_to_time_series_table_metadata(maybe_time_series_table);
+            modelardb_storage::maybe_table_provider_to_time_series_table_metadata(
+                maybe_time_series_table,
+            );
 
         Ok(maybe_time_series_table_metadata)
     }
@@ -672,7 +681,10 @@ mod tests {
                 .is_err()
         );
 
-        context.drop_table(test::TIME_SERIES_TABLE_NAME).await.unwrap();
+        context
+            .drop_table(test::TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
 
         // The time series table should be deregistered from the Apache DataFusion session context.
         assert!(
@@ -702,7 +714,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context.drop_table(test::TIME_SERIES_TABLE_NAME).await.is_err());
+        assert!(
+            context
+                .drop_table(test::TIME_SERIES_TABLE_NAME)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -775,7 +792,10 @@ mod tests {
         let record_batch = test::compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .write_compressed_segments_to_time_series_table(test::TIME_SERIES_TABLE_NAME, vec![record_batch])
+            .write_compressed_segments_to_time_series_table(
+                test::TIME_SERIES_TABLE_NAME,
+                vec![record_batch],
+            )
             .await
             .unwrap();
 
@@ -859,7 +879,9 @@ mod tests {
 
         assert!(
             context
-                .time_series_table_metadata_from_default_database_schema(test::TIME_SERIES_TABLE_NAME)
+                .time_series_table_metadata_from_default_database_schema(
+                    test::TIME_SERIES_TABLE_NAME
+                )
                 .await
                 .is_err()
         );

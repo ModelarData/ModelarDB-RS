@@ -554,22 +554,23 @@ impl UncompressedDataManager {
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<()> {
-        let (memory_use, maybe_data_points, time_series_table_metadata) = match uncompressed_data_buffer {
-            UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
-                uncompressed_in_memory_data_buffer.memory_size(),
-                uncompressed_in_memory_data_buffer.record_batch().await,
-                uncompressed_in_memory_data_buffer
-                    .time_series_table_metadata()
-                    .clone(),
-            ),
-            UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
-                0,
-                uncompressed_on_disk_data_buffer.record_batch().await,
-                uncompressed_on_disk_data_buffer
-                    .time_series_table_metadata()
-                    .clone(),
-            ),
-        };
+        let (memory_use, maybe_data_points, time_series_table_metadata) =
+            match uncompressed_data_buffer {
+                UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
+                    uncompressed_in_memory_data_buffer.memory_size(),
+                    uncompressed_in_memory_data_buffer.record_batch().await,
+                    uncompressed_in_memory_data_buffer
+                        .time_series_table_metadata()
+                        .clone(),
+                ),
+                UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
+                    0,
+                    uncompressed_on_disk_data_buffer.record_batch().await,
+                    uncompressed_on_disk_data_buffer
+                        .time_series_table_metadata()
+                        .clone(),
+                ),
+            };
 
         let data_points = maybe_data_points?;
         let (uncompressed_timestamps, field_column_arrays, tag_column_arrays) =
@@ -913,7 +914,8 @@ mod tests {
         )
         .unwrap();
 
-        let ingested_data_buffer = IngestedDataBuffer::new(time_series_table_metadata.clone(), data);
+        let ingested_data_buffer =
+            IngestedDataBuffer::new(time_series_table_metadata.clone(), data);
         data_manager
             .insert_data_points(ingested_data_buffer)
             .await
@@ -1096,7 +1098,8 @@ mod tests {
         // This test purposely does not use tokio::test to prevent multiple Tokio runtimes.
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
-        let (mut data_manager, time_series_table_metadata) = runtime.block_on(create_managers(&temp_dir));
+        let (mut data_manager, time_series_table_metadata) =
+            runtime.block_on(create_managers(&temp_dir));
 
         runtime.block_on(insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
@@ -1131,7 +1134,8 @@ mod tests {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let runtime = Arc::new(Runtime::new().unwrap());
-        let (data_manager, time_series_table_metadata) = runtime.block_on(create_managers(&temp_dir));
+        let (data_manager, time_series_table_metadata) =
+            runtime.block_on(create_managers(&temp_dir));
 
         // Add the spilled buffer.
         let uncompressed_data = test::uncompressed_time_series_table_record_batch(3);
@@ -1290,6 +1294,9 @@ mod tests {
         let uncompressed_data_manager =
             UncompressedDataManager::new(local_data_folder, memory_pool, channels);
 
-        (uncompressed_data_manager, Arc::new(time_series_table_metadata))
+        (
+            uncompressed_data_manager,
+            Arc::new(time_series_table_metadata),
+        )
     }
 }

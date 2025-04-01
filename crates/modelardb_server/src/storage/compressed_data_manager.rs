@@ -154,7 +154,9 @@ impl CompressedDataManager {
             // compressed_queue anyway and compressed_segments cannot be moved out of
             // compressed_segment_batch if time_series_table_name is actively being borrowed.
             let time_series_table_name = time_series_table_name.to_owned();
-            debug!("Creating compressed data buffer for table '{time_series_table_name}' as none exist.",);
+            debug!(
+                "Creating compressed data buffer for table '{time_series_table_name}' as none exist.",
+            );
 
             let mut compressed_data_buffer =
                 CompressedDataBuffer::new(compressed_segment_batch.time_series_table_metadata);

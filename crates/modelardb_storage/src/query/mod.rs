@@ -22,6 +22,6 @@
 mod generated_as_exec;
 pub(crate) mod grid_exec;
 pub(crate) mod metadata_table;
-pub(crate) mod time_series_table;
 pub(crate) mod normal_table;
 pub(crate) mod sorted_join_exec;
+pub(crate) mod time_series_table;

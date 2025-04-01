@@ -347,7 +347,9 @@ mod test {
     }
 
     /// Return metadata for a time series table with one tag column and the timestamp column at index 1.
-    fn create_simple_time_series_table_metadata(query_schema: Schema) -> Result<TimeSeriesTableMetadata> {
+    fn create_simple_time_series_table_metadata(
+        query_schema: Schema,
+    ) -> Result<TimeSeriesTableMetadata> {
         TimeSeriesTableMetadata::try_new(
             test::TIME_SERIES_TABLE_NAME.to_owned(),
             Arc::new(query_schema),
@@ -385,7 +387,8 @@ mod test {
     }
 
     #[test]
-    fn test_cannot_create_time_series_table_metadata_with_generated_columns_using_generated_columns() {
+    fn test_cannot_create_time_series_table_metadata_with_generated_columns_using_generated_columns()
+     {
         let (query_schema, error_bounds, mut generated_columns) =
             time_series_table_schema_error_bounds_and_generated_columns();
 
@@ -497,7 +500,9 @@ mod test {
         let record_batch = test::uncompressed_time_series_table_record_batch(1);
 
         let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
-            time_series_table_metadata.column_arrays(&record_batch).unwrap();
+            time_series_table_metadata
+                .column_arrays(&record_batch)
+                .unwrap();
 
         assert_eq!(
             modelardb_types::array!(record_batch, 0, TimestampArray),

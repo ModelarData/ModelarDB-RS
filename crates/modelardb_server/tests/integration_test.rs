@@ -909,7 +909,8 @@ async fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
         TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
     let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
-    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::TimeSeriesTable).await;
+    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::TimeSeriesTable)
+        .await;
 
     let query_result = test_context
         .execute_query(format!(
@@ -973,8 +974,12 @@ async fn execute_and_assert_include_select(address_count: usize) {
     let expected_time_series =
         compute::concat_batches(&time_series.schema(), expected_record_batches).unwrap();
 
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::TimeSeriesTable)
-        .await;
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        &[time_series],
+        TableType::TimeSeriesTable,
+    )
+    .await;
 
     let port = test_context.port;
     let address = format!("'grpc://{HOST}:{port}'");
@@ -1034,8 +1039,12 @@ async fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound:
     let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
 
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::TimeSeriesTable)
-        .await;
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        &[time_series],
+        TableType::TimeSeriesTable,
+    )
+    .await;
 
     // The predicate will guarantee that all data points will be included in the query but will
     // prevent the optimizer from rewriting the query due to its presence in segment_query.

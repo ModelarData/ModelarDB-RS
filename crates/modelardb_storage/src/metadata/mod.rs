@@ -18,5 +18,5 @@
 //! [`TableMetadataManager`](table_metadata_manager::TableMetadataManager) which provides
 //! functionality to access table related metadata in the metadata Delta Lake.
 
-pub mod time_series_table_metadata;
 pub mod table_metadata_manager;
+pub mod time_series_table_metadata;

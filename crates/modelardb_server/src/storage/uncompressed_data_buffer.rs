@@ -303,7 +303,8 @@ impl UncompressedOnDiskDataBuffer {
         local_data_folder: Arc<dyn ObjectStore>,
         file_name: &str,
     ) -> Result<Self> {
-        let file_path = spilled_buffer_file_path(&time_series_table_metadata.name, tag_hash, file_name);
+        let file_path =
+            spilled_buffer_file_path(&time_series_table_metadata.name, tag_hash, file_name);
 
         Ok(Self {
             tag_hash,
@@ -352,8 +353,9 @@ impl UncompressedOnDiskDataBuffer {
     ) -> Result<UncompressedInMemoryDataBuffer> {
         let data_points = self.record_batch().await?;
 
-        let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
-            self.time_series_table_metadata.column_arrays(&data_points)?;
+        let (timestamp_column_array, field_column_arrays, tag_column_arrays) = self
+            .time_series_table_metadata
+            .column_arrays(&data_points)?;
 
         let tag_values: Vec<String> = tag_column_arrays
             .iter()
@@ -434,7 +436,9 @@ mod tests {
             assert_eq!(values.capacity(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
         }
 
-        let number_of_fields = test::time_series_table_metadata().field_column_indices.len();
+        let number_of_fields = test::time_series_table_metadata()
+            .field_column_indices
+            .len();
         let expected = (uncompressed_buffer.timestamps.capacity() * mem::size_of::<Timestamp>())
             + (number_of_fields
                 * uncompressed_buffer.values[0].capacity()

@@ -111,13 +111,15 @@ impl TimeSeriesTable {
 
         // Add the tag columns to the base schema for queryable compressed segments.
         let mut query_compressed_schema_fields = Vec::with_capacity(
-            QUERY_COMPRESSED_SCHEMA.0.fields.len() + time_series_table_metadata.tag_column_indices.len(),
+            QUERY_COMPRESSED_SCHEMA.0.fields.len()
+                + time_series_table_metadata.tag_column_indices.len(),
         );
 
         query_compressed_schema_fields.extend(QUERY_COMPRESSED_SCHEMA.0.fields.clone().to_vec());
         for index in &time_series_table_metadata.tag_column_indices {
-            query_compressed_schema_fields
-                .push(Arc::new(time_series_table_metadata.schema.field(*index).clone()));
+            query_compressed_schema_fields.push(Arc::new(
+                time_series_table_metadata.schema.field(*index).clone(),
+            ));
         }
 
         let query_compressed_schema = Arc::new(Schema::new(query_compressed_schema_fields));
@@ -135,7 +137,9 @@ impl TimeSeriesTable {
 
         grid_schema_fields.extend(GRID_SCHEMA.0.fields.clone().to_vec());
         for index in &time_series_table_metadata.tag_column_indices {
-            grid_schema_fields.push(Arc::new(time_series_table_metadata.schema.field(*index).clone()));
+            grid_schema_fields.push(Arc::new(
+                time_series_table_metadata.schema.field(*index).clone(),
+            ));
         }
 
         let grid_schema = Arc::new(Schema::new(grid_schema_fields));
@@ -170,7 +174,8 @@ impl TimeSeriesTable {
         let columns = projection
             .iter()
             .filter_map(|query_schema_index| {
-                if self.time_series_table_metadata.generated_columns[*query_schema_index].is_none() {
+                if self.time_series_table_metadata.generated_columns[*query_schema_index].is_none()
+                {
                     Some(
                         self.time_series_table_metadata
                             .query_schema
@@ -195,7 +200,10 @@ impl TimeSeriesTable {
     ) -> DataFusionResult<usize> {
         let query_schema = &self.time_series_table_metadata.query_schema;
         let column_name = query_schema.field(query_schema_index).name();
-        Ok(self.time_series_table_metadata.schema.index_of(column_name)?)
+        Ok(self
+            .time_series_table_metadata
+            .schema
+            .index_of(column_name)?)
     }
 }
 

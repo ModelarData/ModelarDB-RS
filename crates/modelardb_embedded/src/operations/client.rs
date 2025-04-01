@@ -37,7 +37,9 @@ use tonic::transport::Channel;
 use tonic::{Request, Status};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::operations::{Operations, generate_read_time_series_table_sql, try_new_time_series_table_metadata};
+use crate::operations::{
+    Operations, generate_read_time_series_table_sql, try_new_time_series_table_metadata,
+};
 use crate::{Aggregate, TableType};
 
 /// Types of nodes that can be connected to by [`Client`].
@@ -167,7 +169,9 @@ impl Operations for Client {
                     generated_columns,
                 )?;
 
-                modelardb_storage::time_series_table_metadata_to_record_batch(&time_series_table_metadata)?
+                modelardb_storage::time_series_table_metadata_to_record_batch(
+                    &time_series_table_metadata,
+                )?
             }
         };
 
