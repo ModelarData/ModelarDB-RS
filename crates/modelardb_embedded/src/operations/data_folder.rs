@@ -111,7 +111,7 @@ pub struct DataFolder {
     /// Delta Lake for storing metadata and data in Apache Parquet files.
     delta_lake: DeltaLake,
     /// Metadata manager for providing access to metadata related to tables. It is stored in an
-    /// [`Arc`] because it is shared with each of the model tables for use in query planning.
+    /// [`Arc`] because it is shared with each of the time series tables for use in query planning.
     table_metadata_manager: Arc<TableMetadataManager>,
     /// Context providing access to a specific session of Apache DataFusion.
     session_context: SessionContext,
@@ -201,7 +201,7 @@ impl DataFolder {
         Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
     }
 
-    /// Create a [`DataFolder`], register all normal tables and model tables in it with its
+    /// Create a [`DataFolder`], register all normal tables and time series tables in it with its
     /// [`SessionContext`], and return it. If the tables could not be registered,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn try_new_and_register_tables(
@@ -238,7 +238,7 @@ impl DataFolder {
             )?;
         }
 
-        // Register model tables.
+        // Register time series tables.
         for metadata in data_folder
             .table_metadata_manager
             .time_series_table_metadata()
@@ -412,7 +412,7 @@ impl DataFolder {
     }
 
     /// Return [`TimeSeriesTableMetadata`] for the table with `table_name` if it exists, is registered
-    /// with Apache DataFusion, and is a model table.
+    /// with Apache DataFusion, and is a time series table.
     pub async fn model_table_metadata(&self, table_name: &str) -> Option<Arc<TimeSeriesTableMetadata>> {
         let table_provider = self.session_context.table_provider(table_name).await.ok()?;
         modelardb_storage::maybe_table_provider_to_time_series_table_metadata(table_provider)
@@ -520,7 +520,7 @@ impl Operations for DataFolder {
         ));
 
         if let Some(model_table_metadata) = self.model_table_metadata(table_name).await {
-            // Model table.
+            // Time series table.
             if !schemas_are_compatible(&uncompressed_data.schema(), &model_table_metadata.schema) {
                 return Err(schema_mismatch_error);
             }
@@ -563,7 +563,7 @@ impl Operations for DataFolder {
 
     /// Executes the SQL in `sql` and writes the result to the normal table with the name in
     /// `to_table_name` in `to_modelardb`. Note that data can be copied from both normal tables and
-    /// model tables but only to normal tables. This is to not lossy compress data multiple
+    /// time series tables but only to normal tables. This is to not lossy compress data multiple
     /// times. If `to_modelardb` is not a data folder, the data could not be queried, or the result
     /// could not be written to the normal table, [`ModelarDbEmbeddedError`] is returned.
     async fn copy(
@@ -608,9 +608,9 @@ impl Operations for DataFolder {
         }
     }
 
-    /// Reads data from the model table with the table name in `table_name` and returns it as a
+    /// Reads data from the time series table with the table name in `table_name` and returns it as a
     /// [`RecordBatchStream`]. The remaining parameters optionally specify which subset of the data
-    /// to read. If the table is not a model table or the data could not be read,
+    /// to read. If the table is not a time series table or the data could not be read,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn read_time_series_table(
         &mut self,
@@ -621,13 +621,13 @@ impl Operations for DataFolder {
         maybe_end_time: Option<&str>,
         tags: HashMap<String, String>,
     ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
-        // DataFolder.read() interface is designed for model tables.
+        // DataFolder.read() interface is designed for time series tables.
         let model_table_medata =
             if let Some(model_table_metadata) = self.model_table_metadata(table_name).await {
                 model_table_metadata
             } else {
                 return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{table_name} is not a model table."
+                    "{table_name} is not a time series table."
                 )));
             };
 
@@ -644,10 +644,10 @@ impl Operations for DataFolder {
         self.read(&sql).await
     }
 
-    /// Copy the data from the model table with the name in `from_table_name` in `self` to the model
-    /// table with the name in `to_table_name` in `to_modelardb`. Note that duplicate data is not
-    /// deleted. If `to_modelardb` is not a data folder, the schemas of the model tables do not
-    /// match, or the data could not be copied, [`ModelarDbEmbeddedError`] is returned.
+    /// Copy the data from the time series table with the name in `from_table_name` in `self` to the
+    /// time series table with the name in `to_table_name` in `to_modelardb`. Note that duplicate
+    /// data is not deleted. If `to_modelardb` is not a data folder, the schemas of the time series
+    /// tables do not match, or the data could not be copied, [`ModelarDbEmbeddedError`] is returned.
     #[allow(clippy::too_many_arguments)]
     async fn copy_time_series_table(
         &self,
@@ -667,13 +667,13 @@ impl Operations for DataFolder {
                 )
             })?;
 
-        // DataFolder.copy_model_table() interface is designed for model tables.
+        // DataFolder.copy_model_table() interface is designed for time series tables.
         let from_model_table_metadata = self
             .model_table_metadata(from_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{from_table_name} is not a model table."
+                    "{from_table_name} is not a time series table."
                 ))
             })?;
 
@@ -682,11 +682,11 @@ impl Operations for DataFolder {
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{to_table_name} is not a model table."
+                    "{to_table_name} is not a time series table."
                 ))
             })?;
 
-        // Check if the schemas of the model tables match.
+        // Check if the schemas of the time series tables match.
         if !schemas_are_compatible(
             &from_model_table_metadata.schema,
             &to_model_table_metadata.schema,
@@ -761,8 +761,8 @@ impl Operations for DataFolder {
             self.model_table_metadata(from_table_name).await,
             to_data_folder.model_table_metadata(to_table_name).await,
         ) {
-            // If both tables are model tables, check if their schemas match and write the data in
-            // from_table_name to to_table_name if so.
+            // If both tables are time series tables, check if their schemas match and write the
+            // data in from_table_name to to_table_name if so.
             if !schemas_are_compatible(
                 &from_model_table_metadata.schema,
                 &to_model_table_metadata.schema,
@@ -798,12 +798,12 @@ impl Operations for DataFolder {
                 .await?;
         } else {
             return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                "{from_table_name} and {to_table_name} are not both normal tables or model tables."
+                "{from_table_name} and {to_table_name} are not both normal tables or time series tables."
             )));
         }
 
         // Truncate the table after moving the data. This will also delete the tag hash metadata
-        // if the table is a model table.
+        // if the table is a time series table.
         self.truncate(from_table_name).await?;
 
         Ok(())
@@ -845,8 +845,8 @@ impl Operations for DataFolder {
     }
 }
 
-/// Sort the `uncompressed_data` from the model table with `model_table_metadata` according to its
-/// tags and then timestamps.
+/// Sort the `uncompressed_data` from the time series table with `model_table_metadata` according
+/// to its tags and then timestamps.
 fn sort_record_batch_by_tags_and_time(
     model_table_metadata: &TimeSeriesTableMetadata,
     uncompressed_data: &RecordBatch,
@@ -1110,7 +1110,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Create a new data folder and verify that the existing model tables are registered.
+        // Create a new data folder and verify that the existing time series tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         assert!(
             new_data_folder
@@ -1361,7 +1361,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a time series table.")
         );
     }
 
@@ -1383,7 +1383,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a time series table.")
         );
     }
 
@@ -1764,7 +1764,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a time series table.")
         );
     }
 
@@ -1791,7 +1791,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a time series table.")
         );
     }
 
@@ -1815,7 +1815,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a time series table.")
         );
     }
 
@@ -1844,7 +1844,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a time series table.")
         );
     }
 
@@ -2219,7 +2219,7 @@ mod tests {
     async fn test_copy_normal_table_from_model_table_to_normal_table() {
         let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
 
-        // Create a normal table that has the same schema as the model table in from_data_folder.
+        // Create a normal table that has the same schema as the time series table in from_data_folder.
         let temp_dir = tempfile::tempdir().unwrap();
         let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
@@ -2391,7 +2391,7 @@ mod tests {
 
         data_folder.drop(MODEL_TABLE_NAME).await.unwrap();
 
-        // Verify that the model table was deregistered from Apache DataFusion.
+        // Verify that the time series table was deregistered from Apache DataFusion.
         assert!(
             !data_folder
                 .session_context
@@ -2399,7 +2399,7 @@ mod tests {
                 .unwrap()
         );
 
-        // Verify that the model table was dropped from the metadata Delta Lake.
+        // Verify that the time series table was dropped from the metadata Delta Lake.
         assert!(
             !data_folder
                 .table_metadata_manager
@@ -2408,7 +2408,7 @@ mod tests {
                 .unwrap()
         );
 
-        // Verify that the model table was dropped from the Delta Lake.
+        // Verify that the time series table was dropped from the Delta Lake.
         assert!(
             data_folder
                 .delta_lake
@@ -2482,7 +2482,7 @@ mod tests {
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
 
-        // Verify that the model table still exists.
+        // Verify that the time series table still exists.
         assert_model_table_exists(&data_folder, MODEL_TABLE_NAME, model_table_schema()).await;
     }
 
@@ -2630,7 +2630,7 @@ mod tests {
             result.unwrap_err().to_string(),
             format!(
                 "Invalid Argument Error: {NORMAL_TABLE_NAME} and {MODEL_TABLE_NAME} are not \
-                both normal tables or model tables."
+                both normal tables or time series tables."
             )
         );
 
@@ -2665,7 +2665,7 @@ mod tests {
             result.unwrap_err().to_string(),
             format!(
                 "Invalid Argument Error: {NORMAL_TABLE_NAME} and {MISSING_TABLE_NAME} are not \
-                both normal tables or model tables."
+                both normal tables or time series tables."
             )
         );
 
@@ -2706,12 +2706,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify that the data was deleted but the model table still exists.
+        // Verify that the data was deleted but the time series table still exists.
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
         assert_model_table_exists(&from_data_folder, MODEL_TABLE_NAME, model_table_schema()).await;
 
-        // Verify that the model table data was moved to the new data folder.
+        // Verify that the time series table data was moved to the new data folder.
         let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
         assert_eq!(actual_result, sorted_model_table_data());
     }
@@ -2749,12 +2749,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify that the data was deleted but the model table still exists.
+        // Verify that the data was deleted but the time series table still exists.
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
         assert_model_table_exists(&from_data_folder, MODEL_TABLE_NAME, model_table_schema()).await;
 
-        // Verify that the model table data was moved to the new data folder.
+        // Verify that the time series table data was moved to the new data folder.
         let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
         assert_generated_column_result_eq(actual_result, sorted_model_table_data());
     }
@@ -2764,10 +2764,10 @@ mod tests {
         table_name: &str,
         expected_schema: Schema,
     ) -> TimeSeriesTableMetadata {
-        // Verify that the model table exists in the Delta Lake.
+        // Verify that the time series table exists in the Delta Lake.
         assert!(data_folder.delta_lake.delta_table(table_name).await.is_ok());
 
-        // Verify that the model table exists in the metadata Delta Lake with the correct schema.
+        // Verify that the time series table exists in the metadata Delta Lake with the correct schema.
         let model_table_metadata = data_folder
             .table_metadata_manager
             .time_series_table_metadata_for_time_series_table(table_name)
@@ -2777,7 +2777,7 @@ mod tests {
         assert_eq!(model_table_metadata.name, table_name);
         assert_eq!(*model_table_metadata.query_schema, expected_schema);
 
-        // Verify that the model table is registered with Apache DataFusion.
+        // Verify that the time series table is registered with Apache DataFusion.
         assert!(data_folder.session_context.table_exist(table_name).unwrap());
 
         model_table_metadata
@@ -2858,7 +2858,7 @@ mod tests {
             result.unwrap_err().to_string(),
             format!(
                 "Invalid Argument Error: {MODEL_TABLE_NAME} and {NORMAL_TABLE_NAME} \
-                are not both normal tables or model tables."
+                are not both normal tables or time series tables."
             )
         );
 
@@ -2892,7 +2892,7 @@ mod tests {
             result.unwrap_err().to_string(),
             format!(
                 "Invalid Argument Error: {MODEL_TABLE_NAME} and {MISSING_TABLE_NAME} \
-                are not both normal tables or model tables."
+                are not both normal tables or time series tables."
             )
         );
 
@@ -2946,7 +2946,7 @@ mod tests {
             result.unwrap_err().to_string(),
             format!(
                 "Invalid Argument Error: {MISSING_TABLE_NAME} and {MODEL_TABLE_NAME} \
-                are not both normal tables or model tables."
+                are not both normal tables or time series tables."
             )
         );
     }
