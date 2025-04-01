@@ -100,7 +100,7 @@ macro_rules! array {
     };
 }
 
-/// Extract the [`arrays`](arrow::array::Array) required to execute queries against a model table
+/// Extract the [`arrays`](arrow::array::Array) required to execute queries against a time series table
 /// from a [`RecordBatch`](arrow::record_batch::RecordBatch), cast them to the required type, and
 /// assign the resulting arrays to the specified variables. Panics if any of these steps fail:
 ///

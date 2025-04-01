@@ -803,7 +803,7 @@ mod tests {
         let session_state = session_state_builder.build();
         let session_context = SessionContext::new_with_state(session_state);
 
-        // Create model table.
+        // Create time series table.
         let model_table_metadata = test::time_series_table_metadata_arc();
 
         let delta_table = delta_lake

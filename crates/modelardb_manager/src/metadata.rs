@@ -33,13 +33,13 @@ use uuid::Uuid;
 use crate::cluster::Node;
 use crate::error::Result;
 
-/// Stores the metadata required for reading from and writing to the normal tables and model tables
+/// Stores the metadata required for reading from and writing to the normal tables and time series tables
 /// and persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub struct MetadataManager {
     /// Delta Lake with functionality to read and write to and from the manager metadata tables.
     delta_lake: DeltaLake,
     /// Metadata manager used to interface with the subset of the manager metadata Delta Lake
-    /// related to normal tables and model tables.
+    /// related to normal tables and time series tables.
     pub(crate) table_metadata_manager: TableMetadataManager,
     /// Session context used to query the manager metadata Delta Lake tables using Apache DataFusion.
     session_context: Arc<SessionContext>,

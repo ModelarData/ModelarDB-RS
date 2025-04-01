@@ -278,15 +278,15 @@ async fn execute_command(
         // Print helpful information, explanations with \\ must be indented more to be aligned.
         "\\h" => {
             println!(
-                "CREATE [MODEL] TABLE     Execute a CREATE TABLE or CREATE MODEL TABLE statement.\n\
-                 INSERT INTO              Execute an INSERT INTO statement. Must include generated columns.\n\
-                 SELECT                   Execute a SELECT statement.\n\
-                 \\d TABLE_NAME            Print the schema of a table with TABLE_NAME.\n\
-                 \\dt                      Print the name of all the tables.\n\
-                 \\f                       Flushes data in memory to disk.\n\
-                 \\F                       Flushes data in memory and disk to the object store.\n\
-                 \\h                       Print documentation for all supported commands.\n\
-                 \\q                       Quit modelardb."
+                "CREATE [TIME SERIES] TABLE     Execute a CREATE TABLE or CREATE TIME SERIES TABLE statement.\n\
+                 INSERT INTO                    Execute an INSERT INTO statement. Must include generated columns.\n\
+                 SELECT                         Execute a SELECT statement.\n\
+                 \\d TABLE_NAME                 Print the schema of a table with TABLE_NAME.\n\
+                 \\dt                           Print the name of all the tables.\n\
+                 \\f                            Flushes data in memory to disk.\n\
+                 \\F                            Flushes data in memory and disk to the object store.\n\
+                 \\h                            Print documentation for all supported commands.\n\
+                 \\q                            Quit modelardb."
             );
             Ok(())
         }
