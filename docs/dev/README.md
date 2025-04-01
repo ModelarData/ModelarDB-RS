@@ -73,7 +73,7 @@ storage.
   tables.
   - **Delta Lake** - Module providing functionality for reading from and writing to a delta lake.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
-  - **Parser** - Extensions to Apache DataFusion's SQL parser. The first extension adds support for creating model
+  - **Parser** - Extensions to Apache DataFusion's SQL parser. The first extension adds support for creating time series
   tables with a timestamp, one or more fields, and zero or more tags. The second adds support for adding a `INCLUDE
   address[, address+]` clause before `SELECT`.
   - **Test** - Constants and functionality for data generation for use in tests.
