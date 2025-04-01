@@ -30,7 +30,7 @@ use tracing::info;
 use crate::configuration::ConfigurationManager;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
-use crate::storage::data_sinks::{ModelTableDataSink, NormalTableDataSink};
+use crate::storage::data_sinks::{TimeSeriesTableDataSink, NormalTableDataSink};
 use crate::{ClusterMode, DataFolders};
 
 /// Provides access to the system's configuration and components.
@@ -262,7 +262,7 @@ impl Context {
             .delta_table(&time_series_table_metadata.name)
             .await?;
 
-        let time_series_table_data_sink = Arc::new(ModelTableDataSink::new(
+        let time_series_table_data_sink = Arc::new(TimeSeriesTableDataSink::new(
             time_series_table_metadata.clone(),
             self.storage_engine.clone(),
         ));
