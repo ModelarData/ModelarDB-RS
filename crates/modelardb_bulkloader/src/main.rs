@@ -41,7 +41,7 @@ use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
 use modelardb_embedded::operations::Operations;
 use modelardb_embedded::operations::data_folder::DataFolder;
 use modelardb_storage::delta_lake::DeltaTableWriter;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use sysinfo::System;
 
 #[tokio::main]
@@ -125,10 +125,10 @@ fn print_usage_and_exit_with_error() -> ! {
             import parquet_folder data_folder table_name   imports data from parquet_folder to the table with table_name in data_folder\n \
             export data_folder parquet_folder table_name   exports data from the table with table_name in data_folder to parquet_folder\n\n\
             flags\n \
-            --pre-sql statements                           one or more quoted SQL statements run before any operation, e.g, CREATE MODEL TABLE\n \
+            --pre-sql statements                           one or more quoted SQL statements run before any operation, e.g, CREATE TIME SERIES TABLE\n \
             --partition-by columns                         columns to partition the output data by when exporting to Apache Parquet files\n \
             --post-sql statements                          one or more quoted SQL statements run after a successful operation, e.g, DROP TABLE\n \
-            --cast-double-to-float                         cast double to float, which may be a lossy cast, to simplify loading model tables"
+            --cast-double-to-float                         cast double to float, which may be a lossy cast, to simplify loading time series tables"
     );
     process::exit(1);
 }
@@ -136,8 +136,8 @@ fn print_usage_and_exit_with_error() -> ! {
 /// Import data from `input_path` to the table with `table_name` in `output_path`. `pre_sql` is
 /// executed in the [`DataFolder`] at `output_path` before the importing starts, and `post_sql` is
 /// executed after it has finished successfully. `cast_double_to_float` specifies if
-/// [`DataType::Float64`] should be cast to [`DataType::Float32`] for model tables to simplify
-/// importing data into model tables. If data cannot be read, the table already exists with a
+/// [`DataType::Float64`] should be cast to [`DataType::Float32`] for time series tables to simplify
+/// importing data into time series tables. If data cannot be read, the table already exists with a
 /// different schema, or the data cannot be written, a [`ModelarDbEmbeddedError`] is returned.
 async fn import(
     input_path: &str,
@@ -168,10 +168,12 @@ async fn import(
         data_folder.read(sql).await?;
     }
 
-    if let Some(model_table_metadata) = data_folder.model_table_metadata(table_name).await {
-        import_model_table(
+    if let Some(time_series_table_metadata) =
+        data_folder.time_series_table_metadata(table_name).await
+    {
+        import_time_series_table(
             input_stream,
-            &model_table_metadata,
+            &time_series_table_metadata,
             &mut data_folder,
             cast_double_to_float,
         )
@@ -179,7 +181,7 @@ async fn import(
     } else {
         if cast_double_to_float {
             return Err(ModelarDbEmbeddedError::InvalidArgument(
-                "Float can only be cast to doubles for model tables.".to_owned(),
+                "Float can only be cast to doubles for time series tables.".to_owned(),
             ));
         }
         import_normal_table(input_stream, table_name, &mut data_folder).await?;
@@ -192,17 +194,17 @@ async fn import(
     Ok(())
 }
 
-/// Import data from `input_stream` to the model table with `model_table_metadata` in `data_folder`.
-/// If `cast_double_to_float` is [`true`], [`DataType::Float64`] is cast to [`DataType::Float32`] to
-/// simplify importing time series into model tables. If data cannot be read or written, a
-/// [`ModelarDbEmbeddedError`] is returned.
-async fn import_model_table(
+/// Import data from `input_stream` to the time series table with `time_series_table_metadata` in
+/// `data_folder`. If `cast_double_to_float` is [`true`], [`DataType::Float64`] is cast to
+/// [`DataType::Float32`] to simplify importing time series into time series tables. If data cannot
+/// be read or written, a [`ModelarDbEmbeddedError`] is returned.
+async fn import_time_series_table(
     mut input_stream: Pin<Box<dyn RecordBatchStream>>,
-    model_table_metadata: &ModelTableMetadata,
+    time_series_table_metadata: &TimeSeriesTableMetadata,
     data_folder: &mut DataFolder,
     cast_double_to_float: bool,
 ) -> Result<()> {
-    let table_name = &model_table_metadata.name;
+    let table_name = &time_series_table_metadata.name;
     let mut delta_table_writer = data_folder.writer(table_name).await?;
 
     let mut system = System::new();
@@ -217,10 +219,10 @@ async fn import_model_table(
         // possible. The amount of available memory is reduced by 20% for other variables.
         system.refresh_memory();
         if current_batch_size > (system.available_memory() as usize / 10 * 8) {
-            if let Err(write_error) = import_and_clear_model_table_batch(
+            if let Err(write_error) = import_and_clear_time_series_table_batch(
                 data_folder,
                 &mut delta_table_writer,
-                model_table_metadata,
+                time_series_table_metadata,
                 &mut current_batch,
                 &mut current_batch_size,
             )
@@ -232,10 +234,10 @@ async fn import_model_table(
         }
     }
 
-    if let Err(write_error) = import_and_clear_model_table_batch(
+    if let Err(write_error) = import_and_clear_time_series_table_batch(
         data_folder,
         &mut delta_table_writer,
-        model_table_metadata,
+        time_series_table_metadata,
         &mut current_batch,
         &mut current_batch_size,
     )
@@ -336,8 +338,8 @@ async fn has_apache_parquet_signature(object_store: &dyn ObjectStore, path: &Pat
 
 /// Cast the schema of `record_batch` to be compatible with [`deltalake`] if it can be done
 /// losslessly and `cast_double_to_float` is [`false`], otherwise [`ModelarDbEmbeddedError`] is
-/// returned. Although if `cast_double_to_float` is [`true`], all arrays of type
-/// [`DataType::Float64`] are also cast to [`DataType::Float32`] to simplify loading model tables.
+/// returned. Although if `cast_double_to_float` is [`true`], all arrays of type [`DataType::Float64`]
+/// are also cast to [`DataType::Float32`] to simplify loading time series tables.
 fn cast_record_batch(record_batch: RecordBatch, cast_double_to_float: bool) -> Result<RecordBatch> {
     let schema = record_batch.schema();
     let columns = record_batch.columns();
@@ -383,14 +385,14 @@ fn cast_record_batch(record_batch: RecordBatch, cast_double_to_float: bool) -> R
     RecordBatch::try_new(cast_schema, cast_columns).map_err(|error| error.into())
 }
 
-/// Import the `current_batch` into the model table with `model_table_metadata` in `data_folder`
-/// using `delta_table_writer`. Then clear `current_batch` and zero `current_batch_size`. If a
-/// [`RecordBatch`] in `current_batch` has a different schema, the compression fails, or the write
-/// fails, a [`ModelarDbEmbeddedError`] is returned.
-async fn import_and_clear_model_table_batch(
+/// Import the `current_batch` into the time series table with `time_series_table_metadata` in
+/// `data_folder` using `delta_table_writer`. Then clear `current_batch` and zero
+/// `current_batch_size`. If a [`RecordBatch`] in `current_batch` has a different schema, the
+/// compression fails, or the write fails, a [`ModelarDbEmbeddedError`] is returned.
+async fn import_and_clear_time_series_table_batch(
     data_folder: &DataFolder,
     delta_table_writer: &mut DeltaTableWriter,
-    model_table_metadata: &ModelTableMetadata,
+    time_series_table_metadata: &TimeSeriesTableMetadata,
     current_batch: &mut Vec<RecordBatch>,
     current_batch_size: &mut usize,
 ) -> Result<()> {
@@ -398,7 +400,7 @@ async fn import_and_clear_model_table_batch(
         let schema = current_batch[0].schema();
         let uncompressed_data = compute::concat_batches(&schema, &*current_batch)?;
         let compressed_data = data_folder
-            .compress_all(model_table_metadata, &uncompressed_data)
+            .compress_all(time_series_table_metadata, &uncompressed_data)
             .await?;
         delta_table_writer.write_all(&compressed_data).await?;
         current_batch.clear();

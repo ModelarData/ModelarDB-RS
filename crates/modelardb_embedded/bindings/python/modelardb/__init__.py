@@ -75,11 +75,11 @@ class NormalTable:
 
 
 @dataclass
-class ModelTable:
+class TimeSeriesTable:
     """A relational table storing time series with metadata more efficiently
     than :class:`Table` by storing the time series with metadata as models.
 
-    :param schema: The schema of the model table. It must contain a timestamp
+    :param schema: The schema of the time series table. It must contain a timestamp
     column with the type :class:`pyarrow.timestamp("us")`, one or more field columns
     with the type :class:`pyarrow.float32()`, and zero or more tag columns with the
     type :class:`pyarrow.string()`.
@@ -324,7 +324,7 @@ class ModelarDB:
             int modelardb_embedded_create(void* maybe_modelardb_ptr,
                                           bool is_data_folder,
                                           char* table_name_ptr,
-                                          bool is_model_table,
+                                          bool is_time_series_table,
                                           struct ArrowSchema* schema_ptr,
                                           struct ArrowArray* error_bound_array_ptr,
                                           struct ArrowSchema* error_bound_array_schema_ptr,
@@ -360,29 +360,29 @@ class ModelarDB:
                                         void* maybe_to_modelardb_ptr,
                                         char* to_table_name_ptr);
 
-            int modelardb_embedded_read_model_table(void* maybe_modelardb_ptr,
-                                                    bool is_data_folder,
-                                                    char* table_name_ptr,
-                                                    struct ArrowArray* columns_array_ptr,
-                                                    struct ArrowSchema* columns_array_schema_ptr,
-                                                    struct ArrowArray* group_by_array_ptr,
-                                                    struct ArrowSchema* group_by_array_schema_ptr,
-                                                    char* start_time_ptr,
-                                                    char* end_time_ptr,
-                                                    struct ArrowArray* tags_array_ptr,
-                                                    struct ArrowSchema* tags_array_schema_ptr,
-                                                    struct ArrowArray* decompressed_struct_array_ptr,
-                                                    struct ArrowSchema* decompressed_struct_array_schema_ptr);
+            int modelardb_embedded_read_time_series_table(void* maybe_modelardb_ptr,
+                                                          bool is_data_folder,
+                                                          char* table_name_ptr,
+                                                          struct ArrowArray* columns_array_ptr,
+                                                          struct ArrowSchema* columns_array_schema_ptr,
+                                                          struct ArrowArray* group_by_array_ptr,
+                                                          struct ArrowSchema* group_by_array_schema_ptr,
+                                                          char* start_time_ptr,
+                                                          char* end_time_ptr,
+                                                          struct ArrowArray* tags_array_ptr,
+                                                          struct ArrowSchema* tags_array_schema_ptr,
+                                                          struct ArrowArray* decompressed_struct_array_ptr,
+                                                          struct ArrowSchema* decompressed_struct_array_schema_ptr);
 
-            int modelardb_embedded_copy_model_table(void* maybe_from_modelardb_ptr,
-                                                    bool is_data_folder,
-                                                    char* from_table_name_ptr,
-                                                    void* maybe_to_modelardb_ptr,
-                                                    char* to_table_name_ptr,
-                                                    char* start_time_ptr,
-                                                    char* end_time_ptr,
-                                                    struct ArrowArray* tags_array_ptr,
-                                                    struct ArrowSchema* tags_array_schema_ptr);
+            int modelardb_embedded_copy_time_series_table(void* maybe_from_modelardb_ptr,
+                                                          bool is_data_folder,
+                                                          char* from_table_name_ptr,
+                                                          void* maybe_to_modelardb_ptr,
+                                                          char* to_table_name_ptr,
+                                                          char* start_time_ptr,
+                                                          char* end_time_ptr,
+                                                          struct ArrowArray* tags_array_ptr,
+                                                          struct ArrowSchema* tags_array_schema_ptr);
 
             int modelardb_embedded_move(void* maybe_from_modelardb_ptr,
                                         bool is_data_folder,
@@ -539,13 +539,13 @@ class ModelarDB:
         )
         self.__check_return_code_and_raise_error(return_code)
 
-    def create(self, table_name: str, table_type: NormalTable | ModelTable):
+    def create(self, table_name: str, table_type: NormalTable | TimeSeriesTable):
         """Creates a table with `table_name`, `schema`, and `error_bounds`.
 
         :param table_name: The name of the table to create.
         :type table_name: str
         :param table_type: The type of the table to create.
-        :type table_name: NormalTable or ModelTable
+        :type table_name: NormalTable or TimeSeriesTable
         :raises ValueError: If incorrect arguments are provided.
         """
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
@@ -555,11 +555,11 @@ class ModelarDB:
         table_type.schema._export_to_c(schema_ptr_int)
 
         if isinstance(table_type, NormalTable):
-            is_model_table = False
+            is_time_series_table = False
             error_bounds = {}
             generated_columns = {}
-        elif isinstance(table_type, ModelTable):
-            is_model_table = True
+        elif isinstance(table_type, TimeSeriesTable):
+            is_time_series_table = True
 
             # AbsoluteErrorBound is encoded as positive values while
             # RelativeErrorBound is encoded as negative values.
@@ -571,7 +571,7 @@ class ModelarDB:
             }
             generated_columns = table_type.generated_columns
         else:
-            raise ValueError("table_type must be a NormalTable or a ModelTable")
+            raise ValueError("table_type must be a NormalTable or a TimeSeriesTable")
 
         error_bounds_array: MapArray = pyarrow.array(
             [error_bounds], pyarrow.map_(pyarrow.string(), pyarrow.float32())
@@ -587,7 +587,7 @@ class ModelarDB:
             self.__modelardb_ptr,
             self.__is_data_folder,
             table_name_ptr,
-            is_model_table,
+            is_time_series_table,
             schema_ptr,
             error_bounds_ffi.array_ptr,
             error_bounds_ffi.schema_ptr,
@@ -693,7 +693,7 @@ class ModelarDB:
     def copy(self, sql: str, to_modelardb: Self, to_table_name: str):
         """Executes an `sql` statement and copies the result to the normal
         table with `to_table_name` in `to_modelardb`. Data can be copied from
-        both normal tables and model tables but only to normal tables. Duplicate
+        both normal tables and time series tables but only to normal tables. Duplicate
         data is not dropped. This is to not lossy compress data multiple times.
 
         :param sql: An SQL statement.
@@ -718,7 +718,7 @@ class ModelarDB:
         )
         self.__check_return_code_and_raise_error(return_code)
 
-    def read_model_table(
+    def read_time_series_table(
         self,
         table_name: str,
         columns: None | list[str] | list[tuple[str, Aggregate]] = None,
@@ -727,11 +727,11 @@ class ModelarDB:
         end_time: None | datetime | str = None,
         tags: None | dict[str, str] = None,
     ) -> RecordBatch:
-        """Reads data from the model table with `table_name` and returns it. The
+        """Reads data from the time series table with `table_name` and returns it. The
         remaining parameters optionally specify which subset of the data to
         read.
 
-        :param table_name: The name of the model table to read data from.
+        :param table_name: The name of the time series table to read data from.
         :type table_name: str
         :param columns: A subset of columns to read or aggregate by.
         :type columns: list[str] | list[tuple[str, Aggregate]], optional
@@ -743,7 +743,7 @@ class ModelarDB:
         :type end_time: datetime | str, optional
         :param tags: One or more tag and tag value pairs to filter by.
         :type tags: dict[str, str], optional
-        :return: The data from the model table with `table_name`.
+        :return: The data from the time series table with `table_name`.
         :rtype: RecordBatch
         :raises ValueError: If incorrect arguments are provided.
         """
@@ -784,7 +784,7 @@ class ModelarDB:
 
         decompressed_batch_ffi = FFIArray.from_type(RecordBatch)
 
-        return_code = self.__library.modelardb_embedded_read_model_table(
+        return_code = self.__library.modelardb_embedded_read_time_series_table(
             self.__modelardb_ptr,
             self.__is_data_folder,
             table_name_ptr,
@@ -803,7 +803,7 @@ class ModelarDB:
 
         return decompressed_batch_ffi.array()
 
-    def copy_model_table(
+    def copy_time_series_table(
         self,
         from_table_name: str,
         to_modelardb: Self,
@@ -812,16 +812,16 @@ class ModelarDB:
         end_time: None | datetime | str = None,
         tags: None | dict[str, str] = None,
     ):
-        """Copies data from the model table with `from_table_name` in `self` to
-        the model table with `to_table_name` in `to_modelardb`. The remaining
+        """Copies data from the time series table with `from_table_name` in `self` to
+        the time series table with `to_table_name` in `to_modelardb`. The remaining
         parameters optionally specify which subset of the data to copy.
         Duplicate data is not dropped.
 
-        :param from_table_name: Name of the model table to read data from.
+        :param from_table_name: Name of the time series table to read data from.
         :type from_table_name: str
         :param to_modelardb: :obj:`ModelarDB` to write data from `self` to.
         :type to_modelardb: ModelarDB
-        :param to_table_name: Name of the model table to write data to.
+        :param to_table_name: Name of the time series table to write data to.
         :type to_table_name: str
         :param start_time: A start time to filter by as a `datetime` or an ISO 8601 `str`.
         :type start_time: datetime | str, optional
@@ -847,7 +847,7 @@ class ModelarDB:
         )
         tags_ffi = FFIArray.from_array(tags_array)
 
-        return_code = self.__library.modelardb_embedded_copy_model_table(
+        return_code = self.__library.modelardb_embedded_copy_time_series_table(
             from_modelardb,
             self.__is_data_folder,
             from_table_name,

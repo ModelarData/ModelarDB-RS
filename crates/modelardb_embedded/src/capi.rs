@@ -268,7 +268,7 @@ pub unsafe extern "C" fn modelardb_embedded_create(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
-    is_model_table: bool,
+    is_time_series_table: bool,
     schema_ptr: *const FFI_ArrowSchema,
     error_bounds_array_ptr: *const FFI_ArrowArray,
     error_bounds_array_schema_ptr: *const FFI_ArrowSchema,
@@ -280,7 +280,7 @@ pub unsafe extern "C" fn modelardb_embedded_create(
             maybe_operations_ptr,
             is_data_folder,
             table_name_ptr,
-            is_model_table,
+            is_time_series_table,
             schema_ptr,
             error_bounds_array_ptr,
             error_bounds_array_schema_ptr,
@@ -298,7 +298,7 @@ unsafe fn create(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
-    is_model_table: bool,
+    is_time_series_table: bool,
     schema_ptr: *const FFI_ArrowSchema,
     error_bounds_array_ptr: *const FFI_ArrowArray,
     error_bounds_array_schema_ptr: *const FFI_ArrowSchema,
@@ -323,12 +323,12 @@ unsafe fn create(
         )?
     };
 
-    let table_type = if is_model_table {
+    let table_type = if is_time_series_table {
         let error_bounds_array: MapArray = error_bounds_array_data.into();
         let error_bounds = error_bounds_array_to_error_bounds(&error_bounds_array);
         let generated_columns_array: MapArray = generated_columns_array_data.into();
         let generated_columns = map_array_to_map_of_string_to_string(&generated_columns_array);
-        TableType::ModelTable(schema, error_bounds, generated_columns)
+        TableType::TimeSeriesTable(schema, error_bounds, generated_columns)
     } else {
         TableType::NormalTable(schema)
     };
@@ -599,7 +599,7 @@ unsafe fn copy(
     TOKIO_RUNTIME.block_on(from_modelardb.copy(sql, to_modelardb, to_table_name))
 }
 
-/// Reads data from the model table with the table name in `table_name_ptr` in the [`DataFolder`] or
+/// Reads data from the time series table with the table name in `table_name_ptr` in the [`DataFolder`] or
 /// [`Client`] in `maybe_operations_ptr` and writes it to `decompressed_struct_array_ptr` and
 /// `decompressed_struct_array_schema_ptr`. The remaining parameters optionally specify which subset
 /// of the data to read. Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`];
@@ -612,7 +612,7 @@ unsafe fn copy(
 /// `decompressed_struct_array_schema_ptr` is a valid pointer to enough memory for an Apache Arrow C
 /// Data Interface Schema.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn modelardb_embedded_read_model_table(
+pub unsafe extern "C" fn modelardb_embedded_read_time_series_table(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
@@ -628,7 +628,7 @@ pub unsafe extern "C" fn modelardb_embedded_read_model_table(
     decompressed_struct_array_schema_ptr: *mut FFI_ArrowSchema,
 ) -> c_int {
     let maybe_unit = unsafe {
-        read_model_table(
+        read_time_series_table(
             maybe_operations_ptr,
             is_data_folder,
             table_name_ptr,
@@ -648,9 +648,9 @@ pub unsafe extern "C" fn modelardb_embedded_read_model_table(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_read_model_table`].
+/// See documentation for [`modelardb_embedded_read_time_series_table`].
 #[allow(clippy::too_many_arguments)]
-unsafe fn read_model_table(
+unsafe fn read_time_series_table(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
@@ -685,7 +685,7 @@ unsafe fn read_model_table(
     let tags_array: MapArray = tags_array_data.into();
     let tags = map_array_to_map_of_string_to_string(&tags_array);
 
-    let decompressed_data_stream = TOKIO_RUNTIME.block_on(modelardb.read_model_table(
+    let decompressed_data_stream = TOKIO_RUNTIME.block_on(modelardb.read_time_series_table(
         table_name,
         &columns,
         &group_by,
@@ -735,8 +735,8 @@ fn columns_array_to_columns(columns_array: &StructArray) -> Result<Vec<(String, 
     Ok(columns)
 }
 
-/// Copies data from the model table with the name in `from_table_name_ptr` in the [`DataFolder`] or
-/// [`Client`] in `maybe_from_operations_ptr` to the model table with the name in
+/// Copies data from the time series table with the name in `from_table_name_ptr` in the [`DataFolder`] or
+/// [`Client`] in `maybe_from_operations_ptr` to the time series table with the name in
 /// `to_table_name_ptr` in the [`DataFolder`] or [`Client`] in
 /// `maybe_to_operations_ptr`. `maybe_from_operations_ptr` and `maybe_to_operations_ptr` cannot be
 /// different types. The remaining parameters optionally specify which subset of the data to
@@ -747,7 +747,7 @@ fn columns_array_to_columns(columns_array: &StructArray) -> Result<Vec<(String, 
 /// timestamp; `end_time_ptr` points to a valid C string with an ISO 8601 timestamp; and
 /// `tags_array_ptr` and `tags_array_schema_ptr` points to a [`MapArray`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn modelardb_embedded_copy_model_table(
+pub unsafe extern "C" fn modelardb_embedded_copy_time_series_table(
     maybe_from_operations_ptr: *mut c_void,
     is_data_folder: bool,
     from_table_name_ptr: *const c_char,
@@ -759,7 +759,7 @@ pub unsafe extern "C" fn modelardb_embedded_copy_model_table(
     tags_array_schema_ptr: *const FFI_ArrowSchema,
 ) -> c_int {
     let maybe_unit = unsafe {
-        copy_model_table(
+        copy_time_series_table(
             maybe_from_operations_ptr,
             is_data_folder,
             from_table_name_ptr,
@@ -775,9 +775,9 @@ pub unsafe extern "C" fn modelardb_embedded_copy_model_table(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_copy_model_table`].
+/// See documentation for [`modelardb_embedded_copy_time_series_table`].
 #[allow(clippy::too_many_arguments)]
-unsafe fn copy_model_table(
+unsafe fn copy_time_series_table(
     maybe_from_operations_ptr: *mut c_void,
     is_data_folder: bool,
     from_table_name_ptr: *const c_char,
@@ -802,7 +802,7 @@ unsafe fn copy_model_table(
     let tags_array: MapArray = tags_array_data.into();
     let tags = map_array_to_map_of_string_to_string(&tags_array);
 
-    TOKIO_RUNTIME.block_on(from_modelardb.copy_model_table(
+    TOKIO_RUNTIME.block_on(from_modelardb.copy_time_series_table(
         from_table_name,
         to_modelardb,
         to_table_name,

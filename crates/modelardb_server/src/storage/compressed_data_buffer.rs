@@ -13,48 +13,48 @@
  * limitations under the License.
  */
 
-//! Buffer for compressed segments from the same model table.
+//! Buffer for compressed segments from the same time series table.
 
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 
 use crate::error::{ModelarDbServerError, Result};
 
 /// Batch of compressed segments that were compressed together and are ready to be inserted into a
-/// [`CompressedDataBuffer`] for a model table.
+/// [`CompressedDataBuffer`] for a time series table.
 #[derive(Clone, Debug)]
 pub(super) struct CompressedSegmentBatch {
-    /// Metadata of the model table to insert the data points into.
-    pub(super) model_table_metadata: Arc<ModelTableMetadata>,
+    /// Metadata of the time series table to insert the data points into.
+    pub(super) time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Compressed segments representing the data points to insert.
     pub(super) compressed_segments: Vec<RecordBatch>,
 }
 
 impl CompressedSegmentBatch {
     pub(super) fn new(
-        model_table_metadata: Arc<ModelTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         compressed_segments: Vec<RecordBatch>,
     ) -> Self {
         Self {
-            model_table_metadata,
+            time_series_table_metadata,
             compressed_segments,
         }
     }
 
-    /// Return the name of the model table the batch stores data for.
-    pub(super) fn model_table_name(&self) -> &str {
-        &self.model_table_metadata.name
+    /// Return the name of the time series table the batch stores data for.
+    pub(super) fn time_series_table_name(&self) -> &str {
+        &self.time_series_table_metadata.name
     }
 }
 
 /// A single compressed buffer, containing one or more compressed segments for a time series in a
-/// model table as one or more [RecordBatches](RecordBatch) per column and providing functionality
-/// for appending segments and saving all segments to a single Apache Parquet file.
+/// time series table as one or more [RecordBatches](RecordBatch) per column and providing
+/// functionality for appending segments and saving all segments to a single Apache Parquet file.
 pub(super) struct CompressedDataBuffer {
-    /// Metadata of the model table the buffer stores compressed segments for.
-    model_table_metadata: Arc<ModelTableMetadata>,
+    /// Metadata of the time series table the buffer stores compressed segments for.
+    time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Compressed segments that make up the compressed data in the [`CompressedDataBuffer`].
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
@@ -62,27 +62,27 @@ pub(super) struct CompressedDataBuffer {
 }
 
 impl CompressedDataBuffer {
-    pub(super) fn new(model_table_metadata: Arc<ModelTableMetadata>) -> Self {
+    pub(super) fn new(time_series_table_metadata: Arc<TimeSeriesTableMetadata>) -> Self {
         Self {
-            model_table_metadata,
+            time_series_table_metadata,
             compressed_segments: vec![],
             size_in_bytes: 0,
         }
     }
 
     /// Append `compressed_segments` to the [`CompressedDataBuffer`] and return the size of
-    /// `compressed_segments` in bytes if their schema matches the model table, otherwise
+    /// `compressed_segments` in bytes if their schema matches the time series table, otherwise
     /// [`ModelarDbServerError`] is returned.
     pub(super) fn append_compressed_segments(
         &mut self,
         mut compressed_segments: Vec<RecordBatch>,
     ) -> Result<usize> {
         if compressed_segments.iter().any(|compressed_segments| {
-            compressed_segments.schema() != self.model_table_metadata.compressed_schema
+            compressed_segments.schema() != self.time_series_table_metadata.compressed_schema
         }) {
             return Err(ModelarDbServerError::InvalidArgument(format!(
                 "Compressed segments must all match {}.",
-                self.model_table_metadata.name
+                self.time_series_table_metadata.name
             )));
         }
 
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn test_can_append_valid_compressed_segments() {
         let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
+            CompressedDataBuffer::new(test::time_series_table_metadata_arc());
 
         compressed_data_buffer
             .append_compressed_segments(vec![
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn test_compressed_data_buffer_size_updated_when_appending() {
         let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
+            CompressedDataBuffer::new(test::time_series_table_metadata_arc());
 
         compressed_data_buffer
             .append_compressed_segments(vec![
@@ -162,7 +162,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_record_batches_from_compressed_data_buffer() {
         let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
+            CompressedDataBuffer::new(test::time_series_table_metadata_arc());
 
         let compressed_segments = vec![
             test::compressed_segments_record_batch(),

@@ -37,7 +37,9 @@ use tonic::transport::Channel;
 use tonic::{Request, Status};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::operations::{Operations, generate_read_model_table_sql, try_new_model_table_metadata};
+use crate::operations::{
+    Operations, generate_read_time_series_table_sql, try_new_time_series_table_metadata,
+};
 use crate::{Aggregate, TableType};
 
 /// Types of nodes that can be connected to by [`Client`].
@@ -159,15 +161,17 @@ impl Operations for Client {
             TableType::NormalTable(schema) => {
                 modelardb_storage::normal_table_metadata_to_record_batch(table_name, &schema)?
             }
-            TableType::ModelTable(schema, error_bounds, generated_columns) => {
-                let model_table_metadata = try_new_model_table_metadata(
+            TableType::TimeSeriesTable(schema, error_bounds, generated_columns) => {
+                let time_series_table_metadata = try_new_time_series_table_metadata(
                     table_name,
                     schema.clone(),
                     error_bounds,
                     generated_columns,
                 )?;
 
-                modelardb_storage::model_table_metadata_to_record_batch(&model_table_metadata)?
+                modelardb_storage::time_series_table_metadata_to_record_batch(
+                    &time_series_table_metadata,
+                )?
             }
         };
 
@@ -266,9 +270,9 @@ impl Operations for Client {
     }
 
     /// Executes the SQL in `sql` and writes the result to the normal table with the name in
-    /// `to_table_name` in `to_modelardb`. Note that if copying data to a model table, the data is
-    /// compressed again. If the SQL could not be executed or the data could not be written to the
-    /// table, [`ModelarDbEmbeddedError`] is returned.
+    /// `to_table_name` in `to_modelardb`. Note that if copying data to a time series table, the
+    /// data is compressed again. If the SQL could not be executed or the data could not be written
+    /// to the table, [`ModelarDbEmbeddedError`] is returned.
     async fn copy(
         &mut self,
         sql: &str,
@@ -284,11 +288,11 @@ impl Operations for Client {
         Ok(())
     }
 
-    /// Reads data from the model table with the table name in `table_name` and returns it as a
+    /// Reads data from the time series table with the table name in `table_name` and returns it as a
     /// [`RecordBatchStream`]. The remaining parameters optionally specify which subset of the data
     /// to read. If the data could not be read from the table, [`ModelarDbEmbeddedError`] is
     /// returned.
-    async fn read_model_table(
+    async fn read_time_series_table(
         &mut self,
         table_name: &str,
         columns: &[(String, Aggregate)],
@@ -299,7 +303,7 @@ impl Operations for Client {
     ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
         let schema = self.schema(table_name).await?;
 
-        let sql = generate_read_model_table_sql(
+        let sql = generate_read_time_series_table_sql(
             table_name,
             &schema,
             columns,
@@ -313,7 +317,7 @@ impl Operations for Client {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn copy_model_table(
+    async fn copy_time_series_table(
         &self,
         _from_table_name: &str,
         _to_modelardb: &dyn Operations,
@@ -323,7 +327,7 @@ impl Operations for Client {
         _tags: HashMap<String, String>,
     ) -> Result<()> {
         Err(ModelarDbEmbeddedError::Unimplemented(
-            "The ModelarDB client does not support copying model tables.".to_owned(),
+            "The ModelarDB client does not support copying time series tables.".to_owned(),
         ))
     }
 

@@ -47,7 +47,7 @@ use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::{Span, Token};
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 
 /// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, etc.) that have been tokenized,
 /// parsed, and for which semantic checks have verified that it is compatible with ModelarDB.
@@ -55,8 +55,8 @@ use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata}
 pub enum ModelarDbStatement {
     /// CREATE TABLE.
     CreateNormalTable { name: String, schema: Schema },
-    /// CREATE MODEL TABLE.
-    CreateModelTable(Arc<ModelTableMetadata>),
+    /// CREATE TIME SERIES TABLE.
+    CreateTimeSeriesTable(Arc<TimeSeriesTableMetadata>),
     /// INSERT, EXPLAIN, SELECT.
     Statement(Statement),
     /// INCLUDE addresses SELECT.
@@ -69,7 +69,7 @@ pub enum ModelarDbStatement {
 
 /// Tokenizes and parses the SQL statement in `sql` and return its parsed representation in the form
 /// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contain
-/// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE MODEL
+/// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE TIME SERIES
 /// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, and DROP TABLE are supported.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
@@ -162,8 +162,8 @@ pub fn tokenize_and_parse_sql_expression(
         .map_err(|error| error.into())
 }
 
-/// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE MODEL
-/// TABLE table_name DDL statements and INCLUDE 'address'[, 'address']+ DQL statements.
+/// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
+/// SERIES TABLE table_name DDL statements and INCLUDE 'address'[, 'address']+ DQL statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -177,19 +177,24 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Return [`true`] if the token stream starts with CREATE MODEL TABLE, otherwise [`false`] is
-    /// returned. The method does not consume tokens.
-    fn next_tokens_are_create_model_table(&self, parser: &Parser) -> bool {
+    /// Return [`true`] if the token stream starts with CREATE TIME SERIES TABLE, otherwise
+    /// [`false`] is returned. The method does not consume tokens.
+    fn next_tokens_are_create_time_series_table(&self, parser: &Parser) -> bool {
         // CREATE.
         if let Token::Word(word) = parser.peek_nth_token(0).token {
             if word.keyword == Keyword::CREATE {
-                // MODEL.
+                // TIME.
                 if let Token::Word(word) = parser.peek_nth_token(1).token {
-                    if word.value.to_uppercase() == "MODEL" {
-                        // TABLE.
+                    if word.value.to_uppercase() == "TIME" {
+                        // SERIES.
                         if let Token::Word(word) = parser.peek_nth_token(2).token {
-                            if word.keyword == Keyword::TABLE {
-                                return true;
+                            if word.value.to_uppercase() == "SERIES" {
+                                // TABLE.
+                                if let Token::Word(word) = parser.peek_nth_token(3).token {
+                                    if word.keyword == Keyword::TABLE {
+                                        return true;
+                                    }
+                                }
                             }
                         }
                     }
@@ -199,12 +204,16 @@ impl ModelarDbDialect {
         false
     }
 
-    /// Parse CREATE MODEL TABLE table_name DDL statements to a [`Statement::CreateTable`]. A
+    /// Parse CREATE TIME SERIES TABLE table_name DDL statements to a [`Statement::CreateTable`]. A
     /// [`ParserError`] is returned if the column names and the column types cannot be parsed.
-    fn parse_create_model_table(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
-        // CREATE MODEL TABLE.
+    fn parse_create_time_series_table(
+        &self,
+        parser: &mut Parser,
+    ) -> StdResult<Statement, ParserError> {
+        // CREATE TIME SERIES TABLE.
         parser.expect_keyword(Keyword::CREATE)?;
-        self.expect_word_value(parser, "MODEL")?;
+        self.expect_word_value(parser, "TIME")?;
+        self.expect_word_value(parser, "SERIES")?;
         parser.expect_keyword(Keyword::TABLE)?;
         let table_name = self.parse_word_value(parser)?;
 
@@ -213,7 +222,7 @@ impl ModelarDbDialect {
 
         // Return Statement::CreateTable with the extracted information.
         let name = ObjectName(vec![Ident::new(table_name)]);
-        Ok(Self::new_create_model_table_statement(name, columns))
+        Ok(Self::new_create_time_series_table_statement(name, columns))
     }
 
     /// Parse (column name and type*) to a [`Vec<ColumnDef>`]. A [`ParserError`] is returned if the
@@ -358,8 +367,8 @@ impl ModelarDbDialect {
     }
 
     /// Create a new [`Statement::CreateTable`] with the provided `table_name` and `columns`, and
-    /// with `engine` set to "ModelTable".
-    fn new_create_model_table_statement(
+    /// with `engine` set to "TimeSeriesTable".
+    fn new_create_time_series_table_statement(
         table_name: ObjectName,
         columns: Vec<ColumnDef>,
     ) -> Statement {
@@ -392,7 +401,7 @@ impl ModelarDbDialect {
             like: None,
             clone: None,
             engine: Some(TableEngine {
-                name: "ModelTable".to_owned(),
+                name: "TimeSeriesTable".to_owned(),
                 parameters: None,
             }),
             comment: None,
@@ -487,15 +496,15 @@ impl Dialect for ModelarDbDialect {
         self.dialect.is_identifier_part(c)
     }
 
-    /// Check if the next tokens are CREATE MODEL TABLE, if so, attempt to parse the token stream as
-    /// a CREATE MODEL TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
+    /// Check if the next tokens are CREATE TIME SERIES TABLE, if so, attempt to parse the token stream
+    /// as a CREATE TIME SERIES TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
     /// attempt to parse the token stream as an INCLUDE 'address'[, 'address']+ DQL statement. If
     /// both checks fail, [`None`] is returned so sqlparser uses its parsing methods for all other
     /// statements. If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`]
     /// is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
-        if self.next_tokens_are_create_model_table(parser) {
-            Some(self.parse_create_model_table(parser))
+        if self.next_tokens_are_create_time_series_table(parser) {
+            Some(self.parse_create_time_series_table(parser))
         } else if self.next_token_is_include(parser) {
             Some(self.parse_include_query(parser))
         } else {
@@ -576,7 +585,7 @@ impl ContextProvider for ParserContextProvider {
     }
 }
 
-/// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL TABLE statement in
+/// Perform semantic checks to ensure that the CREATE TABLE and CREATE TIME SERIES TABLE statement in
 /// `create_table` was correct. A [`ModelarDbStorageError`] is returned if a semantic check fails.
 /// If all semantic checks are successful a [`ModelarDbStatement`] is returned.
 fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<ModelarDbStatement> {
@@ -621,12 +630,12 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     // Create a ModelarDbStatement with the information for creating the table of the specified
     // type.
     if let Some(_expected_engine) = engine {
-        // Create a model table for time series that only supports TIMESTAMP, FIELD, and TAG.
-        let model_table_metadata =
-            semantic_checks_for_create_model_table(normalized_name, columns)?;
+        // Create a time series table for time series that only supports TIMESTAMP, FIELD, and TAG.
+        let time_series_table_metadata =
+            semantic_checks_for_create_time_series_table(normalized_name, columns)?;
 
-        Ok(ModelarDbStatement::CreateModelTable(Arc::new(
-            model_table_metadata,
+        Ok(ModelarDbStatement::CreateTimeSeriesTable(Arc::new(
+            time_series_table_metadata,
         )))
     } else {
         // Create a table that supports all columns types supported by Apache DataFusion.
@@ -657,13 +666,13 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     }
 }
 
-/// Perform additional semantic checks to ensure that the CREATE MODEL TABLE statement from which
+/// Perform additional semantic checks to ensure that the CREATE TIME SERIES TABLE statement from which
 /// `name` and `column_defs` was extracted was correct. A [`ParserError`] is returned if any of the
 /// additional semantic checks fails.
-fn semantic_checks_for_create_model_table(
+fn semantic_checks_for_create_time_series_table(
     name: String,
     column_defs: Vec<ColumnDef>,
-) -> StdResult<ModelTableMetadata, ParserError> {
+) -> StdResult<TimeSeriesTableMetadata, ParserError> {
     // Extract the error bounds for all columns. It is here to keep the parser types in the parser.
     let error_bounds = extract_error_bounds_for_all_columns(&column_defs)?;
 
@@ -672,11 +681,11 @@ fn semantic_checks_for_create_model_table(
         .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
     // Convert column definitions to a schema.
-    let query_schema = column_defs_to_model_table_query_schema(column_defs)
+    let query_schema = column_defs_to_time_series_table_query_schema(column_defs)
         .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
-    // Return the metadata required to create a model table.
-    let model_table_metadata = ModelTableMetadata::try_new(
+    // Return the metadata required to create a time series table.
+    let time_series_table_metadata = TimeSeriesTableMetadata::try_new(
         name,
         Arc::new(query_schema),
         error_bounds,
@@ -684,7 +693,7 @@ fn semantic_checks_for_create_model_table(
     )
     .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
-    Ok(model_table_metadata)
+    Ok(time_series_table_metadata)
 }
 
 /// Return [`ParserError`] if [`Statement`] is not a [`CreateTable`] or if an unsupported
@@ -826,9 +835,9 @@ fn check_unsupported_feature_is_disabled(
     }
 }
 
-/// Return [`Schema`] if the types of the `column_defs` are supported by model tables, otherwise a
-/// [`DataFusionError`] is returned.
-fn column_defs_to_model_table_query_schema(
+/// Return [`Schema`] if the types of the `column_defs` are supported by time series tables,
+/// otherwise a [`DataFusionError`] is returned.
+fn column_defs_to_time_series_table_query_schema(
     column_defs: Vec<ColumnDef>,
 ) -> StdResult<Schema, DataFusionError> {
     let mut fields = Vec::with_capacity(column_defs.len());
@@ -867,7 +876,7 @@ fn column_defs_to_model_table_query_schema(
                         option => {
                             return Err(DataFusionError::SQL(
                                 ParserError::ParserError(format!(
-                                    "{option} is not supported in model tables."
+                                    "{option} is not supported in time series tables."
                                 )),
                                 None,
                             ));
@@ -881,7 +890,7 @@ fn column_defs_to_model_table_query_schema(
             data_type => {
                 return Err(DataFusionError::SQL(
                     ParserError::ParserError(format!(
-                        "{data_type} is not supported in model tables."
+                        "{data_type} is not supported in time series tables."
                     )),
                     None,
                 ));
@@ -976,7 +985,7 @@ fn extract_generation_exprs_for_all_columns(
             } = &column_def_option.option
             {
                 // The expression is saved as a string, so it can be stored in the metadata Delta
-                // Lake, it is not stored in ModelTableMetadata as it not used for during query
+                // Lake, it is not stored in TimeSeriesTableMetadata as it not used for during query
                 // execution.
                 let sql_expr = generation_expr.as_ref().unwrap();
                 let original_expr = sql_expr.to_string();
@@ -1107,15 +1116,17 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_parse_semantic_check_create_model_table() {
-        let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP,
-                         field_one FIELD, field_two FIELD(10.5), field_three FIELD(1%),
-                         field_four FIELD AS (CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)),
-                         tag TAG)";
+    fn test_tokenize_parse_semantic_check_create_time_series_table() {
+        let sql = "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP,
+                   field_one FIELD, field_two FIELD(10.5), field_three FIELD(1%),
+                   field_four FIELD AS (CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)),
+                   tag TAG)";
 
         let modelardb_statement = tokenize_and_parse_sql_statement(sql).unwrap();
-        if let ModelarDbStatement::CreateModelTable(model_table_metadata) = &modelardb_statement {
-            assert_eq!(model_table_metadata.name, "table_name");
+        if let ModelarDbStatement::CreateTimeSeriesTable(time_series_table_metadata) =
+            &modelardb_statement
+        {
+            assert_eq!(time_series_table_metadata.name, "table_name");
             let expected_schema = Arc::new(Schema::new(vec![
                 Field::new(
                     "timestamp",
@@ -1143,44 +1154,86 @@ mod tests {
                 }),
                 Field::new("tag", DataType::Utf8, false),
             ]));
-            assert_eq!(model_table_metadata.query_schema, expected_schema);
+            assert_eq!(time_series_table_metadata.query_schema, expected_schema);
 
             assert_eq!(
-                model_table_metadata.error_bounds[2],
+                time_series_table_metadata.error_bounds[2],
                 ErrorBound::try_new_absolute(10.5).unwrap()
             );
             assert_eq!(
-                model_table_metadata.error_bounds[3],
+                time_series_table_metadata.error_bounds[3],
                 ErrorBound::try_new_relative(1.0).unwrap()
             );
-            assert!(model_table_metadata.generated_columns[4].is_some())
+            assert!(time_series_table_metadata.generated_columns[4].is_some())
         } else {
-            panic!("CREATE TABLE DDL did not parse to a ModelarDbStatement::CreateModelTable.");
+            panic!(
+                "CREATE TABLE DDL did not parse to a ModelarDbStatement::CreateTimeSeriesTable."
+            );
         }
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_create() {
+    fn test_tokenize_and_parse_create_time_series_table_without_create() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+                "TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_create_model_space() {
+    fn test_tokenize_and_parse_create_time_series_table_without_create_time_space() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATEMODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+                "CREATETIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_model() {
+    fn test_tokenize_and_parse_create_time_series_table_without_time() {
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_time_series_table_without_time_series_space() {
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE TIMESERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_time_series_table_without_series() {
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE TIME TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_time_series_table_without_series_table_space() {
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE TIME SERIESTABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_time_series_table_without_time_and_series() {
         // Tracks if sqlparser at some point can parse fields/tags in a TABLE.
         assert!(
             tokenize_and_parse_sql_statement(
@@ -1192,177 +1245,169 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_model_table_space() {
+    fn test_tokenize_and_parse_create_time_series_table_without_table_name() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODELTABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+                "CREATE TIME SERIES TABLE(timestamp TIMESTAMP, field FIELD, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_table_name() {
+    fn test_tokenize_and_parse_create_time_series_table_without_table_table_name_space() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE(timestamp TIMESTAMP, field FIELD, tag TAG)",
+                "CREATE TIME SERIES TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_table_table_name_space() {
+    fn test_tokenize_and_parse_create_time_series_table_without_start_parentheses() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+                "CREATE TIME SERIES TABLE table_name timestamp TIMESTAMP, field FIELD, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_start_parentheses() {
-        assert!(
-            tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name timestamp TIMESTAMP, field FIELD, tag TAG)",
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn test_tokenize_and_parse_create_model_table_with_option() {
+    fn test_tokenize_and_parse_create_time_series_table_with_option() {
         assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP PRIMARY KEY, field FIELD, tag TAG)",
+            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP PRIMARY KEY, field FIELD, tag TAG)",
         )
         .is_err());
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_sql_types() {
+    fn test_tokenize_and_parse_create_time_series_table_with_sql_types() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field REAL, tag VARCHAR)",
+                "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field REAL, tag VARCHAR)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_column_name() {
+    fn test_tokenize_and_parse_create_time_series_table_without_column_name() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(TIMESTAMP, field FIELD, tag TAG)",
+                "CREATE TIME SERIES TABLE table_name(TIMESTAMP, field FIELD, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_generated_timestamps() {
+    fn test_tokenize_and_parse_create_time_series_table_with_generated_timestamps() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP AS (37), field FIELD, tag TAG)",
+                "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP AS (37), field FIELD, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_generated_tags() {
+    fn test_tokenize_and_parse_create_time_series_table_with_generated_tags() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG AS (37))",
+                "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG AS (37))",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_parentheses() {
-        assert!(
-            tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37, tag TAG)",
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_start_parentheses()
+    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_without_parentheses()
     {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37), tag TAG)",
+                "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_end_parentheses() {
+    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_without_start_parentheses()
+     {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS (37, tag TAG)",
+                "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37), tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_absolute_error_bound()
-    {
+    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_without_end_parentheses()
+     {
+        assert!(
+            tokenize_and_parse_sql_statement(
+                "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD AS (37, tag TAG)",
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_with_absolute_error_bound()
+     {
         assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0) AS (37), tag TAG)",
+            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0) AS (37), tag TAG)",
         )
         .is_err());
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_relative_error_bound()
-    {
+    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_with_relative_error_bound()
+     {
         assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0%) AS (37), tag TAG)",
+            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0%) AS (37), tag TAG)",
         )
         .is_err());
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_column_type() {
+    fn test_tokenize_and_parse_create_time_series_table_without_column_type() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(timestamp, field FIELD, tag TAG)",
+                "CREATE TIME SERIES TABLE table_name(timestamp, field FIELD, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_comma() {
+    fn test_tokenize_and_parse_create_time_series_table_without_comma() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP field FIELD, tag TAG)",
+                "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP field FIELD, tag TAG)",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_end_parentheses() {
+    fn test_tokenize_and_parse_create_time_series_table_without_end_parentheses() {
         assert!(
             tokenize_and_parse_sql_statement(
-                "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG",
+                "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG",
             )
             .is_err()
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_two_create_model_table_statements() {
+    fn test_tokenize_and_parse_two_create_time_series_table_statements() {
         let error = tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG);
-             CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG);
+             CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         );
 
         assert!(error.is_err());
@@ -1390,18 +1435,18 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_lowercase_keyword_as_table_name() {
+    fn test_tokenize_and_parse_create_time_series_table_with_lowercase_keyword_as_table_name() {
         parse_and_assert_that_keywords_are_restricted_in_table_name(
             str::to_lowercase,
-            "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TIME SERIES TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_uppercase_keyword_as_table_name() {
+    fn test_tokenize_and_parse_create_time_series_table_with_uppercase_keyword_as_table_name() {
         parse_and_assert_that_keywords_are_restricted_in_table_name(
             str::to_uppercase,
-            "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TIME SERIES TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
     }
 
@@ -1464,27 +1509,28 @@ mod tests {
     }
 
     #[test]
-    fn test_semantic_checks_for_create_model_table_check_correct_generated_expression() {
+    fn test_semantic_checks_for_create_time_series_table_check_correct_generated_expression() {
         let modelardb_statement = tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_1 * PI() / 180)), tag TAG)",
+            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_1 * PI() / 180)), tag TAG)",
         ).unwrap();
 
         assert!(is_statement_create_table(modelardb_statement));
     }
 
     #[test]
-    fn test_semantic_checks_for_create_model_table_check_wrong_generated_expression() {
+    fn test_semantic_checks_for_create_time_series_table_check_wrong_generated_expression() {
         assert!(tokenize_and_parse_sql_statement(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_3 * PI() / 180)), tag TAG)",
+            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_3 * PI() / 180)), tag TAG)",
         ).is_err());
     }
 
     /// Return [`true`] if `modelardb_statement` is [`ModelarDbStatement::CreateNormalTable`] or
-    /// [`ModelarDbStatement::CreateModelTable`] and [`false`] otherwise.
+    /// [`ModelarDbStatement::CreateTimeSeriesTable`] and [`false`] otherwise.
     fn is_statement_create_table(modelardb_statement: ModelarDbStatement) -> bool {
         matches!(
             modelardb_statement,
-            ModelarDbStatement::CreateNormalTable { .. } | ModelarDbStatement::CreateModelTable(..)
+            ModelarDbStatement::CreateNormalTable { .. }
+                | ModelarDbStatement::CreateTimeSeriesTable(..)
         )
     }
 

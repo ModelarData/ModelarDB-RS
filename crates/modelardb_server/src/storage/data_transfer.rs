@@ -248,12 +248,12 @@ impl DataTransfer {
         if self
             .local_data_folder
             .table_metadata_manager
-            .is_model_table(table_name)
+            .is_time_series_table(table_name)
             .await?
         {
             self.remote_data_folder
                 .delta_lake
-                .write_compressed_segments_to_model_table(table_name, record_batches)
+                .write_compressed_segments_to_time_series_table(table_name, record_batches)
                 .await?;
         } else {
             self.remote_data_folder
@@ -284,14 +284,14 @@ mod tests {
     use modelardb_storage::test;
     use tempfile::{self, TempDir};
 
-    const EXPECTED_MODEL_TABLE_FILE_SIZE: usize = 2038;
+    const EXPECTED_TIME_SERIES_TABLE_FILE_SIZE: usize = 2038;
 
     // Tests for data transfer component.
     #[tokio::test]
     async fn test_include_existing_files_on_start_up() {
         let (_temp_dir, local_data_folder) = create_local_data_folder_with_tables().await;
 
-        let (normal_table_files_size, model_table_files_size) =
+        let (normal_table_files_size, time_series_table_files_size) =
             write_batches_to_tables(&local_data_folder, 1).await;
         let (_target_dir, data_transfer) = create_data_transfer_component(local_data_folder).await;
 
@@ -306,9 +306,9 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
-            model_table_files_size
+            time_series_table_files_size
         );
     }
 
@@ -318,12 +318,12 @@ mod tests {
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
-        let (_normal_table_files_size, model_table_files_size) =
+        let (_normal_table_files_size, time_series_table_files_size) =
             write_batches_to_tables(&local_data_folder, 1).await;
 
         assert!(
             data_transfer
-                .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
+                .increase_table_size(test::TIME_SERIES_TABLE_NAME, time_series_table_files_size)
                 .await
                 .is_ok()
         );
@@ -331,9 +331,9 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
-            EXPECTED_MODEL_TABLE_FILE_SIZE
+            EXPECTED_TIME_SERIES_TABLE_FILE_SIZE
         );
     }
 
@@ -343,24 +343,24 @@ mod tests {
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
-        let (_normal_table_files_size, model_table_files_size) =
+        let (_normal_table_files_size, time_series_table_files_size) =
             write_batches_to_tables(&local_data_folder, 1).await;
 
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
+            .increase_table_size(test::TIME_SERIES_TABLE_NAME, time_series_table_files_size)
             .await
             .unwrap();
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
+            .increase_table_size(test::TIME_SERIES_TABLE_NAME, time_series_table_files_size)
             .await
             .unwrap();
 
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
-            EXPECTED_MODEL_TABLE_FILE_SIZE * 2
+            EXPECTED_TIME_SERIES_TABLE_FILE_SIZE * 2
         );
     }
 
@@ -371,11 +371,11 @@ mod tests {
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
 
-        data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
+        data_transfer.mark_table_as_dropped(test::TIME_SERIES_TABLE_NAME);
         assert!(
             data_transfer
                 .dropped_tables
-                .contains(test::MODEL_TABLE_NAME)
+                .contains(test::TIME_SERIES_TABLE_NAME)
         );
     }
 
@@ -385,19 +385,19 @@ mod tests {
 
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(local_data_folder.clone()).await;
-        let (_normal_table_files_size, model_table_files_size) =
+        let (_normal_table_files_size, time_series_table_files_size) =
             write_batches_to_tables(&local_data_folder, 1).await;
 
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, model_table_files_size)
+            .increase_table_size(test::TIME_SERIES_TABLE_NAME, time_series_table_files_size)
             .await
             .unwrap();
 
-        data_transfer.mark_table_as_dropped(test::MODEL_TABLE_NAME);
+        data_transfer.mark_table_as_dropped(test::TIME_SERIES_TABLE_NAME);
 
         assert_eq!(
-            data_transfer.clear_table(test::MODEL_TABLE_NAME),
-            EXPECTED_MODEL_TABLE_FILE_SIZE
+            data_transfer.clear_table(test::TIME_SERIES_TABLE_NAME),
+            EXPECTED_TIME_SERIES_TABLE_FILE_SIZE
         );
 
         // The table should be removed from the in-memory tracking of compressed files and removed
@@ -405,7 +405,7 @@ mod tests {
         assert!(
             !data_transfer
                 .table_size_in_bytes
-                .contains_key(test::MODEL_TABLE_NAME)
+                .contains_key(test::TIME_SERIES_TABLE_NAME)
         );
 
         assert!(data_transfer.dropped_tables.is_empty());
@@ -419,22 +419,22 @@ mod tests {
         let (_, mut data_transfer) = create_data_transfer_component(local_data_folder).await;
 
         data_transfer
-            .set_transfer_batch_size_in_bytes(Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 10))
+            .set_transfer_batch_size_in_bytes(Some(EXPECTED_TIME_SERIES_TABLE_FILE_SIZE * 10))
             .await
             .unwrap();
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 10)
+            Some(EXPECTED_TIME_SERIES_TABLE_FILE_SIZE * 10)
         );
 
         // Data should not have been transferred.
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
-            EXPECTED_MODEL_TABLE_FILE_SIZE * 2
+            EXPECTED_TIME_SERIES_TABLE_FILE_SIZE * 2
         );
     }
 
@@ -447,7 +447,7 @@ mod tests {
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 3 - 1)
+            Some(EXPECTED_TIME_SERIES_TABLE_FILE_SIZE * 3 - 1)
         );
 
         data_transfer
@@ -461,14 +461,14 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap(),
-            EXPECTED_MODEL_TABLE_FILE_SIZE * 2
+            EXPECTED_TIME_SERIES_TABLE_FILE_SIZE * 2
         );
     }
 
     /// Create a [`DataFolder`] in a local [`TempDir`] and create a single normal table and a
-    /// single model table in it.
+    /// single time series table in it.
     async fn create_local_data_folder_with_tables() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_url = temp_dir.path().to_str().unwrap();
@@ -487,25 +487,25 @@ mod tests {
             .await
             .unwrap();
 
-        // Create a model table.
-        let model_table_metadata = test::model_table_metadata();
+        // Create a time series table.
+        let time_series_table_metadata = test::time_series_table_metadata();
         local_data_folder
             .delta_lake
-            .create_model_table(&model_table_metadata)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 
         local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
 
         (temp_dir, local_data_folder)
     }
 
-    /// Write `batch_write_count` batches to the normal table and the model table in the local data
-    /// folder and return the total size of the files in each table.
+    /// Write `batch_write_count` batches to the normal table and the time series table in the local
+    /// data folder and return the total size of the files in each table.
     async fn write_batches_to_tables(
         local_data_folder: &DataFolder,
         batch_write_count: usize,
@@ -521,11 +521,11 @@ mod tests {
                 .await
                 .unwrap();
 
-            // Write to the model table.
+            // Write to the time series table.
             local_data_folder
                 .delta_lake
-                .write_compressed_segments_to_model_table(
-                    test::MODEL_TABLE_NAME,
+                .write_compressed_segments_to_time_series_table(
+                    test::TIME_SERIES_TABLE_NAME,
                     vec![test::compressed_segments_record_batch()],
                 )
                 .await
@@ -534,7 +534,7 @@ mod tests {
 
         (
             table_files_size(local_data_folder, test::NORMAL_TABLE_NAME).await,
-            table_files_size(local_data_folder, test::MODEL_TABLE_NAME).await,
+            table_files_size(local_data_folder, test::TIME_SERIES_TABLE_NAME).await,
         )
     }
 
@@ -569,7 +569,7 @@ mod tests {
         let data_transfer = DataTransfer::try_new(
             local_data_folder,
             remote_data_folder,
-            Some(EXPECTED_MODEL_TABLE_FILE_SIZE * 3 - 1),
+            Some(EXPECTED_TIME_SERIES_TABLE_FILE_SIZE * 3 - 1),
         )
         .await
         .unwrap();

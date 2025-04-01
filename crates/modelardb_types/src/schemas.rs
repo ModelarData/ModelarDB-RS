@@ -84,7 +84,7 @@ pub static CONFIGURATION_SCHEMA: LazyLock<ConfigurationSchema> = LazyLock::new(|
 /// table metadata.
 pub static TABLE_METADATA_SCHEMA: LazyLock<TableMetadataSchema> = LazyLock::new(|| {
     TableMetadataSchema(Arc::new(Schema::new(vec![
-        Field::new("is_model_table", DataType::Boolean, false),
+        Field::new("is_time_series_table", DataType::Boolean, false),
         Field::new("name", DataType::Utf8, false),
         Field::new("schema", DataType::Binary, false),
         Field::new(

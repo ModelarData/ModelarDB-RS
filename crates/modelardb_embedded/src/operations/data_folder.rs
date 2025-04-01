@@ -39,12 +39,14 @@ use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
 use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_types::types::TimestampArray;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::operations::{Operations, generate_read_model_table_sql, try_new_model_table_metadata};
+use crate::operations::{
+    Operations, generate_read_time_series_table_sql, try_new_time_series_table_metadata,
+};
 use crate::{Aggregate, TableType};
 
 /// [`DataSink`] that rejects INSERT statements passed to [`DataFolder.read()`].
@@ -111,7 +113,7 @@ pub struct DataFolder {
     /// Delta Lake for storing metadata and data in Apache Parquet files.
     delta_lake: DeltaLake,
     /// Metadata manager for providing access to metadata related to tables. It is stored in an
-    /// [`Arc`] because it is shared with each of the model tables for use in query planning.
+    /// [`Arc`] because it is shared with each of the time series tables for use in query planning.
     table_metadata_manager: Arc<TableMetadataManager>,
     /// Context providing access to a specific session of Apache DataFusion.
     session_context: SessionContext,
@@ -201,7 +203,7 @@ impl DataFolder {
         Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
     }
 
-    /// Create a [`DataFolder`], register all normal tables and model tables in it with its
+    /// Create a [`DataFolder`], register all normal tables and time series tables in it with its
     /// [`SessionContext`], and return it. If the tables could not be registered,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn try_new_and_register_tables(
@@ -238,15 +240,15 @@ impl DataFolder {
             )?;
         }
 
-        // Register model tables.
+        // Register time series tables.
         for metadata in data_folder
             .table_metadata_manager
-            .model_table_metadata()
+            .time_series_table_metadata()
             .await?
         {
             let delta_table = data_folder.delta_lake.delta_table(&metadata.name).await?;
 
-            modelardb_storage::register_model_table(
+            modelardb_storage::register_time_series_table(
                 &data_folder.session_context,
                 delta_table,
                 metadata,
@@ -257,21 +259,21 @@ impl DataFolder {
         Ok(data_folder)
     }
 
-    /// Compress the `uncompressed_data` from the table with `model_table_metadata` and return the
+    /// Compress the `uncompressed_data` from the table with `time_series_table_metadata` and return the
     /// resulting segments.
     pub async fn compress_all(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
         uncompressed_data: &RecordBatch,
     ) -> Result<Vec<RecordBatch>> {
         // Sort by all tags and then time to simplify splitting the data into time series.
         let sorted_uncompressed_data =
-            sort_record_batch_by_tags_and_time(model_table_metadata, uncompressed_data)?;
+            sort_record_batch_by_tags_and_time(time_series_table_metadata, uncompressed_data)?;
 
         // Split the sorted uncompressed data into time series and compress them separately.
         let mut compressed_data = vec![];
 
-        let tag_column_arrays: Vec<&StringArray> = model_table_metadata
+        let tag_column_arrays: Vec<&StringArray> = time_series_table_metadata
             .tag_column_indices
             .iter()
             .map(|index| modelardb_types::array!(sorted_uncompressed_data, *index, StringArray))
@@ -299,7 +301,7 @@ impl DataFolder {
                     sorted_uncompressed_data.slice(row_index_start, time_series_length);
 
                 self.compress(
-                    model_table_metadata,
+                    time_series_table_metadata,
                     &uncompressed_time_series,
                     &tag_values,
                     &mut compressed_data,
@@ -319,7 +321,7 @@ impl DataFolder {
             sorted_uncompressed_data.slice(row_index_start, time_series_length);
 
         self.compress(
-            model_table_metadata,
+            time_series_table_metadata,
             &uncompressed_time_series,
             &tag_values,
             &mut compressed_data,
@@ -330,36 +332,36 @@ impl DataFolder {
     }
 
     /// Compress the field columns in `uncompressed_time_series` from the table with
-    /// `model_table_metadata` and append the result to `compressed_data`. It is assumed that all
-    /// data points in `uncompressed_time_series` have the same tags as in `tag_values`.
+    /// `time_series_table_metadata` and append the result to `compressed_data`. It is assumed that
+    /// all data points in `uncompressed_time_series` have the same tags as in `tag_values`.
     async fn compress(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
         uncompressed_time_series: &RecordBatch,
         tag_values: &[String],
         compressed_data: &mut Vec<RecordBatch>,
     ) -> Result<()> {
         let uncompressed_timestamps = modelardb_types::array!(
             uncompressed_time_series,
-            model_table_metadata.timestamp_column_index,
+            time_series_table_metadata.timestamp_column_index,
             TimestampArray
         );
 
-        for field_column_index in &model_table_metadata.field_column_indices {
+        for field_column_index in &time_series_table_metadata.field_column_indices {
             let uncompressed_values = modelardb_types::array!(
                 uncompressed_time_series,
                 *field_column_index,
                 Float32Array
             );
 
-            let error_bound = model_table_metadata.error_bounds[*field_column_index];
+            let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
 
             // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
             let compressed_time_series = modelardb_compression::try_compress(
                 uncompressed_timestamps,
                 uncompressed_values,
                 error_bound,
-                model_table_metadata.compressed_schema.clone(),
+                time_series_table_metadata.compressed_schema.clone(),
                 tag_values.to_vec(),
                 *field_column_index as i16,
             )
@@ -376,9 +378,9 @@ impl DataFolder {
     /// [`ModelarDbEmbeddedError`] is returned.
     pub async fn writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
         let delta_table = self.delta_lake.delta_table(table_name).await?;
-        if self.model_table_metadata(table_name).await.is_some() {
+        if self.time_series_table_metadata(table_name).await.is_some() {
             self.delta_lake
-                .model_table_writer(delta_table)
+                .time_series_table_writer(delta_table)
                 .await
                 .map_err(|error| error.into())
         } else {
@@ -411,11 +413,14 @@ impl DataFolder {
         }
     }
 
-    /// Return [`ModelTableMetadata`] for the table with `table_name` if it exists, is registered
-    /// with Apache DataFusion, and is a model table.
-    pub async fn model_table_metadata(&self, table_name: &str) -> Option<Arc<ModelTableMetadata>> {
+    /// Return [`TimeSeriesTableMetadata`] for the table with `table_name` if it exists, is registered
+    /// with Apache DataFusion, and is a time series table.
+    pub async fn time_series_table_metadata(
+        &self,
+        table_name: &str,
+    ) -> Option<Arc<TimeSeriesTableMetadata>> {
         let table_provider = self.session_context.table_provider(table_name).await.ok()?;
-        modelardb_storage::maybe_table_provider_to_model_table_metadata(table_provider)
+        modelardb_storage::maybe_table_provider_to_time_series_table_metadata(table_provider)
     }
 }
 
@@ -450,8 +455,8 @@ impl Operations for DataFolder {
                     data_sink.clone(),
                 )?;
             }
-            TableType::ModelTable(schema, error_bounds, generated_columns) => {
-                let model_table_metadata = Arc::new(try_new_model_table_metadata(
+            TableType::TimeSeriesTable(schema, error_bounds, generated_columns) => {
+                let time_series_table_metadata = Arc::new(try_new_time_series_table_metadata(
                     table_name,
                     schema,
                     error_bounds,
@@ -460,19 +465,19 @@ impl Operations for DataFolder {
 
                 let delta_table = self
                     .delta_lake
-                    .create_model_table(&model_table_metadata)
+                    .create_time_series_table(&time_series_table_metadata)
                     .await?;
 
                 self.table_metadata_manager
-                    .save_model_table_metadata(&model_table_metadata)
+                    .save_time_series_table_metadata(&time_series_table_metadata)
                     .await?;
 
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
-                modelardb_storage::register_model_table(
+                modelardb_storage::register_time_series_table(
                     &self.session_context,
                     delta_table,
-                    model_table_metadata,
+                    time_series_table_metadata,
                     data_sink.clone(),
                 )?
             }
@@ -493,8 +498,9 @@ impl Operations for DataFolder {
     /// Returns the schema of the table with the name in `table_name`. If the table does not exist,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn schema(&mut self, table_name: &str) -> Result<Schema> {
-        if let Some(model_table_metadata) = self.model_table_metadata(table_name).await {
-            Ok((*model_table_metadata.query_schema).to_owned())
+        if let Some(time_series_table_metadata) = self.time_series_table_metadata(table_name).await
+        {
+            Ok((*time_series_table_metadata.query_schema).to_owned())
         } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
             Ok(normal_table_schema)
         } else {
@@ -519,18 +525,22 @@ impl Operations for DataFolder {
             "The uncompressed data does not match the schema for the table: {table_name}."
         ));
 
-        if let Some(model_table_metadata) = self.model_table_metadata(table_name).await {
-            // Model table.
-            if !schemas_are_compatible(&uncompressed_data.schema(), &model_table_metadata.schema) {
+        if let Some(time_series_table_metadata) = self.time_series_table_metadata(table_name).await
+        {
+            // Time series table.
+            if !schemas_are_compatible(
+                &uncompressed_data.schema(),
+                &time_series_table_metadata.schema,
+            ) {
                 return Err(schema_mismatch_error);
             }
 
             let compressed_data = self
-                .compress_all(&model_table_metadata, &uncompressed_data)
+                .compress_all(&time_series_table_metadata, &uncompressed_data)
                 .await?;
 
             self.delta_lake
-                .write_compressed_segments_to_model_table(table_name, compressed_data)
+                .write_compressed_segments_to_time_series_table(table_name, compressed_data)
                 .await?;
         } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
             // Normal table.
@@ -563,7 +573,7 @@ impl Operations for DataFolder {
 
     /// Executes the SQL in `sql` and writes the result to the normal table with the name in
     /// `to_table_name` in `to_modelardb`. Note that data can be copied from both normal tables and
-    /// model tables but only to normal tables. This is to not lossy compress data multiple
+    /// time series tables but only to normal tables. This is to not lossy compress data multiple
     /// times. If `to_modelardb` is not a data folder, the data could not be queried, or the result
     /// could not be written to the normal table, [`ModelarDbEmbeddedError`] is returned.
     async fn copy(
@@ -608,11 +618,11 @@ impl Operations for DataFolder {
         }
     }
 
-    /// Reads data from the model table with the table name in `table_name` and returns it as a
+    /// Reads data from the time series table with the table name in `table_name` and returns it as a
     /// [`RecordBatchStream`]. The remaining parameters optionally specify which subset of the data
-    /// to read. If the table is not a model table or the data could not be read,
+    /// to read. If the table is not a time series table or the data could not be read,
     /// [`ModelarDbEmbeddedError`] is returned.
-    async fn read_model_table(
+    async fn read_time_series_table(
         &mut self,
         table_name: &str,
         columns: &[(String, Aggregate)],
@@ -621,19 +631,20 @@ impl Operations for DataFolder {
         maybe_end_time: Option<&str>,
         tags: HashMap<String, String>,
     ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
-        // DataFolder.read() interface is designed for model tables.
-        let model_table_medata =
-            if let Some(model_table_metadata) = self.model_table_metadata(table_name).await {
-                model_table_metadata
-            } else {
-                return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{table_name} is not a model table."
-                )));
-            };
+        // DataFolder.read() interface is designed for time series tables.
+        let time_series_table_medata = if let Some(time_series_table_metadata) =
+            self.time_series_table_metadata(table_name).await
+        {
+            time_series_table_metadata
+        } else {
+            return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
+                "{table_name} is not a time series table."
+            )));
+        };
 
-        let sql = generate_read_model_table_sql(
+        let sql = generate_read_time_series_table_sql(
             table_name,
-            &model_table_medata.query_schema,
+            &time_series_table_medata.query_schema,
             columns,
             group_by,
             maybe_start_time,
@@ -644,12 +655,12 @@ impl Operations for DataFolder {
         self.read(&sql).await
     }
 
-    /// Copy the data from the model table with the name in `from_table_name` in `self` to the model
-    /// table with the name in `to_table_name` in `to_modelardb`. Note that duplicate data is not
-    /// deleted. If `to_modelardb` is not a data folder, the schemas of the model tables do not
-    /// match, or the data could not be copied, [`ModelarDbEmbeddedError`] is returned.
+    /// Copy the data from the time series table with the name in `from_table_name` in `self` to the
+    /// time series table with the name in `to_table_name` in `to_modelardb`. Note that duplicate
+    /// data is not deleted. If `to_modelardb` is not a data folder, the schemas of the time series
+    /// tables do not match, or the data could not be copied, [`ModelarDbEmbeddedError`] is returned.
     #[allow(clippy::too_many_arguments)]
-    async fn copy_model_table(
+    async fn copy_time_series_table(
         &self,
         from_table_name: &str,
         to_modelardb: &dyn Operations,
@@ -667,29 +678,29 @@ impl Operations for DataFolder {
                 )
             })?;
 
-        // DataFolder.copy_model_table() interface is designed for model tables.
-        let from_model_table_metadata = self
-            .model_table_metadata(from_table_name)
+        // DataFolder.copy_time_series_table() interface is designed for time series tables.
+        let from_time_series_table_metadata = self
+            .time_series_table_metadata(from_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{from_table_name} is not a model table."
+                    "{from_table_name} is not a time series table."
                 ))
             })?;
 
-        let to_model_table_metadata = to_data_folder
-            .model_table_metadata(to_table_name)
+        let to_time_series_table_metadata = to_data_folder
+            .time_series_table_metadata(to_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{to_table_name} is not a model table."
+                    "{to_table_name} is not a time series table."
                 ))
             })?;
 
-        // Check if the schemas of the model tables match.
+        // Check if the schemas of the time series tables match.
         if !schemas_are_compatible(
-            &from_model_table_metadata.schema,
-            &to_model_table_metadata.schema,
+            &from_time_series_table_metadata.schema,
+            &to_time_series_table_metadata.schema,
         ) {
             return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
                 "The schema of {from_table_name} does not match the schema of {to_table_name}."
@@ -728,7 +739,7 @@ impl Operations for DataFolder {
         // Write read data to to_table_name in to_data_folder.
         to_data_folder
             .delta_lake
-            .write_compressed_segments_to_model_table(to_table_name, record_batches)
+            .write_compressed_segments_to_time_series_table(to_table_name, record_batches)
             .await?;
 
         Ok(())
@@ -757,15 +768,17 @@ impl Operations for DataFolder {
             "The schema of {from_table_name} does not match the schema of {to_table_name}."
         ));
 
-        if let (Some(from_model_table_metadata), Some(to_model_table_metadata)) = (
-            self.model_table_metadata(from_table_name).await,
-            to_data_folder.model_table_metadata(to_table_name).await,
+        if let (Some(from_time_series_table_metadata), Some(to_time_series_table_metadata)) = (
+            self.time_series_table_metadata(from_table_name).await,
+            to_data_folder
+                .time_series_table_metadata(to_table_name)
+                .await,
         ) {
-            // If both tables are model tables, check if their schemas match and write the data in
-            // from_table_name to to_table_name if so.
+            // If both tables are time series tables, check if their schemas match and write the
+            // data in from_table_name to to_table_name if so.
             if !schemas_are_compatible(
-                &from_model_table_metadata.schema,
-                &to_model_table_metadata.schema,
+                &from_time_series_table_metadata.schema,
+                &to_time_series_table_metadata.schema,
             ) {
                 return Err(schema_mismatch_error);
             }
@@ -776,7 +789,7 @@ impl Operations for DataFolder {
 
             to_data_folder
                 .delta_lake
-                .write_compressed_segments_to_model_table(to_table_name, record_batches)
+                .write_compressed_segments_to_time_series_table(to_table_name, record_batches)
                 .await?;
         } else if let (Some(from_normal_table_schema), Some(to_normal_table_schema)) = (
             self.normal_table_schema(from_table_name).await,
@@ -798,12 +811,12 @@ impl Operations for DataFolder {
                 .await?;
         } else {
             return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                "{from_table_name} and {to_table_name} are not both normal tables or model tables."
+                "{from_table_name} and {to_table_name} are not both normal tables or time series tables."
             )));
         }
 
         // Truncate the table after moving the data. This will also delete the tag hash metadata
-        // if the table is a model table.
+        // if the table is a time series table.
         self.truncate(from_table_name).await?;
 
         Ok(())
@@ -845,10 +858,10 @@ impl Operations for DataFolder {
     }
 }
 
-/// Sort the `uncompressed_data` from the model table with `model_table_metadata` according to its
-/// tags and then timestamps.
+/// Sort the `uncompressed_data` from the time series table with `time_series_table_metadata`
+/// according to its tags and then timestamps.
 fn sort_record_batch_by_tags_and_time(
-    model_table_metadata: &ModelTableMetadata,
+    time_series_table_metadata: &TimeSeriesTableMetadata,
     uncompressed_data: &RecordBatch,
 ) -> Result<RecordBatch> {
     let mut physical_sort_exprs = vec![];
@@ -858,16 +871,18 @@ fn sort_record_batch_by_tags_and_time(
         nulls_first: false,
     };
 
-    for tag_column_index in &model_table_metadata.tag_column_indices {
-        let field = model_table_metadata.schema.field(*tag_column_index);
+    for tag_column_index in &time_series_table_metadata.tag_column_indices {
+        let field = time_series_table_metadata.schema.field(*tag_column_index);
         physical_sort_exprs.push(PhysicalSortExpr {
             expr: Arc::new(Column::new(field.name(), *tag_column_index)),
             options: sort_options,
         });
     }
 
-    let timestamp_column_index = model_table_metadata.timestamp_column_index;
-    let field = model_table_metadata.schema.field(timestamp_column_index);
+    let timestamp_column_index = time_series_table_metadata.timestamp_column_index;
+    let field = time_series_table_metadata
+        .schema
+        .field(timestamp_column_index);
     physical_sort_exprs.push(PhysicalSortExpr {
         expr: Arc::new(Column::new(field.name(), timestamp_column_index)),
         options: sort_options,
@@ -917,7 +932,7 @@ mod tests {
     use arrow_flight::flight_service_client::FlightServiceClient;
     use datafusion::datasource::TableProvider;
     use datafusion::logical_expr::col;
-    use modelardb_storage::metadata::model_table_metadata::GeneratedColumn;
+    use modelardb_storage::metadata::time_series_table_metadata::GeneratedColumn;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ValueArray};
     use tempfile::TempDir;
     use tonic::transport::Channel;
@@ -926,9 +941,9 @@ mod tests {
     use crate::record_batch_stream_to_record_batch;
 
     const NORMAL_TABLE_NAME: &str = "normal_table";
-    const MODEL_TABLE_NAME: &str = "model_table";
+    const TIME_SERIES_TABLE_NAME: &str = "time_series_table";
     const MISSING_TABLE_NAME: &str = "missing_table";
-    const MODEL_TABLE_WITH_GENERATED_COLUMN_NAME: &str = "model_table_with_generated";
+    const TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME: &str = "time_series_table_with_generated";
     const INVALID_COLUMN_NAME: &str = "invalid_column";
 
     #[tokio::test]
@@ -1018,13 +1033,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_model_table() {
-        let (_temp_dir, data_folder) = create_data_folder_with_model_table().await;
-        assert_model_table_exists(&data_folder, MODEL_TABLE_NAME, model_table_schema()).await;
+    async fn test_create_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        assert_time_series_table_exists(
+            &data_folder,
+            TIME_SERIES_TABLE_NAME,
+            time_series_table_schema(),
+        )
+        .await;
     }
 
     #[tokio::test]
-    async fn test_create_model_table_with_error_bounds() {
+    async fn test_create_time_series_table_with_error_bounds() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
@@ -1039,16 +1059,21 @@ mod tests {
             ),
         ]);
 
-        let table_type = TableType::ModelTable(model_table_schema(), error_bounds, HashMap::new());
+        let table_type =
+            TableType::TimeSeriesTable(time_series_table_schema(), error_bounds, HashMap::new());
         data_folder
-            .create(MODEL_TABLE_NAME, table_type)
+            .create(TIME_SERIES_TABLE_NAME, table_type)
             .await
             .unwrap();
 
-        let model_table_metadata =
-            assert_model_table_exists(&data_folder, MODEL_TABLE_NAME, model_table_schema()).await;
+        let time_series_table_metadata = assert_time_series_table_exists(
+            &data_folder,
+            TIME_SERIES_TABLE_NAME,
+            time_series_table_schema(),
+        )
+        .await;
 
-        let error_bound_values: Vec<f32> = model_table_metadata
+        let error_bound_values: Vec<f32> = time_series_table_metadata
             .error_bounds
             .iter()
             .map(|error_bound| match error_bound {
@@ -1061,14 +1086,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_model_table_with_generated_columns() {
+    async fn test_create_time_series_table_with_generated_columns() {
         let (_temp_dir, data_folder) =
-            create_data_folder_with_model_table_with_generated_column().await;
+            create_data_folder_with_time_series_table_with_generated_column().await;
 
-        let mut model_table_metadata = assert_model_table_exists(
+        let mut time_series_table_metadata = assert_time_series_table_exists(
             &data_folder,
-            MODEL_TABLE_WITH_GENERATED_COLUMN_NAME,
-            model_table_with_generated_column_schema(),
+            TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME,
+            time_series_table_with_generated_column_schema(),
         )
         .await;
 
@@ -1078,7 +1103,7 @@ mod tests {
             original_expr: "field_1 + field_2".to_owned(),
         };
 
-        let mut actual_generated_column = model_table_metadata
+        let mut actual_generated_column = time_series_table_metadata
             .generated_columns
             .pop()
             .unwrap()
@@ -1090,51 +1115,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_register_existing_model_tables_on_open() {
+    async fn test_register_existing_time_series_tables_on_open() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         data_folder
             .create(
-                "model_table_1",
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                "time_series_table_1",
+                TableType::TimeSeriesTable(
+                    time_series_table_schema(),
+                    HashMap::new(),
+                    HashMap::new(),
+                ),
             )
             .await
             .unwrap();
 
         data_folder
             .create(
-                "model_table_2",
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                "time_series_table_2",
+                TableType::TimeSeriesTable(
+                    time_series_table_schema(),
+                    HashMap::new(),
+                    HashMap::new(),
+                ),
             )
             .await
             .unwrap();
 
-        // Create a new data folder and verify that the existing model tables are registered.
+        // Create a new data folder and verify that the existing time series tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         assert!(
             new_data_folder
                 .session_context
-                .table_exist("model_table_1")
+                .table_exist("time_series_table_1")
                 .unwrap()
         );
         assert!(
             new_data_folder
                 .session_context
-                .table_exist("model_table_2")
+                .table_exist("time_series_table_2")
                 .unwrap()
         );
     }
 
     #[tokio::test]
-    async fn test_create_model_table_with_empty_schema() {
+    async fn test_create_time_series_table_with_empty_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder
             .create(
-                MODEL_TABLE_NAME,
-                TableType::ModelTable(Schema::empty(), HashMap::new(), HashMap::new()),
+                TIME_SERIES_TABLE_NAME,
+                TableType::TimeSeriesTable(Schema::empty(), HashMap::new(), HashMap::new()),
             )
             .await;
 
@@ -1146,22 +1179,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_existing_model_table() {
+    async fn test_create_existing_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder
             .create(
-                MODEL_TABLE_NAME,
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                TIME_SERIES_TABLE_NAME,
+                TableType::TimeSeriesTable(
+                    time_series_table_schema(),
+                    HashMap::new(),
+                    HashMap::new(),
+                ),
             )
             .await;
         assert!(result.is_ok());
 
         let result = data_folder
             .create(
-                MODEL_TABLE_NAME,
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                TIME_SERIES_TABLE_NAME,
+                TableType::TimeSeriesTable(
+                    time_series_table_schema(),
+                    HashMap::new(),
+                    HashMap::new(),
+                ),
             )
             .await;
 
@@ -1190,14 +1231,18 @@ mod tests {
 
         data_folder
             .create(
-                MODEL_TABLE_NAME,
-                TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new()),
+                TIME_SERIES_TABLE_NAME,
+                TableType::TimeSeriesTable(
+                    time_series_table_schema(),
+                    HashMap::new(),
+                    HashMap::new(),
+                ),
             )
             .await
             .unwrap();
 
         let table_names = data_folder.tables().await.unwrap();
-        assert_eq!(table_names, vec![NORMAL_TABLE_NAME, MODEL_TABLE_NAME]);
+        assert_eq!(table_names, vec![NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME]);
     }
 
     #[tokio::test]
@@ -1209,11 +1254,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_model_table_schema() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_time_series_table_schema() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
-        let actual_schema = data_folder.schema(MODEL_TABLE_NAME).await.unwrap();
-        assert_eq!(actual_schema, model_table_schema());
+        let actual_schema = data_folder.schema(TIME_SERIES_TABLE_NAME).await.unwrap();
+        assert_eq!(actual_schema, time_series_table_schema());
     }
 
     #[tokio::test]
@@ -1280,18 +1325,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_to_model_table() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_write_to_time_series_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
         let mut delta_table = data_folder
             .delta_lake
-            .delta_table(MODEL_TABLE_NAME)
+            .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
         assert_eq!(delta_table.get_files_count(), 0);
 
         data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
@@ -1300,11 +1345,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_empty_data_to_model_table() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_write_empty_data_to_time_series_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
-        let empty_data = RecordBatch::new_empty(Arc::new(model_table_schema()));
-        let result = data_folder.write(MODEL_TABLE_NAME, empty_data).await;
+        let empty_data = RecordBatch::new_empty(Arc::new(time_series_table_schema()));
+        let result = data_folder.write(TIME_SERIES_TABLE_NAME, empty_data).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -1313,18 +1358,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_data_with_invalid_schema_to_model_table() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_write_data_with_invalid_schema_to_time_series_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         let result = data_folder
-            .write(MODEL_TABLE_NAME, invalid_table_data())
+            .write(TIME_SERIES_TABLE_NAME, invalid_table_data())
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
                 "Invalid Argument Error: The uncompressed data does not \
-                match the schema for the table: {MODEL_TABLE_NAME}."
+                match the schema for the table: {TIME_SERIES_TABLE_NAME}."
             )
         );
     }
@@ -1335,7 +1380,7 @@ mod tests {
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder
-            .write(MISSING_TABLE_NAME, model_table_data())
+            .write(MISSING_TABLE_NAME, time_series_table_data())
             .await;
 
         assert_eq!(
@@ -1345,10 +1390,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_normal_table() {
+    async fn test_read_time_series_table_from_normal_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
 
-        let result = data_folder_read_model_table(
+        let result = data_folder_read_time_series_table(
             &mut data_folder,
             NORMAL_TABLE_NAME,
             &[],
@@ -1361,16 +1406,16 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a time series table.")
         );
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_missing_table() {
+    async fn test_read_time_series_table_from_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let result = data_folder_read_model_table(
+        let result = data_folder_read_time_series_table(
             &mut data_folder,
             MISSING_TABLE_NAME,
             &[],
@@ -1383,22 +1428,22 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a time series table.")
         );
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_time_series_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let actual_result = data_folder_read_model_table(
+        let actual_result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &[],
             &[],
             None,
@@ -1408,16 +1453,16 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(actual_result, sorted_model_table_data());
+        assert_eq!(actual_result, sorted_time_series_table_data());
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_empty_model_table() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_empty_time_series_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
-        let actual_result = data_folder_read_model_table(
+        let actual_result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &[],
             &[],
             None,
@@ -1434,11 +1479,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table_with_columns() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_time_series_table_with_columns() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
@@ -1447,9 +1492,9 @@ mod tests {
             ("field_1".to_owned(), Aggregate::None),
         ];
 
-        let actual_result = data_folder_read_model_table(
+        let actual_result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &columns,
             &[],
             None,
@@ -1461,16 +1506,16 @@ mod tests {
 
         assert_eq!(
             actual_result,
-            sorted_model_table_data().project(&[1, 3]).unwrap()
+            sorted_time_series_table_data().project(&[1, 3]).unwrap()
         );
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table_with_aggregates() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_time_series_table_with_aggregates() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
@@ -1483,9 +1528,9 @@ mod tests {
             ("field_2".to_owned(), Aggregate::Avg),
         ];
 
-        let actual_result = data_folder_read_model_table(
+        let actual_result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &columns,
             &["tag_1".to_owned()],
             None,
@@ -1519,14 +1564,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table_with_invalid_column() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_time_series_table_with_invalid_column() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         let columns = vec![(INVALID_COLUMN_NAME.to_owned(), Aggregate::None)];
 
-        let result = data_folder_read_model_table(
+        let result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &columns,
             &[],
             None,
@@ -1540,20 +1585,20 @@ mod tests {
             format!(
                 "DataFusion Error: Schema error: No field named {INVALID_COLUMN_NAME}. \
                 Valid fields are {}.",
-                model_table_columns()
+                time_series_table_columns()
             )
         );
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table_with_invalid_group_by() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_time_series_table_with_invalid_group_by() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         let group_by = vec![INVALID_COLUMN_NAME.to_owned()];
 
-        let result = data_folder_read_model_table(
+        let result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &[],
             &group_by,
             None,
@@ -1568,24 +1613,24 @@ mod tests {
             format!(
                 "DataFusion Error: Schema error: No field named {INVALID_COLUMN_NAME}. \
                 Valid fields are {}, {}.",
-                model_table_columns(),
-                model_table_columns()
+                time_series_table_columns(),
+                time_series_table_columns()
             )
         );
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table_with_timestamps() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_time_series_table_with_timestamps() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let actual_result = data_folder_read_model_table(
+        let actual_result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &[],
             &[],
             Some("1970-01-01T00:00:00.000150"),
@@ -1595,22 +1640,22 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(actual_result, model_table_data().slice(2, 2));
+        assert_eq!(actual_result, time_series_table_data().slice(2, 2));
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table_with_invalid_timestamps() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_time_series_table_with_invalid_timestamps() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let invalid_start_time = "01/01/1970T00:00:00.000150";
-        let result = data_folder_read_model_table(
+        let result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &[],
             &[],
             Some(invalid_start_time),
@@ -1629,11 +1674,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table_with_tags() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_time_series_table_with_tags() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
@@ -1641,9 +1686,9 @@ mod tests {
         tags.insert("tag_1".to_owned(), "tag_x".to_owned());
         tags.insert("tag_2".to_owned(), "tag_a".to_owned());
 
-        let actual_result = data_folder_read_model_table(
+        let actual_result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &[],
             &[],
             None,
@@ -1653,19 +1698,19 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(actual_result, sorted_model_table_data().slice(0, 3));
+        assert_eq!(actual_result, sorted_time_series_table_data().slice(0, 3));
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table_with_invalid_tag() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table_from_time_series_table_with_invalid_tag() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         let mut tags = HashMap::new();
         tags.insert(INVALID_COLUMN_NAME.to_owned(), "tag_x".to_owned());
 
-        let result = data_folder_read_model_table(
+        let result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_NAME,
+            TIME_SERIES_TABLE_NAME,
             &[],
             &[],
             None,
@@ -1679,33 +1724,36 @@ mod tests {
             format!(
                 "DataFusion Error: Schema error: No field named {INVALID_COLUMN_NAME}. \
                 Valid fields are {}.",
-                model_table_columns()
+                time_series_table_columns()
             )
         );
     }
 
-    fn model_table_columns() -> String {
-        model_table_schema()
+    fn time_series_table_columns() -> String {
+        time_series_table_schema()
             .fields()
             .iter()
-            .map(|field| format!("{MODEL_TABLE_NAME}.{}", field.name()))
+            .map(|field| format!("{TIME_SERIES_TABLE_NAME}.{}", field.name()))
             .collect::<Vec<String>>()
             .join(", ")
     }
 
     #[tokio::test]
-    async fn test_read_model_table_from_model_table_with_generated_column() {
+    async fn test_read_time_series_table_from_time_series_table_with_generated_column() {
         let (_temp_dir, mut data_folder) =
-            create_data_folder_with_model_table_with_generated_column().await;
+            create_data_folder_with_time_series_table_with_generated_column().await;
 
         data_folder
-            .write(MODEL_TABLE_WITH_GENERATED_COLUMN_NAME, model_table_data())
+            .write(
+                TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME,
+                time_series_table_data(),
+            )
             .await
             .unwrap();
 
-        let actual_result = data_folder_read_model_table(
+        let actual_result = data_folder_read_time_series_table(
             &mut data_folder,
-            MODEL_TABLE_WITH_GENERATED_COLUMN_NAME,
+            TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME,
             &[],
             &[],
             None,
@@ -1715,10 +1763,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_generated_column_result_eq(actual_result, sorted_model_table_data());
+        assert_generated_column_result_eq(actual_result, sorted_time_series_table_data());
     }
 
-    async fn data_folder_read_model_table(
+    async fn data_folder_read_time_series_table(
         data_folder: &mut DataFolder,
         table_name: &str,
         columns: &[(String, Aggregate)],
@@ -1728,7 +1776,7 @@ mod tests {
         tags: HashMap<String, String>,
     ) -> Result<RecordBatch> {
         let record_batch_stream = data_folder
-            .read_model_table(
+            .read_time_series_table(
                 table_name,
                 columns,
                 group_by,
@@ -1742,9 +1790,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_normal_table_to_model_table() {
+    async fn test_copy_time_series_table_from_normal_table_to_time_series_table() {
         let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let (_temp_dir, to_data_folder) = create_data_folder_with_model_table().await;
+        let (_temp_dir, to_data_folder) = create_data_folder_with_time_series_table().await;
 
         from_data_folder
             .write(NORMAL_TABLE_NAME, normal_table_data())
@@ -1752,10 +1800,10 @@ mod tests {
             .unwrap();
 
         let result = from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 NORMAL_TABLE_NAME,
                 &to_data_folder,
-                MODEL_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 None,
                 None,
                 HashMap::new(),
@@ -1764,23 +1812,23 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a time series table.")
         );
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_model_table_to_normal_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_copy_time_series_table_from_time_series_table_to_normal_table() {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
         let (_temp_dir, to_data_folder) = create_data_folder_with_normal_table().await;
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let result = from_data_folder
-            .copy_model_table(
-                MODEL_TABLE_NAME,
+            .copy_time_series_table(
+                TIME_SERIES_TABLE_NAME,
                 &to_data_folder,
                 NORMAL_TABLE_NAME,
                 None,
@@ -1791,22 +1839,22 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {NORMAL_TABLE_NAME} is not a time series table.")
         );
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_missing_table() {
+    async fn test_copy_time_series_table_from_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let from_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let (_temp_dir, to_data_folder) = create_data_folder_with_model_table().await;
+        let (_temp_dir, to_data_folder) = create_data_folder_with_time_series_table().await;
 
         let result = from_data_folder
-            .copy_model_table(
+            .copy_time_series_table(
                 MISSING_TABLE_NAME,
                 &to_data_folder,
-                MODEL_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 None,
                 None,
                 HashMap::new(),
@@ -1815,25 +1863,25 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a time series table.")
         );
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_model_table_to_missing_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_copy_time_series_table_from_time_series_table_to_missing_table() {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
         let to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let result = from_data_folder
-            .copy_model_table(
-                MODEL_TABLE_NAME,
+            .copy_time_series_table(
+                TIME_SERIES_TABLE_NAME,
                 &to_data_folder,
                 MISSING_TABLE_NAME,
                 None,
@@ -1844,16 +1892,17 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a model table.")
+            format!("Invalid Argument Error: {MISSING_TABLE_NAME} is not a time series table.")
         );
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_model_table_to_model_table_with_invalid_schema() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_copy_time_series_table_from_time_series_table_to_time_series_table_with_invalid_schema()
+     {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
@@ -1861,17 +1910,17 @@ mod tests {
         let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let table_type =
-            TableType::ModelTable(invalid_table_schema(), HashMap::new(), HashMap::new());
+            TableType::TimeSeriesTable(invalid_table_schema(), HashMap::new(), HashMap::new());
         to_data_folder
-            .create(MODEL_TABLE_NAME, table_type)
+            .create(TIME_SERIES_TABLE_NAME, table_type)
             .await
             .unwrap();
 
         let result = from_data_folder
-            .copy_model_table(
-                MODEL_TABLE_NAME,
+            .copy_time_series_table(
+                TIME_SERIES_TABLE_NAME,
                 &to_data_folder,
-                MODEL_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 None,
                 None,
                 HashMap::new(),
@@ -1881,31 +1930,31 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "Invalid Argument Error: The schema of {MODEL_TABLE_NAME} \
-                does not match the schema of {MODEL_TABLE_NAME}."
+                "Invalid Argument Error: The schema of {TIME_SERIES_TABLE_NAME} \
+                does not match the schema of {TIME_SERIES_TABLE_NAME}."
             )
         );
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_model_table_to_model_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_copy_time_series_table_from_time_series_table_to_time_series_table() {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
 
-        let sql = format!("SELECT * FROM {}", MODEL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
         let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
         assert_eq!(to_actual_result.num_rows(), 0);
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         from_data_folder
-            .copy_model_table(
-                MODEL_TABLE_NAME,
+            .copy_time_series_table(
+                TIME_SERIES_TABLE_NAME,
                 &to_data_folder,
-                MODEL_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 None,
                 None,
                 HashMap::new(),
@@ -1916,32 +1965,36 @@ mod tests {
         let from_actual_result = data_folder_read(&mut from_data_folder, &sql).await.unwrap();
         let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
 
-        assert_eq!(from_actual_result, sorted_model_table_data());
+        assert_eq!(from_actual_result, sorted_time_series_table_data());
         assert_eq!(to_actual_result, from_actual_result);
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_model_table_to_model_table_with_timestamps() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_copy_time_series_table_from_time_series_table_to_time_series_table_with_timestamps()
+     {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
 
-        let sql = format!("SELECT * FROM {}", MODEL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
         let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
         assert_eq!(to_actual_result.num_rows(), 0);
 
         // Force the physical data to have multiple segments by writing the data in three parts.
         for i in 0..3 {
             from_data_folder
-                .write(MODEL_TABLE_NAME, model_table_data().slice(i * 2, 2))
+                .write(
+                    TIME_SERIES_TABLE_NAME,
+                    time_series_table_data().slice(i * 2, 2),
+                )
                 .await
                 .unwrap();
         }
 
         from_data_folder
-            .copy_model_table(
-                MODEL_TABLE_NAME,
+            .copy_time_series_table(
+                TIME_SERIES_TABLE_NAME,
                 &to_data_folder,
-                MODEL_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 Some("1970-01-01T00:00:00.000150"),
                 Some("1970-01-01T00:00:00.000250"),
                 HashMap::new(),
@@ -1952,26 +2005,27 @@ mod tests {
         let from_actual_result = data_folder_read(&mut from_data_folder, &sql).await.unwrap();
         let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
 
-        assert_eq!(from_actual_result, model_table_data());
-        assert_eq!(to_actual_result, model_table_data().slice(2, 2));
+        assert_eq!(from_actual_result, time_series_table_data());
+        assert_eq!(to_actual_result, time_series_table_data().slice(2, 2));
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_model_table_to_model_table_with_invalid_timestamps() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
-        let (_temp_dir, to_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_copy_time_series_table_from_time_series_table_to_time_series_table_with_invalid_timestamps()
+     {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, to_data_folder) = create_data_folder_with_time_series_table().await;
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let invalid_start_time = "01/01/1970T00:00:00.000150";
         let result = from_data_folder
-            .copy_model_table(
-                MODEL_TABLE_NAME,
+            .copy_time_series_table(
+                TIME_SERIES_TABLE_NAME,
                 &to_data_folder,
-                MODEL_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 Some(invalid_start_time),
                 Some("01/01/1970T00:00:00.000250"),
                 HashMap::new(),
@@ -1988,28 +2042,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_model_table_to_model_table_with_generated_column() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_copy_time_series_table_from_time_series_table_to_time_series_table_with_generated_column()
+     {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
         let (_temp_dir, mut to_data_folder) =
-            create_data_folder_with_model_table_with_generated_column().await;
+            create_data_folder_with_time_series_table_with_generated_column().await;
 
-        let to_sql = format!("SELECT * FROM {}", MODEL_TABLE_WITH_GENERATED_COLUMN_NAME);
+        let to_sql = format!(
+            "SELECT * FROM {}",
+            TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME
+        );
         let to_actual_result = data_folder_read(&mut to_data_folder, &to_sql)
             .await
             .unwrap();
         assert_eq!(to_actual_result.num_rows(), 0);
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         // Even though the query schemas are different, the data should still be copied.
         from_data_folder
-            .copy_model_table(
-                MODEL_TABLE_NAME,
+            .copy_time_series_table(
+                TIME_SERIES_TABLE_NAME,
                 &to_data_folder,
-                MODEL_TABLE_WITH_GENERATED_COLUMN_NAME,
+                TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME,
                 None,
                 None,
                 HashMap::new(),
@@ -2017,7 +2075,7 @@ mod tests {
             .await
             .unwrap();
 
-        let from_sql = format!("SELECT * FROM {}", MODEL_TABLE_NAME);
+        let from_sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
         let from_actual_result = data_folder_read(&mut from_data_folder, &from_sql)
             .await
             .unwrap();
@@ -2026,20 +2084,20 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(from_actual_result, sorted_model_table_data());
+        assert_eq!(from_actual_result, sorted_time_series_table_data());
         assert_generated_column_result_eq(to_actual_result, from_actual_result);
     }
 
     #[tokio::test]
-    async fn test_copy_model_table_from_data_folder_to_client() {
-        let (_temp_dir, from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_copy_time_series_table_from_data_folder_to_client() {
+        let (_temp_dir, from_data_folder) = create_data_folder_with_time_series_table().await;
         let to_client = lazy_modelardb_client();
 
         let result = from_data_folder
-            .copy_model_table(
-                MODEL_TABLE_NAME,
+            .copy_time_series_table(
+                TIME_SERIES_TABLE_NAME,
                 &to_client,
-                MODEL_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 None,
                 None,
                 HashMap::new(),
@@ -2082,25 +2140,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_model_table() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_time_series_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let sql = format!("SELECT * FROM {}", MODEL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
         let actual_result = data_folder_read(&mut data_folder, &sql).await.unwrap();
 
-        assert_eq!(actual_result, sorted_model_table_data());
+        assert_eq!(actual_result, sorted_time_series_table_data());
     }
 
     #[tokio::test]
-    async fn test_read_empty_model_table() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_read_empty_time_series_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
-        let sql = format!("SELECT * FROM {}", MODEL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
         let actual_result = data_folder_read(&mut data_folder, &sql).await.unwrap();
 
         assert_eq!(
@@ -2216,14 +2274,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_normal_table_from_model_table_to_normal_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_copy_normal_table_from_time_series_table_to_normal_table() {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
 
-        // Create a normal table that has the same schema as the model table in from_data_folder.
+        // Create a normal table that has the same schema as the time series table in from_data_folder.
         let temp_dir = tempfile::tempdir().unwrap();
         let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let schema = model_table_schema();
+        let schema = time_series_table_schema();
         to_data_folder
             .create(NORMAL_TABLE_NAME, TableType::NormalTable(schema))
             .await
@@ -2236,11 +2294,11 @@ mod tests {
         assert_eq!(to_actual_result.num_rows(), 0);
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let copy_sql = format!("SELECT * FROM {}", MODEL_TABLE_NAME);
+        let copy_sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
         from_data_folder
             .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
             .await
@@ -2253,14 +2311,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(from_actual_result, sorted_model_table_data());
+        assert_eq!(from_actual_result, sorted_time_series_table_data());
         assert_eq!(to_actual_result, from_actual_result);
     }
 
     #[tokio::test]
-    async fn test_copy_normal_table_from_normal_table_to_model_table() {
+    async fn test_copy_normal_table_from_normal_table_to_time_series_table() {
         let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_model_table().await;
+        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
 
         from_data_folder
             .write(NORMAL_TABLE_NAME, normal_table_data())
@@ -2269,12 +2327,12 @@ mod tests {
 
         let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
         let result = from_data_folder
-            .copy(&copy_sql, &mut to_data_folder, MODEL_TABLE_NAME)
+            .copy(&copy_sql, &mut to_data_folder, TIME_SERIES_TABLE_NAME)
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!("Invalid Argument Error: {MODEL_TABLE_NAME} is not a normal table.")
+            format!("Invalid Argument Error: {TIME_SERIES_TABLE_NAME} is not a normal table.")
         );
     }
 
@@ -2379,40 +2437,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_model_table() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_drop_time_series_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         assert!(
             data_folder
                 .session_context
-                .table_exist(MODEL_TABLE_NAME)
+                .table_exist(TIME_SERIES_TABLE_NAME)
                 .unwrap()
         );
 
-        data_folder.drop(MODEL_TABLE_NAME).await.unwrap();
+        data_folder.drop(TIME_SERIES_TABLE_NAME).await.unwrap();
 
-        // Verify that the model table was deregistered from Apache DataFusion.
+        // Verify that the time series table was deregistered from Apache DataFusion.
         assert!(
             !data_folder
                 .session_context
-                .table_exist(MODEL_TABLE_NAME)
+                .table_exist(TIME_SERIES_TABLE_NAME)
                 .unwrap()
         );
 
-        // Verify that the model table was dropped from the metadata Delta Lake.
+        // Verify that the time series table was dropped from the metadata Delta Lake.
         assert!(
             !data_folder
                 .table_metadata_manager
-                .is_model_table(MODEL_TABLE_NAME)
+                .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
 
-        // Verify that the model table was dropped from the Delta Lake.
+        // Verify that the time series table was dropped from the Delta Lake.
         assert!(
             data_folder
                 .delta_lake
-                .delta_table(MODEL_TABLE_NAME)
+                .delta_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         );
@@ -2461,29 +2519,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_truncate_model_table() {
-        let (_temp_dir, mut data_folder) = create_data_folder_with_model_table().await;
+    async fn test_truncate_time_series_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let mut delta_table = data_folder
             .delta_lake
-            .delta_table(MODEL_TABLE_NAME)
+            .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
         assert_eq!(delta_table.get_files_count(), 2);
 
-        data_folder.truncate(MODEL_TABLE_NAME).await.unwrap();
+        data_folder.truncate(TIME_SERIES_TABLE_NAME).await.unwrap();
 
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
 
-        // Verify that the model table still exists.
-        assert_model_table_exists(&data_folder, MODEL_TABLE_NAME, model_table_schema()).await;
+        // Verify that the time series table still exists.
+        assert_time_series_table_exists(
+            &data_folder,
+            TIME_SERIES_TABLE_NAME,
+            time_series_table_schema(),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -2612,9 +2675,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_move_normal_table_to_model_table() {
+    async fn test_move_normal_table_to_time_series_table() {
         let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_model_table().await;
+        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
 
         let expected_result = normal_table_data();
         from_data_folder
@@ -2623,14 +2686,14 @@ mod tests {
             .unwrap();
 
         let result = from_data_folder
-            .r#move(NORMAL_TABLE_NAME, &to_data_folder, MODEL_TABLE_NAME)
+            .r#move(NORMAL_TABLE_NAME, &to_data_folder, TIME_SERIES_TABLE_NAME)
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "Invalid Argument Error: {NORMAL_TABLE_NAME} and {MODEL_TABLE_NAME} are not \
-                both normal tables or model tables."
+                "Invalid Argument Error: {NORMAL_TABLE_NAME} and {TIME_SERIES_TABLE_NAME} are not \
+                both normal tables or time series tables."
             )
         );
 
@@ -2639,7 +2702,7 @@ mod tests {
             NORMAL_TABLE_NAME,
             expected_result,
             Some(&mut to_data_folder),
-            Some(MODEL_TABLE_NAME),
+            Some(TIME_SERIES_TABLE_NAME),
         )
         .await;
     }
@@ -2665,7 +2728,7 @@ mod tests {
             result.unwrap_err().to_string(),
             format!(
                 "Invalid Argument Error: {NORMAL_TABLE_NAME} and {MISSING_TABLE_NAME} are not \
-                both normal tables or model tables."
+                both normal tables or time series tables."
             )
         );
 
@@ -2680,60 +2743,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_move_model_table_to_model_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_move_time_series_table_to_time_series_table() {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
 
-        let sql = format!("SELECT * FROM {}", MODEL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
         let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
         assert_eq!(to_actual_result.num_rows(), 0);
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let mut delta_table = from_data_folder
             .delta_lake
-            .delta_table(MODEL_TABLE_NAME)
+            .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
         assert_eq!(delta_table.get_files_count(), 2);
 
         from_data_folder
-            .r#move(MODEL_TABLE_NAME, &to_data_folder, MODEL_TABLE_NAME)
+            .r#move(
+                TIME_SERIES_TABLE_NAME,
+                &to_data_folder,
+                TIME_SERIES_TABLE_NAME,
+            )
             .await
             .unwrap();
 
-        // Verify that the data was deleted but the model table still exists.
+        // Verify that the data was deleted but the time series table still exists.
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
-        assert_model_table_exists(&from_data_folder, MODEL_TABLE_NAME, model_table_schema()).await;
+        assert_time_series_table_exists(
+            &from_data_folder,
+            TIME_SERIES_TABLE_NAME,
+            time_series_table_schema(),
+        )
+        .await;
 
-        // Verify that the model table data was moved to the new data folder.
+        // Verify that the time series table data was moved to the new data folder.
         let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
-        assert_eq!(actual_result, sorted_model_table_data());
+        assert_eq!(actual_result, sorted_time_series_table_data());
     }
 
     #[tokio::test]
-    async fn test_move_model_table_to_model_table_with_generated_column() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_move_time_series_table_to_time_series_table_with_generated_column() {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
         let (_temp_dir, mut to_data_folder) =
-            create_data_folder_with_model_table_with_generated_column().await;
+            create_data_folder_with_time_series_table_with_generated_column().await;
 
-        let sql = format!("SELECT * FROM {}", MODEL_TABLE_WITH_GENERATED_COLUMN_NAME);
+        let sql = format!(
+            "SELECT * FROM {}",
+            TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME
+        );
         let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
         assert_eq!(actual_result.num_rows(), 0);
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let mut delta_table = from_data_folder
             .delta_lake
-            .delta_table(MODEL_TABLE_NAME)
+            .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -2742,45 +2817,50 @@ mod tests {
         // Even though the query schemas are different, the data should still be moved.
         from_data_folder
             .r#move(
-                MODEL_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 &to_data_folder,
-                MODEL_TABLE_WITH_GENERATED_COLUMN_NAME,
+                TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME,
             )
             .await
             .unwrap();
 
-        // Verify that the data was deleted but the model table still exists.
+        // Verify that the data was deleted but the time series table still exists.
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
-        assert_model_table_exists(&from_data_folder, MODEL_TABLE_NAME, model_table_schema()).await;
+        assert_time_series_table_exists(
+            &from_data_folder,
+            TIME_SERIES_TABLE_NAME,
+            time_series_table_schema(),
+        )
+        .await;
 
-        // Verify that the model table data was moved to the new data folder.
+        // Verify that the time series table data was moved to the new data folder.
         let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
-        assert_generated_column_result_eq(actual_result, sorted_model_table_data());
+        assert_generated_column_result_eq(actual_result, sorted_time_series_table_data());
     }
 
-    async fn assert_model_table_exists(
+    async fn assert_time_series_table_exists(
         data_folder: &DataFolder,
         table_name: &str,
         expected_schema: Schema,
-    ) -> ModelTableMetadata {
-        // Verify that the model table exists in the Delta Lake.
+    ) -> TimeSeriesTableMetadata {
+        // Verify that the time series table exists in the Delta Lake.
         assert!(data_folder.delta_lake.delta_table(table_name).await.is_ok());
 
-        // Verify that the model table exists in the metadata Delta Lake with the correct schema.
-        let model_table_metadata = data_folder
+        // Verify that the time series table exists in the metadata Delta Lake with the correct schema.
+        let time_series_table_metadata = data_folder
             .table_metadata_manager
-            .model_table_metadata_for_model_table(table_name)
+            .time_series_table_metadata_for_time_series_table(table_name)
             .await
             .unwrap();
 
-        assert_eq!(model_table_metadata.name, table_name);
-        assert_eq!(*model_table_metadata.query_schema, expected_schema);
+        assert_eq!(time_series_table_metadata.name, table_name);
+        assert_eq!(*time_series_table_metadata.query_schema, expected_schema);
 
-        // Verify that the model table is registered with Apache DataFusion.
+        // Verify that the time series table is registered with Apache DataFusion.
         assert!(data_folder.session_context.table_exist(table_name).unwrap());
 
-        model_table_metadata
+        time_series_table_metadata
     }
 
     fn assert_generated_column_result_eq(
@@ -2799,73 +2879,77 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_move_model_table_to_model_table_with_invalid_schema() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_move_time_series_table_to_time_series_table_with_invalid_schema() {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
         let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         to_data_folder
             .create(
-                MODEL_TABLE_NAME,
-                TableType::ModelTable(invalid_table_schema(), HashMap::new(), HashMap::new()),
+                TIME_SERIES_TABLE_NAME,
+                TableType::TimeSeriesTable(invalid_table_schema(), HashMap::new(), HashMap::new()),
             )
             .await
             .unwrap();
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let result = from_data_folder
-            .r#move(MODEL_TABLE_NAME, &to_data_folder, MODEL_TABLE_NAME)
+            .r#move(
+                TIME_SERIES_TABLE_NAME,
+                &to_data_folder,
+                TIME_SERIES_TABLE_NAME,
+            )
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "Invalid Argument Error: The schema of {MODEL_TABLE_NAME} \
-                does not match the schema of {MODEL_TABLE_NAME}."
+                "Invalid Argument Error: The schema of {TIME_SERIES_TABLE_NAME} \
+                does not match the schema of {TIME_SERIES_TABLE_NAME}."
             )
         );
 
         assert_table_not_moved(
             &mut from_data_folder,
-            MODEL_TABLE_NAME,
-            sorted_model_table_data(),
+            TIME_SERIES_TABLE_NAME,
+            sorted_time_series_table_data(),
             Some(&mut to_data_folder),
-            Some(MODEL_TABLE_NAME),
+            Some(TIME_SERIES_TABLE_NAME),
         )
         .await;
     }
 
     #[tokio::test]
-    async fn test_move_model_table_to_normal_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_move_time_series_table_to_normal_table() {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
         let (_temp_dir, mut to_data_folder) = create_data_folder_with_normal_table().await;
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let result = from_data_folder
-            .r#move(MODEL_TABLE_NAME, &to_data_folder, NORMAL_TABLE_NAME)
+            .r#move(TIME_SERIES_TABLE_NAME, &to_data_folder, NORMAL_TABLE_NAME)
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "Invalid Argument Error: {MODEL_TABLE_NAME} and {NORMAL_TABLE_NAME} \
-                are not both normal tables or model tables."
+                "Invalid Argument Error: {TIME_SERIES_TABLE_NAME} and {NORMAL_TABLE_NAME} \
+                are not both normal tables or time series tables."
             )
         );
 
         assert_table_not_moved(
             &mut from_data_folder,
-            MODEL_TABLE_NAME,
-            sorted_model_table_data(),
+            TIME_SERIES_TABLE_NAME,
+            sorted_time_series_table_data(),
             Some(&mut to_data_folder),
             Some(NORMAL_TABLE_NAME),
         )
@@ -2873,33 +2957,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_move_model_table_to_missing_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_model_table().await;
+    async fn test_move_time_series_table_to_missing_table() {
+        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
         let to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         from_data_folder
-            .write(MODEL_TABLE_NAME, model_table_data())
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let result = from_data_folder
-            .r#move(MODEL_TABLE_NAME, &to_data_folder, MISSING_TABLE_NAME)
+            .r#move(TIME_SERIES_TABLE_NAME, &to_data_folder, MISSING_TABLE_NAME)
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "Invalid Argument Error: {MODEL_TABLE_NAME} and {MISSING_TABLE_NAME} \
-                are not both normal tables or model tables."
+                "Invalid Argument Error: {TIME_SERIES_TABLE_NAME} and {MISSING_TABLE_NAME} \
+                are not both normal tables or time series tables."
             )
         );
 
         assert_table_not_moved(
             &mut from_data_folder,
-            MODEL_TABLE_NAME,
-            sorted_model_table_data(),
+            TIME_SERIES_TABLE_NAME,
+            sorted_time_series_table_data(),
             None,
             None,
         )
@@ -2932,21 +3016,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_move_missing_table_to_model_table() {
+    async fn test_move_missing_table_to_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut from_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let (_temp_dir, to_data_folder) = create_data_folder_with_model_table().await;
+        let (_temp_dir, to_data_folder) = create_data_folder_with_time_series_table().await;
 
         let result = from_data_folder
-            .r#move(MISSING_TABLE_NAME, &to_data_folder, MODEL_TABLE_NAME)
+            .r#move(MISSING_TABLE_NAME, &to_data_folder, TIME_SERIES_TABLE_NAME)
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "Invalid Argument Error: {MISSING_TABLE_NAME} and {MODEL_TABLE_NAME} \
-                are not both normal tables or model tables."
+                "Invalid Argument Error: {MISSING_TABLE_NAME} and {TIME_SERIES_TABLE_NAME} \
+                are not both normal tables or time series tables."
             )
         );
     }
@@ -3020,22 +3104,22 @@ mod tests {
         ])
     }
 
-    async fn create_data_folder_with_model_table() -> (TempDir, DataFolder) {
+    async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let table_type =
-            TableType::ModelTable(model_table_schema(), HashMap::new(), HashMap::new());
+            TableType::TimeSeriesTable(time_series_table_schema(), HashMap::new(), HashMap::new());
 
         data_folder
-            .create(MODEL_TABLE_NAME, table_type)
+            .create(TIME_SERIES_TABLE_NAME, table_type)
             .await
             .unwrap();
 
         (temp_dir, data_folder)
     }
 
-    fn sorted_model_table_data() -> RecordBatch {
+    fn sorted_time_series_table_data() -> RecordBatch {
         let sort_options = SortOptions {
             descending: false,
             nulls_first: false,
@@ -3057,14 +3141,14 @@ mod tests {
         ];
 
         sort::sort_batch(
-            &model_table_data(),
+            &time_series_table_data(),
             &LexOrdering::new(physical_sort_exprs),
             None,
         )
         .unwrap()
     }
 
-    fn model_table_data() -> RecordBatch {
+    fn time_series_table_data() -> RecordBatch {
         let timestamps = TimestampArray::from(vec![100, 100, 200, 200, 300, 300]);
         let tag_1 = StringArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
         let tag_2 = StringArray::from(vec!["tag_a", "tag_b", "tag_a", "tag_b", "tag_a", "tag_b"]);
@@ -3072,7 +3156,7 @@ mod tests {
         let field_2 = ValueArray::from(vec![24.0, 56.0, 25.0, 55.0, 26.0, 54.0]);
 
         RecordBatch::try_new(
-            Arc::new(model_table_schema()),
+            Arc::new(time_series_table_schema()),
             vec![
                 Arc::new(timestamps),
                 Arc::new(tag_1),
@@ -3084,7 +3168,7 @@ mod tests {
         .unwrap()
     }
 
-    fn model_table_schema() -> Schema {
+    fn time_series_table_schema() -> Schema {
         Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("tag_1", DataType::Utf8, false),
@@ -3094,26 +3178,27 @@ mod tests {
         ])
     }
 
-    async fn create_data_folder_with_model_table_with_generated_column() -> (TempDir, DataFolder) {
+    async fn create_data_folder_with_time_series_table_with_generated_column()
+    -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let generated_columns = vec![("generated".to_owned(), "field_1 + field_2".to_owned())];
-        let table_type = TableType::ModelTable(
-            model_table_with_generated_column_schema(),
+        let table_type = TableType::TimeSeriesTable(
+            time_series_table_with_generated_column_schema(),
             HashMap::new(),
             generated_columns.into_iter().collect(),
         );
 
         data_folder
-            .create(MODEL_TABLE_WITH_GENERATED_COLUMN_NAME, table_type)
+            .create(TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME, table_type)
             .await
             .unwrap();
 
         (temp_dir, data_folder)
     }
 
-    fn model_table_with_generated_column_schema() -> Schema {
+    fn time_series_table_with_generated_column_schema() -> Schema {
         Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("tag_1", DataType::Utf8, false),

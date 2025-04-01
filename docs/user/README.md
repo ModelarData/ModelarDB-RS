@@ -154,54 +154,55 @@ MODELARDBD_PORT=8889  # By default modelardbd uses port 9999.
 
 ### Ingest Data
 Before data can be ingested into `modelardbd`, tables must be created. `modelardbd` supports two types of tables,
-standard relational tables created with `CREATE TABLE` statements and model tables created with `CREATE MODEL TABLE`
-statements. From a user's perspective, a model table functions like a standard relational table and can be queried using
-SQL. However, the implementation of a model table is highly optimized for time series and a model table must contain a
-single column with timestamps, one or more columns with fields (measurements as floating-point values), and zero or more
-columns with tags (metadata as strings). As stated, model tables can be created using `CREATE MODEL TABLE` statements
-with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD`, an error bound can optionally be specified in
-parentheses to enable lossy compression with a per-value error bound. The error bound can be absolute or relative, e.g.,
-`FIELD(1.0)` creates a column with an absolute per-value error bound that allows each value to deviate by at most 1.0
-while `FIELD(1.0%)` creates a column with a relative per-value error bound that allows each value to deviate by at most
-1.0%. `FIELD` columns default to an error bound of zero when none is specified. Thus, by default lossless compression is
-used and lossy compression is only used if explicitly requested. If the values in a `FIELD` column can be computed from
-other columns they need not be stored. Instead, if a `FIELD` column is defined using the syntax `FIELD AS (expression)`,
-e.g., `FIELD AS (column_one + column_two)`, the values of the `FIELD` column will be the result of the expression. As
-these generated `FIELD` columns do not store any data, an error bound cannot be defined.
+standard relational tables created with `CREATE TABLE` statements and time series tables created with `CREATE TIME SERIES TABLE`
+statements. From a user's perspective, a time series table functions like a standard relational table and can be queried 
+using SQL. However, the implementation of a time series table is highly optimized for time series and a time series table 
+must contain a single column with timestamps, one or more columns with fields (measurements as floating-point values), 
+and zero or more columns with tags (metadata as strings). As stated, time series tables can be created using 
+`CREATE TIME SERIES TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD`, an error bound 
+can optionally be specified in parentheses to enable lossy compression with a per-value error bound. The error bound can 
+be absolute or relative, e.g.,`FIELD(1.0)` creates a column with an absolute per-value error bound that allows each value 
+to deviate by at most 1.0 while `FIELD(1.0%)` creates a column with a relative per-value error bound that allows each 
+value to deviate by at most 1.0%. `FIELD` columns default to an error bound of zero when none is specified. Thus, by 
+default lossless compression is used and lossy compression is only used if explicitly requested. If the values in a 
+`FIELD` column can be computed from other columns they need not be stored. Instead, if a `FIELD` column is defined using 
+the syntax `FIELD AS (expression)`, e.g., `FIELD AS (column_one + column_two)`, the values of the `FIELD` column will be 
+the result of the expression. As these generated `FIELD` columns do not store any data, an error bound cannot be defined.
 
-As both `CREATE MODEL TABLE` and `CREATE TABLE` are just SQL statements, both types of tables can be created using
-`modelardb` or programmatically using Apache Arrow Flight. For example, a model table storing a simple multivariate
+As both `CREATE TIME SERIES TABLE` and `CREATE TABLE` are just SQL statements, both types of tables can be created using
+`modelardb` or programmatically using Apache Arrow Flight. For example, a time series table storing a simple multivariate
 time series with weather data collected at different wind turbines can be created as follows:
 
 ```shell
-CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0%))
+CREATE TIME SERIES TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0%))
 ```
 
-The following example shows how to create the same model table in Python using Apache Arrow Flight:
+The following example shows how to create the same time series table in Python using Apache Arrow Flight:
 
 ```python
 from pyarrow import flight
 
 flight_client = flight.FlightClient("grpc://127.0.0.1:9999")
 
-sql = "CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0%))"
+sql = "CREATE TIME SERIES TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0%))"
 ticket = flight.Ticket(sql)
 result = flight_client.do_get(ticket)
 
 print(list(result))
 ```
 
-When running a cluster of `modelardbd` instances, it is required to use `modelardbm` to create tables and model tables.
-This is a necessity as `modelardbm` is responsible for keeping the database schema consistent across all `modelardbd`
-instances in the cluster. The process for creating a table on the manager is the same as when creating the table
-directly on a `modelardbd` instance, as shown above. The only difference is that the gRPC URL should be changed to
-connect to the manager instead of the DBMS server. When the table is created through `modelardbm`, the table is
-automatically created in all `modelardbd` instances managed by `modelardbm`.
+When running a cluster of `modelardbd` instances, it is required to use `modelardbm` to create tables. This is a 
+necessity as `modelardbm` is responsible for keeping the database schema consistent across all `modelardbd` instances in 
+the cluster. The process for creating a table on the manager is the same as when creating the table directly on a 
+`modelardbd` instance, as shown above. The only difference is that the gRPC URL should be changed to connect to the 
+manager instead of the DBMS server. When the table is created through `modelardbm`, the table is automatically created 
+in all `modelardbd` instances managed by `modelardbm`.
 
-After creating a table or a model table, data can be ingested into `modelardbd` with `INSERT` in `modelardb`. Be aware that
-`INSERT` statements currently must contain values for all columns but that the values for generated columns will be dropped
-by `modelardbd`. As parsing `INSERT` statements add significant overhead, binary data can also be ingested programmatically
-using Apache Arrow Flight. For example, this Python example ingests three data points into the model table `wind_turbine`:
+After creating a table, data can be ingested into `modelardbd` with `INSERT` in `modelardb`. Be aware that `INSERT` 
+statements currently must contain values for all columns but that the values for generated columns will be dropped by 
+`modelardbd`. As parsing `INSERT` statements add significant overhead, binary data can also be ingested programmatically
+using Apache Arrow Flight. For example, this Python example ingests three data points into the time series table 
+`wind_turbine`:
 
 ```python
 import pyarrow
@@ -226,8 +227,8 @@ writer.close()
 While this example simply ingests three data points from memory, it is simple to extend such that it reads from other
 data sources. For example, [this Python
 script](https://github.com/ModelarData/Utilities/blob/main/Apache-Parquet-Loader/main.py) makes it simple to bulk load
-time series from Apache Parquet files with the same schema by reading the Apache Parquet files, creating a model table
-that matches their schema if it does not exist, and transferring the data in the Apache Parquet files to `modelardbd`
+time series from Apache Parquet files with the same schema by reading the Apache Parquet files, creating a time series 
+table that matches their schema if it does not exist, and transferring the data in the Apache Parquet files to `modelardbd`
 using Apache Arrow Flight.
 
 Time series can also be ingested into `modelardbd` using
@@ -250,7 +251,7 @@ modelardb
 ```
 
 Be aware that the REPL currently does not support splitting SQL statements over multiple lines, thus SQL statements do
-not need to end with a `;`. In addition to `CREATE MODEL TABLE`, ModelarDB also extends SQL with an `INCLUDE` clause
+not need to end with a `;`. In addition to `CREATE TIME SERIES TABLE`, ModelarDB also extends SQL with an `INCLUDE` clause
 with the format `INCLUDE address[, address]*`. When this clause is prepended to a `SELECT` statement, a `modelardbd`
 instance executes the `SELECT` statement on the data it manages and forwards the statement to `modelardbd` instances at
 the provided addresses. Afterwards, the `modelardbd` instance that initially received the query, unions the result from

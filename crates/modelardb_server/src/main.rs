@@ -54,8 +54,8 @@ pub enum ClusterMode {
 
 /// Setup tracing that prints to stdout, parse the command line arguments to extract
 /// [`DataFolders`], construct a [`Context`] with the systems components, initialize the normal
-/// tables and model tables in the metadata Delta Lake, initialize a CTRL+C handler that flushes the
-/// data in memory to disk, and start the Apache Arrow Flight interface. Returns
+/// tables and time series tables in the metadata Delta Lake, initialize a CTRL+C handler that
+/// flushes the data in memory to disk, and start the Apache Arrow Flight interface. Returns
 /// [`ModelarDbServerError`](error::ModelarDbServerError) if the command line arguments
 /// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
 /// Flight interface cannot be started.
@@ -86,9 +86,9 @@ fn main() -> Result<()> {
         cluster_mode.clone(),
     ))?);
 
-    // Register normal tables and model tables.
+    // Register normal tables and time series tables.
     runtime.block_on(context.register_normal_tables())?;
-    runtime.block_on(context.register_model_tables())?;
+    runtime.block_on(context.register_time_series_tables())?;
 
     if let ClusterMode::MultiNode(manager) = &cluster_mode {
         runtime.block_on(manager.retrieve_and_create_tables(&context))?;
