@@ -415,7 +415,7 @@ impl DataFolder {
     /// with Apache DataFusion, and is a model table.
     pub async fn model_table_metadata(&self, table_name: &str) -> Option<Arc<TimeSeriesTableMetadata>> {
         let table_provider = self.session_context.table_provider(table_name).await.ok()?;
-        modelardb_storage::maybe_table_provider_to_model_table_metadata(table_provider)
+        modelardb_storage::maybe_table_provider_to_time_series_table_metadata(table_provider)
     }
 }
 

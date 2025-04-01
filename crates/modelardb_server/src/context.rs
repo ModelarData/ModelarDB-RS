@@ -371,7 +371,7 @@ impl Context {
         })?;
 
         let maybe_time_series_table_metadata =
-            modelardb_storage::maybe_table_provider_to_model_table_metadata(maybe_time_series_table);
+            modelardb_storage::maybe_table_provider_to_time_series_table_metadata(maybe_time_series_table);
 
         Ok(maybe_time_series_table_metadata)
     }

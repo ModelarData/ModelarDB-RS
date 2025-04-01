@@ -38,21 +38,21 @@ use crate::storage::{UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER
 /// [`UncompressedInMemoryDataBuffer`] before it is considered unused and can be finished.
 const RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED: u64 = 1;
 
-/// Ingested data points from one or more time series to be inserted into a model table.
+/// Ingested data points from one or more time series to be inserted into a time series table.
 pub(super) struct IngestedDataBuffer {
-    /// Metadata of the model table to insert the data points into.
-    pub(super) model_table_metadata: Arc<TimeSeriesTableMetadata>,
+    /// Metadata of the time series table to insert the data points into.
+    pub(super) time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Uncompressed data points to insert.
     pub(super) data_points: RecordBatch,
 }
 
 impl IngestedDataBuffer {
     pub(super) fn new(
-        model_table_metadata: Arc<TimeSeriesTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         data_points: RecordBatch,
     ) -> Self {
         Self {
-            model_table_metadata,
+            time_series_table_metadata,
             data_points,
         }
     }
@@ -72,8 +72,8 @@ pub(super) enum UncompressedDataBuffer {
 pub(super) struct UncompressedInMemoryDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points for.
     tag_hash: u64,
-    /// Metadata of the model table the buffer stores data for.
-    model_table_metadata: Arc<TimeSeriesTableMetadata>,
+    /// Metadata of the time series table the buffer stores data for.
+    time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Index of the last batch that caused the buffer to be updated.
     updated_by_batch_index: u64,
     /// Builder that timestamps are appended to.
@@ -88,17 +88,17 @@ impl UncompressedInMemoryDataBuffer {
     pub(super) fn new(
         tag_hash: u64,
         tag_values: Vec<String>,
-        model_table_metadata: Arc<TimeSeriesTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         current_batch_index: u64,
     ) -> Self {
         let timestamps = TimestampBuilder::with_capacity(*UNCOMPRESSED_DATA_BUFFER_CAPACITY);
-        let values = (0..model_table_metadata.field_column_indices.len())
+        let values = (0..time_series_table_metadata.field_column_indices.len())
             .map(|_| ValueBuilder::with_capacity(*UNCOMPRESSED_DATA_BUFFER_CAPACITY))
             .collect();
 
         Self {
             tag_hash,
-            model_table_metadata,
+            time_series_table_metadata,
             updated_by_batch_index: current_batch_index,
             timestamps,
             values,
@@ -164,13 +164,13 @@ impl UncompressedInMemoryDataBuffer {
 
         let mut field_column_index = 0;
         let mut tag_column_index = 0;
-        let mut columns = Vec::with_capacity(self.model_table_metadata.schema.fields().len());
+        let mut columns = Vec::with_capacity(self.time_series_table_metadata.schema.fields().len());
 
         // Iterate over the column indices in the schema and add the sorted data to the columns.
-        for column_index in 0..self.model_table_metadata.schema.fields().len() {
-            if self.model_table_metadata.is_timestamp(column_index) {
+        for column_index in 0..self.time_series_table_metadata.schema.fields().len() {
+            if self.time_series_table_metadata.is_timestamp(column_index) {
                 columns.push(compute::take(&timestamps, &sorted_indices, None)?);
-            } else if self.model_table_metadata.is_tag(column_index) {
+            } else if self.time_series_table_metadata.is_tag(column_index) {
                 // The tag value is the same for each data point so it is not sorted.
                 let tag_value = self.tag_values[tag_column_index].clone();
                 let tag_array: StringArray =
@@ -186,13 +186,13 @@ impl UncompressedInMemoryDataBuffer {
             }
         }
 
-        RecordBatch::try_new(self.model_table_metadata.schema.clone(), columns)
+        RecordBatch::try_new(self.time_series_table_metadata.schema.clone(), columns)
             .map_err(|error| error.into())
     }
 
-    /// Return the metadata for the model table the buffer stores data points for.
-    pub(super) fn model_table_metadata(&self) -> &Arc<TimeSeriesTableMetadata> {
-        &self.model_table_metadata
+    /// Return the metadata for the time series table the buffer stores data points for.
+    pub(super) fn time_series_table_metadata(&self) -> &Arc<TimeSeriesTableMetadata> {
+        &self.time_series_table_metadata
     }
 
     /// Return the total size of this [`UncompressedInMemoryDataBuffer`] in bytes.
@@ -210,7 +210,7 @@ impl UncompressedInMemoryDataBuffer {
 
         UncompressedOnDiskDataBuffer::try_spill(
             self.tag_hash,
-            self.model_table_metadata.clone(),
+            self.time_series_table_metadata.clone(),
             self.updated_by_batch_index,
             local_data_folder,
             data_points,
@@ -233,7 +233,7 @@ impl Debug for UncompressedInMemoryDataBuffer {
 }
 
 /// Return the total amount of memory in bytes an [`UncompressedInMemoryDataBuffer`] storing data
-/// points from a model table with `number_of_fields` field columns will require.
+/// points from a time series table with `number_of_fields` field columns will require.
 pub(super) fn compute_memory_size(number_of_fields: usize) -> usize {
     (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Timestamp>())
         + (number_of_fields * (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>()))
@@ -244,8 +244,8 @@ pub(super) fn compute_memory_size(number_of_fields: usize) -> usize {
 pub(super) struct UncompressedOnDiskDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points for.
     tag_hash: u64,
-    /// Metadata of the model table the buffer stores data for.
-    model_table_metadata: Arc<TimeSeriesTableMetadata>,
+    /// Metadata of the time series table the buffer stores data for.
+    time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Index of the last batch that added data points to this buffer.
     updated_by_batch_index: u64,
     /// Location for storing spilled buffers at `file_path`.
@@ -262,16 +262,16 @@ impl UncompressedOnDiskDataBuffer {
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(super) async fn try_spill(
         tag_hash: u64,
-        model_table_metadata: Arc<TimeSeriesTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         updated_by_batch_index: u64,
         local_data_folder: Arc<dyn ObjectStore>,
         data_points: RecordBatch,
     ) -> Result<Self> {
         // Create a path that uses the first timestamp as the filename.
-        let timestamp_index = model_table_metadata.timestamp_column_index;
+        let timestamp_index = time_series_table_metadata.timestamp_column_index;
         let timestamps = modelardb_types::array!(data_points, timestamp_index, TimestampArray);
         let file_path = spilled_buffer_file_path(
-            &model_table_metadata.name,
+            &time_series_table_metadata.name,
             tag_hash,
             &format!("{}.parquet", timestamps.value(0)),
         );
@@ -286,7 +286,7 @@ impl UncompressedOnDiskDataBuffer {
 
         Ok(Self {
             tag_hash,
-            model_table_metadata,
+            time_series_table_metadata,
             updated_by_batch_index,
             local_data_folder,
             file_path,
@@ -298,16 +298,16 @@ impl UncompressedOnDiskDataBuffer {
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) is returned.
     pub(super) fn try_new(
         tag_hash: u64,
-        model_table_metadata: Arc<TimeSeriesTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         updated_by_batch_index: u64,
         local_data_folder: Arc<dyn ObjectStore>,
         file_name: &str,
     ) -> Result<Self> {
-        let file_path = spilled_buffer_file_path(&model_table_metadata.name, tag_hash, file_name);
+        let file_path = spilled_buffer_file_path(&time_series_table_metadata.name, tag_hash, file_name);
 
         Ok(Self {
             tag_hash,
-            model_table_metadata,
+            time_series_table_metadata,
             updated_by_batch_index,
             local_data_folder,
             file_path,
@@ -330,9 +330,9 @@ impl UncompressedOnDiskDataBuffer {
         Ok(data_points)
     }
 
-    /// Return the metadata for the model table the buffer stores data points for.
-    pub(super) fn model_table_metadata(&self) -> &Arc<TimeSeriesTableMetadata> {
-        &self.model_table_metadata
+    /// Return the metadata for the time series table the buffer stores data points for.
+    pub(super) fn time_series_table_metadata(&self) -> &Arc<TimeSeriesTableMetadata> {
+        &self.time_series_table_metadata
     }
 
     /// Return [`true`] if all the data points in the [`UncompressedOnDiskDataBuffer`] are from
@@ -353,7 +353,7 @@ impl UncompressedOnDiskDataBuffer {
         let data_points = self.record_batch().await?;
 
         let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
-            self.model_table_metadata.column_arrays(&data_points)?;
+            self.time_series_table_metadata.column_arrays(&data_points)?;
 
         let tag_values: Vec<String> = tag_column_arrays
             .iter()
@@ -363,7 +363,7 @@ impl UncompressedOnDiskDataBuffer {
         let mut in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             self.tag_hash,
             tag_values,
-            self.model_table_metadata.clone(),
+            self.time_series_table_metadata.clone(),
             current_batch_index,
         );
 
@@ -529,11 +529,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_record_batch_from_in_memory_data_buffer() {
-        let model_table_metadata = test::time_series_table_metadata_arc();
+        let time_series_table_metadata = test::time_series_table_metadata_arc();
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            model_table_metadata.clone(),
+            time_series_table_metadata.clone(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
@@ -542,7 +542,7 @@ mod tests {
         let data = uncompressed_buffer.record_batch().await.unwrap();
 
         assert_eq!(data.num_rows(), capacity);
-        assert_eq!(data.schema(), model_table_metadata.schema);
+        assert_eq!(data.schema(), time_series_table_metadata.schema);
     }
 
     proptest! {
@@ -551,11 +551,11 @@ mod tests {
         // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
-        let model_table_metadata = test::time_series_table_metadata_arc();
+        let time_series_table_metadata = test::time_series_table_metadata_arc();
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            model_table_metadata.clone(),
+            time_series_table_metadata.clone(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -566,7 +566,7 @@ mod tests {
         }
 
         let data = runtime.block_on(uncompressed_buffer.record_batch()).unwrap();
-        assert_eq!(data.schema(), model_table_metadata.schema);
+        assert_eq!(data.schema(), time_series_table_metadata.schema);
         let timestamps = modelardb_types::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
     }
@@ -651,11 +651,11 @@ mod tests {
         // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
-        let model_table_metadata = test::time_series_table_metadata_arc();
+        let time_series_table_metadata = test::time_series_table_metadata_arc();
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            model_table_metadata.clone(),
+            time_series_table_metadata.clone(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -676,7 +676,7 @@ mod tests {
         assert_eq!(spilled_buffers.len(), 1);
 
         let data = runtime.block_on(uncompressed_on_disk_buffer.record_batch()).unwrap();
-        assert_eq!(data.schema(), model_table_metadata.schema);
+        assert_eq!(data.schema(), time_series_table_metadata.schema);
         let timestamps = modelardb_types::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
 
