@@ -106,6 +106,11 @@ fn parse_command_line_arguments(
         if arg_path.exists() {
             // Assumes all files contains queries.
             maybe_query_file = Some(arg_path.to_path_buf());
+        } else if arg.starts_with(&['.', '/']) {
+            // Prevent missing files from being used as host.
+            Err(ModelarDbClientError::InvalidArgument(format!(
+                "{arg} does not exist"
+            )))?;
         } else if arg.contains(':') {
             // Assumes anything with : is host:port.
             let host_and_port = arg.splitn(2, ':').collect::<Vec<&str>>();
