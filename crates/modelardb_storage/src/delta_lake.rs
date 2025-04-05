@@ -67,8 +67,8 @@ impl DeltaLake {
     /// [`ModelarDbStorageError`] if `local_url` cannot be parsed.
     pub fn try_from_local_url(local_url: &str) -> Result<Self> {
         match local_url.split_once("://") {
-            Some(("file", local_path)) => Self::try_from_local_path(StdPath::new(local_path)),
             None => Self::try_from_local_path(StdPath::new(local_url)),
+            Some(("file", local_path)) => Self::try_from_local_path(StdPath::new(local_path)),
             Some(("memory", _)) => Ok(Self::new_in_memory()),
             _ => Err(ModelarDbStorageError::InvalidArgument(format!(
                 "{local_url} is not a valid local URL."
