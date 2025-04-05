@@ -237,7 +237,7 @@ pub fn generate_values(
     match values_structure {
         // Generates constant values.
         ValuesStructure::Constant(maybe_add_noise_range) => {
-            let mut values = iter::repeat(std_rng.random()).take(uncompressed_timestamps.len());
+            let mut values = iter::repeat_n(std_rng.random(), uncompressed_timestamps.len());
             randomize_and_collect_iterator(maybe_add_noise_range, &mut values)
         }
         // Generates linear values.
