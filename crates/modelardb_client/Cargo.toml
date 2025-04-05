@@ -28,7 +28,6 @@ arrow-flight.workspace = true
 arrow.workspace = true
 bytes.workspace = true
 dirs.workspace = true
-object_store.workspace = true
 rustyline.workspace = true
 tokio.workspace = true
 tonic.workspace = true
