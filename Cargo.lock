@@ -2964,7 +2964,6 @@ dependencies = [
  "arrow-flight",
  "bytes",
  "dirs",
- "object_store",
  "rustyline",
  "tokio",
  "tonic",

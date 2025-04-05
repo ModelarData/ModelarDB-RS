@@ -21,21 +21,20 @@ mod helper;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::env::{self, Args};
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, IsTerminal, Write};
+use std::path::{Path as StdPath, PathBuf as StdPathBuf};
 use std::process;
 use std::sync::Arc;
 use std::time::Instant;
 
 use arrow::array::ArrayRef;
-use arrow::datatypes::{Schema, ToByteSlice};
+use arrow::datatypes::Schema;
 use arrow::ipc::convert;
 use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, Ticket, utils};
 use bytes::Bytes;
-use object_store::local::LocalFileSystem;
-use object_store::path::Path;
-use object_store::{ObjectMeta, ObjectStore};
 use rustyline::Editor;
 use rustyline::history::FileHistory;
 use tonic::transport::Channel;
@@ -62,9 +61,6 @@ const TRANSPORT_ERROR: &str = "transport error: no messages received.";
 /// cannot be read.
 #[tokio::main]
 async fn main() -> Result<()> {
-    let current_dir = env::current_dir()?;
-    let local_file_system = LocalFileSystem::new_with_prefix(current_dir)?;
-
     // Parse the command line arguments.
     let args = env::args();
     if args.len() > 3 {
@@ -76,8 +72,7 @@ async fn main() -> Result<()> {
         eprintln!("Usage: {binary_name} [server host or host:port] [query_file]",);
         process::exit(1);
     }
-    let (maybe_host, maybe_port, maybe_query_file) =
-        parse_command_line_arguments(args, &local_file_system).await?;
+    let (maybe_host, maybe_port, maybe_query_file) = parse_command_line_arguments(args)?;
 
     // Connect to the server.
     let host = maybe_host.unwrap_or_else(|| DEFAULT_HOST.to_owned());
@@ -86,7 +81,7 @@ async fn main() -> Result<()> {
 
     // Execute the queries.
     if let Some(query_file) = maybe_query_file {
-        execute_queries_from_a_file(flight_service_client, &query_file, &local_file_system).await
+        execute_queries_from_a_file(flight_service_client, &query_file).await
     } else {
         execute_queries_from_a_repl(flight_service_client).await
     }
@@ -95,10 +90,9 @@ async fn main() -> Result<()> {
 /// Parse the command line arguments in `args` and return a triple with the host of the server to
 /// connect to, the port to connect to, and the file containing the queries to execute on the
 /// server. If one of these command line arguments is not provided it is replaced with [`None`].
-async fn parse_command_line_arguments(
+fn parse_command_line_arguments(
     mut args: Args,
-    local_file_system: &LocalFileSystem,
-) -> Result<(Option<String>, Option<u16>, Option<ObjectMeta>)> {
+) -> Result<(Option<String>, Option<u16>, Option<StdPathBuf>)> {
     // Drop the path of the executable.
     args.next();
 
@@ -108,10 +102,10 @@ async fn parse_command_line_arguments(
     let mut maybe_query_file = None;
 
     for arg in args {
-        let arg_path = Path::from(arg.as_str());
-        if let Ok(query_file) = local_file_system.head(&arg_path).await {
+        let arg_path = &StdPath::new(arg.as_str());
+        if arg_path.exists() {
             // Assumes all files contains queries.
-            maybe_query_file = Some(query_file);
+            maybe_query_file = Some(arg_path.to_path_buf());
         } else if arg.contains(':') {
             // Assumes anything with : is host:port.
             let host_and_port = arg.splitn(2, ':').collect::<Vec<&str>>();
@@ -142,12 +136,10 @@ async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>> 
 /// Execute the commands and queries in `query_file`.
 async fn execute_queries_from_a_file(
     mut flight_service_client: FlightServiceClient<Channel>,
-    query_file: &ObjectMeta,
-    local_file_system: &LocalFileSystem,
+    query_file: &StdPath,
 ) -> Result<()> {
-    let file = local_file_system.get(&query_file.location).await?;
-    let bytes = file.bytes().await?;
-    let lines = io::BufReader::new(bytes.to_byte_slice()).lines();
+    let file = File::open(query_file)?;
+    let lines = BufReader::new(file).lines();
 
     for line in lines {
         // Remove any comments.
