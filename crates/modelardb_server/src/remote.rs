@@ -43,7 +43,7 @@ use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_common::{arguments, remote};
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::functions;
 use modelardb_types::schemas::CONFIGURATION_SCHEMA;
@@ -299,16 +299,16 @@ impl FlightServiceHandler {
     }
 
     /// While there is still more data to receive, ingest the data into the storage engine.
-    async fn ingest_into_model_table(
+    async fn ingest_into_time_series_table(
         &self,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
             let data_points = remote::flight_data_to_record_batch(
                 &flight_data?,
-                &model_table_metadata.schema,
+                &time_series_table_metadata.schema,
                 &self.dictionaries_by_id,
             )?;
             let mut storage_engine = self.context.storage_engine.write().await;
@@ -316,7 +316,7 @@ impl FlightServiceHandler {
             // Note that the storage engine returns when the data is stored in memory, which means
             // the data could be lost if the system crashes right after ingesting the data.
             storage_engine
-                .insert_data_points(model_table_metadata.clone(), data_points)
+                .insert_data_points(time_series_table_metadata.clone(), data_points)
                 .await
                 .map_err(|error| {
                     Status::internal(format!("Data could not be ingested: {error}"))
@@ -414,8 +414,8 @@ impl FlightService for FlightServiceHandler {
     }
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
-    /// the result itself. Currently, CREATE TABLE, CREATE MODEL TABLE, EXPLAIN, INCLUDE, SELECT,
-    /// INSERT, TRUNCATE TABLE, and DROP TABLE are supported.
+    /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, EXPLAIN, INCLUDE,
+    /// SELECT, INSERT, TRUNCATE TABLE, and DROP TABLE are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -447,11 +447,11 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(empty_record_batch_stream())
             }
-            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
+            ModelarDbStatement::CreateTimeSeriesTable(time_series_table_metadata) => {
                 self.validate_request(request.metadata()).await?;
 
                 self.context
-                    .create_model_table(&model_table_metadata)
+                    .create_time_series_table(&time_series_table_metadata)
                     .await
                     .map_err(error_to_status_invalid_argument)?;
 
@@ -539,15 +539,18 @@ impl FlightService for FlightServiceHandler {
         let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
         let normalized_table_name = functions::normalize_name(table_name);
 
-        // Handle the data based on whether it is a normal table or a model table.
-        if let Some(model_table_metadata) = self
+        // Handle the data based on whether it is a normal table or a time series table.
+        if let Some(time_series_table_metadata) = self
             .context
-            .model_table_metadata_from_default_database_schema(&normalized_table_name)
+            .time_series_table_metadata_from_default_database_schema(&normalized_table_name)
             .await
             .map_err(error_to_status_invalid_argument)?
         {
-            debug!("Writing data to model table '{}'.", normalized_table_name);
-            self.ingest_into_model_table(model_table_metadata, &mut flight_data_stream)
+            debug!(
+                "Writing data to time series table '{}'.",
+                normalized_table_name
+            );
+            self.ingest_into_time_series_table(time_series_table_metadata, &mut flight_data_stream)
                 .await?;
         } else {
             debug!("Writing data to normal table '{}'.", normalized_table_name);
@@ -575,9 +578,9 @@ impl FlightService for FlightServiceHandler {
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `CreateTables`: Create the tables given in the [`RecordBatch`] in the action body. The
-    /// [`RecordBatch`] should have the fields `is_model_table`, `name`, `schema`, `error_bounds` and
-    /// `generated_columns`. `error_bounds` and `generated_columns` should be null if `is_model_table`
-    /// is `false`.
+    /// [`RecordBatch`] should have the fields `is_time_series_table`, `name`, `schema`,
+    /// `error_bounds` and `generated_columns`. `error_bounds` and `generated_columns` should be
+    /// null if `is_time_series_table` is `false`.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.

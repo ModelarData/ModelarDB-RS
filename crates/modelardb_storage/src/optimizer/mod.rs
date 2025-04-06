@@ -15,7 +15,7 @@
 
 //! Implementation of physical optimizer rules that rewrites the physical plans produced by Apache
 //! Arrow DataFusion to execute queries more efficiently directly on the segments with metadata and
-//! models stored in model tables.
+//! models stored in time series tables.
 
 mod model_simple_aggregates;
 

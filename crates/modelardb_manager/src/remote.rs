@@ -37,7 +37,7 @@ use futures::{Stream, stream};
 use modelardb_common::arguments;
 use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
@@ -123,16 +123,16 @@ impl FlightServiceHandler {
 
             Ok(Arc::new(schema))
         } else if table_metadata_manager
-            .is_model_table(table_name)
+            .is_time_series_table(table_name)
             .await
             .map_err(error_to_status_internal)?
         {
-            let model_table_metadata = table_metadata_manager
-                .model_table_metadata_for_model_table(table_name)
+            let time_series_table_metadata = table_metadata_manager
+                .time_series_table_metadata_for_time_series_table(table_name)
                 .await
                 .map_err(error_to_status_internal)?;
 
-            Ok(model_table_metadata.query_schema)
+            Ok(time_series_table_metadata.query_schema)
         } else {
             Err(Status::invalid_argument(format!(
                 "Table with name '{table_name}' does not exist.",
@@ -206,34 +206,35 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Create a model table, save it to the metadata Delta Lake and create it for each node
-    /// controlled by the manager. If the model table cannot be saved to the metadata Delta Lake or
-    /// created for each node, return [`Status`].
-    async fn save_and_create_cluster_model_table(
+    /// Create a time series table, save it to the metadata Delta Lake and create it for each node
+    /// controlled by the manager. If the time series table cannot be saved to the metadata Delta
+    /// Lake or created for each node, return [`Status`].
+    async fn save_and_create_cluster_time_series_table(
         &self,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context
             .remote_data_folder
             .delta_lake
-            .create_model_table(&model_table_metadata)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .map_err(error_to_status_internal)?;
 
-        // Persist the new model table to the metadata Delta Lake.
+        // Persist the new time series table to the metadata Delta Lake.
         self.context
             .remote_data_folder
             .metadata_manager
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .map_err(error_to_status_internal)?;
 
-        // Register and save the model table to each node in the cluster.
-        let record_batch =
-            modelardb_storage::model_table_metadata_to_record_batch(&model_table_metadata)
-                .map_err(error_to_status_internal)?;
+        // Register and save the time series table to each node in the cluster.
+        let record_batch = modelardb_storage::time_series_table_metadata_to_record_batch(
+            &time_series_table_metadata,
+        )
+        .map_err(error_to_status_internal)?;
 
         self.context
             .cluster
@@ -243,7 +244,10 @@ impl FlightServiceHandler {
             .await
             .map_err(error_to_status_internal)?;
 
-        info!("Created model table '{}'.", model_table_metadata.name);
+        info!(
+            "Created time series table '{}'.",
+            time_series_table_metadata.name
+        );
 
         Ok(())
     }
@@ -428,8 +432,8 @@ impl FlightService for FlightServiceHandler {
     }
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
-    /// the result itself. Currently, CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, and DROP
-    /// TABLE are supported.
+    /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, TRUNCATE TABLE, and
+    /// DROP TABLE are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -456,10 +460,10 @@ impl FlightService for FlightServiceHandler {
                 self.save_and_create_cluster_normal_table(&name, &schema)
                     .await?;
             }
-            ModelarDbStatement::CreateModelTable(model_table_metadata) => {
-                self.check_if_table_exists(&model_table_metadata.name)
+            ModelarDbStatement::CreateTimeSeriesTable(time_series_table_metadata) => {
+                self.check_if_table_exists(&time_series_table_metadata.name)
                     .await?;
-                self.save_and_create_cluster_model_table(model_table_metadata)
+                self.save_and_create_cluster_time_series_table(time_series_table_metadata)
                     .await?;
             }
             ModelarDbStatement::TruncateTable(table_names) => {
@@ -475,7 +479,7 @@ impl FlightService for FlightServiceHandler {
             // .. is not used so a compile error is raised if a new ModelarDbStatement is added.
             ModelarDbStatement::Statement(_) | ModelarDbStatement::IncludeSelect(..) => {
                 return Err(Status::invalid_argument(
-                    "Expected CREATE TABLE, CREATE MODEL TABLE, TRUNCATE TABLE, or DROP TABLE.",
+                    "Expected CREATE TABLE, CREATE TIME SERIES TABLE, TRUNCATE TABLE, or DROP TABLE.",
                 ));
             }
         };
@@ -510,11 +514,11 @@ impl FlightService for FlightServiceHandler {
     /// * `CreateTables`: Create the tables given in the [`RecordBatch`](arrow::record_batch::RecordBatch)
     /// in the action body. The tables are created for each node in the cluster of nodes controlled
     /// by the manager. The [`RecordBatch`](arrow::record_batch::RecordBatch) should have the fields
-    /// `is_model_table`, `name`, `schema`, `error_bounds` and `generated_columns`. `error_bounds`
-    /// and `generated_columns` should be null if `is_model_table` is `false`.
+    /// `is_time_series_table`, `name`, `schema`, `error_bounds` and `generated_columns`.
+    /// `error_bounds` and `generated_columns` should be null if `is_time_series_table` is `false`.
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the metadata required
-    /// to create the normal tables and model tables that are missing in the list. The list of table
-    /// names is also checked to make sure all given tables actually exist.
+    /// to create the normal tables and time series tables that are missing in the list. The list of
+    /// table names is also checked to make sure all given tables actually exist.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
     /// to the cluster of nodes controlled by the manager and the key and object store used in the
     /// cluster is returned.
@@ -538,7 +542,7 @@ impl FlightService for FlightServiceHandler {
             )
             .map_err(error_to_status_invalid_argument)?;
 
-            let (normal_table_metadata, model_table_metadata) =
+            let (normal_table_metadata, time_series_table_metadata) =
                 modelardb_storage::table_metadata_from_record_batch(&record_batch)
                     .map_err(error_to_status_invalid_argument)?;
 
@@ -548,9 +552,9 @@ impl FlightService for FlightServiceHandler {
                     .await?;
             }
 
-            for metadata in model_table_metadata {
+            for metadata in time_series_table_metadata {
                 self.check_if_table_exists(&metadata.name).await?;
-                self.save_and_create_cluster_model_table(Arc::new(metadata))
+                self.save_and_create_cluster_time_series_table(Arc::new(metadata))
                     .await?;
             }
 
@@ -604,13 +608,13 @@ impl FlightService for FlightServiceHandler {
                         modelardb_storage::normal_table_metadata_to_record_batch(table, &schema)
                             .map_err(error_to_status_internal)?
                     } else {
-                        let model_table_metadata = table_metadata_manager
-                            .model_table_metadata_for_model_table(table)
+                        let time_series_table_metadata = table_metadata_manager
+                            .time_series_table_metadata_for_time_series_table(table)
                             .await
                             .map_err(error_to_status_internal)?;
 
-                        modelardb_storage::model_table_metadata_to_record_batch(
-                            &model_table_metadata,
+                        modelardb_storage::time_series_table_metadata_to_record_batch(
+                            &time_series_table_metadata,
                         )
                         .map_err(error_to_status_internal)?
                     };
@@ -731,7 +735,7 @@ impl FlightService for FlightServiceHandler {
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
             description:
-                "Return the metadata required to create all normal tables and model tables \
+                "Return the metadata required to create all normal tables and time series tables \
                  currently in the manager's database schema."
                     .to_owned(),
         };

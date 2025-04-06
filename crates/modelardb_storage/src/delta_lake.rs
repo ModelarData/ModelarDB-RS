@@ -45,7 +45,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
@@ -290,10 +290,13 @@ impl DeltaLake {
         }
     }
 
-    /// Return a [`DeltaTableWriter`] for writing to the model table with `delta_table` in the Delta
-    /// Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established
-    /// or the table does not exist.
-    pub async fn model_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
+    /// Return a [`DeltaTableWriter`] for writing to the time series table with `delta_table` in the
+    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
+    /// established or the table does not exist.
+    pub async fn time_series_table_writer(
+        &self,
+        delta_table: DeltaTable,
+    ) -> Result<DeltaTableWriter> {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
 
         // Specify that the file must be sorted by the tag columns and then by start_time.
@@ -361,18 +364,18 @@ impl DeltaLake {
         .await
     }
 
-    /// Create a Delta Lake table for a model table with `model_table_metadata` if it does not
-    /// already exist. Returns [`DeltaTable`] if the table could be created and
+    /// Create a Delta Lake table for a time series table with `time_series_table_metadata` if it
+    /// does not already exist. Returns [`DeltaTable`] if the table could be created and
     /// [`ModelarDbStorageError`] if it could not.
-    pub async fn create_model_table(
+    pub async fn create_time_series_table(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<DeltaTable> {
         self.create_table(
-            &model_table_metadata.name,
-            &model_table_metadata.compressed_schema,
+            &time_series_table_metadata.name,
+            &time_series_table_metadata.compressed_schema,
             &[FIELD_COLUMN.to_owned()],
-            self.location_of_compressed_table(&model_table_metadata.name),
+            self.location_of_compressed_table(&time_series_table_metadata.name),
             SaveMode::ErrorIfExists,
         )
         .await
@@ -503,16 +506,16 @@ impl DeltaLake {
             .await
     }
 
-    /// Write `record_batches` with segments to a Delta Lake table for a model table with
+    /// Write `record_batches` with segments to a Delta Lake table for a time series table with
     /// `table_name`. Returns an updated [`DeltaTable`] if the file was written successfully,
     /// otherwise returns [`ModelarDbStorageError`].
-    pub async fn write_compressed_segments_to_model_table(
+    pub async fn write_compressed_segments_to_time_series_table(
         &self,
         table_name: &str,
         compressed_segments: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
         let delta_table = self.delta_table(table_name).await?;
-        let delta_table_writer = self.model_table_writer(delta_table).await?;
+        let delta_table_writer = self.time_series_table_writer(delta_table).await?;
         self.write_record_batches_to_table(delta_table_writer, compressed_segments)
             .await
     }
@@ -534,7 +537,7 @@ impl DeltaLake {
         }
     }
 
-    /// Return the location of the compressed model or normal table with `table_name`.
+    /// Return the location of the compressed time series or normal table with `table_name`.
     fn location_of_compressed_table(&self, table_name: &str) -> String {
         format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }

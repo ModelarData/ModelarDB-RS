@@ -70,9 +70,9 @@ const SEGMENT_TEST_MINIMUM_LENGTH: usize = 50;
 /// The different types of tables used in the integration tests.
 enum TableType {
     NormalTable,
-    ModelTable,
-    ModelTableNoTag,
-    ModelTableAsField,
+    TimeSeriesTable,
+    TimeSeriesTableNoTag,
+    TimeSeriesTableAsField,
 }
 
 /// Handler to the server process and client for use by the tests. The local folder is deleted and
@@ -175,7 +175,7 @@ impl TestContext {
         Ok(client)
     }
 
-    /// Create a normal table or model table with or without tags in the server through the
+    /// Create a normal table or time series table with or without tags in the server through the
     /// `do_action()` method and the `CreateTable` action.
     async fn create_table(&mut self, table_name: &str, table_type: TableType) {
         let cmd = match table_type {
@@ -192,9 +192,9 @@ impl TestContext {
                      )"
                 )
             }
-            TableType::ModelTable => {
+            TableType::TimeSeriesTable => {
                 format!(
-                    "CREATE MODEL TABLE {table_name}(
+                    "CREATE TIME SERIES TABLE {table_name}(
                          timestamp TIMESTAMP,
                          field_one FIELD,
                          field_two FIELD,
@@ -205,9 +205,9 @@ impl TestContext {
                      )"
                 )
             }
-            TableType::ModelTableNoTag => {
+            TableType::TimeSeriesTableNoTag => {
                 format!(
-                    "CREATE MODEL TABLE {table_name}(
+                    "CREATE TIME SERIES TABLE {table_name}(
                          timestamp TIMESTAMP,
                          field_one FIELD,
                          field_two FIELD,
@@ -217,9 +217,9 @@ impl TestContext {
                      )"
                 )
             }
-            TableType::ModelTableAsField => {
+            TableType::TimeSeriesTableAsField => {
                 format!(
-                    "CREATE MODEL TABLE {table_name}(
+                    "CREATE TIME SERIES TABLE {table_name}(
                          timestamp TIMESTAMP,
                          generated FIELD AS (field_one + CAST(37.0 AS REAL)),
                          field_one FIELD,
@@ -502,11 +502,11 @@ async fn test_can_register_normal_table_after_restart() {
 }
 
 #[tokio::test]
-async fn test_can_create_model_table() {
+async fn test_can_create_time_series_table() {
     let mut test_context = TestContext::new().await;
 
     test_context
-        .create_table(TABLE_NAME, TableType::ModelTable)
+        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
@@ -516,11 +516,11 @@ async fn test_can_create_model_table() {
 }
 
 #[tokio::test]
-async fn test_can_register_model_table_after_restart() {
+async fn test_can_register_time_series_table_after_restart() {
     let mut test_context = TestContext::new().await;
 
     test_context
-        .create_table(TABLE_NAME, TableType::ModelTable)
+        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     test_context.restart_server().await;
@@ -532,13 +532,13 @@ async fn test_can_register_model_table_after_restart() {
 }
 
 #[tokio::test]
-async fn test_can_create_register_and_list_multiple_normal_tables_and_model_tables() {
+async fn test_can_create_register_and_list_multiple_normal_tables_and_time_series_tables() {
     let mut test_context = TestContext::new().await;
     let table_types = &[
         TableType::NormalTable,
-        TableType::ModelTable,
-        TableType::ModelTableNoTag,
-        TableType::ModelTableAsField,
+        TableType::TimeSeriesTable,
+        TableType::TimeSeriesTableNoTag,
+        TableType::TimeSeriesTableAsField,
     ];
 
     // Create number_of_each_to_create of each table type.
@@ -549,9 +549,9 @@ async fn test_can_create_register_and_list_multiple_normal_tables_and_model_tabl
         // test to fail and to also make compilation fail if no table types are added to TableType.
         let table_type_name = match table_type {
             TableType::NormalTable => "normal_table",
-            TableType::ModelTable => "model_table",
-            TableType::ModelTableNoTag => "model_table_no_tag",
-            TableType::ModelTableAsField => "model_table_as_field",
+            TableType::TimeSeriesTable => "time_series_table",
+            TableType::TimeSeriesTableNoTag => "time_series_table_no_tag",
+            TableType::TimeSeriesTableAsField => "time_series_table_as_field",
         };
 
         for table_number in 0..number_of_each_to_create {
@@ -602,10 +602,10 @@ async fn test_can_drop_normal_table() {
 }
 
 #[tokio::test]
-async fn test_can_drop_model_table() {
+async fn test_can_drop_time_series_table() {
     let mut test_context = TestContext::new().await;
     test_context
-        .create_table(TABLE_NAME, TableType::ModelTable)
+        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
@@ -616,10 +616,10 @@ async fn test_can_drop_model_table() {
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names.len(), 0);
 
-    // It should be possible to create a model table, drop it, and then create a new model table with
-    // the same name.
+    // It should be possible to create a time series table, drop it, and then create a new time
+    // series table with the same name.
     test_context
-        .create_table(TABLE_NAME, TableType::ModelTable)
+        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 }
 
@@ -655,14 +655,14 @@ async fn test_can_truncate_normal_table() {
 }
 
 #[tokio::test]
-async fn test_can_truncate_model_table() {
+async fn test_can_truncate_time_series_table() {
     let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
-        TableType::ModelTable,
+        TableType::TimeSeriesTable,
     )
     .await;
 
@@ -673,7 +673,7 @@ async fn test_can_truncate_model_table() {
         .await
         .unwrap();
 
-    // The model table should be empty after truncating it.
+    // The time series table should be empty after truncating it.
     assert_eq!(query_result.num_rows(), 0);
 }
 
@@ -690,7 +690,7 @@ async fn test_can_get_schema() {
     let mut test_context = TestContext::new().await;
 
     test_context
-        .create_table(TABLE_NAME, TableType::ModelTable)
+        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     let schema = test_context.retrieve_schema(TABLE_NAME).await;
@@ -749,7 +749,7 @@ async fn test_do_put_can_ingest_time_series_with_tags() {
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
-        TableType::ModelTable,
+        TableType::TimeSeriesTable,
     )
     .await;
 
@@ -765,7 +765,7 @@ async fn test_do_put_can_ingest_time_series_with_tags() {
 async fn test_insert_can_ingest_time_series_with_tags() {
     let mut test_context = TestContext::new().await;
     test_context
-        .create_table(TABLE_NAME, TableType::ModelTable)
+        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     let insert_result = test_context
@@ -800,7 +800,7 @@ async fn test_do_put_can_ingest_time_series_without_tags() {
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
-        TableType::ModelTableNoTag,
+        TableType::TimeSeriesTableNoTag,
     )
     .await;
 
@@ -816,7 +816,7 @@ async fn test_do_put_can_ingest_time_series_without_tags() {
 async fn test_insert_can_ingest_time_series_without_tags() {
     let mut test_context = TestContext::new().await;
     test_context
-        .create_table(TABLE_NAME, TableType::ModelTableNoTag)
+        .create_table(TABLE_NAME, TableType::TimeSeriesTableNoTag)
         .await;
 
     let insert_result = test_context
@@ -851,7 +851,7 @@ async fn test_do_put_can_ingest_time_series_with_generated_field() {
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series.clone()],
-        TableType::ModelTableAsField,
+        TableType::TimeSeriesTableAsField,
     )
     .await;
 
@@ -872,7 +872,7 @@ async fn test_do_put_can_ingest_time_series_with_generated_field() {
 async fn test_insert_can_ingest_time_series_with_generated_field() {
     let mut test_context = TestContext::new().await;
     test_context
-        .create_table(TABLE_NAME, TableType::ModelTableAsField)
+        .create_table(TABLE_NAME, TableType::TimeSeriesTableAsField)
         .await;
 
     let insert_result = test_context
@@ -909,7 +909,8 @@ async fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
         TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
     let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
-    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::ModelTable).await;
+    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::TimeSeriesTable)
+        .await;
 
     let query_result = test_context
         .execute_query(format!(
@@ -936,7 +937,7 @@ async fn test_cannot_ingest_invalid_time_series() {
         TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), &[time_series]);
 
     test_context
-        .create_table(TABLE_NAME, TableType::ModelTable)
+        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     assert!(
@@ -973,8 +974,12 @@ async fn execute_and_assert_include_select(address_count: usize) {
     let expected_time_series =
         compute::concat_batches(&time_series.schema(), expected_record_batches).unwrap();
 
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable)
-        .await;
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        &[time_series],
+        TableType::TimeSeriesTable,
+    )
+    .await;
 
     let port = test_context.port;
     let address = format!("'grpc://{HOST}:{port}'");
@@ -1021,11 +1026,11 @@ async fn test_avg_from_segments_equals_avg_from_data_points() {
 
 /// Asserts that the query executed on segments in `segment_query` returns a result within
 /// `error_bound` of an equivalent query executed on data points reconstructed from the segments by:
-/// 1. Generating a multivariate time series with one tag and ingesting it into a model table.
+/// 1. Generating a multivariate time series with one tag and ingesting it into a time series table.
 /// 2. Creating an equivalent query from `segment_query` that the optimizer cannot rewrite, so it is
 ///    executed on segments.
-/// 3. Executing `segment_query` and the new equivalent query against the model table containing the
-///    generated time series.
+/// 3. Executing `segment_query` and the new equivalent query against the time series table
+///    containing the generated time series.
 /// 4. Comparing the query plans of `segment_query` and the new equivalent query to ensure the first
 ///    query was rewritten by the optimizer and the other query was not.
 /// 5. Comparing the results of `segment_query` and the new equivalent query to ensure they are
@@ -1034,8 +1039,12 @@ async fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound:
     let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
 
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable)
-        .await;
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        &[time_series],
+        TableType::TimeSeriesTable,
+    )
+    .await;
 
     // The predicate will guarantee that all data points will be included in the query but will
     // prevent the optimizer from rewriting the query due to its presence in segment_query.
@@ -1283,8 +1292,8 @@ async fn test_can_create_tables() {
     assert_eq!(
         retrieved_table_names,
         vec![
-            modelardb_storage::test::MODEL_TABLE_NAME.to_owned(),
             modelardb_storage::test::NORMAL_TABLE_NAME.to_owned(),
+            modelardb_storage::test::TIME_SERIES_TABLE_NAME.to_owned(),
         ]
     );
 }

@@ -83,9 +83,9 @@ impl Manager {
         ))
     }
 
-    /// Initialize the local database schema with the normal tables and model tables from the managers
-    /// database schema. If the tables to create could not be retrieved from the manager, or the
-    /// tables could not be created, return [`ModelarDbServerError`].
+    /// Initialize the local database schema with the normal tables and time series tables from the
+    /// managers database schema. If the tables to create could not be retrieved from the manager,
+    /// or the tables could not be created, return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
         let existing_tables = context.default_database_schema()?.table_names();
 

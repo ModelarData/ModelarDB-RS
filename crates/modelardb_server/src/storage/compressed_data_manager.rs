@@ -40,10 +40,10 @@ pub(super) struct CompressedDataManager {
     /// Folder containing all compressed data managed by the [`StorageEngine`](crate::storage::StorageEngine).
     pub(crate) local_data_folder: DataFolder,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
-    /// the model table the compressed segments represents data points for so the Apache Parquet
+    /// the time series table the compressed segments represents data points for so the Apache Parquet
     /// files can be partitioned by table.
     pub(super) compressed_data_buffers: DashMap<String, CompressedDataBuffer>,
-    /// FIFO queue of model table names referring to [`CompressedDataBuffers`](CompressedDataBuffer)
+    /// FIFO queue of time series table names referring to [`CompressedDataBuffers`](CompressedDataBuffer)
     /// that can be saved to persistent storage.
     compressed_queue: SegQueue<String>,
     /// Channels used by the storage engine's threads to communicate.
@@ -129,41 +129,43 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Insert `compressed_segment_batch` into the in-memory [`CompressedDataBuffer`] for the model
-    /// table. If inserting `compressed_segment_batch` exceeded the reserved memory limit, save
+    /// Insert `compressed_segment_batch` into the in-memory [`CompressedDataBuffer`] for the time
+    /// series table. If inserting `compressed_segment_batch` exceeded the reserved memory limit, save
     /// compressed data to disk until enough memory is available. If compressed data could not be
     /// saved to disk, return [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn insert_compressed_segments(
         &self,
         compressed_segment_batch: CompressedSegmentBatch,
     ) -> Result<()> {
-        let model_table_name = compressed_segment_batch.model_table_name();
-        debug!("Inserting batch into compressed data buffer for table '{model_table_name}'.");
+        let time_series_table_name = compressed_segment_batch.time_series_table_name();
+        debug!("Inserting batch into compressed data buffer for table '{time_series_table_name}'.");
 
         // Since the compressed segments are already in memory, insert the segments into the
         // compressed data buffer first and check if the reserved memory limit is exceeded after.
         let segments_size = if let Some(mut compressed_data_buffer) =
-            self.compressed_data_buffers.get_mut(model_table_name)
+            self.compressed_data_buffers.get_mut(time_series_table_name)
         {
-            debug!("Found existing compressed data buffer for table '{model_table_name}'.",);
+            debug!("Found existing compressed data buffer for table '{time_series_table_name}'.",);
 
             compressed_data_buffer
                 .append_compressed_segments(compressed_segment_batch.compressed_segments)
         } else {
             // A String is created as two copies are required for compressed_data_buffer and
             // compressed_queue anyway and compressed_segments cannot be moved out of
-            // compressed_segment_batch if model_table_name is actively being borrowed.
-            let model_table_name = model_table_name.to_owned();
-            debug!("Creating compressed data buffer for table '{model_table_name}' as none exist.",);
+            // compressed_segment_batch if time_series_table_name is actively being borrowed.
+            let time_series_table_name = time_series_table_name.to_owned();
+            debug!(
+                "Creating compressed data buffer for table '{time_series_table_name}' as none exist.",
+            );
 
             let mut compressed_data_buffer =
-                CompressedDataBuffer::new(compressed_segment_batch.model_table_metadata);
+                CompressedDataBuffer::new(compressed_segment_batch.time_series_table_metadata);
             let segment_size = compressed_data_buffer
                 .append_compressed_segments(compressed_segment_batch.compressed_segments);
 
             self.compressed_data_buffers
-                .insert(model_table_name.clone(), compressed_data_buffer);
-            self.compressed_queue.push(model_table_name);
+                .insert(time_series_table_name.clone(), compressed_data_buffer);
+            self.compressed_queue.push(time_series_table_name);
 
             segment_size
         }?;
@@ -226,8 +228,8 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Save the compressed data that belongs to the model table with `table_name` The size of the
-    /// saved compressed data is added back to the remaining compressed memory. If the data is
+    /// Save the compressed data that belongs to the time series table with `table_name` The size of
+    /// the saved compressed data is added back to the remaining compressed memory. If the data is
     /// written successfully to disk, return [`Ok`], otherwise return
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn save_compressed_data(&self, table_name: &str) -> Result<()> {
@@ -244,7 +246,7 @@ impl CompressedDataManager {
         let compressed_segments = compressed_data_buffer.record_batches();
         self.local_data_folder
             .delta_lake
-            .write_compressed_segments_to_model_table(table_name, compressed_segments)
+            .write_compressed_segments_to_time_series_table(table_name, compressed_segments)
             .await?;
 
         // Inform the data transfer component about the new data if a remote data folder was
@@ -332,7 +334,7 @@ mod tests {
     async fn test_can_insert_compressed_segment_into_new_compressed_data_buffer() {
         let segments = compressed_segments_record_batch();
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-        let key = test::MODEL_TABLE_NAME;
+        let key = test::TIME_SERIES_TABLE_NAME;
 
         data_manager
             .insert_compressed_segments(segments)
@@ -362,7 +364,7 @@ mod tests {
             .unwrap();
         let previous_size = data_manager
             .compressed_data_buffers
-            .get(test::MODEL_TABLE_NAME)
+            .get(test::TIME_SERIES_TABLE_NAME)
             .unwrap()
             .size_in_bytes;
 
@@ -374,7 +376,7 @@ mod tests {
         assert!(
             data_manager
                 .compressed_data_buffers
-                .get(test::MODEL_TABLE_NAME)
+                .get(test::TIME_SERIES_TABLE_NAME)
                 .unwrap()
                 .size_in_bytes
                 > previous_size
@@ -388,7 +390,7 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_model_table(&test::model_table_metadata())
+            .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -399,7 +401,7 @@ mod tests {
 
         // Insert compressed data into the storage engine until data is saved to Apache Parquet.
         let compressed_buffer_size = compressed_segment_batch
-            .model_table_metadata
+            .time_series_table_metadata
             .field_column_indices
             .len()
             * COMPRESSED_SEGMENTS_SIZE;
@@ -448,7 +450,7 @@ mod tests {
         let segments = compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .create_model_table(&segments.model_table_metadata)
+            .create_time_series_table(&segments.time_series_table_metadata)
             .await
             .unwrap();
 
@@ -504,7 +506,7 @@ mod tests {
         let segments = compressed_segments_record_batch();
         local_data_folder
             .delta_lake
-            .create_model_table(&segments.model_table_metadata)
+            .create_time_series_table(&segments.time_series_table_metadata)
             .await
             .unwrap();
         data_manager
@@ -544,7 +546,7 @@ mod tests {
     }
 
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished
-    /// and a metadata manager with a single model table.
+    /// and a metadata manager with a single time series table.
     async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
         let channels = Arc::new(Channels::new());
@@ -555,14 +557,14 @@ mod tests {
             COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
-        // Create a local data folder and save a single model table to the metadata Delta Lake.
+        // Create a local data folder and save a single time series table to the metadata Delta Lake.
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
 
-        let model_table_metadata = test::model_table_metadata();
+        let time_series_table_metadata = test::time_series_table_metadata();
         local_data_folder
             .table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
 
@@ -582,13 +584,13 @@ mod tests {
         compressed_segment_batch_with_time(0, 0.0)
     }
 
-    /// Return a [`CompressedSegmentBatch`] containing compressed segments for a model table with
-    /// two field columns. For each of the field columns the batch contains three compressed
+    /// Return a [`CompressedSegmentBatch`] containing compressed segments for a time series table
+    /// with two field columns. For each of the field columns the batch contains three compressed
     /// segments. The compressed segments time range is from `time_ms` to `time_ms` + 3, while the
     /// value range is from `offset` + 5.2 to `offset` + 34.2.
     fn compressed_segment_batch_with_time(time_ms: i64, offset: f32) -> CompressedSegmentBatch {
         CompressedSegmentBatch::new(
-            test::model_table_metadata_arc(),
+            test::time_series_table_metadata_arc(),
             vec![
                 test::compressed_segments_record_batch_with_time(COLUMN_INDEX, time_ms, offset),
                 test::compressed_segments_record_batch_with_time(COLUMN_INDEX + 1, time_ms, offset),

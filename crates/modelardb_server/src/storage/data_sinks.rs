@@ -29,13 +29,13 @@ use datafusion::physical_plan::insert::DataSink;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, SendableRecordBatchStream};
 use futures::StreamExt;
-use modelardb_storage::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
 
 /// [`DataSink`] that writes [`RecordBatches`](RecordBatch) to [`StorageEngine`]. Use
-/// [`ModelTableDataSink`] for writing multivariate time series to [`StorageEngine`].
+/// [`TimeSeriesTableDataSink`] for writing multivariate time series to [`StorageEngine`].
 pub struct NormalTableDataSink {
     /// The name of the normal table inserted data will be written to.
     table_name: String,
@@ -121,27 +121,27 @@ impl DisplayAs for NormalTableDataSink {
 /// [`DataSink`] that writes [`RecordBatches`](RecordBatch) containing multivariate time series to
 /// [`StorageEngine`]. Assumes the generated columns are included, thus they are dropped without
 /// checking the schema.
-pub struct ModelTableDataSink {
-    /// Metadata for the model table inserted data will be written to.
-    model_table_metadata: Arc<ModelTableMetadata>,
+pub struct TimeSeriesTableDataSink {
+    /// Metadata for the time series table inserted data will be written to.
+    time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Manages all uncompressed and compressed data in the system.
     storage_engine: Arc<RwLock<StorageEngine>>,
 }
 
-impl ModelTableDataSink {
+impl TimeSeriesTableDataSink {
     pub fn new(
-        model_table_metadata: Arc<ModelTableMetadata>,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Self {
         Self {
-            model_table_metadata,
+            time_series_table_metadata,
             storage_engine,
         }
     }
 }
 
 #[async_trait]
-impl DataSink for ModelTableDataSink {
+impl DataSink for TimeSeriesTableDataSink {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
@@ -149,7 +149,7 @@ impl DataSink for ModelTableDataSink {
 
     /// Return the [`DataSink's`](DataSink) schema.
     fn schema(&self) -> &Arc<Schema> {
-        &self.model_table_metadata.schema
+        &self.time_series_table_metadata.schema
     }
 
     /// Return a snapshot of the set of metrics being collected by the [`DataSink`].
@@ -171,12 +171,12 @@ impl DataSink for ModelTableDataSink {
             // part of the inserted data since Apache DataFusion checks it before passing it to
             // write_all().
             let record_batch =
-                record_batch?.project(&self.model_table_metadata.query_schema_to_schema)?;
+                record_batch?.project(&self.time_series_table_metadata.query_schema_to_schema)?;
 
-            // Create a new record batch with the schema of the model table to fix the problem where
-            // the schema of the inserted data has nullable fields.
+            // Create a new record batch with the schema of the time series table to fix the problem
+            // where the schema of the inserted data has nullable fields.
             let record_batch = RecordBatch::try_new(
-                self.model_table_metadata.schema.clone(),
+                self.time_series_table_metadata.schema.clone(),
                 record_batch.columns().to_vec(),
             )?;
 
@@ -184,7 +184,7 @@ impl DataSink for ModelTableDataSink {
 
             let mut storage_engine = self.storage_engine.write().await;
             storage_engine
-                .insert_data_points(self.model_table_metadata.clone(), record_batch)
+                .insert_data_points(self.time_series_table_metadata.clone(), record_batch)
                 .await
                 .map_err(|error| DataFusionError::External(Box::new(error)))?;
         }
@@ -193,20 +193,20 @@ impl DataSink for ModelTableDataSink {
     }
 }
 
-impl Debug for ModelTableDataSink {
+impl Debug for TimeSeriesTableDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        let name = &self.model_table_metadata.name;
-        write!(f, "ModelTableDataSink for {name}")
+        let name = &self.time_series_table_metadata.name;
+        write!(f, "TimeSeriesTableDataSink for {name}")
     }
 }
 
-impl DisplayAs for ModelTableDataSink {
+impl DisplayAs for TimeSeriesTableDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> FmtResult {
-        let name = &self.model_table_metadata.name;
-        write!(f, "ModelTableDataSink for {name}")
+        let name = &self.time_series_table_metadata.name;
+        write!(f, "TimeSeriesTableDataSink for {name}")
     }
 }

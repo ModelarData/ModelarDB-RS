@@ -28,7 +28,9 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::DFSchema;
 use datafusion::execution::RecordBatchStream;
-use modelardb_storage::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use modelardb_storage::metadata::time_series_table_metadata::{
+    GeneratedColumn, TimeSeriesTableMetadata,
+};
 use modelardb_types::types::ErrorBound;
 
 use crate::error::Result;
@@ -59,7 +61,7 @@ pub trait Operations: Sync + Send {
 
     /// Executes the SQL in `sql` and writes the result to the normal table with the name in
     /// `to_table_name` in `to_modelardb`. Note that data can be copied from both normal tables and
-    /// model tables but only to normal tables. This is to not lossy compress data multiple times.
+    /// time series tables but only to normal tables. This is to not lossy compress data multiple times.
     async fn copy(
         &mut self,
         sql: &str,
@@ -67,10 +69,10 @@ pub trait Operations: Sync + Send {
         to_table_name: &str,
     ) -> Result<()>;
 
-    /// Reads data from the model table with the name in `table_name` and returns it as a
+    /// Reads data from the time series table with the name in `table_name` and returns it as a
     /// [`RecordBatchStream`]. The remaining parameters optionally specify which subset of the data
     /// to read.
-    async fn read_model_table(
+    async fn read_time_series_table(
         &mut self,
         table_name: &str,
         columns: &[(String, Aggregate)],
@@ -80,10 +82,10 @@ pub trait Operations: Sync + Send {
         tags: HashMap<String, String>,
     ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>>;
 
-    /// Copy the data from the model table with the name in `from_table_name` in `self` to the model
-    /// table with the name in `to_table_name` in `to_modelardb`. Note that duplicate data is not
-    /// deleted.
-    async fn copy_model_table(
+    /// Copy the data from the time series table with the name in `from_table_name` in `self` to the
+    /// time series table with the name in `to_table_name` in `to_modelardb`. Note that duplicate
+    /// data is not deleted.
+    async fn copy_time_series_table(
         &self,
         from_table_name: &str,
         to_modelardb: &dyn Operations,
@@ -109,15 +111,15 @@ pub trait Operations: Sync + Send {
     async fn drop(&mut self, table_name: &str) -> Result<()>;
 }
 
-/// Use the model table metadata in `table_name`, `schema`, `error_bounds`, and `generated_columns`
-/// to create [`ModelTableMetadata`]. If the metadata is valid, return [`ModelTableMetadata`],
+/// Use the time series table metadata in `table_name`, `schema`, `error_bounds`, and `generated_columns`
+/// to create [`TimeSeriesTableMetadata`]. If the metadata is valid, return [`TimeSeriesTableMetadata`],
 /// otherwise return [`ModelarDbEmbeddedError`].
-fn try_new_model_table_metadata(
+fn try_new_time_series_table_metadata(
     table_name: &str,
     schema: Schema,
     mut error_bounds: HashMap<String, ErrorBound>,
     generated_columns: HashMap<String, String>,
-) -> Result<ModelTableMetadata> {
+) -> Result<TimeSeriesTableMetadata> {
     let schema = Arc::new(schema);
     let df_schema: DFSchema = schema.clone().try_into()?;
 
@@ -138,7 +140,7 @@ fn try_new_model_table_metadata(
         }
     }
 
-    ModelTableMetadata::try_new(
+    TimeSeriesTableMetadata::try_new(
         table_name.to_owned(),
         schema,
         error_bounds_all,
@@ -147,9 +149,9 @@ fn try_new_model_table_metadata(
     .map_err(|error| error.into())
 }
 
-/// Constructs an SQL query to read data from the model table with the name in `table_name`. The
-/// remaining parameters optionally specify which subset of the data to read.
-pub(super) fn generate_read_model_table_sql(
+/// Constructs an SQL query to read data from the time series table with the name in `table_name`.
+/// The remaining parameters optionally specify which subset of the data to read.
+pub(super) fn generate_read_time_series_table_sql(
     table_name: &str,
     schema: &Schema,
     columns: &[(String, Aggregate)],
