@@ -109,7 +109,7 @@ fn parse_command_line_arguments(
         } else if arg.starts_with(['.', '/']) {
             // Prevent missing files from being used as host.
             Err(ModelarDbClientError::InvalidArgument(format!(
-                "{arg} does not exist"
+                "{arg} does not exist."
             )))?;
         } else if arg.contains(':') {
             // Assumes anything with : is host:port.
