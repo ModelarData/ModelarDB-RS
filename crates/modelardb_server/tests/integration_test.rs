@@ -294,9 +294,10 @@ impl TestContext {
 
         if let Some(tag) = maybe_tag {
             fields.push(Field::new("tag", DataType::Utf8, false));
-            columns.push(Arc::new(StringArray::from_iter_values(
-                iter::repeat(tag).take(time_series_len),
-            )));
+            columns.push(Arc::new(StringArray::from_iter_values(iter::repeat_n(
+                tag,
+                time_series_len,
+            ))));
         }
 
         let schema = Arc::new(Schema::new(fields));
