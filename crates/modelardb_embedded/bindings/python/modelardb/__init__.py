@@ -145,7 +145,7 @@ class Manager:
 
 
 class Aggregate(Enum):
-    """Aggregate operations supported by :meth:`ModelarDB.read`."""
+    """Aggregate operations supported by :meth:`Operations.read`."""
 
     NONE = 0
     COUNT = 1
@@ -318,10 +318,10 @@ class Operations:
             void* modelardb_embedded_connect(char* node_url_ptr,
                                              bool is_server_node);
 
-            int modelardb_embedded_close(void* maybe_modelardb_ptr, 
+            int modelardb_embedded_close(void* maybe_operations_ptr, 
                                          bool is_data_folder);
 
-            int modelardb_embedded_create(void* maybe_modelardb_ptr,
+            int modelardb_embedded_create(void* maybe_operations_ptr,
                                           bool is_data_folder,
                                           char* table_name_ptr,
                                           bool is_time_series_table,
@@ -331,24 +331,24 @@ class Operations:
                                           struct ArrowArray* generated_columns_array_ptr,
                                           struct ArrowSchema* generated_columns_array_schema_ptr);
 
-            int modelardb_embedded_tables(void* maybe_modelardb_ptr,
+            int modelardb_embedded_tables(void* maybe_operations_ptr,
                                           bool is_data_folder,
                                           struct ArrowArray* tables_array_ptr,
                                           struct ArrowSchema* tables_array_schema_ptr);
 
-            int modelardb_embedded_schema(void* maybe_modelardb_ptr,
+            int modelardb_embedded_schema(void* maybe_operations_ptr,
                                           bool is_data_folder,
                                           char* table_name_ptr,
                                           struct ArrowArray* schema_struct_array_ptr,
                                           struct ArrowSchema* schema_struct_array_schema_ptr);
 
-            int modelardb_embedded_write(void* maybe_modelardb_ptr,
+            int modelardb_embedded_write(void* maybe_operations_ptr,
                                          bool is_data_folder,
                                          char* table_name_ptr,
                                          struct ArrowArray* uncompressed_struct_ptr,
                                          struct ArrowSchema* uncompressed_struct_schema_ptr);
 
-            int modelardb_embedded_read(void* maybe_modelardb_ptr,
+            int modelardb_embedded_read(void* maybe_operations_ptr,
                                         bool is_data_folder,
                                         char* sql_ptr,
                                         struct ArrowArray* decompressed_struct_ptr,
@@ -360,7 +360,7 @@ class Operations:
                                         void* maybe_target_operations_ptr,
                                         char* target_table_name_ptr);
 
-            int modelardb_embedded_read_time_series_table(void* maybe_modelardb_ptr,
+            int modelardb_embedded_read_time_series_table(void* maybe_operations_ptr,
                                                           bool is_data_folder,
                                                           char* table_name_ptr,
                                                           struct ArrowArray* columns_array_ptr,
@@ -390,11 +390,11 @@ class Operations:
                                         void* maybe_target_operations_ptr,
                                         char* target_table_name_ptr);
 
-            int modelardb_embedded_truncate(void* maybe_modelardb_ptr,
+            int modelardb_embedded_truncate(void* maybe_operations_ptr,
                                             bool is_data_folder,
                                             char* table_name_ptr);
 
-            int modelardb_embedded_drop(void* maybe_modelardb_ptr,
+            int modelardb_embedded_drop(void* maybe_operations_ptr,
                                         bool is_data_folder,
                                         char* table_name_ptr);
 
