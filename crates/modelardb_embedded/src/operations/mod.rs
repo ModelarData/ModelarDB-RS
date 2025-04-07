@@ -60,13 +60,13 @@ pub trait Operations: Sync + Send {
     async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>>;
 
     /// Executes the SQL in `sql` and writes the result to the normal table with the name in
-    /// `to_table_name` in `to_modelardb`. Note that data can be copied from both normal tables and
+    /// `target_table_name` in `target`. Note that data can be copied from both normal tables and
     /// time series tables but only to normal tables. This is to not lossy compress data multiple times.
     async fn copy(
         &mut self,
         sql: &str,
-        to_modelardb: &mut dyn Operations,
-        to_table_name: &str,
+        target: &mut dyn Operations,
+        target_table_name: &str,
     ) -> Result<()>;
 
     /// Reads data from the time series table with the name in `table_name` and returns it as a
@@ -82,26 +82,26 @@ pub trait Operations: Sync + Send {
         tags: HashMap<String, String>,
     ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>>;
 
-    /// Copy the data from the time series table with the name in `from_table_name` in `self` to the
-    /// time series table with the name in `to_table_name` in `to_modelardb`. Note that duplicate
+    /// Copy the data from the time series table with the name in `source_table_name` in `self` to the
+    /// time series table with the name in `target_table_name` in `target`. Note that duplicate
     /// data is not deleted.
     async fn copy_time_series_table(
         &self,
-        from_table_name: &str,
-        to_modelardb: &dyn Operations,
-        to_table_name: &str,
+        source_table_name: &str,
+        target: &dyn Operations,
+        target_table_name: &str,
         maybe_start_time: Option<&str>,
         maybe_end_time: Option<&str>,
         tags: HashMap<String, String>,
     ) -> Result<()>;
 
-    /// Move all data from the table with the name in `from_table_name` in `self` to the table with
-    /// the name in `to_table_name` in `to_modelardb`.
+    /// Move all data from the table with the name in `source_table_name` in `self` to the table with
+    /// the name in `target_table_name` in `target`.
     async fn r#move(
         &mut self,
-        from_table_name: &str,
-        to_modelardb: &dyn Operations,
-        to_table_name: &str,
+        source_table_name: &str,
+        target: &dyn Operations,
+        target_table_name: &str,
     ) -> Result<()>;
 
     /// Truncate the table with the name in `table_name`.
