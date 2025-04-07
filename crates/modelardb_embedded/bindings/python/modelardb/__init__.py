@@ -706,7 +706,7 @@ class Operations:
         """
         sql_ptr = ffi.new("char[]", bytes(sql, "UTF-8"))
 
-        target = target.__modelardb_ptr
+        target = target.__operations_ptr
         target_table_name = ffi.new("char[]", bytes(target_table_name, "UTF-8"))
 
         return_code = self.__library.modelardb_embedded_copy(
@@ -834,7 +834,7 @@ class Operations:
         source = self.__operations_ptr
         source_table_name = ffi.new("char[]", bytes(source_table_name, "UTF-8"))
 
-        target = target.__modelardb_ptr
+        target = target.__operations_ptr
         target_table_name = ffi.new("char[]", bytes(target_table_name, "UTF-8"))
 
         start_time_ptr = self.__str_to_c_char_ptr(self.__get_timestamp(start_time))
@@ -895,7 +895,7 @@ class Operations:
         source = self.__operations_ptr
         source_table_name = ffi.new("char[]", bytes(source_table_name, "UTF-8"))
 
-        target = target.__modelardb_ptr
+        target = target.__operations_ptr
         target_table_name = ffi.new("char[]", bytes(target_table_name, "UTF-8"))
 
         return_code = self.__library.modelardb_embedded_move(
