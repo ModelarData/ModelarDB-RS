@@ -105,12 +105,12 @@ async fn main() -> Result<()> {
 fn parse_host_port(maybe_host_port: &str) -> Result<(&str, u16)> {
     let mut parts = maybe_host_port.splitn(2, ':');
     let host = parts.next().unwrap_or(DEFAULT_HOST);
-    let port = match parts.next() {
-        Some(port) => port.parse().map_err(|_| {
+    let port = parts
+        .next()
+        .map_or(Ok(DEFAULT_PORT.to_owned()), |part| part.parse())
+        .map_err(|_| {
             ModelarDbClientError::InvalidArgument("Port must be between 1 and 65535.".to_owned())
-        }),
-        None => Ok(DEFAULT_PORT.to_owned()),
-    }?;
+        })?;
 
     Ok((host, port))
 }
