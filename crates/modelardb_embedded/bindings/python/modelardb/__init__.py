@@ -410,7 +410,7 @@ class Operations:
 
     @classmethod
     def open_memory(cls):
-        """Create a :obj:`Operations` data folder that manages data in memory.
+        """Create an :obj:`Operations` data folder that manages data in memory.
 
         :return: The constructed :obj:`Operations`.
         :rtype: Operations
@@ -427,7 +427,7 @@ class Operations:
 
     @classmethod
     def open_local(cls, data_folder_path: str):
-        """Create a :obj:`Operations` data folder that manages data in the local folder at `data_folder_path`.
+        """Create an :obj:`Operations` data folder that manages data in the local folder at `data_folder_path`.
 
         :param data_folder_path: The path of the data folder.
         :type data_folder_path: str
@@ -452,7 +452,7 @@ class Operations:
     def open_s3(
         cls, endpoint: str, bucket_name: str, access_key_id: str, secret_access_key: str
     ):
-        """Create a :obj:`Operations` data folder that manages data in an object store with a S3-compatible API.
+        """Create an :obj:`Operations` data folder that manages data in an object store with a S3-compatible API.
 
         :param endpoint: The endpoint of the S3-compatible object store.
         :type endpoint: str
@@ -484,7 +484,7 @@ class Operations:
 
     @classmethod
     def open_azure(cls, account_name: str, access_key: str, container_name: str):
-        """Create a :obj:`Operations` data folder that manages data in an object store with an Azure-compatible API.
+        """Create an :obj:`Operations` data folder that manages data in an object store with an Azure-compatible API.
 
         :param account_name: The account name to use for authentication.
         :type account_name: str
@@ -513,7 +513,7 @@ class Operations:
 
     @classmethod
     def connect(cls, node: Server | Manager):
-        """Create a connection to a :obj:`Operations` node.
+        """Create a connection to an :obj:`Operations` node.
 
         :param node: The ModelarDB node to connect to.
         :type node: Server | Manager
@@ -954,7 +954,7 @@ class Operations:
 
 
 def open_memory() -> Operations:
-    """Create a :obj:`Operations` data folder that manages data in memory.
+    """Create an :obj:`Operations` data folder that manages data in memory.
 
     :return: The constructed :obj:`Operations`.
     :rtype: Operations
@@ -963,7 +963,7 @@ def open_memory() -> Operations:
 
 
 def open_local(data_folder_path: str) -> Operations:
-    """Create a :obj:`Operations` data folder that manages data in the local folder at `data_folder_path`.
+    """Create an :obj:`Operations` data folder that manages data in the local folder at `data_folder_path`.
 
     :param data_folder_path: The path of the data folder.
     :type data_folder_path: str
@@ -976,7 +976,7 @@ def open_local(data_folder_path: str) -> Operations:
 def open_s3(
     endpoint: str, bucket_name: str, access_key_id: str, secret_access_key: str
 ) -> Operations:
-    """Create a :obj:`Operations` data folder that manages data in an object store with a S3-compatible API.
+    """Create an :obj:`Operations` data folder that manages data in an object store with a S3-compatible API.
 
     :param endpoint: The endpoint of the S3-compatible object store.
     :type endpoint: str
@@ -993,7 +993,7 @@ def open_s3(
 
 
 def open_azure(account_name: str, access_key: str, container_name: str) -> Operations:
-    """Create a :obj:`Operations` data folder that manages data in an object store with an Azure-compatible API.
+    """Create an :obj:`Operations` data folder that manages data in an object store with an Azure-compatible API.
 
     :param account_name: The account name to use for authentication.
     :type account_name: str
@@ -1008,7 +1008,7 @@ def open_azure(account_name: str, access_key: str, container_name: str) -> Opera
 
 
 def connect(node: Server | Manager) -> Operations:
-    """Create a connection to a :obj:`Operations` node.
+    """Create a connection to an :obj:`Operations` node.
 
     :param node: The ModelarDB node to connect to.
     :type node: Server | Manager
