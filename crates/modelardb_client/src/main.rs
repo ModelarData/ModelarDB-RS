@@ -20,10 +20,10 @@ mod helper;
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::env::{self, Args};
+use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, IsTerminal, Write};
-use std::path::{Path as StdPath, PathBuf as StdPathBuf};
+use std::path::Path as StdPath;
 use std::process;
 use std::sync::Arc;
 use std::time::Instant;
@@ -62,24 +62,35 @@ const TRANSPORT_ERROR: &str = "transport error: no messages received.";
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse the command line arguments.
-    let args = env::args();
-    if args.len() > 3 {
-        // The errors are consciously ignored as the client is terminating.
-        let binary_path = env::current_exe().unwrap();
-        let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+    let args = env::args().collect::<Vec<String>>();
+    let (host, port, maybe_query_file) = match &args[1..] {
+        [] => (DEFAULT_HOST, DEFAULT_PORT, None),
+        [query_file] if StdPath::new(&query_file).exists() => {
+            let query_file = StdPath::new(&query_file).to_path_buf();
+            (DEFAULT_HOST, DEFAULT_PORT, Some(query_file))
+        }
+        [host_port] if !host_port.starts_with(['.', '/']) => {
+            let (host, port) = parse_host_port(host_port)?;
+            (host, port, None)
+        }
+        [host_port, query_file] if StdPath::new(&query_file).exists() => {
+            let (host, port) = Parse_host_port(host_port)?;
+            let query_file = StdPath::new(&query_file).to_path_buf();
+            (host, port, Some(query_file))
+        }
+        _ => {
+            // The errors are consciously ignored as the client is terminating.
+            let binary_path = env::current_exe().unwrap();
+            let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
 
-        // Punctuation at the end does not seem to be common in the usage message of Unix tools.
-        eprintln!("Usage: {binary_name} [server host or host:port] [query_file]",);
-        process::exit(1);
-    }
-    let (maybe_host, maybe_port, maybe_query_file) = parse_command_line_arguments(args)?;
-
-    // Connect to the server.
-    let host = maybe_host.unwrap_or_else(|| DEFAULT_HOST.to_owned());
-    let port = maybe_port.unwrap_or_else(|| DEFAULT_PORT.to_owned());
-    let flight_service_client = connect(&host, port).await?;
+            // Punctuation at the end does not seem to be common in the usage message of Unix tools.
+            eprintln!("Usage: {binary_name} [host or host:port] [query_file]",);
+            process::exit(1);
+        }
+    };
 
     // Execute the queries.
+    let flight_service_client = connect(host, port).await?;
     if let Some(query_file) = maybe_query_file {
         execute_queries_from_a_file(flight_service_client, &query_file).await
     } else {
@@ -87,46 +98,21 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Parse the command line arguments in `args` and return a triple with the host of the server to
-/// connect to, the port to connect to, and the file containing the queries to execute on the
-/// server. If one of these command line arguments is not provided it is replaced with [`None`].
-fn parse_command_line_arguments(
-    mut args: Args,
-) -> Result<(Option<String>, Option<u16>, Option<StdPathBuf>)> {
-    // Drop the path of the executable.
-    args.next();
+/// Parse the host and port in `maybe_host_port` and return a pair with the host of the server to
+/// connect to and the port to connect to. If the host is not included `DEFAULT_HOST` is used and if
+/// port is not included `DEFAULT_PORT` is used. Returns [`ModelarDbClientError`] if the port is not
+/// valid.
+fn parse_host_port(maybe_host_port: &str) -> Result<(&str, u16)> {
+    let mut parts = maybe_host_port.splitn(2, ':');
+    let host = parts.next().unwrap_or(DEFAULT_HOST);
+    let port = match parts.next() {
+        Some(port) => port.parse().map_err(|_| {
+            ModelarDbClientError::InvalidArgument("Port must be between 1 and 65535.".to_owned())
+        }),
+        None => Ok(DEFAULT_PORT.to_owned()),
+    }?;
 
-    // Parse command line arguments.
-    let mut maybe_host = None;
-    let mut maybe_port = None;
-    let mut maybe_query_file = None;
-
-    for arg in args {
-        let arg_path = &StdPath::new(arg.as_str());
-        if arg_path.exists() {
-            // Assumes all files contains queries.
-            maybe_query_file = Some(arg_path.to_path_buf());
-        } else if arg.starts_with(['.', '/']) {
-            // Prevent missing files from being used as host.
-            Err(ModelarDbClientError::InvalidArgument(format!(
-                "{arg} does not exist."
-            )))?;
-        } else if arg.contains(':') {
-            // Assumes anything with : is host:port.
-            let host_and_port = arg.splitn(2, ':').collect::<Vec<&str>>();
-            maybe_host = Some(host_and_port[0].to_owned());
-            maybe_port = Some(host_and_port[1].parse().map_err(|_| {
-                ModelarDbClientError::InvalidArgument(
-                    "Port must be between 1 and 65535.".to_owned(),
-                )
-            })?);
-        } else {
-            // Assumes anything else is a host.
-            maybe_host = Some(arg);
-        }
-    }
-
-    Ok((maybe_host, maybe_port, maybe_query_file))
+    Ok((host, port))
 }
 
 /// Connect to the server at `host`:`port`. Returns [`ModelarDbClientError`] if a connection to the
