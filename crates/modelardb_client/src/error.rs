@@ -21,7 +21,6 @@ use std::io::Error as IoError;
 use std::result::Result as StdResult;
 
 use arrow::error::ArrowError;
-use object_store::Error as ObjectStoreError;
 use rustyline::error::ReadlineError as RustyLineError;
 use tonic::Status as TonicStatusError;
 use tonic::transport::Error as TonicTransportError;
@@ -38,8 +37,6 @@ pub enum ModelarDbClientError {
     InvalidArgument(String),
     /// Error returned from IO operations.
     Io(IoError),
-    /// Error returned by ObjectStore.
-    ObjectStore(ObjectStoreError),
     /// Error returned by RustyLine.
     RustyLine(RustyLineError),
     /// Status returned by Tonic.
@@ -54,7 +51,6 @@ impl Display for ModelarDbClientError {
             Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
-            Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::RustyLine(reason) => write!(f, "RustyLine Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
@@ -69,7 +65,6 @@ impl Error for ModelarDbClientError {
             Self::Arrow(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
             Self::Io(reason) => Some(reason),
-            Self::ObjectStore(reason) => Some(reason),
             Self::RustyLine(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
@@ -86,12 +81,6 @@ impl From<ArrowError> for ModelarDbClientError {
 impl From<IoError> for ModelarDbClientError {
     fn from(error: IoError) -> Self {
         Self::Io(error)
-    }
-}
-
-impl From<ObjectStoreError> for ModelarDbClientError {
-    fn from(error: ObjectStoreError) -> Self {
-        Self::ObjectStore(error)
     }
 }
 
