@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
             (host, port, None)
         }
         [host_port, query_file] if StdPath::new(&query_file).exists() => {
-            let (host, port) = Parse_host_port(host_port)?;
+            let (host, port) = parse_host_port(host_port)?;
             let query_file = StdPath::new(&query_file).to_path_buf();
             (host, port, Some(query_file))
         }
