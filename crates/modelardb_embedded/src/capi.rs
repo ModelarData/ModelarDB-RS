@@ -556,26 +556,26 @@ unsafe fn read(
     }
 }
 
-/// Executes the SQL in `sql_ptr` in the [`DataFolder`] or [`Client`] in `maybe_from_modelardb_ptr`
-/// and copies the result to the normal table in `maybe_to_modelardb_ptr`. Assumes
-/// `maybe_from_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; `sql_ptr` points to a valid
-/// C string; `maybe_to_modelardb_ptr` points to a [`DataFolder`] or [`Client`]; and
-/// `to_table_name_ptr` points to a valid C string.
+/// Executes the SQL in `sql_ptr` in the [`DataFolder`] or [`Client`] in `maybe_source_operations_ptr`
+/// and copies the result to the normal table in `maybe_target_operations_ptr`. Assumes
+/// `maybe_source_operations_ptr` points to a [`DataFolder`] or [`Client`]; `sql_ptr` points to a valid
+/// C string; `maybe_target_operations_ptr` points to a [`DataFolder`] or [`Client`]; and
+/// `target_table_name_ptr` points to a valid C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_copy(
-    maybe_from_modelardb_ptr: *mut c_void,
+    maybe_source_operations_ptr: *mut c_void,
     is_data_folder: bool,
     sql_ptr: *const c_char,
-    maybe_to_modelardb_ptr: *mut c_void,
-    to_table_name_ptr: *const c_char,
+    maybe_target_operations_ptr: *mut c_void,
+    target_table_name_ptr: *const c_char,
 ) -> c_int {
     let maybe_unit = unsafe {
         copy(
-            maybe_from_modelardb_ptr,
+            maybe_source_operations_ptr,
             is_data_folder,
             sql_ptr,
-            maybe_to_modelardb_ptr,
-            to_table_name_ptr,
+            maybe_target_operations_ptr,
+            target_table_name_ptr,
         )
     };
 
@@ -584,19 +584,19 @@ pub unsafe extern "C" fn modelardb_embedded_copy(
 
 /// See documentation for [`modelardb_embedded_copy`].
 unsafe fn copy(
-    maybe_from_modelardb_ptr: *mut c_void,
+    maybe_source_operations_ptr: *mut c_void,
     is_data_folder: bool,
     sql_ptr: *const c_char,
-    maybe_to_modelardb_ptr: *mut c_void,
-    to_table_name_ptr: *const c_char,
+    maybe_target_operations_ptr: *mut c_void,
+    target_table_name_ptr: *const c_char,
 ) -> Result<()> {
-    let from_modelardb = unsafe { c_void_to_operations(maybe_from_modelardb_ptr, is_data_folder)? };
+    let source = unsafe { c_void_to_operations(maybe_source_operations_ptr, is_data_folder)? };
     let sql = unsafe { c_char_ptr_to_str(sql_ptr)? };
 
-    let to_modelardb = unsafe { c_void_to_operations(maybe_to_modelardb_ptr, is_data_folder)? };
-    let to_table_name = unsafe { c_char_ptr_to_str(to_table_name_ptr)? };
+    let target = unsafe { c_void_to_operations(maybe_target_operations_ptr, is_data_folder)? };
+    let target_table_name = unsafe { c_char_ptr_to_str(target_table_name_ptr)? };
 
-    TOKIO_RUNTIME.block_on(from_modelardb.copy(sql, to_modelardb, to_table_name))
+    TOKIO_RUNTIME.block_on(source.copy(sql, target, target_table_name))
 }
 
 /// Reads data from the time series table with the table name in `table_name_ptr` in the [`DataFolder`] or
@@ -735,24 +735,24 @@ fn columns_array_to_columns(columns_array: &StructArray) -> Result<Vec<(String, 
     Ok(columns)
 }
 
-/// Copies data from the time series table with the name in `from_table_name_ptr` in the [`DataFolder`] or
-/// [`Client`] in `maybe_from_operations_ptr` to the time series table with the name in
-/// `to_table_name_ptr` in the [`DataFolder`] or [`Client`] in
-/// `maybe_to_operations_ptr`. `maybe_from_operations_ptr` and `maybe_to_operations_ptr` cannot be
-/// different types. The remaining parameters optionally specify which subset of the data to
-/// copy. Duplicate data is not dropped. Assumes `maybe_from_operations_ptr` points to a
-/// [`DataFolder`] or [`Client`]; `from_table_name_ptr` points to a valid C string;
-/// `maybe_to_operations_ptr` points to a [`DataFolder`] or [`Client`]; and `to_table_name_ptr`
+/// Copies data from the time series table with the name in `source_table_name_ptr` in the [`DataFolder`] or
+/// [`Client`] in `maybe_source_operations_ptr` to the time series table with the name in
+/// `target_table_name_ptr` in the [`DataFolder`] or [`Client`] in
+/// `maybe_target_operations_ptr`. `maybe_source_operations_ptr` and `maybe_target_operations_ptr`
+/// cannot be different types. The remaining parameters optionally specify which subset of the data
+/// to copy. Duplicate data is not dropped. Assumes `maybe_source_operations_ptr` points to a
+/// [`DataFolder`] or [`Client`]; `source_table_name_ptr` points to a valid C string;
+/// `maybe_target_operations_ptr` points to a [`DataFolder`] or [`Client`]; and `target_table_name_ptr`
 /// points to a valid C string; `start_time_ptr` points to a valid C string with an ISO 8601
 /// timestamp; `end_time_ptr` points to a valid C string with an ISO 8601 timestamp; and
 /// `tags_array_ptr` and `tags_array_schema_ptr` points to a [`MapArray`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_copy_time_series_table(
-    maybe_from_operations_ptr: *mut c_void,
+    maybe_source_operations_ptr: *mut c_void,
     is_data_folder: bool,
-    from_table_name_ptr: *const c_char,
-    maybe_to_operations_ptr: *mut c_void,
-    to_table_name_ptr: *const c_char,
+    source_table_name_ptr: *const c_char,
+    maybe_target_operations_ptr: *mut c_void,
+    target_table_name_ptr: *const c_char,
     start_time_ptr: *const c_char,
     end_time_ptr: *const c_char,
     tags_array_ptr: *const FFI_ArrowArray,
@@ -760,11 +760,11 @@ pub unsafe extern "C" fn modelardb_embedded_copy_time_series_table(
 ) -> c_int {
     let maybe_unit = unsafe {
         copy_time_series_table(
-            maybe_from_operations_ptr,
+            maybe_source_operations_ptr,
             is_data_folder,
-            from_table_name_ptr,
-            maybe_to_operations_ptr,
-            to_table_name_ptr,
+            source_table_name_ptr,
+            maybe_target_operations_ptr,
+            target_table_name_ptr,
             start_time_ptr,
             end_time_ptr,
             tags_array_ptr,
@@ -778,22 +778,21 @@ pub unsafe extern "C" fn modelardb_embedded_copy_time_series_table(
 /// See documentation for [`modelardb_embedded_copy_time_series_table`].
 #[allow(clippy::too_many_arguments)]
 unsafe fn copy_time_series_table(
-    maybe_from_operations_ptr: *mut c_void,
+    maybe_source_operations_ptr: *mut c_void,
     is_data_folder: bool,
-    from_table_name_ptr: *const c_char,
-    maybe_to_operations_ptr: *mut c_void,
-    to_table_name_ptr: *const c_char,
+    source_table_name_ptr: *const c_char,
+    maybe_target_operations_ptr: *mut c_void,
+    target_table_name_ptr: *const c_char,
     start_time_ptr: *const c_char,
     end_time_ptr: *const c_char,
     tags_array_ptr: *const FFI_ArrowArray,
     tags_array_schema_ptr: *const FFI_ArrowSchema,
 ) -> Result<()> {
-    let from_modelardb =
-        unsafe { c_void_to_operations(maybe_from_operations_ptr, is_data_folder)? };
-    let from_table_name = unsafe { c_char_ptr_to_str(from_table_name_ptr)? };
+    let source = unsafe { c_void_to_operations(maybe_source_operations_ptr, is_data_folder)? };
+    let source_table_name = unsafe { c_char_ptr_to_str(source_table_name_ptr)? };
 
-    let to_modelardb = unsafe { c_void_to_operations(maybe_to_operations_ptr, is_data_folder)? };
-    let to_table_name = unsafe { c_char_ptr_to_str(to_table_name_ptr)? };
+    let target = unsafe { c_void_to_operations(maybe_target_operations_ptr, is_data_folder)? };
+    let target_table_name = unsafe { c_char_ptr_to_str(target_table_name_ptr)? };
 
     let maybe_start_time = unsafe { c_char_ptr_to_maybe_str(start_time_ptr)? };
     let maybe_end_time = unsafe { c_char_ptr_to_maybe_str(end_time_ptr)? };
@@ -802,10 +801,10 @@ unsafe fn copy_time_series_table(
     let tags_array: MapArray = tags_array_data.into();
     let tags = map_array_to_map_of_string_to_string(&tags_array);
 
-    TOKIO_RUNTIME.block_on(from_modelardb.copy_time_series_table(
-        from_table_name,
-        to_modelardb,
-        to_table_name,
+    TOKIO_RUNTIME.block_on(source.copy_time_series_table(
+        source_table_name,
+        target,
+        target_table_name,
         maybe_start_time,
         maybe_end_time,
         tags,
@@ -839,27 +838,27 @@ fn map_array_to_map_of_string_to_string(map_array: &MapArray) -> HashMap<String,
     map
 }
 
-/// Move all data from the table with the name in `from_table_name_ptr` in the [`DataFolder`] or
-/// [`Client`] in `maybe_from_operations_ptr` to the table with the name in `to_table_name_ptr` in
-/// the [`DataFolder`] or [`Client`] in `maybe_to_operations_ptr`. Assumes
-/// `maybe_from_operations_ptr` points to a [`DataFolder`] or [`Client`]; `from_table_name_ptr`
-/// points to a valid C string; `maybe_to_operations_ptr` points to a [`DataFolder`] or [`Client`];
-/// and `to_table_name_ptr` points to a valid C string.
+/// Move all data from the table with the name in `source_table_name_ptr` in the [`DataFolder`] or
+/// [`Client`] in `maybe_source_operations_ptr` to the table with the name in `target_table_name_ptr`
+/// in the [`DataFolder`] or [`Client`] in `maybe_target_operations_ptr`. Assumes
+/// `maybe_source_operations_ptr` points to a [`DataFolder`] or [`Client`]; `source_table_name_ptr`
+/// points to a valid C string; `maybe_target_operations_ptr` points to a [`DataFolder`] or [`Client`];
+/// and `target_table_name_ptr` points to a valid C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_move(
-    maybe_from_operations_ptr: *mut c_void,
+    maybe_source_operations_ptr: *mut c_void,
     is_data_folder: bool,
-    from_table_name_ptr: *const c_char,
-    maybe_to_operations_ptr: *mut c_void,
-    to_table_name_ptr: *const c_char,
+    source_table_name_ptr: *const c_char,
+    maybe_target_operations_ptr: *mut c_void,
+    target_table_name_ptr: *const c_char,
 ) -> c_int {
     let maybe_unit = unsafe {
         r#move(
-            maybe_from_operations_ptr,
+            maybe_source_operations_ptr,
             is_data_folder,
-            from_table_name_ptr,
-            maybe_to_operations_ptr,
-            to_table_name_ptr,
+            source_table_name_ptr,
+            maybe_target_operations_ptr,
+            target_table_name_ptr,
         )
     };
 
@@ -868,20 +867,19 @@ pub unsafe extern "C" fn modelardb_embedded_move(
 
 /// See documentation for [`modelardb_embedded_move`].
 unsafe fn r#move(
-    maybe_from_operations_ptr: *mut c_void,
+    maybe_source_operations_ptr: *mut c_void,
     is_data_folder: bool,
-    from_table_name_ptr: *const c_char,
-    maybe_to_operations_ptr: *mut c_void,
-    to_table_name_ptr: *const c_char,
+    source_table_name_ptr: *const c_char,
+    maybe_target_operations_ptr: *mut c_void,
+    target_table_name_ptr: *const c_char,
 ) -> Result<()> {
-    let from_modelardb =
-        unsafe { c_void_to_operations(maybe_from_operations_ptr, is_data_folder)? };
-    let from_table_name = unsafe { c_char_ptr_to_str(from_table_name_ptr)? };
+    let source = unsafe { c_void_to_operations(maybe_source_operations_ptr, is_data_folder)? };
+    let source_table_name = unsafe { c_char_ptr_to_str(source_table_name_ptr)? };
 
-    let to_modelardb = unsafe { c_void_to_operations(maybe_to_operations_ptr, is_data_folder)? };
-    let to_table_name = unsafe { c_char_ptr_to_str(to_table_name_ptr)? };
+    let target = unsafe { c_void_to_operations(maybe_target_operations_ptr, is_data_folder)? };
+    let target_table_name = unsafe { c_char_ptr_to_str(target_table_name_ptr)? };
 
-    TOKIO_RUNTIME.block_on(from_modelardb.r#move(from_table_name, to_modelardb, to_table_name))
+    TOKIO_RUNTIME.block_on(source.r#move(source_table_name, target, target_table_name))
 }
 
 /// Truncates the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in

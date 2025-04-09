@@ -145,7 +145,7 @@ class Manager:
 
 
 class Aggregate(Enum):
-    """Aggregate operations supported by :meth:`ModelarDB.read`."""
+    """Aggregate operations supported by :meth:`Operations.read`."""
 
     NONE = 0
     COUNT = 1
@@ -249,7 +249,7 @@ class FFIArray:
         return self.__array
 
 
-class ModelarDB:
+class Operations:
     """Class used to interact with a ModelarDB data folder or a ModelarDB node."""
 
     @staticmethod
@@ -318,10 +318,10 @@ class ModelarDB:
             void* modelardb_embedded_connect(char* node_url_ptr,
                                              bool is_server_node);
 
-            int modelardb_embedded_close(void* maybe_modelardb_ptr, 
+            int modelardb_embedded_close(void* maybe_operations_ptr, 
                                          bool is_data_folder);
 
-            int modelardb_embedded_create(void* maybe_modelardb_ptr,
+            int modelardb_embedded_create(void* maybe_operations_ptr,
                                           bool is_data_folder,
                                           char* table_name_ptr,
                                           bool is_time_series_table,
@@ -331,36 +331,36 @@ class ModelarDB:
                                           struct ArrowArray* generated_columns_array_ptr,
                                           struct ArrowSchema* generated_columns_array_schema_ptr);
 
-            int modelardb_embedded_tables(void* maybe_modelardb_ptr,
+            int modelardb_embedded_tables(void* maybe_operations_ptr,
                                           bool is_data_folder,
                                           struct ArrowArray* tables_array_ptr,
                                           struct ArrowSchema* tables_array_schema_ptr);
 
-            int modelardb_embedded_schema(void* maybe_modelardb_ptr,
+            int modelardb_embedded_schema(void* maybe_operations_ptr,
                                           bool is_data_folder,
                                           char* table_name_ptr,
                                           struct ArrowArray* schema_struct_array_ptr,
                                           struct ArrowSchema* schema_struct_array_schema_ptr);
 
-            int modelardb_embedded_write(void* maybe_modelardb_ptr,
+            int modelardb_embedded_write(void* maybe_operations_ptr,
                                          bool is_data_folder,
                                          char* table_name_ptr,
                                          struct ArrowArray* uncompressed_struct_ptr,
                                          struct ArrowSchema* uncompressed_struct_schema_ptr);
 
-            int modelardb_embedded_read(void* maybe_modelardb_ptr,
+            int modelardb_embedded_read(void* maybe_operations_ptr,
                                         bool is_data_folder,
                                         char* sql_ptr,
                                         struct ArrowArray* decompressed_struct_ptr,
                                         struct ArrowSchema* decompressed_struct_schema_ptr);
 
-            int modelardb_embedded_copy(void* maybe_from_modelardb_ptr,
+            int modelardb_embedded_copy(void* maybe_source_operations_ptr,
                                         bool is_data_folder,
                                         char* sql_ptr,
-                                        void* maybe_to_modelardb_ptr,
-                                        char* to_table_name_ptr);
+                                        void* maybe_target_operations_ptr,
+                                        char* target_table_name_ptr);
 
-            int modelardb_embedded_read_time_series_table(void* maybe_modelardb_ptr,
+            int modelardb_embedded_read_time_series_table(void* maybe_operations_ptr,
                                                           bool is_data_folder,
                                                           char* table_name_ptr,
                                                           struct ArrowArray* columns_array_ptr,
@@ -374,27 +374,27 @@ class ModelarDB:
                                                           struct ArrowArray* decompressed_struct_array_ptr,
                                                           struct ArrowSchema* decompressed_struct_array_schema_ptr);
 
-            int modelardb_embedded_copy_time_series_table(void* maybe_from_modelardb_ptr,
+            int modelardb_embedded_copy_time_series_table(void* maybe_source_operations_ptr,
                                                           bool is_data_folder,
-                                                          char* from_table_name_ptr,
-                                                          void* maybe_to_modelardb_ptr,
-                                                          char* to_table_name_ptr,
+                                                          char* source_table_name_ptr,
+                                                          void* maybe_target_operations_ptr,
+                                                          char* target_table_name_ptr,
                                                           char* start_time_ptr,
                                                           char* end_time_ptr,
                                                           struct ArrowArray* tags_array_ptr,
                                                           struct ArrowSchema* tags_array_schema_ptr);
 
-            int modelardb_embedded_move(void* maybe_from_modelardb_ptr,
+            int modelardb_embedded_move(void* maybe_source_operations_ptr,
                                         bool is_data_folder,
-                                        char* from_table_name_ptr,
-                                        void* maybe_to_modelardb_ptr,
-                                        char* to_table_name_ptr);
+                                        char* source_table_name_ptr,
+                                        void* maybe_target_operations_ptr,
+                                        char* target_table_name_ptr);
 
-            int modelardb_embedded_truncate(void* maybe_modelardb_ptr,
+            int modelardb_embedded_truncate(void* maybe_operations_ptr,
                                             bool is_data_folder,
                                             char* table_name_ptr);
 
-            int modelardb_embedded_drop(void* maybe_modelardb_ptr,
+            int modelardb_embedded_drop(void* maybe_operations_ptr,
                                         bool is_data_folder,
                                         char* table_name_ptr);
 
@@ -410,40 +410,40 @@ class ModelarDB:
 
     @classmethod
     def open_memory(cls):
-        """Create a :obj:`ModelarDB` data folder that manages data in memory.
+        """Create an :obj:`Operations` data folder that manages data in memory.
 
-        :return: The constructed :obj:`ModelarDB`.
-        :rtype: ModelarDB
+        :return: The constructed :obj:`Operations`.
+        :rtype: Operations
         """
-        self: ModelarDB = cls()
+        self: Operations = cls()
 
-        self.__modelardb_ptr = self.__library.modelardb_embedded_open_memory()
+        self.__operations_ptr = self.__library.modelardb_embedded_open_memory()
         self.__is_data_folder = True
 
-        if self.__modelardb_ptr == ffi.NULL:
+        if self.__operations_ptr == ffi.NULL:
             raise ValueError("Failed to create memory data folder.")
 
         return self
 
     @classmethod
     def open_local(cls, data_folder_path: str):
-        """Create a :obj:`ModelarDB` data folder that manages data in the local folder at `data_folder_path`.
+        """Create an :obj:`Operations` data folder that manages data in the local folder at `data_folder_path`.
 
         :param data_folder_path: The path of the data folder.
         :type data_folder_path: str
-        :return: The constructed :obj:`ModelarDB`.
-        :rtype: ModelarDB
+        :return: The constructed :obj:`Operations`.
+        :rtype: Operations
         """
-        self: ModelarDB = cls()
+        self: Operations = cls()
 
         data_folder_path_ptr = ffi.new("char[]", bytes(data_folder_path, "UTF-8"))
 
-        self.__modelardb_ptr = self.__library.modelardb_embedded_open_local(
+        self.__operations_ptr = self.__library.modelardb_embedded_open_local(
             data_folder_path_ptr
         )
         self.__is_data_folder = True
 
-        if self.__modelardb_ptr == ffi.NULL:
+        if self.__operations_ptr == ffi.NULL:
             raise ValueError("Failed to create local data folder.")
 
         return self
@@ -452,7 +452,7 @@ class ModelarDB:
     def open_s3(
         cls, endpoint: str, bucket_name: str, access_key_id: str, secret_access_key: str
     ):
-        """Create a :obj:`ModelarDB` data folder that manages data in an object store with a S3-compatible API.
+        """Create an :obj:`Operations` data folder that manages data in an object store with a S3-compatible API.
 
         :param endpoint: The endpoint of the S3-compatible object store.
         :type endpoint: str
@@ -462,29 +462,29 @@ class ModelarDB:
         :type access_key_id: str
         :param secret_access_key: The secret access key to use for authentication.
         :type secret_access_key: str
-        :return: The constructed :obj:`ModelarDB`.
-        :rtype: ModelarDB
+        :return: The constructed :obj:`Operations`.
+        :rtype: Operations
         """
-        self: ModelarDB = cls()
+        self: Operations = cls()
 
         endpoint_ptr = ffi.new("char[]", bytes(endpoint, "UTF-8"))
         bucket_name_ptr = ffi.new("char[]", bytes(bucket_name, "UTF-8"))
         access_key_id_ptr = ffi.new("char[]", bytes(access_key_id, "UTF-8"))
         secret_access_key_ptr = ffi.new("char[]", bytes(secret_access_key, "UTF-8"))
 
-        self.__modelardb_ptr = self.__library.modelardb_embedded_open_s3(
+        self.__operations_ptr = self.__library.modelardb_embedded_open_s3(
             endpoint_ptr, bucket_name_ptr, access_key_id_ptr, secret_access_key_ptr
         )
         self.__is_data_folder = True
 
-        if self.__modelardb_ptr == ffi.NULL:
+        if self.__operations_ptr == ffi.NULL:
             raise ValueError("Failed to create S3 data folder.")
 
         return self
 
     @classmethod
     def open_azure(cls, account_name: str, access_key: str, container_name: str):
-        """Create a :obj:`ModelarDB` data folder that manages data in an object store with an Azure-compatible API.
+        """Create an :obj:`Operations` data folder that manages data in an object store with an Azure-compatible API.
 
         :param account_name: The account name to use for authentication.
         :type account_name: str
@@ -492,42 +492,42 @@ class ModelarDB:
         :type access_key: str
         :param container_name: The name of the container to read data from and write data to.
         :type container_name: str
-        :return: The constructed :obj:`ModelarDB`.
-        :rtype: ModelarDB
+        :return: The constructed :obj:`Operations`.
+        :rtype: Operations
         """
-        self: ModelarDB = cls()
+        self: Operations = cls()
 
         account_name_ptr = ffi.new("char[]", bytes(account_name, "UTF-8"))
         access_key_ptr = ffi.new("char[]", bytes(access_key, "UTF-8"))
         container_name_ptr = ffi.new("char[]", bytes(container_name, "UTF-8"))
 
-        self.__modelardb_ptr = self.__library.modelardb_embedded_open_azure(
+        self.__operations_ptr = self.__library.modelardb_embedded_open_azure(
             account_name_ptr, access_key_ptr, container_name_ptr
         )
         self.__is_data_folder = True
 
-        if self.__modelardb_ptr == ffi.NULL:
+        if self.__operations_ptr == ffi.NULL:
             raise ValueError("Failed to create Azure data folder.")
 
         return self
 
     @classmethod
     def connect(cls, node: Server | Manager):
-        """Create a connection to a :obj:`ModelarDB` node.
+        """Create a connection to an :obj:`Operations` node.
 
         :param node: The ModelarDB node to connect to.
         :type node: Server | Manager
         """
-        self: ModelarDB = cls()
+        self: Operations = cls()
 
         node_url_ptr = ffi.new("char[]", bytes(node.url, "UTF-8"))
 
-        self.__modelardb_ptr = self.__library.modelardb_embedded_connect(
+        self.__operations_ptr = self.__library.modelardb_embedded_connect(
             node_url_ptr, isinstance(node, Server)
         )
         self.__is_data_folder = False
 
-        if self.__modelardb_ptr == ffi.NULL:
+        if self.__operations_ptr == ffi.NULL:
             raise ValueError("Failed to connect to ModelarDB node.")
 
         return self
@@ -535,7 +535,7 @@ class ModelarDB:
     def __del__(self):
         """Close the connection to the local folder, object store, or node and deallocate the memory."""
         return_code = self.__library.modelardb_embedded_close(
-            self.__modelardb_ptr, self.__is_data_folder
+            self.__operations_ptr, self.__is_data_folder
         )
         self.__check_return_code_and_raise_error(return_code)
 
@@ -584,7 +584,7 @@ class ModelarDB:
         generated_columns_ffi = FFIArray.from_array(generated_columns_array)
 
         return_code = self.__library.modelardb_embedded_create(
-            self.__modelardb_ptr,
+            self.__operations_ptr,
             self.__is_data_folder,
             table_name_ptr,
             is_time_series_table,
@@ -607,7 +607,7 @@ class ModelarDB:
         tables_ffi = FFIArray.from_type(StringArray)
 
         return_code = self.__library.modelardb_embedded_tables(
-            self.__modelardb_ptr,
+            self.__operations_ptr,
             self.__is_data_folder,
             tables_ffi.array_ptr,
             tables_ffi.schema_ptr,
@@ -632,7 +632,7 @@ class ModelarDB:
         schema_batch_ffi = FFIArray.from_type(RecordBatch)
 
         return_code = self.__library.modelardb_embedded_schema(
-            self.__modelardb_ptr,
+            self.__operations_ptr,
             self.__is_data_folder,
             table_name_ptr,
             schema_batch_ffi.array_ptr,
@@ -658,7 +658,7 @@ class ModelarDB:
         uncompressed_batch_ffi = FFIArray.from_array(uncompressed_batch)
 
         return_code = self.__library.modelardb_embedded_write(
-            self.__modelardb_ptr,
+            self.__operations_ptr,
             self.__is_data_folder,
             table_name_ptr,
             uncompressed_batch_ffi.array_ptr,
@@ -680,7 +680,7 @@ class ModelarDB:
         decompressed_batch_ffi = FFIArray.from_type(RecordBatch)
 
         return_code = self.__library.modelardb_embedded_read(
-            self.__modelardb_ptr,
+            self.__operations_ptr,
             self.__is_data_folder,
             sql_ptr,
             decompressed_batch_ffi.array_ptr,
@@ -690,31 +690,31 @@ class ModelarDB:
 
         return decompressed_batch_ffi.array()
 
-    def copy(self, sql: str, to_modelardb: Self, to_table_name: str):
+    def copy(self, sql: str, target: Self, target_table_name: str):
         """Executes an `sql` statement and copies the result to the normal
-        table with `to_table_name` in `to_modelardb`. Data can be copied from
+        table with `target_table_name` in `target`. Data can be copied from
         both normal tables and time series tables but only to normal tables. Duplicate
         data is not dropped. This is to not lossy compress data multiple times.
 
         :param sql: An SQL statement.
         :type sql: str
-        :param to_modelardb: :obj:`ModelarDB` to write data from `self` to.
-        :type to_modelardb: ModelarDB
-        :param to_table_name: Name of the normal table to write data to.
-        :type to_table_name: str
+        :param target: :obj:`Operations` to write data from `self` to.
+        :type target: Operations
+        :param target_table_name: Name of the normal table to write data to.
+        :type target_table_name: str
         :raises ValueError: If incorrect arguments are provided.
         """
         sql_ptr = ffi.new("char[]", bytes(sql, "UTF-8"))
 
-        to_modelardb = to_modelardb.__modelardb_ptr
-        to_table_name = ffi.new("char[]", bytes(to_table_name, "UTF-8"))
+        target = target.__operations_ptr
+        target_table_name = ffi.new("char[]", bytes(target_table_name, "UTF-8"))
 
         return_code = self.__library.modelardb_embedded_copy(
-            self.__modelardb_ptr,
+            self.__operations_ptr,
             self.__is_data_folder,
             sql_ptr,
-            to_modelardb,
-            to_table_name,
+            target,
+            target_table_name,
         )
         self.__check_return_code_and_raise_error(return_code)
 
@@ -785,7 +785,7 @@ class ModelarDB:
         decompressed_batch_ffi = FFIArray.from_type(RecordBatch)
 
         return_code = self.__library.modelardb_embedded_read_time_series_table(
-            self.__modelardb_ptr,
+            self.__operations_ptr,
             self.__is_data_folder,
             table_name_ptr,
             columns_ffi.array_ptr,
@@ -805,24 +805,24 @@ class ModelarDB:
 
     def copy_time_series_table(
         self,
-        from_table_name: str,
-        to_modelardb: Self,
-        to_table_name: str,
+        source_table_name: str,
+        target: Self,
+        target_table_name: str,
         start_time: None | datetime | str = None,
         end_time: None | datetime | str = None,
         tags: None | dict[str, str] = None,
     ):
-        """Copies data from the time series table with `from_table_name` in `self` to
-        the time series table with `to_table_name` in `to_modelardb`. The remaining
+        """Copies data from the time series table with `source_table_name` in `self` to
+        the time series table with `target_table_name` in `target`. The remaining
         parameters optionally specify which subset of the data to copy.
         Duplicate data is not dropped.
 
-        :param from_table_name: Name of the time series table to read data from.
-        :type from_table_name: str
-        :param to_modelardb: :obj:`ModelarDB` to write data from `self` to.
-        :type to_modelardb: ModelarDB
-        :param to_table_name: Name of the time series table to write data to.
-        :type to_table_name: str
+        :param source_table_name: Name of the time series table to read data from.
+        :type source_table_name: str
+        :param target: :obj:`Operations` to write data from `self` to.
+        :type target: Operations
+        :param target_table_name: Name of the time series table to write data to.
+        :type target_table_name: str
         :param start_time: A start time to filter by as a `datetime` or an ISO 8601 `str`.
         :type start_time: datetime | str, optional
         :param end_time: An end time to filter by as a `datetime` or an ISO 8601 `str`.
@@ -831,11 +831,11 @@ class ModelarDB:
         :type tags: dict[str, str], optional
         :raises ValueError: If incorrect arguments are provided.
         """
-        from_modelardb = self.__modelardb_ptr
-        from_table_name = ffi.new("char[]", bytes(from_table_name, "UTF-8"))
+        source = self.__operations_ptr
+        source_table_name = ffi.new("char[]", bytes(source_table_name, "UTF-8"))
 
-        to_modelardb = to_modelardb.__modelardb_ptr
-        to_table_name = ffi.new("char[]", bytes(to_table_name, "UTF-8"))
+        target = target.__operations_ptr
+        target_table_name = ffi.new("char[]", bytes(target_table_name, "UTF-8"))
 
         start_time_ptr = self.__str_to_c_char_ptr(self.__get_timestamp(start_time))
         end_time_ptr = self.__str_to_c_char_ptr(self.__get_timestamp(end_time))
@@ -848,11 +848,11 @@ class ModelarDB:
         tags_ffi = FFIArray.from_array(tags_array)
 
         return_code = self.__library.modelardb_embedded_copy_time_series_table(
-            from_modelardb,
+            source,
             self.__is_data_folder,
-            from_table_name,
-            to_modelardb,
-            to_table_name,
+            source_table_name,
+            target,
+            target_table_name,
             start_time_ptr,
             end_time_ptr,
             tags_ffi.array_ptr,
@@ -877,33 +877,33 @@ class ModelarDB:
 
     def move(
         self,
-        from_table_name: str,
-        to_modelardb: Self,
-        to_table_name: str,
+        source_table_name: str,
+        target: Self,
+        target_table_name: str,
     ):
-        """Moves all data from the table with `from_table_name` in `self`
-        to the table with `to_table_name` in `to_modelardb`.
+        """Moves all data from the table with `source_table_name` in `self`
+        to the table with `target_table_name` in `target`.
 
-        :param from_table_name: Name of the table to read data from.
-        :type from_table_name: str
-        :param to_modelardb: :obj:`ModelarDB` to write data from `self` to.
-        :type to_modelardb: ModelarDB
-        :param to_table_name: Name of the table to write data to.
-        :type to_table_name: str
+        :param source_table_name: Name of the table to read data from.
+        :type source_table_name: str
+        :param target: :obj:`Operations` to write data from `self` to.
+        :type target: Operations
+        :param target_table_name: Name of the table to write data to.
+        :type target_table_name: str
         :raises ValueError: If incorrect arguments are provided.
         """
-        from_modelardb = self.__modelardb_ptr
-        from_table_name = ffi.new("char[]", bytes(from_table_name, "UTF-8"))
+        source = self.__operations_ptr
+        source_table_name = ffi.new("char[]", bytes(source_table_name, "UTF-8"))
 
-        to_modelardb = to_modelardb.__modelardb_ptr
-        to_table_name = ffi.new("char[]", bytes(to_table_name, "UTF-8"))
+        target = target.__operations_ptr
+        target_table_name = ffi.new("char[]", bytes(target_table_name, "UTF-8"))
 
         return_code = self.__library.modelardb_embedded_move(
-            from_modelardb,
+            source,
             self.__is_data_folder,
-            from_table_name,
-            to_modelardb,
-            to_table_name,
+            source_table_name,
+            target,
+            target_table_name,
         )
         self.__check_return_code_and_raise_error(return_code)
 
@@ -916,7 +916,7 @@ class ModelarDB:
         """
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
         return_code = self.__library.modelardb_embedded_truncate(
-            self.__modelardb_ptr, self.__is_data_folder, table_name_ptr
+            self.__operations_ptr, self.__is_data_folder, table_name_ptr
         )
         self.__check_return_code_and_raise_error(return_code)
 
@@ -929,7 +929,7 @@ class ModelarDB:
         """
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
         return_code = self.__library.modelardb_embedded_drop(
-            self.__modelardb_ptr, self.__is_data_folder, table_name_ptr
+            self.__operations_ptr, self.__is_data_folder, table_name_ptr
         )
         self.__check_return_code_and_raise_error(return_code)
 
@@ -953,30 +953,30 @@ class ModelarDB:
                 raise ValueError("Unknown return code.")
 
 
-def open_memory() -> ModelarDB:
-    """Create a :obj:`ModelarDB` data folder that manages data in memory.
+def open_memory() -> Operations:
+    """Create an :obj:`Operations` data folder that manages data in memory.
 
-    :return: The constructed :obj:`ModelarDB`.
-    :rtype: ModelarDB
+    :return: The constructed :obj:`Operations`.
+    :rtype: Operations
     """
-    return ModelarDB.open_memory()
+    return Operations.open_memory()
 
 
-def open_local(data_folder_path: str) -> ModelarDB:
-    """Create a :obj:`ModelarDB` data folder that manages data in the local folder at `data_folder_path`.
+def open_local(data_folder_path: str) -> Operations:
+    """Create an :obj:`Operations` data folder that manages data in the local folder at `data_folder_path`.
 
     :param data_folder_path: The path of the data folder.
     :type data_folder_path: str
-    :return: The constructed :obj:`ModelarDB`.
-    :rtype: ModelarDB
+    :return: The constructed :obj:`Operations`.
+    :rtype: Operations
     """
-    return ModelarDB.open_local(data_folder_path)
+    return Operations.open_local(data_folder_path)
 
 
 def open_s3(
     endpoint: str, bucket_name: str, access_key_id: str, secret_access_key: str
-) -> ModelarDB:
-    """Create a :obj:`ModelarDB` data folder that manages data in an object store with a S3-compatible API.
+) -> Operations:
+    """Create an :obj:`Operations` data folder that manages data in an object store with a S3-compatible API.
 
     :param endpoint: The endpoint of the S3-compatible object store.
     :type endpoint: str
@@ -986,14 +986,14 @@ def open_s3(
     :type access_key_id: str
     :param secret_access_key: The secret access key to use for authentication.
     :type secret_access_key: str
-    :return: The constructed :obj:`ModelarDB`.
-    :rtype: ModelarDB
+    :return: The constructed :obj:`Operations`.
+    :rtype: Operations
     """
-    return ModelarDB.open_s3(endpoint, bucket_name, access_key_id, secret_access_key)
+    return Operations.open_s3(endpoint, bucket_name, access_key_id, secret_access_key)
 
 
-def open_azure(account_name: str, access_key: str, container_name: str) -> ModelarDB:
-    """Create a :obj:`ModelarDB` data folder that manages data in an object store with an Azure-compatible API.
+def open_azure(account_name: str, access_key: str, container_name: str) -> Operations:
+    """Create an :obj:`Operations` data folder that manages data in an object store with an Azure-compatible API.
 
     :param account_name: The account name to use for authentication.
     :type account_name: str
@@ -1001,16 +1001,16 @@ def open_azure(account_name: str, access_key: str, container_name: str) -> Model
     :type access_key: str
     :param container_name: The name of the container to read data from and write data to.
     :type container_name: str
-    :return: The constructed :obj:`ModelarDB`.
-    :rtype: ModelarDB
+    :return: The constructed :obj:`Operations`.
+    :rtype: Operations
     """
-    return ModelarDB.open_azure(account_name, access_key, container_name)
+    return Operations.open_azure(account_name, access_key, container_name)
 
 
-def connect(node: Server | Manager) -> ModelarDB:
-    """Create a connection to a :obj:`ModelarDB` node.
+def connect(node: Server | Manager) -> Operations:
+    """Create a connection to an :obj:`Operations` node.
 
     :param node: The ModelarDB node to connect to.
     :type node: Server | Manager
     """
-    return ModelarDB.connect(node)
+    return Operations.connect(node)

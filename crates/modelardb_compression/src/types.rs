@@ -481,9 +481,8 @@ impl CompressedSegmentBatchBuilder {
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
     pub(crate) fn finish(mut self) -> RecordBatch {
         let batch_length = self.model_type_ids.len();
-        let field_column_array: Int16Array = iter::repeat(self.field_column_index)
-            .take(batch_length)
-            .collect();
+        let field_column_array: Int16Array =
+            iter::repeat_n(self.field_column_index, batch_length).collect();
 
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.compressed_schema.fields.len());
         columns.push(Arc::new(self.model_type_ids.finish()));
@@ -498,7 +497,7 @@ impl CompressedSegmentBatchBuilder {
         columns.push(Arc::new(field_column_array));
 
         for tag_value in &self.tag_values {
-            let tag_array: StringArray = iter::repeat(Some(tag_value)).take(batch_length).collect();
+            let tag_array: StringArray = iter::repeat_n(Some(tag_value), batch_length).collect();
             columns.push(Arc::new(tag_array));
         }
 

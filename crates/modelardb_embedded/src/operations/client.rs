@@ -270,19 +270,19 @@ impl Operations for Client {
     }
 
     /// Executes the SQL in `sql` and writes the result to the normal table with the name in
-    /// `to_table_name` in `to_modelardb`. Note that if copying data to a time series table, the
+    /// `target_table_name` in `target`. Note that if copying data to a time series table, the
     /// data is compressed again. If the SQL could not be executed or the data could not be written
     /// to the table, [`ModelarDbEmbeddedError`] is returned.
     async fn copy(
         &mut self,
         sql: &str,
-        to_modelardb: &mut dyn Operations,
-        to_table_name: &str,
+        target: &mut dyn Operations,
+        target_table_name: &str,
     ) -> Result<()> {
         let mut record_batch_stream = self.read(sql).await?;
 
         while let Some(record_batch) = record_batch_stream.next().await {
-            to_modelardb.write(to_table_name, record_batch?).await?;
+            target.write(target_table_name, record_batch?).await?;
         }
 
         Ok(())
@@ -319,9 +319,9 @@ impl Operations for Client {
     #[allow(clippy::too_many_arguments)]
     async fn copy_time_series_table(
         &self,
-        _from_table_name: &str,
-        _to_modelardb: &dyn Operations,
-        _to_table_name: &str,
+        _source_table_name: &str,
+        _target: &dyn Operations,
+        _target_table_name: &str,
         _maybe_start_time: Option<&str>,
         _maybe_end_time: Option<&str>,
         _tags: HashMap<String, String>,
@@ -333,9 +333,9 @@ impl Operations for Client {
 
     async fn r#move(
         &mut self,
-        _from_table_name: &str,
-        _to_modelardb: &dyn Operations,
-        _to_table_name: &str,
+        _source_table_name: &str,
+        _target: &dyn Operations,
+        _target_table_name: &str,
     ) -> Result<()> {
         Err(ModelarDbEmbeddedError::Unimplemented(
             "The ModelarDB client does not support moving tables.".to_owned(),

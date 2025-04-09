@@ -572,46 +572,44 @@ impl Operations for DataFolder {
     }
 
     /// Executes the SQL in `sql` and writes the result to the normal table with the name in
-    /// `to_table_name` in `to_modelardb`. Note that data can be copied from both normal tables and
+    /// `target_table_name` in `target`. Note that data can be copied from both normal tables and
     /// time series tables but only to normal tables. This is to not lossy compress data multiple
-    /// times. If `to_modelardb` is not a data folder, the data could not be queried, or the result
+    /// times. If `target` is not a data folder, the data could not be queried, or the result
     /// could not be written to the normal table, [`ModelarDbEmbeddedError`] is returned.
     async fn copy(
         &mut self,
         sql: &str,
-        to_modelardb: &mut dyn Operations,
-        to_table_name: &str,
+        target: &mut dyn Operations,
+        target_table_name: &str,
     ) -> Result<()> {
-        let to_data_folder = to_modelardb
+        let target_data_folder = target
             .as_any()
             .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(
-                    "to_modelardb is not a data folder.".to_owned(),
-                )
+                ModelarDbEmbeddedError::InvalidArgument("target is not a data folder.".to_owned())
             })?;
 
-        let to_normal_table_schema = to_data_folder
-            .normal_table_schema(to_table_name)
+        let target_normal_table_schema = target_data_folder
+            .normal_table_schema(target_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{to_table_name} is not a normal table."
+                    "{target_table_name} is not a normal table."
                 ))
             })?;
 
         let record_batch_stream = self.read(sql).await?;
 
-        if record_batch_stream.schema() != to_normal_table_schema.into() {
+        if record_batch_stream.schema() != target_normal_table_schema.into() {
             Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                "The schema of the data to copy does not match the schema of {to_table_name}."
+                "The schema of the data to copy does not match the schema of {target_table_name}."
             )))
         } else {
             let record_batches = common::collect(record_batch_stream).await?;
 
-            to_data_folder
+            target_data_folder
                 .delta_lake
-                .write_record_batches_to_normal_table(to_table_name, record_batches)
+                .write_record_batches_to_normal_table(target_table_name, record_batches)
                 .await?;
 
             Ok(())
@@ -655,55 +653,53 @@ impl Operations for DataFolder {
         self.read(&sql).await
     }
 
-    /// Copy the data from the time series table with the name in `from_table_name` in `self` to the
-    /// time series table with the name in `to_table_name` in `to_modelardb`. Note that duplicate
-    /// data is not deleted. If `to_modelardb` is not a data folder, the schemas of the time series
+    /// Copy the data from the time series table with the name in `source_table_name` in `self` to
+    /// the time series table with the name in `target_table_name` in `target`. Note that duplicate
+    /// data is not deleted. If `target` is not a data folder, the schemas of the time series
     /// tables do not match, or the data could not be copied, [`ModelarDbEmbeddedError`] is returned.
     #[allow(clippy::too_many_arguments)]
     async fn copy_time_series_table(
         &self,
-        from_table_name: &str,
-        to_modelardb: &dyn Operations,
-        to_table_name: &str,
+        source_table_name: &str,
+        target: &dyn Operations,
+        target_table_name: &str,
         maybe_start_time: Option<&str>,
         maybe_end_time: Option<&str>,
         _tags: HashMap<String, String>, // TODO: Support tag-based filtering.
     ) -> Result<()> {
-        let to_data_folder = to_modelardb
+        let target_data_folder = target
             .as_any()
             .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(
-                    "to_modelardb is not a data folder.".to_owned(),
-                )
+                ModelarDbEmbeddedError::InvalidArgument("target is not a data folder.".to_owned())
             })?;
 
         // DataFolder.copy_time_series_table() interface is designed for time series tables.
-        let from_time_series_table_metadata = self
-            .time_series_table_metadata(from_table_name)
+        let source_time_series_table_metadata = self
+            .time_series_table_metadata(source_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{from_table_name} is not a time series table."
+                    "{source_table_name} is not a time series table."
                 ))
             })?;
 
-        let to_time_series_table_metadata = to_data_folder
-            .time_series_table_metadata(to_table_name)
+        let target_time_series_table_metadata = target_data_folder
+            .time_series_table_metadata(target_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "{to_table_name} is not a time series table."
+                    "{target_table_name} is not a time series table."
                 ))
             })?;
 
         // Check if the schemas of the time series tables match.
         if !schemas_are_compatible(
-            &from_time_series_table_metadata.schema,
-            &to_time_series_table_metadata.schema,
+            &source_time_series_table_metadata.schema,
+            &target_time_series_table_metadata.schema,
         ) {
             return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                "The schema of {from_table_name} does not match the schema of {to_table_name}."
+                "The schema of {source_table_name} does not match the schema of {target_table_name}."
             )));
         }
 
@@ -725,99 +721,99 @@ impl Operations for DataFolder {
             "WHERE ".to_owned() + &where_clause_values.join(" AND ")
         };
 
-        let sql = format!("SELECT * FROM {} {}", from_table_name, where_clause,);
+        let sql = format!("SELECT * FROM {} {}", source_table_name, where_clause,);
 
-        // Read data to copy from from_table_name in from_data_folder.
-        let from_table = Arc::new(self.delta_lake.delta_table(from_table_name).await?);
+        // Read data to copy from source_table_name in source.
+        let source_table = Arc::new(self.delta_lake.delta_table(source_table_name).await?);
 
         let session_context = SessionContext::new();
-        session_context.register_table(from_table_name, from_table)?;
+        session_context.register_table(source_table_name, source_table)?;
 
         let df = session_context.sql(&sql).await?;
         let record_batches = df.collect().await?;
 
-        // Write read data to to_table_name in to_data_folder.
-        to_data_folder
+        // Write read data to target_table_name in target.
+        target_data_folder
             .delta_lake
-            .write_compressed_segments_to_time_series_table(to_table_name, record_batches)
+            .write_compressed_segments_to_time_series_table(target_table_name, record_batches)
             .await?;
 
         Ok(())
     }
 
-    /// Move all data from the table with the name in `from_table_name` in `self` to the table with
-    /// the name in `to_table_name` in `to_modelardb`. If `to_modelardb` is not a data folder, the
+    /// Move all data from the table with the name in `source_table_name` in `self` to the table
+    /// with the name in `target_table_name` in `target`. If `target` is not a data folder, the
     /// schemas of the tables do not match, or the data could not be moved,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn r#move(
         &mut self,
-        from_table_name: &str,
-        to_modelardb: &dyn Operations,
-        to_table_name: &str,
+        source_table_name: &str,
+        target: &dyn Operations,
+        target_table_name: &str,
     ) -> Result<()> {
-        let to_data_folder = to_modelardb
+        let target_data_folder = target
             .as_any()
             .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
-                ModelarDbEmbeddedError::InvalidArgument(
-                    "to_modelardb is not a data folder.".to_owned(),
-                )
+                ModelarDbEmbeddedError::InvalidArgument("target is not a data folder.".to_owned())
             })?;
 
         let schema_mismatch_error = ModelarDbEmbeddedError::InvalidArgument(format!(
-            "The schema of {from_table_name} does not match the schema of {to_table_name}."
+            "The schema of {source_table_name} does not match the schema of {target_table_name}."
         ));
 
-        if let (Some(from_time_series_table_metadata), Some(to_time_series_table_metadata)) = (
-            self.time_series_table_metadata(from_table_name).await,
-            to_data_folder
-                .time_series_table_metadata(to_table_name)
+        if let (Some(source_time_series_table_metadata), Some(target_time_series_table_metadata)) = (
+            self.time_series_table_metadata(source_table_name).await,
+            target_data_folder
+                .time_series_table_metadata(target_table_name)
                 .await,
         ) {
             // If both tables are time series tables, check if their schemas match and write the
-            // data in from_table_name to to_table_name if so.
+            // data in source_table_name to target_table_name if so.
             if !schemas_are_compatible(
-                &from_time_series_table_metadata.schema,
-                &to_time_series_table_metadata.schema,
+                &source_time_series_table_metadata.schema,
+                &target_time_series_table_metadata.schema,
             ) {
                 return Err(schema_mismatch_error);
             }
 
-            let delta_ops = self.delta_lake.delta_ops(from_table_name).await?;
+            let delta_ops = self.delta_lake.delta_ops(source_table_name).await?;
             let (_table, stream) = delta_ops.load().await?;
             let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
-            to_data_folder
+            target_data_folder
                 .delta_lake
-                .write_compressed_segments_to_time_series_table(to_table_name, record_batches)
+                .write_compressed_segments_to_time_series_table(target_table_name, record_batches)
                 .await?;
-        } else if let (Some(from_normal_table_schema), Some(to_normal_table_schema)) = (
-            self.normal_table_schema(from_table_name).await,
-            to_data_folder.normal_table_schema(to_table_name).await,
+        } else if let (Some(source_normal_table_schema), Some(target_normal_table_schema)) = (
+            self.normal_table_schema(source_table_name).await,
+            target_data_folder
+                .normal_table_schema(target_table_name)
+                .await,
         ) {
             // If both tables are normal tables, check if their schemas match and write the data in
-            // from_table_name to to_table_name if so.
-            if !schemas_are_compatible(&from_normal_table_schema, &to_normal_table_schema) {
+            // source_table_name to target_table_name if so.
+            if !schemas_are_compatible(&source_normal_table_schema, &target_normal_table_schema) {
                 return Err(schema_mismatch_error);
             }
 
-            let delta_ops = self.delta_lake.delta_ops(from_table_name).await?;
+            let delta_ops = self.delta_lake.delta_ops(source_table_name).await?;
             let (_table, stream) = delta_ops.load().await?;
             let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
-            to_data_folder
+            target_data_folder
                 .delta_lake
-                .write_record_batches_to_normal_table(to_table_name, record_batches)
+                .write_record_batches_to_normal_table(target_table_name, record_batches)
                 .await?;
         } else {
             return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                "{from_table_name} and {to_table_name} are not both normal tables or time series tables."
+                "{source_table_name} and {target_table_name} are not both normal tables or time series tables."
             )));
         }
 
         // Truncate the table after moving the data. This will also delete the tag hash metadata
         // if the table is a time series table.
-        self.truncate(from_table_name).await?;
+        self.truncate(source_table_name).await?;
 
         Ok(())
     }
@@ -896,26 +892,26 @@ fn sort_record_batch_by_tags_and_time(
     .map_err(|error| error.into())
 }
 
-/// Compare `from_schema` and `to_schema` and return [`true`] if they have the same number of
+/// Compare `source_schema` and `target_schema` and return [`true`] if they have the same number of
 /// columns, their columns have the same types, and their columns nullability is less or equally
-/// restrictive in `from_schema`. Otherwise [`False`] is returned.
-fn schemas_are_compatible(from_schema: &Schema, to_schema: &Schema) -> bool {
-    let from_fields = from_schema.fields();
-    let to_fields = to_schema.fields();
+/// restrictive in `source_schema`. Otherwise [`False`] is returned.
+fn schemas_are_compatible(source_schema: &Schema, target_schema: &Schema) -> bool {
+    let source_fields = source_schema.fields();
+    let target_fields = target_schema.fields();
 
-    if from_fields.len() != to_fields.len() {
+    if source_fields.len() != target_fields.len() {
         return false;
     }
 
-    for index in 0..from_fields.len() {
-        let from_field = &from_fields[index];
-        let to_field = &to_fields[index];
+    for index in 0..source_fields.len() {
+        let source_field = &source_fields[index];
+        let target_field = &target_fields[index];
 
-        if from_field.data_type() != to_field.data_type() {
+        if source_field.data_type() != target_field.data_type() {
             return false;
         }
 
-        if from_field.is_nullable() && !to_field.is_nullable() {
+        if source_field.is_nullable() && !target_field.is_nullable() {
             return false;
         }
     }
@@ -1791,18 +1787,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_time_series_table_from_normal_table_to_time_series_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let (_temp_dir, to_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, target) = create_data_folder_with_time_series_table().await;
 
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, normal_table_data())
             .await
             .unwrap();
 
-        let result = from_data_folder
+        let result = source
             .copy_time_series_table(
                 NORMAL_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 TIME_SERIES_TABLE_NAME,
                 None,
                 None,
@@ -1818,18 +1814,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_time_series_table_from_time_series_table_to_normal_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
-        let (_temp_dir, to_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, target) = create_data_folder_with_normal_table().await;
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let result = from_data_folder
+        let result = source
             .copy_time_series_table(
                 TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 NORMAL_TABLE_NAME,
                 None,
                 None,
@@ -1846,14 +1842,14 @@ mod tests {
     #[tokio::test]
     async fn test_copy_time_series_table_from_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let from_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let source = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let (_temp_dir, to_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, target) = create_data_folder_with_time_series_table().await;
 
-        let result = from_data_folder
+        let result = source
             .copy_time_series_table(
                 MISSING_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 TIME_SERIES_TABLE_NAME,
                 None,
                 None,
@@ -1869,20 +1865,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_time_series_table_from_time_series_table_to_missing_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let result = from_data_folder
+        let result = source
             .copy_time_series_table(
                 TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 MISSING_TABLE_NAME,
                 None,
                 None,
@@ -1899,27 +1895,27 @@ mod tests {
     #[tokio::test]
     async fn test_copy_time_series_table_from_time_series_table_to_time_series_table_with_invalid_schema()
      {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let table_type =
             TableType::TimeSeriesTable(invalid_table_schema(), HashMap::new(), HashMap::new());
-        to_data_folder
+        target
             .create(TIME_SERIES_TABLE_NAME, table_type)
             .await
             .unwrap();
 
-        let result = from_data_folder
+        let result = source
             .copy_time_series_table(
                 TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 TIME_SERIES_TABLE_NAME,
                 None,
                 None,
@@ -1938,22 +1934,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_time_series_table_from_time_series_table_to_time_series_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_time_series_table().await;
 
         let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
-        let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
-        assert_eq!(to_actual_result.num_rows(), 0);
+        let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
+        assert_eq!(target_actual_result.num_rows(), 0);
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        from_data_folder
+        source
             .copy_time_series_table(
                 TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 TIME_SERIES_TABLE_NAME,
                 None,
                 None,
@@ -1962,26 +1958,26 @@ mod tests {
             .await
             .unwrap();
 
-        let from_actual_result = data_folder_read(&mut from_data_folder, &sql).await.unwrap();
-        let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
+        let source_actual_result = data_folder_read(&mut source, &sql).await.unwrap();
+        let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
 
-        assert_eq!(from_actual_result, sorted_time_series_table_data());
-        assert_eq!(to_actual_result, from_actual_result);
+        assert_eq!(source_actual_result, sorted_time_series_table_data());
+        assert_eq!(target_actual_result, source_actual_result);
     }
 
     #[tokio::test]
     async fn test_copy_time_series_table_from_time_series_table_to_time_series_table_with_timestamps()
      {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_time_series_table().await;
 
         let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
-        let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
-        assert_eq!(to_actual_result.num_rows(), 0);
+        let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
+        assert_eq!(target_actual_result.num_rows(), 0);
 
         // Force the physical data to have multiple segments by writing the data in three parts.
         for i in 0..3 {
-            from_data_folder
+            source
                 .write(
                     TIME_SERIES_TABLE_NAME,
                     time_series_table_data().slice(i * 2, 2),
@@ -1990,10 +1986,10 @@ mod tests {
                 .unwrap();
         }
 
-        from_data_folder
+        source
             .copy_time_series_table(
                 TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 TIME_SERIES_TABLE_NAME,
                 Some("1970-01-01T00:00:00.000150"),
                 Some("1970-01-01T00:00:00.000250"),
@@ -2002,29 +1998,29 @@ mod tests {
             .await
             .unwrap();
 
-        let from_actual_result = data_folder_read(&mut from_data_folder, &sql).await.unwrap();
-        let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
+        let source_actual_result = data_folder_read(&mut source, &sql).await.unwrap();
+        let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
 
-        assert_eq!(from_actual_result, time_series_table_data());
-        assert_eq!(to_actual_result, time_series_table_data().slice(2, 2));
+        assert_eq!(source_actual_result, time_series_table_data());
+        assert_eq!(target_actual_result, time_series_table_data().slice(2, 2));
     }
 
     #[tokio::test]
     async fn test_copy_time_series_table_from_time_series_table_to_time_series_table_with_invalid_timestamps()
      {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
-        let (_temp_dir, to_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, target) = create_data_folder_with_time_series_table().await;
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let invalid_start_time = "01/01/1970T00:00:00.000150";
-        let result = from_data_folder
+        let result = source
             .copy_time_series_table(
                 TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 TIME_SERIES_TABLE_NAME,
                 Some(invalid_start_time),
                 Some("01/01/1970T00:00:00.000250"),
@@ -2044,29 +2040,27 @@ mod tests {
     #[tokio::test]
     async fn test_copy_time_series_table_from_time_series_table_to_time_series_table_with_generated_column()
      {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
-        let (_temp_dir, mut to_data_folder) =
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut target) =
             create_data_folder_with_time_series_table_with_generated_column().await;
 
-        let to_sql = format!(
+        let target_sql = format!(
             "SELECT * FROM {}",
             TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME
         );
-        let to_actual_result = data_folder_read(&mut to_data_folder, &to_sql)
-            .await
-            .unwrap();
-        assert_eq!(to_actual_result.num_rows(), 0);
+        let target_actual_result = data_folder_read(&mut target, &target_sql).await.unwrap();
+        assert_eq!(target_actual_result.num_rows(), 0);
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         // Even though the query schemas are different, the data should still be copied.
-        from_data_folder
+        source
             .copy_time_series_table(
                 TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME,
                 None,
                 None,
@@ -2075,28 +2069,24 @@ mod tests {
             .await
             .unwrap();
 
-        let from_sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
-        let from_actual_result = data_folder_read(&mut from_data_folder, &from_sql)
-            .await
-            .unwrap();
+        let source_sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
+        let source_actual_result = data_folder_read(&mut source, &source_sql).await.unwrap();
 
-        let to_actual_result = data_folder_read(&mut to_data_folder, &to_sql)
-            .await
-            .unwrap();
+        let target_actual_result = data_folder_read(&mut target, &target_sql).await.unwrap();
 
-        assert_eq!(from_actual_result, sorted_time_series_table_data());
-        assert_generated_column_result_eq(to_actual_result, from_actual_result);
+        assert_eq!(source_actual_result, sorted_time_series_table_data());
+        assert_generated_column_result_eq(target_actual_result, source_actual_result);
     }
 
     #[tokio::test]
     async fn test_copy_time_series_table_from_data_folder_to_client() {
-        let (_temp_dir, from_data_folder) = create_data_folder_with_time_series_table().await;
-        let to_client = lazy_modelardb_client();
+        let (_temp_dir, source) = create_data_folder_with_time_series_table().await;
+        let target_client = lazy_modelardb_client();
 
-        let result = from_data_folder
+        let result = source
             .copy_time_series_table(
                 TIME_SERIES_TABLE_NAME,
-                &to_client,
+                &target_client,
                 TIME_SERIES_TABLE_NAME,
                 None,
                 None,
@@ -2106,7 +2096,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid Argument Error: to_modelardb is not a data folder.".to_owned()
+            "Invalid Argument Error: target is not a data folder.".to_owned()
         );
     }
 
@@ -2186,83 +2176,81 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_normal_table_from_normal_table_to_normal_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
 
         let sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
-        let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
-        assert_eq!(to_actual_result.num_rows(), 0);
+        let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
+        assert_eq!(target_actual_result.num_rows(), 0);
 
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, normal_table_data())
             .await
             .unwrap();
 
         let copy_sql = format!("SELECT * FROM {} LIMIT 3", NORMAL_TABLE_NAME);
-        from_data_folder
-            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
+        source
+            .copy(&copy_sql, &mut target, NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
-        let from_actual_result = data_folder_read(&mut from_data_folder, &sql).await.unwrap();
-        let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
+        let source_actual_result = data_folder_read(&mut source, &sql).await.unwrap();
+        let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
 
-        assert_eq!(from_actual_result, normal_table_data());
-        assert_eq!(to_actual_result, from_actual_result.slice(0, 3));
+        assert_eq!(source_actual_result, normal_table_data());
+        assert_eq!(target_actual_result, source_actual_result.slice(0, 3));
     }
 
     #[tokio::test]
     async fn test_copy_normal_table_from_normal_table_to_normal_table_with_different_schema() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let schema = normal_table_schema().project(&[0, 1]).unwrap();
-        to_data_folder
+        target
             .create(NORMAL_TABLE_NAME, TableType::NormalTable(schema))
             .await
             .unwrap();
 
         let sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
-        let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
-        assert_eq!(to_actual_result.num_rows(), 0);
+        let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
+        assert_eq!(target_actual_result.num_rows(), 0);
 
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, normal_table_data())
             .await
             .unwrap();
 
         let copy_sql = format!("SELECT id, name FROM {}", NORMAL_TABLE_NAME);
-        from_data_folder
-            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
+        source
+            .copy(&copy_sql, &mut target, NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
-        let from_actual_result = data_folder_read(&mut from_data_folder, &sql).await.unwrap();
-        let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
+        let source_actual_result = data_folder_read(&mut source, &sql).await.unwrap();
+        let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
 
-        assert_eq!(from_actual_result, normal_table_data());
+        assert_eq!(source_actual_result, normal_table_data());
         assert_eq!(
-            to_actual_result,
-            from_actual_result.project(&[0, 1]).unwrap()
+            target_actual_result,
+            source_actual_result.project(&[0, 1]).unwrap()
         );
     }
 
     #[tokio::test]
     async fn test_copy_normal_table_from_normal_table_to_normal_table_with_invalid_schema() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
 
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, normal_table_data())
             .await
             .unwrap();
 
         let copy_sql = format!("SELECT id, name FROM {}", NORMAL_TABLE_NAME);
-        let result = from_data_folder
-            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
-            .await;
+        let result = source.copy(&copy_sql, &mut target, NORMAL_TABLE_NAME).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -2275,59 +2263,53 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_normal_table_from_time_series_table_to_normal_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
 
-        // Create a normal table that has the same schema as the time series table in from_data_folder.
+        // Create a normal table that has the same schema as the time series table in source.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let schema = time_series_table_schema();
-        to_data_folder
+        target
             .create(NORMAL_TABLE_NAME, TableType::NormalTable(schema))
             .await
             .unwrap();
 
-        let to_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
-        let to_actual_result = data_folder_read(&mut to_data_folder, &to_sql)
-            .await
-            .unwrap();
-        assert_eq!(to_actual_result.num_rows(), 0);
+        let target_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let target_actual_result = data_folder_read(&mut target, &target_sql).await.unwrap();
+        assert_eq!(target_actual_result.num_rows(), 0);
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
         let copy_sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
-        from_data_folder
-            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
+        source
+            .copy(&copy_sql, &mut target, NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
-        let from_actual_result = data_folder_read(&mut from_data_folder, &copy_sql)
-            .await
-            .unwrap();
-        let to_actual_result = data_folder_read(&mut to_data_folder, &to_sql)
-            .await
-            .unwrap();
+        let source_actual_result = data_folder_read(&mut source, &copy_sql).await.unwrap();
+        let target_actual_result = data_folder_read(&mut target, &target_sql).await.unwrap();
 
-        assert_eq!(from_actual_result, sorted_time_series_table_data());
-        assert_eq!(to_actual_result, from_actual_result);
+        assert_eq!(source_actual_result, sorted_time_series_table_data());
+        assert_eq!(target_actual_result, source_actual_result);
     }
 
     #[tokio::test]
     async fn test_copy_normal_table_from_normal_table_to_time_series_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_time_series_table().await;
 
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, normal_table_data())
             .await
             .unwrap();
 
         let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
-        let result = from_data_folder
-            .copy(&copy_sql, &mut to_data_folder, TIME_SERIES_TABLE_NAME)
+        let result = source
+            .copy(&copy_sql, &mut target, TIME_SERIES_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2338,19 +2320,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_normal_table_from_normal_table_to_missing_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, normal_table_data())
             .await
             .unwrap();
 
         let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
-        let result = from_data_folder
-            .copy(&copy_sql, &mut to_data_folder, MISSING_TABLE_NAME)
+        let result = source
+            .copy(&copy_sql, &mut target, MISSING_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2362,14 +2344,12 @@ mod tests {
     #[tokio::test]
     async fn test_copy_normal_table_from_missing_table_to_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut from_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let mut source = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
 
         let copy_sql = format!("SELECT * FROM {}", MISSING_TABLE_NAME);
-        let result = from_data_folder
-            .copy(&copy_sql, &mut to_data_folder, NORMAL_TABLE_NAME)
-            .await;
+        let result = source.copy(&copy_sql, &mut target, NORMAL_TABLE_NAME).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -2382,17 +2362,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_normal_table_from_data_folder_to_client() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let mut to_client = lazy_modelardb_client();
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
+        let mut target_client = lazy_modelardb_client();
 
         let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
-        let result = from_data_folder
-            .copy(&copy_sql, &mut to_client, NORMAL_TABLE_NAME)
+        let result = source
+            .copy(&copy_sql, &mut target_client, NORMAL_TABLE_NAME)
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid Argument Error: to_modelardb is not a data folder.".to_owned()
+            "Invalid Argument Error: target is not a data folder.".to_owned()
         );
     }
 
@@ -2566,20 +2546,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_move_normal_table_to_normal_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
 
         let sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
-        let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
+        let actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(actual_result.num_rows(), 0);
 
         let expected_result = normal_table_data();
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, expected_result.clone())
             .await
             .unwrap();
 
-        let mut delta_table = from_data_folder
+        let mut delta_table = source
             .delta_lake
             .delta_table(NORMAL_TABLE_NAME)
             .await
@@ -2587,19 +2567,18 @@ mod tests {
 
         assert_eq!(delta_table.get_files_count(), 1);
 
-        from_data_folder
-            .r#move(NORMAL_TABLE_NAME, &to_data_folder, NORMAL_TABLE_NAME)
+        source
+            .r#move(NORMAL_TABLE_NAME, &target, NORMAL_TABLE_NAME)
             .await
             .unwrap();
 
         // Verify that the data was deleted but the normal table still exists.
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
-        assert_normal_table_exists(&from_data_folder, NORMAL_TABLE_NAME, normal_table_schema())
-            .await;
+        assert_normal_table_exists(&source, NORMAL_TABLE_NAME, normal_table_schema()).await;
 
         // Verify that the normal table data was moved to the new data folder.
-        let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
+        let actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(actual_result, expected_result);
     }
 
@@ -2633,12 +2612,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_move_normal_table_to_normal_table_with_invalid_schema() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        to_data_folder
+        target
             .create(
                 NORMAL_TABLE_NAME,
                 TableType::NormalTable(invalid_table_schema()),
@@ -2647,13 +2626,13 @@ mod tests {
             .unwrap();
 
         let expected_result = normal_table_data();
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, expected_result.clone())
             .await
             .unwrap();
 
-        let result = from_data_folder
-            .r#move(NORMAL_TABLE_NAME, &to_data_folder, NORMAL_TABLE_NAME)
+        let result = source
+            .r#move(NORMAL_TABLE_NAME, &target, NORMAL_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2665,10 +2644,10 @@ mod tests {
         );
 
         assert_table_not_moved(
-            &mut from_data_folder,
+            &mut source,
             NORMAL_TABLE_NAME,
             expected_result,
-            Some(&mut to_data_folder),
+            Some(&mut target),
             Some(NORMAL_TABLE_NAME),
         )
         .await;
@@ -2676,17 +2655,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_move_normal_table_to_time_series_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_time_series_table().await;
 
         let expected_result = normal_table_data();
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, expected_result.clone())
             .await
             .unwrap();
 
-        let result = from_data_folder
-            .r#move(NORMAL_TABLE_NAME, &to_data_folder, TIME_SERIES_TABLE_NAME)
+        let result = source
+            .r#move(NORMAL_TABLE_NAME, &target, TIME_SERIES_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2698,10 +2677,10 @@ mod tests {
         );
 
         assert_table_not_moved(
-            &mut from_data_folder,
+            &mut source,
             NORMAL_TABLE_NAME,
             expected_result,
-            Some(&mut to_data_folder),
+            Some(&mut target),
             Some(TIME_SERIES_TABLE_NAME),
         )
         .await;
@@ -2709,19 +2688,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_move_normal_table_to_missing_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let expected_result = normal_table_data();
-        from_data_folder
+        source
             .write(NORMAL_TABLE_NAME, expected_result.clone())
             .await
             .unwrap();
 
-        let result = from_data_folder
-            .r#move(NORMAL_TABLE_NAME, &to_data_folder, MISSING_TABLE_NAME)
+        let result = source
+            .r#move(NORMAL_TABLE_NAME, &target, MISSING_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2732,31 +2711,24 @@ mod tests {
             )
         );
 
-        assert_table_not_moved(
-            &mut from_data_folder,
-            NORMAL_TABLE_NAME,
-            expected_result,
-            None,
-            None,
-        )
-        .await;
+        assert_table_not_moved(&mut source, NORMAL_TABLE_NAME, expected_result, None, None).await;
     }
 
     #[tokio::test]
     async fn test_move_time_series_table_to_time_series_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_time_series_table().await;
 
         let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
-        let to_actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
-        assert_eq!(to_actual_result.num_rows(), 0);
+        let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
+        assert_eq!(target_actual_result.num_rows(), 0);
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let mut delta_table = from_data_folder
+        let mut delta_table = source
             .delta_lake
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
@@ -2764,12 +2736,8 @@ mod tests {
 
         assert_eq!(delta_table.get_files_count(), 2);
 
-        from_data_folder
-            .r#move(
-                TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
-                TIME_SERIES_TABLE_NAME,
-            )
+        source
+            .r#move(TIME_SERIES_TABLE_NAME, &target, TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -2777,36 +2745,36 @@ mod tests {
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
         assert_time_series_table_exists(
-            &from_data_folder,
+            &source,
             TIME_SERIES_TABLE_NAME,
             time_series_table_schema(),
         )
         .await;
 
         // Verify that the time series table data was moved to the new data folder.
-        let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
+        let actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(actual_result, sorted_time_series_table_data());
     }
 
     #[tokio::test]
     async fn test_move_time_series_table_to_time_series_table_with_generated_column() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
-        let (_temp_dir, mut to_data_folder) =
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut target) =
             create_data_folder_with_time_series_table_with_generated_column().await;
 
         let sql = format!(
             "SELECT * FROM {}",
             TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME
         );
-        let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
+        let actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(actual_result.num_rows(), 0);
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let mut delta_table = from_data_folder
+        let mut delta_table = source
             .delta_lake
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
@@ -2815,10 +2783,10 @@ mod tests {
         assert_eq!(delta_table.get_files_count(), 2);
 
         // Even though the query schemas are different, the data should still be moved.
-        from_data_folder
+        source
             .r#move(
                 TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
+                &target,
                 TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME,
             )
             .await
@@ -2828,14 +2796,14 @@ mod tests {
         delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
         assert_time_series_table_exists(
-            &from_data_folder,
+            &source,
             TIME_SERIES_TABLE_NAME,
             time_series_table_schema(),
         )
         .await;
 
         // Verify that the time series table data was moved to the new data folder.
-        let actual_result = data_folder_read(&mut to_data_folder, &sql).await.unwrap();
+        let actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_generated_column_result_eq(actual_result, sorted_time_series_table_data());
     }
 
@@ -2880,12 +2848,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_move_time_series_table_to_time_series_table_with_invalid_schema() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        to_data_folder
+        target
             .create(
                 TIME_SERIES_TABLE_NAME,
                 TableType::TimeSeriesTable(invalid_table_schema(), HashMap::new(), HashMap::new()),
@@ -2893,17 +2861,13 @@ mod tests {
             .await
             .unwrap();
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let result = from_data_folder
-            .r#move(
-                TIME_SERIES_TABLE_NAME,
-                &to_data_folder,
-                TIME_SERIES_TABLE_NAME,
-            )
+        let result = source
+            .r#move(TIME_SERIES_TABLE_NAME, &target, TIME_SERIES_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2915,10 +2879,10 @@ mod tests {
         );
 
         assert_table_not_moved(
-            &mut from_data_folder,
+            &mut source,
             TIME_SERIES_TABLE_NAME,
             sorted_time_series_table_data(),
-            Some(&mut to_data_folder),
+            Some(&mut target),
             Some(TIME_SERIES_TABLE_NAME),
         )
         .await;
@@ -2926,16 +2890,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_move_time_series_table_to_normal_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
-        let (_temp_dir, mut to_data_folder) = create_data_folder_with_normal_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let result = from_data_folder
-            .r#move(TIME_SERIES_TABLE_NAME, &to_data_folder, NORMAL_TABLE_NAME)
+        let result = source
+            .r#move(TIME_SERIES_TABLE_NAME, &target, NORMAL_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2947,10 +2911,10 @@ mod tests {
         );
 
         assert_table_not_moved(
-            &mut from_data_folder,
+            &mut source,
             TIME_SERIES_TABLE_NAME,
             sorted_time_series_table_data(),
-            Some(&mut to_data_folder),
+            Some(&mut target),
             Some(NORMAL_TABLE_NAME),
         )
         .await;
@@ -2958,18 +2922,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_move_time_series_table_to_missing_table() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let to_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        from_data_folder
+        source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
             .await
             .unwrap();
 
-        let result = from_data_folder
-            .r#move(TIME_SERIES_TABLE_NAME, &to_data_folder, MISSING_TABLE_NAME)
+        let result = source
+            .r#move(TIME_SERIES_TABLE_NAME, &target, MISSING_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -2981,7 +2945,7 @@ mod tests {
         );
 
         assert_table_not_moved(
-            &mut from_data_folder,
+            &mut source,
             TIME_SERIES_TABLE_NAME,
             sorted_time_series_table_data(),
             None,
@@ -2991,22 +2955,20 @@ mod tests {
     }
 
     async fn assert_table_not_moved(
-        from_data_folder: &mut DataFolder,
-        from_table_name: &str,
+        source: &mut DataFolder,
+        source_table_name: &str,
         expected_result: RecordBatch,
-        maybe_to_data_folder: Option<&mut DataFolder>,
-        maybe_to_table_name: Option<&str>,
+        maybe_target: Option<&mut DataFolder>,
+        maybe_target_table_name: Option<&str>,
     ) {
-        let from_sql = format!("SELECT * FROM {from_table_name}");
-        let from_actual_result = data_folder_read(from_data_folder, &from_sql).await.unwrap();
-        assert_eq!(from_actual_result, expected_result);
+        let source_sql = format!("SELECT * FROM {source_table_name}");
+        let source_actual_result = data_folder_read(source, &source_sql).await.unwrap();
+        assert_eq!(source_actual_result, expected_result);
 
-        if let (Some(to_data_folder), Some(to_table_name)) =
-            (maybe_to_data_folder, maybe_to_table_name)
-        {
-            let to_sql = format!("SELECT * FROM {to_table_name}");
-            let to_actual_result = data_folder_read(to_data_folder, &to_sql).await.unwrap();
-            assert_eq!(to_actual_result.num_rows(), 0);
+        if let (Some(target), Some(target_table_name)) = (maybe_target, maybe_target_table_name) {
+            let target_sql = format!("SELECT * FROM {target_table_name}");
+            let target_actual_result = data_folder_read(target, &target_sql).await.unwrap();
+            assert_eq!(target_actual_result.num_rows(), 0);
         }
     }
 
@@ -3018,12 +2980,12 @@ mod tests {
     #[tokio::test]
     async fn test_move_missing_table_to_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut from_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let mut source = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let (_temp_dir, to_data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, target) = create_data_folder_with_time_series_table().await;
 
-        let result = from_data_folder
-            .r#move(MISSING_TABLE_NAME, &to_data_folder, TIME_SERIES_TABLE_NAME)
+        let result = source
+            .r#move(MISSING_TABLE_NAME, &target, TIME_SERIES_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -3037,16 +2999,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_move_from_data_folder_to_client() {
-        let (_temp_dir, mut from_data_folder) = create_data_folder_with_normal_table().await;
-        let to_client = lazy_modelardb_client();
+        let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
+        let target_client = lazy_modelardb_client();
 
-        let result = from_data_folder
-            .r#move(NORMAL_TABLE_NAME, &to_client, NORMAL_TABLE_NAME)
+        let result = source
+            .r#move(NORMAL_TABLE_NAME, &target_client, NORMAL_TABLE_NAME)
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid Argument Error: to_modelardb is not a data folder.".to_owned()
+            "Invalid Argument Error: target is not a data folder.".to_owned()
         );
     }
 

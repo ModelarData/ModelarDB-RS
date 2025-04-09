@@ -17,13 +17,13 @@ import os
 import unittest
 from tempfile import TemporaryDirectory
 
-import modelardb
 import pyarrow
 from modelardb import (
+    Aggregate,
     AbsoluteErrorBound,
     TimeSeriesTable,
     NormalTable,
-    ModelarDB,
+    Operations,
     FFIArray,
     RelativeErrorBound,
 )
@@ -122,15 +122,15 @@ class ModelarDBPythonTest(unittest.TestCase):
     # Tests for DataFolder.
     def test_data_folder_init(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            new_data_folder = ModelarDB.open_local(temp_dir)
+            new_data_folder = Operations.open_local(temp_dir)
             self.assertEqual(data_folder.tables(), new_data_folder.tables())
 
     def test_data_folder_create_normal_table(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
 
             table_folder = os.path.join(temp_dir, "tables", NORMAL_TABLE_NAME)
             self.assertFalse(os.path.exists(table_folder))
@@ -142,14 +142,14 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_create_time_series_table(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
 
             expected_schema = time_series_table_query_schema()
-            time_series_table_type = modelardb.TimeSeriesTable(
+            time_series_table_type = TimeSeriesTable(
                 expected_schema,
                 {
-                    "field_one": modelardb.AbsoluteErrorBound(1),
-                    "field_two": modelardb.RelativeErrorBound(10),
+                    "field_one": AbsoluteErrorBound(1),
+                    "field_two": RelativeErrorBound(10),
                 },
                 {"field_three": "field_one + field_two"},
             )
@@ -164,7 +164,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_create_error(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
                 data_folder.create(NORMAL_TABLE_NAME, NormalTable(pyarrow.schema([])))
@@ -177,7 +177,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_tables(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
             self.assertEqual(
@@ -186,7 +186,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_schema(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
             actual_normal_table_schema = data_folder.schema(NORMAL_TABLE_NAME)
@@ -197,7 +197,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_schema_error(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
                 data_folder.schema(MISSING_TABLE_NAME)
@@ -209,7 +209,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_write(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
             time_series_table_folder = os.path.join(temp_dir, "tables", TIME_SERIES_TABLE_NAME)
@@ -220,7 +220,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_write_error(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
                 data_folder.write(MISSING_TABLE_NAME, time_series_table_data())
@@ -232,7 +232,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_read(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
             data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
@@ -244,7 +244,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_read_error(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
                 data_folder.read(f"SELECT * FROM {MISSING_TABLE_NAME}")
@@ -256,36 +256,36 @@ class ModelarDBPythonTest(unittest.TestCase):
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_copy(self):
-        with TemporaryDirectory() as from_temp_dir:
-            with TemporaryDirectory() as to_temp_dir:
-                from_data_folder = ModelarDB.open_local(from_temp_dir)
-                create_tables_in_data_folder(from_data_folder)
+        with TemporaryDirectory() as source_temp_dir:
+            with TemporaryDirectory() as target_temp_dir:
+                source_data_folder = Operations.open_local(source_temp_dir)
+                create_tables_in_data_folder(source_data_folder)
 
                 expected_result = normal_table_data()
-                from_data_folder.write(NORMAL_TABLE_NAME, expected_result)
+                source_data_folder.write(NORMAL_TABLE_NAME, expected_result)
 
-                to_data_folder = ModelarDB.open_local(to_temp_dir)
-                create_tables_in_data_folder(to_data_folder)
+                target_data_folder = Operations.open_local(target_temp_dir)
+                create_tables_in_data_folder(target_data_folder)
 
                 sql = f"SELECT * FROM {NORMAL_TABLE_NAME}"
-                from_data_folder.copy(
-                    sql, to_data_folder, NORMAL_TABLE_NAME
+                source_data_folder.copy(
+                    sql, target_data_folder, NORMAL_TABLE_NAME
                 )
 
-                # After copying the data it should also be in to_table.
-                self.assertEqual(from_data_folder.read(sql), expected_result)
-                self.assertEqual(to_data_folder.read(sql), expected_result)
+                # After copying the data it should also be in target_table.
+                self.assertEqual(source_data_folder.read(sql), expected_result)
+                self.assertEqual(target_data_folder.read(sql), expected_result)
 
     def test_data_folder_copy_error(self):
-        with TemporaryDirectory() as from_temp_dir:
-            with TemporaryDirectory() as to_temp_dir:
-                from_data_folder = ModelarDB.open_local(from_temp_dir)
-                to_data_folder = ModelarDB.open_local(to_temp_dir)
+        with TemporaryDirectory() as source_temp_dir:
+            with TemporaryDirectory() as target_temp_dir:
+                source_data_folder = Operations.open_local(source_temp_dir)
+                target_data_folder = Operations.open_local(target_temp_dir)
 
                 with self.assertRaises(RuntimeError) as context:
                     sql = f"SELECT * FROM {MISSING_TABLE_NAME}"
-                    from_data_folder.copy(
-                        sql, to_data_folder, MISSING_TABLE_NAME
+                    source_data_folder.copy(
+                        sql, target_data_folder, MISSING_TABLE_NAME
                     )
 
                 error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a normal table."
@@ -293,7 +293,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_read_time_series_table(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
             data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
@@ -305,7 +305,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_read_time_series_table_with_columns_tags_timestamps(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
             data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
@@ -325,14 +325,14 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_read_time_series_table_with_aggregates(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
             data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
             columns = [
-                ("tag", modelardb.Aggregate.NONE),
-                ("field_one", modelardb.Aggregate.SUM),
+                ("tag", Aggregate.NONE),
+                ("field_one", Aggregate.SUM),
             ]
             actual_result = data_folder.read_time_series_table(
                 TIME_SERIES_TABLE_NAME, columns, ["tag"]
@@ -349,7 +349,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_read_time_series_table_error(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
                 data_folder.read_time_series_table(MISSING_TABLE_NAME)
@@ -360,113 +360,113 @@ class ModelarDBPythonTest(unittest.TestCase):
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_copy_time_series_table(self):
-        with TemporaryDirectory() as from_temp_dir:
-            with TemporaryDirectory() as to_temp_dir:
-                from_data_folder = ModelarDB.open_local(from_temp_dir)
-                create_tables_in_data_folder(from_data_folder)
+        with TemporaryDirectory() as source_temp_dir:
+            with TemporaryDirectory() as target_temp_dir:
+                source_data_folder = Operations.open_local(source_temp_dir)
+                create_tables_in_data_folder(source_data_folder)
 
-                from_data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+                source_data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
-                to_data_folder = ModelarDB.open_local(to_temp_dir)
-                create_tables_in_data_folder(to_data_folder)
+                target_data_folder = Operations.open_local(target_temp_dir)
+                create_tables_in_data_folder(target_data_folder)
 
-                from_data_folder.copy_time_series_table(
-                    TIME_SERIES_TABLE_NAME, to_data_folder, TIME_SERIES_TABLE_NAME
+                source_data_folder.copy_time_series_table(
+                    TIME_SERIES_TABLE_NAME, target_data_folder, TIME_SERIES_TABLE_NAME
                 )
 
-                # After copying the data it should also be in to_table.
+                # After copying the data it should also be in target_table.
                 expected_result = sorted_time_series_table_data_with_generated_column()
                 self.assertEqual(
-                    from_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
+                    source_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
                 )
                 self.assertEqual(
-                    to_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
+                    target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
                 )
 
     def test_data_folder_copy_time_series_table_with_timestamps(self):
-        with TemporaryDirectory() as from_temp_dir:
-            with TemporaryDirectory() as to_temp_dir:
-                from_data_folder = ModelarDB.open_local(from_temp_dir)
-                create_tables_in_data_folder(from_data_folder)
+        with TemporaryDirectory() as source_temp_dir:
+            with TemporaryDirectory() as target_temp_dir:
+                source_data_folder = Operations.open_local(source_temp_dir)
+                create_tables_in_data_folder(source_data_folder)
 
                 # Force the physical data to have multiple segments by writing the data in three parts.
                 for i in range(3):
-                    from_data_folder.write(
+                    source_data_folder.write(
                         TIME_SERIES_TABLE_NAME, time_series_table_data().slice(i * 2, 2)
                     )
 
-                to_data_folder = ModelarDB.open_local(to_temp_dir)
-                create_tables_in_data_folder(to_data_folder)
+                target_data_folder = Operations.open_local(target_temp_dir)
+                create_tables_in_data_folder(target_data_folder)
 
                 end_time = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
-                from_data_folder.copy_time_series_table(
+                source_data_folder.copy_time_series_table(
                     TIME_SERIES_TABLE_NAME,
-                    to_data_folder,
+                    target_data_folder,
                     TIME_SERIES_TABLE_NAME,
                     start_time="1970-01-01T00:00:00.000150",
                     end_time=end_time + datetime.timedelta(microseconds=250),
                 )
 
-                # After copying the data it should also be in to_table.
-                from_expected_result = time_series_table_data_with_generated_column()
+                # After copying the data it should also be in target_table.
+                source_expected_result = time_series_table_data_with_generated_column()
                 self.assertEqual(
-                    from_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
-                    from_expected_result,
+                    source_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
+                    source_expected_result,
                 )
 
-                to_expected_result = from_expected_result.slice(2, 2)
+                target_expected_result = source_expected_result.slice(2, 2)
                 self.assertEqual(
-                    to_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
-                    to_expected_result,
+                    target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
+                    target_expected_result,
                 )
 
     def test_data_folder_copy_time_series_table_error(self):
-        with TemporaryDirectory() as from_temp_dir:
-            with TemporaryDirectory() as to_temp_dir:
-                from_data_folder = ModelarDB.open_local(from_temp_dir)
-                to_data_folder = ModelarDB.open_local(to_temp_dir)
+        with TemporaryDirectory() as source_temp_dir:
+            with TemporaryDirectory() as target_temp_dir:
+                source_data_folder = Operations.open_local(source_temp_dir)
+                target_data_folder = Operations.open_local(target_temp_dir)
 
                 with self.assertRaises(RuntimeError) as context:
-                    from_data_folder.copy_time_series_table(
-                        MISSING_TABLE_NAME, to_data_folder, MISSING_TABLE_NAME
+                    source_data_folder.copy_time_series_table(
+                        MISSING_TABLE_NAME, target_data_folder, MISSING_TABLE_NAME
                     )
 
                 error_message = f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a time series table."
                 self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_move(self):
-        with TemporaryDirectory() as from_temp_dir:
-            with TemporaryDirectory() as to_temp_dir:
-                from_data_folder = ModelarDB.open_local(from_temp_dir)
-                create_tables_in_data_folder(from_data_folder)
+        with TemporaryDirectory() as source_temp_dir:
+            with TemporaryDirectory() as target_temp_dir:
+                source_data_folder = Operations.open_local(source_temp_dir)
+                create_tables_in_data_folder(source_data_folder)
 
-                from_data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+                source_data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
 
-                to_data_folder = ModelarDB.open_local(to_temp_dir)
-                create_tables_in_data_folder(to_data_folder)
+                target_data_folder = Operations.open_local(target_temp_dir)
+                create_tables_in_data_folder(target_data_folder)
 
-                from_data_folder.move(
-                    TIME_SERIES_TABLE_NAME, to_data_folder, TIME_SERIES_TABLE_NAME
+                source_data_folder.move(
+                    TIME_SERIES_TABLE_NAME, target_data_folder, TIME_SERIES_TABLE_NAME
                 )
 
                 self.assertEqual(
-                    from_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME).num_rows, 0
+                    source_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME).num_rows, 0
                 )
 
                 expected_result = sorted_time_series_table_data_with_generated_column()
                 self.assertEqual(
-                    to_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
+                    target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
                 )
 
     def test_data_folder_move_error(self):
-        with TemporaryDirectory() as from_temp_dir:
-            with TemporaryDirectory() as to_temp_dir:
-                from_data_folder = ModelarDB.open_local(from_temp_dir)
-                to_data_folder = ModelarDB.open_local(to_temp_dir)
+        with TemporaryDirectory() as source_temp_dir:
+            with TemporaryDirectory() as target_temp_dir:
+                source_data_folder = Operations.open_local(source_temp_dir)
+                target_data_folder = Operations.open_local(target_temp_dir)
 
                 with self.assertRaises(RuntimeError) as context:
-                    from_data_folder.move(
-                        MISSING_TABLE_NAME, to_data_folder, MISSING_TABLE_NAME
+                    source_data_folder.move(
+                        MISSING_TABLE_NAME, target_data_folder, MISSING_TABLE_NAME
                     )
 
                 error_message = (
@@ -477,7 +477,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_truncate(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
             data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
@@ -489,7 +489,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_truncate_error(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
                 data_folder.truncate(MISSING_TABLE_NAME)
@@ -499,7 +499,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_drop(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
             self.assertTrue(TIME_SERIES_TABLE_NAME in data_folder.tables())
 
@@ -512,7 +512,7 @@ class ModelarDBPythonTest(unittest.TestCase):
 
     def test_data_folder_drop_error(self):
         with TemporaryDirectory() as temp_dir:
-            data_folder = ModelarDB.open_local(temp_dir)
+            data_folder = Operations.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
                 data_folder.drop(MISSING_TABLE_NAME)
@@ -524,15 +524,15 @@ class ModelarDBPythonTest(unittest.TestCase):
             self.assertEqual(error_message, str(context.exception))
 
 
-def create_tables_in_data_folder(data_folder: ModelarDB):
+def create_tables_in_data_folder(data_folder: Operations):
     table_type = NormalTable(normal_table_schema())
     data_folder.create(NORMAL_TABLE_NAME, table_type)
 
-    time_series_table_type = modelardb.TimeSeriesTable(
+    time_series_table_type = TimeSeriesTable(
         time_series_table_query_schema(),
         {
-            "field_one": modelardb.AbsoluteErrorBound(1),
-            "field_two": modelardb.RelativeErrorBound(10),
+            "field_one": AbsoluteErrorBound(1),
+            "field_two": RelativeErrorBound(10),
         },
         {"field_three": "field_one + field_two"},
     )
