@@ -21,6 +21,10 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
 arrow.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true
 
 [dev-dependencies]
 modelardb_common = { path = "../modelardb_common" }
