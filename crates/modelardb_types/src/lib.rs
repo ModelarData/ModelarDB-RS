@@ -20,3 +20,6 @@ pub mod functions;
 pub mod macros;
 pub mod schemas;
 pub mod types;
+pub mod flight {
+    include!(concat!(env!("OUT_DIR"), "/modelardb_types.flight.rs"));
+}

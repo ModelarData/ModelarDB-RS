@@ -16,3 +16,29 @@
 syntax = "proto3";
 
 package modelardb_types.flight;
+
+message CreateTablesRequest {
+  message NormalTableMetadata {
+    string name = 1;
+    bytes schema = 2;
+  }
+
+  message TimeSeriesTableMetadata {
+    message ErrorBound {
+      enum Type {
+        ABSOLUTE = 0;
+        RELATIVE = 1;
+      }
+      Type type = 1;
+      float value = 2;
+    }
+
+    string name = 1;
+    bytes schema = 2;
+    repeated ErrorBound error_bounds = 3;
+    repeated string generated_column_expressions = 4;
+  }
+
+  repeated NormalTableMetadata normal_tables = 1;
+  repeated TimeSeriesTableMetadata time_series_tables = 2;
+}
