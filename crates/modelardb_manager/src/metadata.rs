@@ -37,7 +37,7 @@ use crate::error::Result;
 /// and persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub struct MetadataManager {
     /// Delta Lake with functionality to read and write to and from the manager metadata tables.
-    delta_lake: DeltaLake,
+    delta_lake: Arc<DeltaLake>,
     /// Metadata manager used to interface with the subset of the manager metadata Delta Lake
     /// related to normal tables and time series tables.
     pub(crate) table_metadata_manager: TableMetadataManager,
@@ -330,12 +330,13 @@ mod tests {
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let table_metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
+        let delta_lake = Arc::new(DeltaLake::try_from_local_path(temp_dir.path()).unwrap());
+        let table_metadata_manager = TableMetadataManager::try_new(delta_lake.clone())
             .await
             .unwrap();
 
         let metadata_manager = MetadataManager {
-            delta_lake: DeltaLake::try_from_local_path(temp_dir.path()).unwrap(),
+            delta_lake,
             table_metadata_manager,
             session_context: Arc::new(SessionContext::new()),
         };

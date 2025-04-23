@@ -17,7 +17,6 @@
 //! and the manager metadata Delta Lake. Note that the entire server metadata Delta Lake can be accessed
 //! through this metadata manager, while it only supports a subset of the manager metadata Delta Lake.
 
-use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{Array, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray};
@@ -44,118 +43,17 @@ enum TableType {
 /// tables. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub struct TableMetadataManager {
     /// Delta Lake with functionality to read and write to and from the metadata tables.
-    delta_lake: DeltaLake,
+    delta_lake: Arc<DeltaLake>,
     /// Session context used to query the metadata Delta Lake tables using Apache DataFusion.
     session_context: Arc<SessionContext>,
 }
 
 impl TableMetadataManager {
-    /// Create a new [`TableMetadataManager`] that saves the metadata to an object store given by
-    /// `local_url` and initialize the metadata tables. If `local_url` could not be parsed or the
+    /// Create a new [`TableMetadataManager`] that saves the metadata to `delta_lake` If the
     /// metadata tables could not be created, return [`ModelarDbStorageError`].
-    pub async fn try_from_local_url(local_url: &str) -> Result<Self> {
+    pub async fn try_new(delta_lake: Arc<DeltaLake>) -> Result<Self> {
         let table_metadata_manager = Self {
-            delta_lake: DeltaLake::try_from_local_url(local_url)?,
-            session_context: Arc::new(SessionContext::new()),
-        };
-
-        table_metadata_manager
-            .create_and_register_metadata_delta_lake_tables()
-            .await?;
-
-        Ok(table_metadata_manager)
-    }
-
-    /// Create a new [`TableMetadataManager`] that saves the metadata to an in-memory Delta Lake and
-    /// initialize the metadata tables. If the metadata tables could not be created, return
-    /// [`ModelarDbStorageError`].
-    pub async fn try_new_in_memory() -> Result<Self> {
-        let table_metadata_manager = Self {
-            delta_lake: DeltaLake::new_in_memory(),
-            session_context: Arc::new(SessionContext::new()),
-        };
-
-        table_metadata_manager
-            .create_and_register_metadata_delta_lake_tables()
-            .await?;
-
-        Ok(table_metadata_manager)
-    }
-
-    /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and
-    /// initialize the metadata tables. If the metadata tables could not be created, return
-    /// [`ModelarDbStorageError`].
-    pub async fn try_from_path(folder_path: &StdPath) -> Result<Self> {
-        let table_metadata_manager = Self {
-            delta_lake: DeltaLake::try_from_local_path(folder_path)?,
-            session_context: Arc::new(SessionContext::new()),
-        };
-
-        table_metadata_manager
-            .create_and_register_metadata_delta_lake_tables()
-            .await?;
-
-        Ok(table_metadata_manager)
-    }
-
-    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote object store given
-    /// by `storage_configuration` and initialize the metadata tables. If a connection could not be
-    /// made or the metadata tables could not be created, return [`ModelarDbStorageError`].
-    pub async fn try_from_storage_configuration(
-        storage_configuration: protocol::manager_metadata::StorageConfiguration,
-    ) -> Result<Self> {
-        let table_metadata_manager = Self {
-            delta_lake: DeltaLake::try_remote_from_storage_configuration(storage_configuration)?,
-            session_context: Arc::new(SessionContext::new()),
-        };
-
-        table_metadata_manager
-            .create_and_register_metadata_delta_lake_tables()
-            .await?;
-
-        Ok(table_metadata_manager)
-    }
-
-    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote S3-compatible
-    /// object store and initialize the metadata tables. If the connection cannot be made or the
-    /// metadata tables could not be created, return [`ModelarDbStorageError`].
-    pub async fn try_from_s3_configuration(
-        endpoint: String,
-        bucket_name: String,
-        access_key_id: String,
-        secret_access_key: String,
-    ) -> Result<Self> {
-        let table_metadata_manager = Self {
-            delta_lake: DeltaLake::try_from_s3_configuration(
-                endpoint,
-                bucket_name,
-                access_key_id,
-                secret_access_key,
-            )?,
-            session_context: Arc::new(SessionContext::new()),
-        };
-
-        table_metadata_manager
-            .create_and_register_metadata_delta_lake_tables()
-            .await?;
-
-        Ok(table_metadata_manager)
-    }
-
-    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote Azure-compatible
-    /// object store and initialize the metadata tables. If the connection cannot be made or the
-    /// metadata tables could not be created, return [`ModelarDbStorageError`].
-    pub async fn try_from_azure_configuration(
-        account_name: String,
-        access_key: String,
-        container_name: String,
-    ) -> Result<Self> {
-        let table_metadata_manager = Self {
-            delta_lake: DeltaLake::try_from_azure_configuration(
-                account_name,
-                access_key,
-                container_name,
-            )?,
+            delta_lake,
             session_context: Arc::new(SessionContext::new()),
         };
 
@@ -619,11 +517,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_metadata_delta_lake_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
-            .await
-            .unwrap();
+        let delta_lake = Arc::new(DeltaLake::try_from_local_path(temp_dir.path()).unwrap());
+        let metadata_manager = TableMetadataManager::try_new(delta_lake).await.unwrap();
 
-        // Verify that the tables were created, registered, and has the expected columns.
         assert!(
             metadata_manager
                 .session_context
@@ -850,9 +746,8 @@ mod tests {
 
     async fn create_metadata_manager_and_save_normal_tables() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
-            .await
-            .unwrap();
+        let delta_lake = Arc::new(DeltaLake::try_from_local_path(temp_dir.path()).unwrap());
+        let metadata_manager = TableMetadataManager::try_new(delta_lake).await.unwrap();
 
         metadata_manager
             .save_normal_table_metadata("normal_table_1")
@@ -937,9 +832,8 @@ mod tests {
     #[tokio::test]
     async fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
-            .await
-            .unwrap();
+        let delta_lake = Arc::new(DeltaLake::try_from_local_path(temp_dir.path()).unwrap());
+        let metadata_manager = TableMetadataManager::try_new(delta_lake).await.unwrap();
 
         let query_schema = Arc::new(Schema::new(vec![
             Field::new("generated_column_1", ArrowValue::DATA_TYPE, false),
@@ -1000,9 +894,8 @@ mod tests {
     async fn create_metadata_manager_and_save_time_series_table() -> (TempDir, TableMetadataManager)
     {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_from_path(temp_dir.path())
-            .await
-            .unwrap();
+        let delta_lake = Arc::new(DeltaLake::try_from_local_path(temp_dir.path()).unwrap());
+        let metadata_manager = TableMetadataManager::try_new(delta_lake).await.unwrap();
 
         // Save a time series table to the metadata Delta Lake.
         let time_series_table_metadata = table::time_series_table_metadata();

@@ -43,8 +43,8 @@ impl DataFolder {
     /// could not be parsed, if the folder does not exist and could not be created, or if the
     /// metadata tables could not be created, [`ModelarDbServerError`] is returned.
     pub async fn try_from_local_url(local_url: &str) -> Result<Self> {
-        let delta_lake = DeltaLake::try_from_local_url(local_url)?;
-        let table_metadata_manager = TableMetadataManager::try_from_local_url(local_url).await?;
+        let delta_lake = Arc::new(DeltaLake::try_from_local_url(local_url)?);
+        let table_metadata_manager = TableMetadataManager::try_new(delta_lake.clone()).await?;
 
         if local_url.starts_with("memory://") {
             warn!(
@@ -54,7 +54,7 @@ impl DataFolder {
         };
 
         Ok(Self {
-            delta_lake: Arc::new(delta_lake),
+            delta_lake,
             table_metadata_manager: Arc::new(table_metadata_manager),
         })
     }
@@ -72,7 +72,7 @@ impl DataFolder {
             TableMetadataManager::try_from_storage_configuration(storage_configuration).await?;
 
         Ok(Self {
-            delta_lake: Arc::new(remote_delta_lake),
+            delta_lake,
             table_metadata_manager: Arc::new(remote_table_metadata_manager),
         })
     }
