@@ -42,8 +42,8 @@ impl DataFolder {
     /// could not be parsed, if the folder does not exist and could not be created, or if the
     /// metadata tables could not be created, [`ModelarDbServerError`] is returned.
     pub async fn try_from_local_url(local_url: &str) -> Result<Self> {
-        let delta_lake = DeltaLake::try_from_local_url(local_url)?;
-        let table_metadata_manager = TableMetadataManager::try_from_local_url(local_url).await?;
+        let delta_lake = Arc::new(DeltaLake::try_from_local_url(local_url)?);
+        let table_metadata_manager = TableMetadataManager::try_new(delta_lake.clone()).await?;
 
         if local_url.starts_with("memory://") {
             warn!(
@@ -53,7 +53,7 @@ impl DataFolder {
         };
 
         Ok(Self {
-            delta_lake: Arc::new(delta_lake),
+            delta_lake,
             table_metadata_manager: Arc::new(table_metadata_manager),
         })
     }
@@ -62,13 +62,13 @@ impl DataFolder {
     /// not be parsed or if the metadata tables could not be created, [`ModelarDbServerError`] is
     /// returned.
     pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
-        let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info)?;
+        let delta_lake = Arc::new(DeltaLake::try_remote_from_connection_info(connection_info)?);
 
         let remote_table_metadata_manager =
-            TableMetadataManager::try_from_connection_info(connection_info).await?;
+            TableMetadataManager::try_new(delta_lake.clone()).await?;
 
         Ok(Self {
-            delta_lake: Arc::new(remote_delta_lake),
+            delta_lake,
             table_metadata_manager: Arc::new(remote_table_metadata_manager),
         })
     }

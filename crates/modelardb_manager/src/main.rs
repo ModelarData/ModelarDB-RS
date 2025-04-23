@@ -71,15 +71,14 @@ impl RemoteDataFolder {
     async fn try_new(remote_data_folder_str: &str) -> Result<Self> {
         let connection_info = arguments::argument_to_connection_info(remote_data_folder_str)?;
 
-        let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info)?;
+        let delta_lake = Arc::new(DeltaLake::try_remote_from_connection_info(
+            &connection_info,
+        )?);
 
-        let metadata_manager = MetadataManager::try_from_connection_info(&connection_info).await?;
+        let metadata_manager =
+            Arc::new(MetadataManager::try_from_delta_lake(delta_lake.clone()).await?);
 
-        Ok(Self::new(
-            connection_info,
-            Arc::new(delta_lake),
-            Arc::new(metadata_manager),
-        ))
+        Ok(Self::new(connection_info, delta_lake, metadata_manager))
     }
 }
 
