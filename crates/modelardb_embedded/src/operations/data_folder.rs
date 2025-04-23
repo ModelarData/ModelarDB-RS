@@ -110,7 +110,7 @@ impl DisplayAs for DataFolderDataSink {
 /// Provides access to modelardb_embedded's components.
 pub struct DataFolder {
     /// Delta Lake for storing metadata and data in Apache Parquet files.
-    delta_lake: DeltaLake,
+    delta_lake: Arc<DeltaLake>,
     /// Metadata manager for providing access to metadata related to tables. It is stored in an
     /// [`Arc`] because it is shared with each of the time series tables for use in query planning.
     table_metadata_manager: Arc<TableMetadataManager>,
@@ -122,8 +122,10 @@ impl DataFolder {
     /// Creates a [`DataFolder`] that manages data in memory and returns it. If the metadata tables
     /// could not be created, [`ModelarDbEmbeddedError`] is returned.
     pub async fn open_memory() -> Result<Self> {
-        let delta_lake = DeltaLake::new_in_memory();
-        let table_metadata_manager = Arc::new(TableMetadataManager::try_new_in_memory().await?);
+        let delta_lake = Arc::new(DeltaLake::new_in_memory());
+
+        let table_metadata_manager =
+            Arc::new(TableMetadataManager::try_new(delta_lake.clone()).await?);
 
         Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
     }
@@ -132,10 +134,10 @@ impl DataFolder {
     /// returns it. If the folder does not exist and could not be created or the metadata tables
     /// could not be created, [`ModelarDbEmbeddedError`] is returned.
     pub async fn open_local(data_folder_path: &StdPath) -> Result<Self> {
-        let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
+        let delta_lake = Arc::new(DeltaLake::try_from_local_path(data_folder_path)?);
 
         let table_metadata_manager =
-            Arc::new(TableMetadataManager::try_from_path(data_folder_path).await?);
+            Arc::new(TableMetadataManager::try_new(delta_lake.clone()).await?);
 
         Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
     }
@@ -156,22 +158,15 @@ impl DataFolder {
         deltalake::aws::register_handlers(None);
 
         // Construct data folder.
-        let delta_lake = DeltaLake::try_from_s3_configuration(
+        let delta_lake = Arc::new(DeltaLake::try_from_s3_configuration(
             endpoint.clone(),
             bucket_name.clone(),
             access_key_id.clone(),
             secret_access_key.clone(),
-        )?;
+        )?);
 
-        let table_metadata_manager = Arc::new(
-            TableMetadataManager::try_from_s3_configuration(
-                endpoint,
-                bucket_name,
-                access_key_id,
-                secret_access_key,
-            )
-            .await?,
-        );
+        let table_metadata_manager =
+            Arc::new(TableMetadataManager::try_new(delta_lake.clone()).await?);
 
         Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
     }
@@ -184,20 +179,14 @@ impl DataFolder {
         access_key: String,
         container_name: String,
     ) -> Result<Self> {
-        let delta_lake = DeltaLake::try_from_azure_configuration(
+        let delta_lake = Arc::new(DeltaLake::try_from_azure_configuration(
             account_name.clone(),
             access_key.clone(),
             container_name.clone(),
-        )?;
+        )?);
 
-        let table_metadata_manager = Arc::new(
-            TableMetadataManager::try_from_azure_configuration(
-                account_name,
-                access_key,
-                container_name,
-            )
-            .await?,
-        );
+        let table_metadata_manager =
+            Arc::new(TableMetadataManager::try_new(delta_lake.clone()).await?);
 
         Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
     }
@@ -206,7 +195,7 @@ impl DataFolder {
     /// [`SessionContext`], and return it. If the tables could not be registered,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn try_new_and_register_tables(
-        delta_lake: DeltaLake,
+        delta_lake: Arc<DeltaLake>,
         table_metadata_manager: Arc<TableMetadataManager>,
     ) -> Result<Self> {
         // Construct data folder.
