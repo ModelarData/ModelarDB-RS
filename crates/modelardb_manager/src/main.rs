@@ -33,43 +33,17 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
 use crate::error::{ModelarDbManagerError, Result};
-use crate::metadata::MetadataManager;
+use crate::metadata::ManagerMetadata;
 use crate::remote::start_apache_arrow_flight_server;
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9998 is used.
 pub static PORT: LazyLock<u16> =
     LazyLock::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
 
-/// Stores the connection information with the remote data folder to ensure that the information
-/// is consistent with the remote data folder.
-pub struct RemoteDataFolder {
-    /// Manager for the access to the metadata Delta Lake.
-    pub(crate) metadata_manager: MetadataManager,
-}
-
-impl RemoteDataFolder {
-    pub fn new(metadata_manager: MetadataManager) -> Self {
-        Self { metadata_manager }
-    }
-
-    /// Create a [`RemoteDataFolder`] from `remote_data_folder_str`. If `remote_data_folder_str`
-    /// cannot be parsed or a connection to the object store cannot be created,
-    /// [`ModelarDbManagerError`] is returned.
-    async fn try_new(remote_data_folder_str: &str) -> Result<Self> {
-        let connection_info = arguments::argument_to_connection_info(remote_data_folder_str)?;
-
-        let delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
-
-        let metadata_manager = MetadataManager::try_from_delta_lake(delta_lake).await?;
-
-        Ok(Self::new(metadata_manager))
-    }
-}
-
 /// Provides access to the managers components.
 pub struct Context {
-    /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
-    pub remote_data_folder: RemoteDataFolder,
+    /// Delta Lake for storing metadata and data in Apache Parquet files.
+    pub remote_delta_lake: DeltaLake,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
     /// Key used to identify requests coming from the manager.
@@ -90,15 +64,16 @@ fn main() -> Result<()> {
 
     let user_arguments = arguments::collect_command_line_arguments(3);
     let user_arguments: Vec<&str> = user_arguments.iter().map(|arg| arg.as_str()).collect();
-    let remote_data_folder_str = match user_arguments.as_slice() {
-        &[remote_data_folder_str] => remote_data_folder_str,
-        _ => arguments::print_usage_and_exit_with_error("remote_data_folder"),
+    let remote_delta_lake_str = match user_arguments.as_slice() {
+        &[remote_delta_lake_str] => remote_delta_lake_str,
+        _ => arguments::print_usage_and_exit_with_error("remote_delta_lake"),
     };
 
     let context = runtime.block_on(async {
-        let remote_data_folder = RemoteDataFolder::try_new(remote_data_folder_str).await?;
+        let connection_info = arguments::argument_to_connection_info(remote_delta_lake_str)?;
+        let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
 
-        let nodes = remote_data_folder.metadata_manager.nodes().await?;
+        let nodes = remote_delta_lake.nodes().await?;
 
         let mut cluster = Cluster::new();
         for node in nodes {
@@ -106,8 +81,7 @@ fn main() -> Result<()> {
         }
 
         // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
-        let key = remote_data_folder
-            .metadata_manager
+        let key = remote_delta_lake
             .manager_key()
             .await?
             .to_string()
@@ -118,7 +92,7 @@ fn main() -> Result<()> {
 
         // Create the Context.
         Ok::<Arc<Context>, ModelarDbManagerError>(Arc::new(Context {
-            remote_data_folder,
+            remote_delta_lake,
             cluster: RwLock::new(cluster),
             key,
         }))
