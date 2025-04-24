@@ -332,6 +332,11 @@ impl DeltaLake {
         &self.maybe_connection_info
     }
 
+    /// Return the session context used to query the tables using Apache DataFusion.
+    pub fn session_context(&self) -> &SessionContext {
+        &self.session_context
+    }
+
     /// Return an [`ObjectStore`] to access the root of the Delta Lake.
     pub fn object_store(&self) -> Arc<dyn ObjectStore> {
         self.object_store.clone()
