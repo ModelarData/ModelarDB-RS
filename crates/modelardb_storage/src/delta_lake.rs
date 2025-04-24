@@ -70,6 +70,9 @@ pub struct DeltaLake {
     location: String,
     /// Storage options required to access Delta Lake.
     storage_options: HashMap<String, String>,
+    /// Connection information saved as bytes to make it possible to transfer the information using
+    /// Apache Arrow Flight. Only set to [`Some`] by [`try_remote_from_connection_info()`].
+    maybe_connection_info: Option<Vec<u8>>,
     /// [`ObjectStore`] to access the root of the Delta Lake.
     object_store: Arc<dyn ObjectStore>,
     /// Cache of Delta tables to avoid opening the same table multiple times.
@@ -100,6 +103,7 @@ impl DeltaLake {
         Self {
             location: "memory:///modelardb".to_owned(),
             storage_options: HashMap::new(),
+            maybe_connection_info: None,
             object_store: Arc::new(InMemory::new()),
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
@@ -131,6 +135,7 @@ impl DeltaLake {
         let delta_lake = Self {
             location,
             storage_options: HashMap::new(),
+            maybe_connection_info: None,
             object_store: Arc::new(object_store),
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
@@ -211,6 +216,7 @@ impl DeltaLake {
         let delta_lake = DeltaLake {
             location,
             storage_options,
+            maybe_connection_info: None,
             object_store: Arc::new(object_store),
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
@@ -244,6 +250,7 @@ impl DeltaLake {
         let delta_lake = DeltaLake {
             location,
             storage_options,
+            maybe_connection_info: None,
             object_store: Arc::new(object_store),
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
@@ -316,6 +323,13 @@ impl DeltaLake {
         )?;
 
         Ok(())
+    }
+
+    /// Return connection information saved as bytes to make it possible to transfer the information
+    /// using Apache Arrow Flight. Only returns [`Some`] if [`DeltaLake] was created by
+    /// [`try_remote_from_connection_info()`].
+    pub fn connection_info(&self) -> &Option<Vec<u8>> {
+        &self.maybe_connection_info
     }
 
     /// Return an [`ObjectStore`] to access the root of the Delta Lake.

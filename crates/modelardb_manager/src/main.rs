@@ -64,6 +64,10 @@ impl RemoteDataFolder {
         }
     }
 
+    pub fn new(metadata_manager: MetadataManager) -> Self {
+        Self { metadata_manager }
+    }
+
     /// Create a [`RemoteDataFolder`] from `remote_data_folder_str`. If `remote_data_folder_str`
     /// cannot be parsed or a connection to the object store cannot be created,
     /// [`ModelarDbManagerError`] is returned.
