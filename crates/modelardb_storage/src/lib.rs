@@ -18,10 +18,10 @@
 
 pub mod delta_lake;
 pub mod error;
-pub mod metadata;
 mod optimizer;
 pub mod parser;
 mod query;
+pub mod time_series_table_metadata;
 
 use std::result::Result as StdResult;
 use std::sync::Arc;
