@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use futures::StreamExt;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
+use modelardb_storage::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_types::types::{Timestamp, Value};
 use object_store::path::{Path, PathPart};
 use tokio::runtime::Runtime;
@@ -1278,7 +1278,7 @@ mod tests {
         let time_series_table_metadata = test::time_series_table_metadata();
 
         local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();

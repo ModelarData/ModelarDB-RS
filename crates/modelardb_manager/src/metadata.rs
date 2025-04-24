@@ -25,7 +25,6 @@ use deltalake::DeltaTableError;
 use deltalake::datafusion::logical_expr::{col, lit};
 use deltalake::datafusion::prelude::SessionContext;
 use modelardb_storage::delta_lake::DeltaLake;
-use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_storage::{register_metadata_table, sql_and_concat};
 use modelardb_types::types::ServerMode;
 use uuid::Uuid;
@@ -36,13 +35,10 @@ use crate::error::Result;
 /// Stores the metadata required for reading from and writing to the normal tables and time series tables
 /// and persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub struct MetadataManager {
-    /// Delta Lake with functionality to read and write to and from the manager metadata tables.
-    delta_lake: Arc<DeltaLake>,
-    /// Metadata manager used to interface with the subset of the manager metadata Delta Lake
-    /// related to normal tables and time series tables.
-    pub(crate) table_metadata_manager: TableMetadataManager,
+    /// Delta Lake with functionality to read and write to and from the manager's metadata tables.
+    pub(crate) delta_lake: DeltaLake,
     /// Session context used to query the manager metadata Delta Lake tables using Apache DataFusion.
-    session_context: Arc<SessionContext>,
+    session_context: SessionContext,
 }
 
 impl MetadataManager {
@@ -50,11 +46,10 @@ impl MetadataManager {
     /// `connection_info` and initialize the metadata tables. If `connection_info` could not be
     /// parsed or the metadata tables could not be created, return
     /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
-    pub async fn try_from_delta_lake(delta_lake: Arc<DeltaLake>) -> Result<MetadataManager> {
+    pub async fn try_from_delta_lake(delta_lake: DeltaLake) -> Result<MetadataManager> {
         let metadata_manager = Self {
-            delta_lake: delta_lake.clone(),
-            table_metadata_manager: TableMetadataManager::try_new(delta_lake).await?,
-            session_context: Arc::new(SessionContext::new()),
+            delta_lake,
+            session_context: SessionContext::new(),
         };
 
         // Create the necessary tables in the metadata Delta Lake.
@@ -323,15 +318,13 @@ mod tests {
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let delta_lake = Arc::new(DeltaLake::try_from_local_path(temp_dir.path()).unwrap());
-        let table_metadata_manager = TableMetadataManager::try_new(delta_lake.clone())
+        let delta_lake = DeltaLake::try_from_local_path(temp_dir.path())
             .await
             .unwrap();
 
         let metadata_manager = MetadataManager {
             delta_lake,
-            table_metadata_manager,
-            session_context: Arc::new(SessionContext::new()),
+            session_context: SessionContext::new(),
         };
 
         metadata_manager

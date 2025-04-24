@@ -28,9 +28,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::DFSchema;
 use datafusion::execution::RecordBatchStream;
-use modelardb_storage::metadata::time_series_table_metadata::{
-    GeneratedColumn, TimeSeriesTableMetadata,
-};
+use modelardb_storage::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 use modelardb_types::types::ErrorBound;
 
 use crate::error::Result;

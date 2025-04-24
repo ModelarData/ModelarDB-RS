@@ -18,11 +18,11 @@
 
 pub mod delta_lake;
 pub mod error;
-pub mod metadata;
 mod optimizer;
 pub mod parser;
 mod query;
 pub mod test;
+pub mod time_series_table_metadata;
 
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -62,10 +62,10 @@ use object_store::path::Path;
 use sqlparser::ast::Statement;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 use crate::query::metadata_table::MetadataTable;
 use crate::query::normal_table::NormalTable;
 use crate::query::time_series_table::TimeSeriesTable;
+use crate::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 
 /// The folder storing compressed table data in the data folders.
 const TABLE_FOLDER: &str = "tables";

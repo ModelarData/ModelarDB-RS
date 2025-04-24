@@ -46,21 +46,14 @@ pub struct RemoteDataFolder {
     /// Connection information saved as bytes to make it possible to transfer the information using
     /// Apache Arrow Flight.
     connection_info: Vec<u8>,
-    /// Remote object store for storing data and metadata in Apache Parquet files.
-    delta_lake: Arc<DeltaLake>,
     /// Manager for the access to the metadata Delta Lake.
-    metadata_manager: Arc<MetadataManager>,
+    pub(crate) metadata_manager: MetadataManager,
 }
 
 impl RemoteDataFolder {
-    pub fn new(
-        connection_info: Vec<u8>,
-        delta_lake: Arc<DeltaLake>,
-        metadata_manager: Arc<MetadataManager>,
-    ) -> Self {
+    pub fn new(connection_info: Vec<u8>, metadata_manager: MetadataManager) -> Self {
         Self {
             connection_info,
-            delta_lake,
             metadata_manager,
         }
     }
@@ -71,14 +64,11 @@ impl RemoteDataFolder {
     async fn try_new(remote_data_folder_str: &str) -> Result<Self> {
         let connection_info = arguments::argument_to_connection_info(remote_data_folder_str)?;
 
-        let delta_lake = Arc::new(DeltaLake::try_remote_from_connection_info(
-            &connection_info,
-        )?);
+        let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info).await?;
 
-        let metadata_manager =
-            Arc::new(MetadataManager::try_from_delta_lake(delta_lake.clone()).await?);
+        let metadata_manager = MetadataManager::try_from_delta_lake(delta_lake).await?;
 
-        Ok(Self::new(connection_info, delta_lake, metadata_manager))
+        Ok(Self::new(connection_info, metadata_manager))
     }
 }
 

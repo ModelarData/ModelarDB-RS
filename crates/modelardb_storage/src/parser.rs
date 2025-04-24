@@ -47,7 +47,7 @@ use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::{Span, Token};
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
+use crate::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 
 /// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, etc.) that have been tokenized,
 /// parsed, and for which semantic checks have verified that it is compatible with ModelarDB.

@@ -21,7 +21,7 @@ use std::sync::Arc;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::prelude::SessionContext;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
+use modelardb_storage::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -126,7 +126,7 @@ impl Context {
         // Persist the new normal table to the Delta Lake.
         self.data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .save_normal_table_metadata(table_name)
             .await?;
 
@@ -170,7 +170,7 @@ impl Context {
         // Persist the new time series table to the metadata Delta Lake.
         self.data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .save_time_series_table_metadata(time_series_table_metadata)
             .await?;
 
@@ -191,7 +191,7 @@ impl Context {
         let table_names = self
             .data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .normal_table_names()
             .await?;
 
@@ -240,7 +240,7 @@ impl Context {
         let time_series_table_metadata = self
             .data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .time_series_table_metadata()
             .await?;
 
@@ -307,7 +307,7 @@ impl Context {
         // Drop the table metadata from the metadata Delta Lake.
         self.data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .drop_table_metadata(table_name)
             .await?;
 
@@ -494,7 +494,7 @@ mod tests {
             context
                 .data_folders
                 .local_data_folder
-                .table_metadata_manager
+                .delta_lake
                 .is_normal_table(test::NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -543,7 +543,7 @@ mod tests {
         let time_series_table_metadata = context
             .data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .time_series_table_metadata()
             .await
             .unwrap();
@@ -654,7 +654,7 @@ mod tests {
             !context
                 .data_folders
                 .local_data_folder
-                .table_metadata_manager
+                .delta_lake
                 .is_normal_table(test::NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -699,7 +699,7 @@ mod tests {
             !context
                 .data_folders
                 .local_data_folder
-                .table_metadata_manager
+                .delta_lake
                 .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
@@ -760,7 +760,7 @@ mod tests {
         // The normal table should not be deleted from the metadata Delta Lake.
         assert!(
             local_data_folder
-                .table_metadata_manager
+                .delta_lake
                 .is_normal_table(test::NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -810,7 +810,7 @@ mod tests {
         // The time series table should not be deleted from the metadata Delta Lake.
         assert!(
             local_data_folder
-                .table_metadata_manager
+                .delta_lake
                 .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()

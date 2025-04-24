@@ -37,9 +37,9 @@ use futures::{Stream, stream};
 use modelardb_common::arguments;
 use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
+use modelardb_storage::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::ServerMode;
 use tokio::runtime::Runtime;
@@ -96,13 +96,9 @@ impl FlightServiceHandler {
     /// Return the schema of the table with the name `table_name`. If the table does not exist or
     /// the schema cannot be retrieved, return [`Status`].
     async fn table_schema(&self, table_name: &str) -> StdResult<Arc<Schema>, Status> {
-        let table_metadata_manager = &self
-            .context
-            .remote_data_folder
-            .metadata_manager
-            .table_metadata_manager;
+        let delta_lake = &self.context.remote_data_folder.metadata_manager.delta_lake;
 
-        if table_metadata_manager
+        if delta_lake
             .is_normal_table(table_name)
             .await
             .map_err(error_to_status_internal)?
@@ -110,6 +106,7 @@ impl FlightServiceHandler {
             let delta_table = self
                 .context
                 .remote_data_folder
+                .metadata_manager
                 .delta_lake
                 .delta_table(table_name)
                 .await
@@ -122,12 +119,12 @@ impl FlightServiceHandler {
                 .map_err(error_to_status_internal)?;
 
             Ok(Arc::new(schema))
-        } else if table_metadata_manager
+        } else if delta_lake
             .is_time_series_table(table_name)
             .await
             .map_err(error_to_status_internal)?
         {
-            let time_series_table_metadata = table_metadata_manager
+            let time_series_table_metadata = delta_lake
                 .time_series_table_metadata_for_time_series_table(table_name)
                 .await
                 .map_err(error_to_status_internal)?;
@@ -147,7 +144,7 @@ impl FlightServiceHandler {
             .context
             .remote_data_folder
             .metadata_manager
-            .table_metadata_manager
+            .delta_lake
             .table_names()
             .await
             .map_err(error_to_status_internal)?;
@@ -174,6 +171,7 @@ impl FlightServiceHandler {
         // Create an empty Delta Lake table.
         self.context
             .remote_data_folder
+            .metadata_manager
             .delta_lake
             .create_normal_table(table_name, schema)
             .await
@@ -183,7 +181,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .metadata_manager
-            .table_metadata_manager
+            .delta_lake
             .save_normal_table_metadata(table_name)
             .await
             .map_err(error_to_status_internal)?;
@@ -216,6 +214,7 @@ impl FlightServiceHandler {
         // Create an empty Delta Lake table.
         self.context
             .remote_data_folder
+            .metadata_manager
             .delta_lake
             .create_time_series_table(&time_series_table_metadata)
             .await
@@ -225,7 +224,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .metadata_manager
-            .table_metadata_manager
+            .delta_lake
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .map_err(error_to_status_internal)?;
@@ -261,7 +260,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .metadata_manager
-            .table_metadata_manager
+            .delta_lake
             .drop_table_metadata(table_name)
             .await
             .map_err(error_to_status_internal)?;
@@ -269,6 +268,7 @@ impl FlightServiceHandler {
         // Drop the table from the remote data folder data Delta lake.
         self.context
             .remote_data_folder
+            .metadata_manager
             .delta_lake
             .drop_table(table_name)
             .await
@@ -299,6 +299,7 @@ impl FlightServiceHandler {
         // Truncate the table in the remote data folder data Delta lake.
         self.context
             .remote_data_folder
+            .metadata_manager
             .delta_lake
             .truncate_table(table_name)
             .await
@@ -353,7 +354,7 @@ impl FlightService for FlightServiceHandler {
             .context
             .remote_data_folder
             .metadata_manager
-            .table_metadata_manager
+            .delta_lake
             .table_names()
             .await
             .map_err(error_to_status_internal)?;
@@ -573,7 +574,7 @@ impl FlightService for FlightServiceHandler {
                 .context
                 .remote_data_folder
                 .metadata_manager
-                .table_metadata_manager
+                .delta_lake
                 .table_names()
                 .await
                 .map_err(error_to_status_internal)?;
@@ -591,15 +592,11 @@ impl FlightService for FlightServiceHandler {
                     .iter()
                     .filter(|table| !node_tables.contains(&table.as_str()));
 
-                let table_metadata_manager = &self
-                    .context
-                    .remote_data_folder
-                    .metadata_manager
-                    .table_metadata_manager;
+                let delta_lake = &self.context.remote_data_folder.metadata_manager.delta_lake;
 
                 let mut record_batches = vec![];
                 for table in missing_cluster_tables {
-                    let record_batch = if table_metadata_manager
+                    let record_batch = if delta_lake
                         .is_normal_table(table)
                         .await
                         .map_err(error_to_status_internal)?
@@ -608,7 +605,7 @@ impl FlightService for FlightServiceHandler {
                         modelardb_storage::normal_table_metadata_to_record_batch(table, &schema)
                             .map_err(error_to_status_internal)?
                     } else {
-                        let time_series_table_metadata = table_metadata_manager
+                        let time_series_table_metadata = delta_lake
                             .time_series_table_metadata_for_time_series_table(table)
                             .await
                             .map_err(error_to_status_internal)?;

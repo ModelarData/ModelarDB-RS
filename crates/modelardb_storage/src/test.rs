@@ -26,7 +26,7 @@ use modelardb_types::types::{
     ArrowTimestamp, ArrowValue, ErrorBound, Timestamp, TimestampArray, Value, ValueArray,
 };
 
-use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
+use crate::time_series_table_metadata::TimeSeriesTableMetadata;
 use crate::{normal_table_metadata_to_record_batch, time_series_table_metadata_to_record_batch};
 
 /// SQL to create a normal table with a timestamp column and two floating point columns.
