@@ -62,10 +62,7 @@ impl DataTransfer {
         remote_data_folder: DataFolder,
         transfer_batch_size_in_bytes: Option<usize>,
     ) -> Result<Self> {
-        let table_names = local_data_folder
-            .table_metadata_manager
-            .table_names()
-            .await?;
+        let table_names = local_data_folder.delta_lake.table_names().await?;
 
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
@@ -247,7 +244,7 @@ impl DataTransfer {
         // Write the data to the remote Delta Lake.
         if self
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .is_time_series_table(table_name)
             .await?
         {
@@ -496,7 +493,7 @@ mod tests {
             .unwrap();
 
         local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
