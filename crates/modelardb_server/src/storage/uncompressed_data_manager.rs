@@ -1287,7 +1287,7 @@ mod tests {
         let time_series_table_metadata = table::time_series_table_metadata();
 
         local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();

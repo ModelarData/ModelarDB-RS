@@ -110,10 +110,7 @@ impl DisplayAs for DataFolderDataSink {
 /// Provides access to modelardb_embedded's components.
 pub struct DataFolder {
     /// Delta Lake for storing metadata and data in Apache Parquet files.
-    delta_lake: Arc<DeltaLake>,
-    /// Metadata manager for providing access to metadata related to tables. It is stored in an
-    /// [`Arc`] because it is shared with each of the time series tables for use in query planning.
-    table_metadata_manager: Arc<TableMetadataManager>,
+    delta_lake: DeltaLake,
     /// Context providing access to a specific session of Apache DataFusion.
     session_context: SessionContext,
 }
@@ -122,24 +119,16 @@ impl DataFolder {
     /// Creates a [`DataFolder`] that manages data in memory and returns it. If the metadata tables
     /// could not be created, [`ModelarDbEmbeddedError`] is returned.
     pub async fn open_memory() -> Result<Self> {
-        let delta_lake = Arc::new(DeltaLake::new_in_memory());
-
-        let table_metadata_manager =
-            Arc::new(TableMetadataManager::try_new(delta_lake.clone()).await?);
-
-        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
+        let delta_lake = DeltaLake::new_in_memory().await?;
+        Self::try_new_and_register_tables(delta_lake).await
     }
 
     /// Creates a [`DataFolder`] that manages data in the local folder at `data_folder_path` and
     /// returns it. If the folder does not exist and could not be created or the metadata tables
     /// could not be created, [`ModelarDbEmbeddedError`] is returned.
     pub async fn open_local(data_folder_path: &StdPath) -> Result<Self> {
-        let delta_lake = Arc::new(DeltaLake::try_from_local_path(data_folder_path)?);
-
-        let table_metadata_manager =
-            Arc::new(TableMetadataManager::try_new(delta_lake.clone()).await?);
-
-        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
+        let delta_lake = DeltaLake::try_from_local_path(data_folder_path).await?;
+        Self::try_new_and_register_tables(delta_lake).await
     }
 
     /// Creates a [`DataFolder`] that manages data in an object store with an S3-compatible API and
@@ -158,17 +147,15 @@ impl DataFolder {
         deltalake::aws::register_handlers(None);
 
         // Construct data folder.
-        let delta_lake = Arc::new(DeltaLake::try_from_s3_configuration(
+        let delta_lake = DeltaLake::try_from_s3_configuration(
             endpoint.clone(),
             bucket_name.clone(),
             access_key_id.clone(),
             secret_access_key.clone(),
-        )?);
+        )
+        .await?;
 
-        let table_metadata_manager =
-            Arc::new(TableMetadataManager::try_new(delta_lake.clone()).await?);
-
-        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
+        Self::try_new_and_register_tables(delta_lake).await
     }
 
     /// Creates a [`DataFolder`] that manages data in an object store with an Azure-compatible API
@@ -179,42 +166,32 @@ impl DataFolder {
         access_key: String,
         container_name: String,
     ) -> Result<Self> {
-        let delta_lake = Arc::new(DeltaLake::try_from_azure_configuration(
+        let delta_lake = DeltaLake::try_from_azure_configuration(
             account_name.clone(),
             access_key.clone(),
             container_name.clone(),
-        )?);
+        )
+        .await?;
 
-        let table_metadata_manager =
-            Arc::new(TableMetadataManager::try_new(delta_lake.clone()).await?);
-
-        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
+        Self::try_new_and_register_tables(delta_lake).await
     }
 
     /// Create a [`DataFolder`], register all normal tables and time series tables in it with its
     /// [`SessionContext`], and return it. If the tables could not be registered,
     /// [`ModelarDbEmbeddedError`] is returned.
-    async fn try_new_and_register_tables(
-        delta_lake: Arc<DeltaLake>,
-        table_metadata_manager: Arc<TableMetadataManager>,
-    ) -> Result<Self> {
+    async fn try_new_and_register_tables(delta_lake: DeltaLake) -> Result<Self> {
         // Construct data folder.
         let session_context = modelardb_storage::create_session_context();
 
         let data_folder = DataFolder {
             delta_lake,
-            table_metadata_manager,
             session_context,
         };
 
         // Register normal tables.
         let data_sink = Arc::new(DataFolderDataSink::new());
 
-        for normal_table_name in data_folder
-            .table_metadata_manager
-            .normal_table_names()
-            .await?
-        {
+        for normal_table_name in data_folder.delta_lake.normal_table_names().await? {
             let delta_table = data_folder
                 .delta_lake
                 .delta_table(&normal_table_name)
@@ -229,11 +206,7 @@ impl DataFolder {
         }
 
         // Register time series tables.
-        for metadata in data_folder
-            .table_metadata_manager
-            .time_series_table_metadata()
-            .await?
-        {
+        for metadata in data_folder.delta_lake.time_series_table_metadata().await? {
             let delta_table = data_folder.delta_lake.delta_table(&metadata.name).await?;
 
             modelardb_storage::register_time_series_table(
@@ -382,7 +355,7 @@ impl DataFolder {
     /// table does not exist or the table is not a normal table, return [`None`].
     async fn normal_table_schema(&self, table_name: &str) -> Option<Schema> {
         if self
-            .table_metadata_manager
+            .delta_lake
             .is_normal_table(table_name)
             .await
             .is_ok_and(|is_normal_table| is_normal_table)
@@ -429,7 +402,7 @@ impl Operations for DataFolder {
                     .create_normal_table(table_name, &schema)
                     .await?;
 
-                self.table_metadata_manager
+                self.delta_lake
                     .save_normal_table_metadata(table_name)
                     .await?;
 
@@ -455,7 +428,7 @@ impl Operations for DataFolder {
                     .create_time_series_table(&time_series_table_metadata)
                     .await?;
 
-                self.table_metadata_manager
+                self.delta_lake
                     .save_time_series_table_metadata(&time_series_table_metadata)
                     .await?;
 
@@ -476,7 +449,7 @@ impl Operations for DataFolder {
     /// Returns the name of all the tables. If the table names could not be retrieved from the
     /// metadata Delta Lake, [`ModelarDbEmbeddedError`] is returned.
     async fn tables(&mut self) -> Result<Vec<String>> {
-        self.table_metadata_manager
+        self.delta_lake
             .table_names()
             .await
             .map_err(|error| error.into())
@@ -830,9 +803,7 @@ impl Operations for DataFolder {
         self.session_context.deregister_table(table_name)?;
 
         // Delete the table metadata from the metadata Delta Lake.
-        self.table_metadata_manager
-            .drop_table_metadata(table_name)
-            .await?;
+        self.delta_lake.drop_table_metadata(table_name).await?;
 
         // Drop the table from the Delta Lake.
         self.delta_lake.drop_table(table_name).await?;
@@ -2408,7 +2379,7 @@ mod tests {
         // Verify that the normal table was dropped from the metadata Delta Lake.
         assert!(
             !data_folder
-                .table_metadata_manager
+                .delta_lake
                 .is_normal_table(NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -2448,7 +2419,7 @@ mod tests {
         // Verify that the time series table was dropped from the metadata Delta Lake.
         assert!(
             !data_folder
-                .table_metadata_manager
+                .delta_lake
                 .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
@@ -2683,7 +2654,7 @@ mod tests {
         // Verify that the normal table exists in the metadata Delta Lake.
         assert!(
             data_folder
-                .table_metadata_manager
+                .delta_lake
                 .is_normal_table(table_name)
                 .await
                 .unwrap()
@@ -2897,7 +2868,7 @@ mod tests {
 
         // Verify that the time series table exists in the metadata Delta Lake with the correct schema.
         let time_series_table_metadata = data_folder
-            .table_metadata_manager
+            .delta_lake
             .time_series_table_metadata_for_time_series_table(table_name)
             .await
             .unwrap();

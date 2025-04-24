@@ -48,7 +48,7 @@ pub struct RemoteDataFolder {
     /// Remote object store for storing data and metadata in Apache Parquet files.
     delta_lake: Arc<DeltaLake>,
     /// Manager for the access to the metadata Delta Lake.
-    metadata_manager: Arc<MetadataManager>,
+    pub(crate) metadata_manager: MetadataManager,
 }
 
 impl RemoteDataFolder {

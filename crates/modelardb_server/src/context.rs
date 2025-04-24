@@ -94,7 +94,7 @@ impl Context {
         // Persist the new normal table to the Delta Lake.
         self.data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .save_normal_table_metadata(table_name)
             .await?;
 
@@ -138,7 +138,7 @@ impl Context {
         // Persist the new time series table to the metadata Delta Lake.
         self.data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .save_time_series_table_metadata(time_series_table_metadata)
             .await?;
 
@@ -159,7 +159,7 @@ impl Context {
         let table_names = self
             .data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .normal_table_names()
             .await?;
 
@@ -208,7 +208,7 @@ impl Context {
         let time_series_table_metadata = self
             .data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .time_series_table_metadata()
             .await?;
 
@@ -273,7 +273,7 @@ impl Context {
         // Drop the table metadata from the metadata Delta Lake.
         self.data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .drop_table_metadata(table_name)
             .await?;
 
@@ -503,7 +503,7 @@ mod tests {
         let time_series_table_metadata = context
             .data_folders
             .local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .time_series_table_metadata()
             .await
             .unwrap();
@@ -605,14 +605,19 @@ mod tests {
 
         // The normal table should be deleted from the metadata Delta Lake.
         assert!(
-            !context
-                .data_folders
-                .local_data_folder
-                .table_metadata_manager
-                .is_normal_table(NORMAL_TABLE_NAME)
-                .await
-                .unwrap()
-        );
+                    !context
+                        .data_folders
+                        .local_data_folder
+        <<<<<<< HEAD
+                        .table_metadata_manager
+                        .is_normal_table(NORMAL_TABLE_NAME)
+        =======
+                        .delta_lake
+                        .is_normal_table(test::NORMAL_TABLE_NAME)
+        >>>>>>> 7e75112 (Remove TableMetadataManager)
+                        .await
+                        .unwrap()
+                );
 
         // The normal table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
@@ -642,14 +647,19 @@ mod tests {
 
         // The time series table should be deleted from the metadata Delta Lake.
         assert!(
-            !context
-                .data_folders
-                .local_data_folder
-                .table_metadata_manager
-                .is_time_series_table(TIME_SERIES_TABLE_NAME)
-                .await
-                .unwrap()
-        );
+                    !context
+                        .data_folders
+                        .local_data_folder
+        <<<<<<< HEAD
+                        .table_metadata_manager
+                        .is_time_series_table(TIME_SERIES_TABLE_NAME)
+        =======
+                        .delta_lake
+                        .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
+        >>>>>>> 7e75112 (Remove TableMetadataManager)
+                        .await
+                        .unwrap()
+                );
 
         // The time series table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
@@ -686,12 +696,17 @@ mod tests {
 
         // The normal table should not be deleted from the metadata Delta Lake.
         assert!(
-            local_data_folder
-                .table_metadata_manager
-                .is_normal_table(NORMAL_TABLE_NAME)
-                .await
-                .unwrap()
-        );
+                    local_data_folder
+        <<<<<<< HEAD
+                        .table_metadata_manager
+                        .is_normal_table(NORMAL_TABLE_NAME)
+        =======
+                        .delta_lake
+                        .is_normal_table(test::NORMAL_TABLE_NAME)
+        >>>>>>> 7e75112 (Remove TableMetadataManager)
+                        .await
+                        .unwrap()
+                );
 
         // The normal table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
@@ -719,12 +734,17 @@ mod tests {
 
         // The time series table should not be deleted from the metadata Delta Lake.
         assert!(
-            local_data_folder
-                .table_metadata_manager
-                .is_time_series_table(TIME_SERIES_TABLE_NAME)
-                .await
-                .unwrap()
-        );
+                    local_data_folder
+        <<<<<<< HEAD
+                        .table_metadata_manager
+                        .is_time_series_table(TIME_SERIES_TABLE_NAME)
+        =======
+                        .delta_lake
+                        .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
+        >>>>>>> 7e75112 (Remove TableMetadataManager)
+                        .await
+                        .unwrap()
+                );
 
         // The time series table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();

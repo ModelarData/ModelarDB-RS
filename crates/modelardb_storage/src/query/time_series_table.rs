@@ -53,6 +53,7 @@ use modelardb_types::types::{ArrowTimestamp, ArrowValue, TimeSeriesTableMetadata
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
+use crate::time_series_table_metadata::TimeSeriesTableMetadata;
 
 /// A queryable representation of a time series table which stores multivariate time series as segments
 /// containing metadata and models. [`TimeSeriesTable`] implements [`TableProvider`] so it can be
