@@ -43,19 +43,13 @@ pub static PORT: LazyLock<u16> =
 /// Stores the connection information with the remote data folder to ensure that the information
 /// is consistent with the remote data folder.
 pub struct RemoteDataFolder {
-    /// Connection information saved as bytes to make it possible to transfer the information using
-    /// Apache Arrow Flight.
-    connection_info: Vec<u8>,
     /// Manager for the access to the metadata Delta Lake.
     pub(crate) metadata_manager: MetadataManager,
 }
 
 impl RemoteDataFolder {
-    pub fn new(connection_info: Vec<u8>, metadata_manager: MetadataManager) -> Self {
-        Self {
-            connection_info,
-            metadata_manager,
-        }
+    pub fn new(metadata_manager: MetadataManager) -> Self {
+        Self { metadata_manager }
     }
 
     /// Create a [`RemoteDataFolder`] from `remote_data_folder_str`. If `remote_data_folder_str`
@@ -64,11 +58,11 @@ impl RemoteDataFolder {
     async fn try_new(remote_data_folder_str: &str) -> Result<Self> {
         let connection_info = arguments::argument_to_connection_info(remote_data_folder_str)?;
 
-        let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info).await?;
+        let delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
 
         let metadata_manager = MetadataManager::try_from_delta_lake(delta_lake).await?;
 
-        Ok(Self::new(connection_info, metadata_manager))
+        Ok(Self::new(metadata_manager))
     }
 }
 

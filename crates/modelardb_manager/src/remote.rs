@@ -672,7 +672,15 @@ impl FlightService for FlightServiceHandler {
             // unwrap() is safe since the key cannot contain invalid characters.
             let mut response_body = arguments::encode_argument(self.context.key.to_str().unwrap());
 
-            let mut connection_info = self.context.remote_data_folder.connection_info.clone();
+            let mut connection_info = self
+                .context
+                .remote_data_folder
+                .metadata_manager
+                .delta_lake
+                .connection_info()
+                .as_ref()
+                .ok_or_else(|| Status::internal("Required conncetion information does not exist."))?
+                .to_vec();
             response_body.append(&mut connection_info);
 
             // Return the key for the manager and the connection info for the remote object store.

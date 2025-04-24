@@ -54,7 +54,7 @@ impl DataFolder {
     /// Return a [`DataFolder`] created from `connection_info`. If the connection information could
     /// not be parsed or if the metadata tables could not be created, [`ModelarDbServerError`] is
     /// returned.
-    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
+    pub async fn try_from_connection_info(connection_info: Vec<u8>) -> Result<Self> {
         let delta_lake =
             Arc::new(DeltaLake::try_remote_from_connection_info(connection_info).await?);
 
@@ -114,7 +114,7 @@ impl DataFolders {
                     DataFolder::try_from_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
-                    DataFolder::try_from_connection_info(&connection_info).await?;
+                    DataFolder::try_from_connection_info(connection_info).await?;
 
                 Ok((
                     ClusterMode::MultiNode(manager),
@@ -134,7 +134,7 @@ impl DataFolders {
                     DataFolder::try_from_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
-                    DataFolder::try_from_connection_info(&connection_info).await?;
+                    DataFolder::try_from_connection_info(connection_info).await?;
 
                 Ok((
                     ClusterMode::MultiNode(manager),

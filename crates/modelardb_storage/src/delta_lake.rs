@@ -70,6 +70,9 @@ pub struct DeltaLake {
     location: String,
     /// Storage options required to access Delta Lake.
     storage_options: HashMap<String, String>,
+    /// Connection information saved as bytes to make it possible to transfer the information using
+    /// Apache Arrow Flight. Only set to [`Some`] by [`try_remote_from_connection_info()`].
+    maybe_connection_info: Option<Vec<u8>>,
     /// [`ObjectStore`] to access the root of the Delta Lake.
     object_store: Arc<dyn ObjectStore>,
     /// Cache of Delta tables to avoid opening the same table multiple times.
@@ -101,6 +104,7 @@ impl DeltaLake {
         let delta_lake = Self {
             location: "memory://modelardb".to_owned(),
             storage_options: HashMap::new(),
+            maybe_connection_info: None,
             object_store: Arc::new(InMemory::new()),
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
@@ -132,6 +136,7 @@ impl DeltaLake {
         let delta_lake = Self {
             location,
             storage_options: HashMap::new(),
+            maybe_connection_info: None,
             object_store: Arc::new(object_store),
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
@@ -146,8 +151,8 @@ impl DeltaLake {
     /// `connection_info`. Returns [`ModelarDbStorageError`] if `connection_info` could not be
     /// parsed or a connection to the specified object store could not be created or the metadata
     /// tables cannot be created.
-    pub async fn try_remote_from_connection_info(connection_info: &[u8]) -> Result<Self> {
-        let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
+    pub async fn try_remote_from_connection_info(connection_info: Vec<u8>) -> Result<Self> {
+        let (object_store_type, offset_data) = arguments::decode_argument(&connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
         match object_store_type {
@@ -161,25 +166,31 @@ impl DeltaLake {
                     arguments::extract_s3_arguments(offset_data)
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
-                Self::try_from_s3_configuration(
+                let mut delta_lake = Self::try_from_s3_configuration(
                     endpoint.to_owned(),
                     bucket_name.to_owned(),
                     access_key_id.to_owned(),
                     secret_access_key.to_owned(),
                 )
-                .await
+                .await?;
+
+                delta_lake.maybe_connection_info = Some(connection_info);
+                Ok(delta_lake)
             }
             "azureblobstorage" => {
                 let (account, access_key, container_name, _offset_data) =
                     arguments::extract_azure_blob_storage_arguments(offset_data)
                         .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
-                Self::try_from_azure_configuration(
+                let mut delta_lake = Self::try_from_azure_configuration(
                     account.to_owned(),
                     access_key.to_owned(),
                     container_name.to_owned(),
                 )
-                .await
+                .await?;
+
+                delta_lake.maybe_connection_info = Some(connection_info);
+                Ok(delta_lake)
             }
             _ => Err(ModelarDbStorageError::InvalidArgument(format!(
                 "{object_store_type} is not supported."
@@ -227,6 +238,7 @@ impl DeltaLake {
         let delta_lake = DeltaLake {
             location,
             storage_options,
+            maybe_connection_info: None,
             object_store: Arc::new(object_store),
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
@@ -260,6 +272,7 @@ impl DeltaLake {
         let delta_lake = DeltaLake {
             location,
             storage_options,
+            maybe_connection_info: None,
             object_store: Arc::new(object_store),
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(SessionContext::new()),
@@ -332,6 +345,13 @@ impl DeltaLake {
         )?;
 
         Ok(())
+    }
+
+    /// Return connection information saved as bytes to make it possible to transfer the information
+    /// using Apache Arrow Flight. Only returns [`Some`] if [`DeltaLake] was created by
+    /// [`try_remote_from_connection_info()`].
+    pub fn connection_info(&self) -> &Option<Vec<u8>> {
+        &self.maybe_connection_info
     }
 
     /// Return an [`ObjectStore`] to access the root of the Delta Lake.
