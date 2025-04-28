@@ -15,7 +15,7 @@
 
 syntax = "proto3";
 
-package modelardb_types.flight;
+package modelardb.flight.protocol;
 
 message CreateTablesRequest {
   message NormalTableMetadata {
