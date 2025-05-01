@@ -3091,6 +3091,7 @@ dependencies = [
  "arrow",
  "datafusion",
  "modelardb_common",
+ "modelardb_storage",
  "proptest",
  "prost",
  "prost-build",

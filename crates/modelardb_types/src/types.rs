@@ -376,10 +376,265 @@ impl fmt::Display for ServerMode {
 mod tests {
     use super::*;
 
+    use arrow::datatypes::Field;
+    use datafusion::common::ToDFSchema;
+    use datafusion::logical_expr::col;
     use proptest::num;
     use proptest::proptest;
 
     use modelardb_common::test::ERROR_BOUND_ZERO;
+    use modelardb_storage::test;
+
+    // Tests for TimeSeriesTableMetadata.
+    #[test]
+    fn test_can_create_time_series_table_metadata() {
+        let (query_schema, error_bounds, generated_columns) =
+            time_series_table_schema_error_bounds_and_generated_columns();
+        let result = TimeSeriesTableMetadata::try_new(
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            query_schema,
+            error_bounds,
+            generated_columns,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cannot_create_time_series_table_metadata_with_invalid_timestamp_type() {
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("timestamp", DataType::UInt8, false),
+            Field::new("value", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let result = create_simple_time_series_table_metadata(schema);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_time_series_table_metadata_with_invalid_tag_type() {
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::UInt8, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("value", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let result = create_simple_time_series_table_metadata(schema);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_time_series_table_metadata_with_no_fields() {
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+        ]);
+
+        let result = create_simple_time_series_table_metadata(schema);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_time_series_table_metadata_with_invalid_field_type() {
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("value", DataType::UInt8, false),
+        ]);
+
+        let result = create_simple_time_series_table_metadata(schema);
+        assert!(result.is_err());
+    }
+
+    /// Return metadata for a time series table with one tag column and the timestamp column at index 1.
+    fn create_simple_time_series_table_metadata(
+        query_schema: Schema,
+    ) -> Result<TimeSeriesTableMetadata> {
+        TimeSeriesTableMetadata::try_new(
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            Arc::new(query_schema),
+            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap()],
+            vec![None],
+        )
+    }
+
+    #[test]
+    fn test_cannot_create_time_series_table_metadata_with_missing_or_too_many_error_bounds() {
+        let (query_schema, _error_bounds, generated_columns) =
+            time_series_table_schema_error_bounds_and_generated_columns();
+        let result = TimeSeriesTableMetadata::try_new(
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            query_schema,
+            vec![],
+            generated_columns,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_time_series_table_metadata_with_missing_or_too_many_generated_columns() {
+        let (query_schema, error_bounds, _generated_columns) =
+            time_series_table_schema_error_bounds_and_generated_columns();
+        let result = TimeSeriesTableMetadata::try_new(
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            query_schema,
+            error_bounds,
+            vec![],
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_time_series_table_metadata_with_generated_columns_using_generated_columns()
+     {
+        let (query_schema, error_bounds, mut generated_columns) =
+            time_series_table_schema_error_bounds_and_generated_columns();
+
+        generated_columns[5] = Some(GeneratedColumn {
+            expr: Expr::Column("".into()),
+            source_columns: vec![],
+            original_expr: "".to_owned(),
+        });
+
+        generated_columns[6] = Some(GeneratedColumn {
+            expr: Expr::Column("".into()),
+            source_columns: vec![5],
+            original_expr: "".to_owned(),
+        });
+
+        let result = TimeSeriesTableMetadata::try_new(
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            query_schema,
+            error_bounds,
+            generated_columns,
+        );
+
+        assert!(result.is_err());
+    }
+
+    fn time_series_table_schema_error_bounds_and_generated_columns()
+    -> (Arc<Schema>, Vec<ErrorBound>, Vec<Option<GeneratedColumn>>) {
+        (
+            Arc::new(Schema::new(vec![
+                Field::new("location", DataType::Utf8, false),
+                Field::new("install_year", DataType::Utf8, false),
+                Field::new("model", DataType::Utf8, false),
+                Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+                Field::new("power_output", ArrowValue::DATA_TYPE, false),
+                Field::new("wind_speed", ArrowValue::DATA_TYPE, false),
+                Field::new("temperature", ArrowValue::DATA_TYPE, false),
+            ])),
+            vec![
+                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ],
+            vec![None, None, None, None, None, None, None],
+        )
+    }
+
+    #[test]
+    fn test_cannot_create_time_series_table_metadata_with_too_many_fields() {
+        // Create 1025 fields that can be used to initialize a schema.
+        let fields = (0..1025)
+            .map(|i| Field::new(format!("field_{i}").as_str(), DataType::Float32, false))
+            .collect::<Vec<Field>>();
+
+        let error_bounds = vec![
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+        ];
+
+        let generated_columns = vec![None, None, None];
+
+        let result = TimeSeriesTableMetadata::try_new(
+            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            Arc::new(Schema::new(fields)),
+            error_bounds,
+            generated_columns,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_is_timestamp() {
+        let time_series_table_metadata = test::time_series_table_metadata();
+
+        assert!(time_series_table_metadata.is_timestamp(0));
+        assert!(!time_series_table_metadata.is_timestamp(1));
+        assert!(!time_series_table_metadata.is_timestamp(2));
+        assert!(!time_series_table_metadata.is_timestamp(3));
+    }
+
+    #[test]
+    fn test_is_field() {
+        let time_series_table_metadata = test::time_series_table_metadata();
+
+        assert!(!time_series_table_metadata.is_field(0));
+        assert!(time_series_table_metadata.is_field(1));
+        assert!(time_series_table_metadata.is_field(2));
+        assert!(!time_series_table_metadata.is_field(3));
+    }
+
+    #[test]
+    fn test_is_tag() {
+        let time_series_table_metadata = test::time_series_table_metadata();
+
+        assert!(!time_series_table_metadata.is_tag(0));
+        assert!(!time_series_table_metadata.is_tag(1));
+        assert!(!time_series_table_metadata.is_tag(2));
+        assert!(time_series_table_metadata.is_tag(3));
+    }
+
+    #[test]
+    fn test_column_arrays() {
+        let time_series_table_metadata = test::time_series_table_metadata();
+        let record_batch = test::uncompressed_time_series_table_record_batch(1);
+
+        let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
+            time_series_table_metadata
+                .column_arrays(&record_batch)
+                .unwrap();
+
+        assert_eq!(
+            crate::array!(record_batch, 0, TimestampArray),
+            timestamp_column_array
+        );
+        assert_eq!(
+            crate::array!(record_batch, 1, ValueArray),
+            field_column_arrays[0]
+        );
+        assert_eq!(
+            crate::array!(record_batch, 2, ValueArray),
+            field_column_arrays[1]
+        );
+        assert_eq!(
+            crate::array!(record_batch, 3, StringArray),
+            tag_column_arrays[0]
+        );
+    }
+
+    #[test]
+    fn test_column_arrays_with_invalid_schema() {
+        let time_series_table_metadata = test::time_series_table_metadata();
+        let record_batch = test::normal_table_record_batch();
+
+        let result = time_series_table_metadata.column_arrays(&record_batch);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: The record batch does not match the schema of the time series table."
+        );
+    }
 
     // Tests for ErrorBound.
     #[test]
@@ -448,5 +703,43 @@ mod tests {
     #[test]
     fn test_relative_error_bound_cannot_be_nan() {
         assert!(ErrorBound::try_new_relative(f32::NAN).is_err())
+    }
+
+    // Tests for GeneratedColumn.
+    #[test]
+    fn test_can_create_generated_column() {
+        let schema = Schema::new(vec![
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("field_2", ArrowValue::DATA_TYPE, false),
+            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let sql_expr = col("field_1") + col("field_2");
+        let expected_generated_column = GeneratedColumn {
+            expr: sql_expr.clone(),
+            source_columns: vec![0, 1],
+            original_expr: sql_expr.to_string(),
+        };
+
+        let df_schema = schema.to_dfschema().unwrap();
+        let mut result = GeneratedColumn::try_from_sql_expr(sql_expr, &df_schema).unwrap();
+
+        // Sort the source columns to ensure the order is consistent.
+        result.source_columns.sort();
+        assert_eq!(expected_generated_column, result);
+    }
+
+    #[test]
+    fn test_cannot_create_generated_column_with_invalid_sql_expr() {
+        let schema = Schema::new(vec![
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let df_schema = schema.to_dfschema().unwrap();
+        let sql_expr = col("field_1") + col("field_2");
+        let result = GeneratedColumn::try_from_sql_expr(sql_expr, &df_schema);
+
+        assert!(result.is_err());
     }
 }

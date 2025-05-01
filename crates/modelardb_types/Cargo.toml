@@ -29,4 +29,5 @@ prost-build.workspace = true
 
 [dev-dependencies]
 modelardb_common = { path = "../modelardb_common" }
+modelardb_storage = { path = "../modelardb_storage" }
 proptest.workspace = true
