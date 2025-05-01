@@ -28,6 +28,7 @@ use datafusion::parquet::errors::ParquetError;
 use deltalake::{DeltaTableError, ObjectStoreError};
 use modelardb_common::error::ModelarDbCommonError;
 use modelardb_storage::error::ModelarDbStorageError;
+use modelardb_types::error::ModelarDbTypesError;
 use tonic::Status as TonicStatusError;
 use tonic::transport::Error as TonicTransportError;
 
@@ -49,6 +50,8 @@ pub enum ModelarDbEmbeddedError {
     ModelarDbCommon(ModelarDbCommonError),
     /// Error returned by modelardb_storage.
     ModelarDbStorage(ModelarDbStorageError),
+    /// Error returned by modelardb_types.
+    ModelarDbTypes(ModelarDbTypesError),
     /// Error returned by ObjectStore.
     ObjectStore(ObjectStoreError),
     /// Error returned by Apache Parquet.
@@ -74,6 +77,7 @@ impl Display for ModelarDbEmbeddedError {
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
             Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
+            Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::Parquet(reason) => write!(f, "Parquet Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
@@ -94,6 +98,7 @@ impl Error for ModelarDbEmbeddedError {
             Self::InvalidArgument(_reason) => None,
             Self::ModelarDbCommon(reason) => Some(reason),
             Self::ModelarDbStorage(reason) => Some(reason),
+            Self::ModelarDbTypes(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
             Self::Parquet(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
@@ -132,6 +137,12 @@ impl From<ModelarDbCommonError> for ModelarDbEmbeddedError {
 impl From<ModelarDbStorageError> for ModelarDbEmbeddedError {
     fn from(error: ModelarDbStorageError) -> Self {
         Self::ModelarDbStorage(error)
+    }
+}
+
+impl From<ModelarDbTypesError> for ModelarDbEmbeddedError {
+    fn from(error: ModelarDbTypesError) -> Self {
+        Self::ModelarDbTypes(error)
     }
 }
 
