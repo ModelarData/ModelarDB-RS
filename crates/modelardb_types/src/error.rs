@@ -19,12 +19,16 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::result::Result as StdResult;
 
+use datafusion::common::DataFusionError;
+
 /// Result type used throughout `modelardb_types`.
 pub type Result<T> = StdResult<T, ModelarDbTypesError>;
 
 /// Error type used throughout `modelardb_types`.
 #[derive(Debug)]
 pub enum ModelarDbTypesError {
+    /// Error returned by Apache DataFusion.
+    DataFusion(DataFusionError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
 }
@@ -32,6 +36,7 @@ pub enum ModelarDbTypesError {
 impl Display for ModelarDbTypesError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
+            Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
         }
     }
@@ -41,7 +46,14 @@ impl Error for ModelarDbTypesError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         // Return the error that caused self to occur if one exists.
         match self {
+            Self::DataFusion(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
         }
+    }
+}
+
+impl From<DataFusionError> for ModelarDbTypesError {
+    fn from(error: DataFusionError) -> Self {
+        Self::DataFusion(error)
     }
 }
