@@ -24,13 +24,13 @@ use arrow::array::{Array, BinaryArray, BooleanArray, Float32Array, Int16Array, S
 use arrow::datatypes::{DataType, Field, Schema};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
-use datafusion::prelude::{SessionContext, col};
+use datafusion::prelude::{col, SessionContext};
 use modelardb_common::test::ERROR_BOUND_ZERO;
-use modelardb_types::types::ErrorBound;
+use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
+use crate::parser::tokenize_and_parse_sql_expression;
 use crate::{
     register_metadata_table, sql_and_concat, try_convert_bytes_to_schema,
     try_convert_schema_to_bytes,
@@ -515,6 +515,7 @@ impl TableMetadataManager {
             error_bounds,
             generated_columns,
         )
+        .map_err(|error| error.into())
     }
 
     /// Return the error bounds for the columns in the time series table with `table_name`. If a
@@ -582,8 +583,8 @@ impl TableMetadataManager {
 
             // If generated_column_expr is null, it is saved as an empty string in the column values.
             if !generated_column_expr.is_empty() {
-                let generated_column =
-                    GeneratedColumn::try_from_sql_expr(generated_column_expr, df_schema)?;
+                let sql_expr = tokenize_and_parse_sql_expression(generated_column_expr, df_schema)?;
+                let generated_column = GeneratedColumn::try_from_sql_expr(sql_expr, df_schema)?;
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
             }

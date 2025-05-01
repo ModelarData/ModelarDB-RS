@@ -28,10 +28,8 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::DFSchema;
 use datafusion::execution::RecordBatchStream;
-use modelardb_storage::metadata::time_series_table_metadata::{
-    GeneratedColumn, TimeSeriesTableMetadata,
-};
-use modelardb_types::types::ErrorBound;
+use modelardb_storage::parser::tokenize_and_parse_sql_expression;
+use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
 use crate::error::Result;
 use crate::{Aggregate, TableType};
@@ -123,15 +121,15 @@ fn try_new_time_series_table_metadata(
     let schema = Arc::new(schema);
     let df_schema: DFSchema = schema.clone().try_into()?;
 
-    // unwrap() is safe as zero is always a legal absolute error bound.
-    let lossless = ErrorBound::try_new_absolute(0.0).unwrap();
+    let lossless = ErrorBound::try_new_absolute(0.0)?;
 
     let mut error_bounds_all = Vec::with_capacity(schema.fields().len());
     let mut generated_columns_all = Vec::with_capacity(schema.fields().len());
     for field in schema.fields() {
         error_bounds_all.push(error_bounds.remove(field.name()).unwrap_or(lossless));
 
-        if let Some(sql_expr) = generated_columns.get(field.name()) {
+        if let Some(expr) = generated_columns.get(field.name()) {
+            let sql_expr = tokenize_and_parse_sql_expression(expr, &df_schema)?;
             generated_columns_all.push(Some(GeneratedColumn::try_from_sql_expr(
                 sql_expr, &df_schema,
             )?));

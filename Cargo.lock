@@ -2952,6 +2952,7 @@ dependencies = [
  "futures",
  "modelardb_embedded",
  "modelardb_storage",
+ "modelardb_types",
  "sysinfo",
  "tokio",
 ]

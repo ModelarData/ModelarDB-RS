@@ -30,5 +30,6 @@ deltalake.workspace = true
 futures.workspace = true
 modelardb_embedded = { path = "../modelardb_embedded" }
 modelardb_storage = { path = "../modelardb_storage" }
+modelardb_types = { path = "../modelardb_types" }
 sysinfo.workspace = true
 tokio.workspace = true

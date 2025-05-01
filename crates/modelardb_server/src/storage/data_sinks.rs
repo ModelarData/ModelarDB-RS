@@ -29,7 +29,7 @@ use datafusion::physical_plan::insert::DataSink;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, SendableRecordBatchStream};
 use futures::StreamExt;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
+use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;

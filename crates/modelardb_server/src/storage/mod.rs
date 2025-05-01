@@ -34,7 +34,7 @@ use std::sync::{Arc, LazyLock};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
+use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::error;

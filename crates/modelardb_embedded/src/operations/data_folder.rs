@@ -40,8 +40,7 @@ use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
-use modelardb_types::types::TimestampArray;
+use modelardb_types::types::{TimeSeriesTableMetadata, TimestampArray};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
@@ -928,8 +927,9 @@ mod tests {
     use arrow_flight::flight_service_client::FlightServiceClient;
     use datafusion::datasource::TableProvider;
     use datafusion::logical_expr::col;
-    use modelardb_storage::metadata::time_series_table_metadata::GeneratedColumn;
-    use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ValueArray};
+    use modelardb_types::types::{
+        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, ValueArray,
+    };
     use tempfile::TempDir;
     use tonic::transport::Channel;
 
@@ -1169,7 +1169,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "ModelarDB Storage Error: Invalid Argument Error: \
+            "ModelarDB Types Error: Invalid Argument Error: \
             There needs to be exactly one timestamp column."
         );
     }

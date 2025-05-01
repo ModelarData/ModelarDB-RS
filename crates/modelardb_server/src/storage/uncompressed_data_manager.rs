@@ -24,8 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use futures::StreamExt;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
-use modelardb_types::types::{Timestamp, Value};
+use modelardb_types::types::{TimeSeriesTableMetadata, Timestamp, Value};
 use object_store::path::{Path, PathPart};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};

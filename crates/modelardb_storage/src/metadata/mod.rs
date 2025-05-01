@@ -13,10 +13,7 @@
  * limitations under the License.
  */
 
-//! Implementation of [`TimeSeriesTableMetadata`](crate::TimeSeriesTableMetadata) which contains
-//! metadata required to interact with time series tables and
-//! [`TableMetadataManager`](table_metadata_manager::TableMetadataManager) which provides
-//! functionality to access table related metadata in the metadata Delta Lake.
+//! Implementation of [`TableMetadataManager`](table_metadata_manager::TableMetadataManager) which
+//! provides functionality to access table related metadata in the metadata Delta Lake.
 
 pub mod table_metadata_manager;
-pub mod time_series_table_metadata;

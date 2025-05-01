@@ -36,6 +36,7 @@ use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_common::arguments;
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
+use modelardb_types::types::TimeSeriesTableMetadata;
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -45,7 +46,6 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.

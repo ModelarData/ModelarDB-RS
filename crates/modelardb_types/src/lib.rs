@@ -16,8 +16,8 @@
 //! Implementation of functions, macros, and types used throughout ModelarDB.
 
 pub mod error;
+pub mod flight;
 pub mod functions;
 pub mod macros;
 pub mod schemas;
 pub mod types;
-pub mod flight;

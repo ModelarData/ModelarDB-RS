@@ -41,7 +41,7 @@ use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
 use modelardb_embedded::operations::Operations;
 use modelardb_embedded::operations::data_folder::DataFolder;
 use modelardb_storage::delta_lake::DeltaTableWriter;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
+use modelardb_types::types::TimeSeriesTableMetadata;
 use sysinfo::System;
 
 #[tokio::main]

@@ -23,10 +23,10 @@ use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::{
-    ArrowTimestamp, ArrowValue, ErrorBound, Timestamp, TimestampArray, Value, ValueArray,
+    ArrowTimestamp, ArrowValue, ErrorBound, TimeSeriesTableMetadata, Timestamp, TimestampArray,
+    Value, ValueArray,
 };
 
-use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use crate::{normal_table_metadata_to_record_batch, time_series_table_metadata_to_record_batch};
 
 /// SQL to create a normal table with a timestamp column and two floating point columns.

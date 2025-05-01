@@ -56,13 +56,13 @@ use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use futures::StreamExt;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
-use modelardb_types::types::ErrorBound;
+use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 use object_store::ObjectStore;
 use object_store::path::Path;
 use sqlparser::ast::Statement;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
+use crate::parser::tokenize_and_parse_sql_expression;
 use crate::query::metadata_table::MetadataTable;
 use crate::query::normal_table::NormalTable;
 use crate::query::time_series_table::TimeSeriesTable;
@@ -497,7 +497,10 @@ fn array_to_generated_columns(
     let mut generated_columns = Vec::with_capacity(expr_array.len());
     for maybe_expr in expr_array.iter() {
         if let Some(expr) = maybe_expr {
-            generated_columns.push(Some(GeneratedColumn::try_from_sql_expr(expr, df_schema)?));
+            let sql_expr = tokenize_and_parse_sql_expression(expr, df_schema)?;
+            generated_columns.push(Some(GeneratedColumn::try_from_sql_expr(
+                sql_expr, df_schema,
+            )?));
         } else {
             generated_columns.push(None);
         }
