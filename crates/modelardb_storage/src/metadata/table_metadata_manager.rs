@@ -24,7 +24,7 @@ use arrow::array::{Array, BinaryArray, BooleanArray, Float32Array, Int16Array, S
 use arrow::datatypes::{DataType, Field, Schema};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
-use datafusion::prelude::{col, SessionContext};
+use datafusion::prelude::{SessionContext, col};
 use modelardb_common::test::ERROR_BOUND_ZERO;
 use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
@@ -584,7 +584,8 @@ impl TableMetadataManager {
             // If generated_column_expr is null, it is saved as an empty string in the column values.
             if !generated_column_expr.is_empty() {
                 let sql_expr = tokenize_and_parse_sql_expression(generated_column_expr, df_schema)?;
-                let generated_column = GeneratedColumn::try_from_sql_expr(sql_expr, df_schema)?;
+                let generated_column =
+                    GeneratedColumn::try_from_sql_expr(sql_expr, df_schema, generated_column_expr)?;
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
             }

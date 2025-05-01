@@ -325,19 +325,21 @@ impl GeneratedColumn {
     /// Create a [`GeneratedColumn`] from an [`Expr`] and a [`DFSchema`]. If the SQL expression
     /// is not valid or refers to columns that are not in the [`DFSchema`],
     /// a [`ModelarDbTypesError`] is returned.
-    pub fn try_from_sql_expr(sql_expr: Expr, df_schema: &DFSchema) -> Result<Self> {
-        let original_expr = sql_expr.to_string();
-
-        let source_columns: StdResult<Vec<usize>, DataFusionError> = sql_expr
+    pub fn try_from_sql_expr(
+        expr: Expr,
+        df_schema: &DFSchema,
+        original_expr: &str,
+    ) -> Result<Self> {
+        let source_columns: StdResult<Vec<usize>, DataFusionError> = expr
             .column_refs()
             .iter()
             .map(|column| df_schema.index_of_column(column))
             .collect();
 
         Ok(Self {
-            expr: sql_expr,
+            expr,
             source_columns: source_columns?,
-            original_expr,
+            original_expr: original_expr.to_owned(),
         })
     }
 }
@@ -715,14 +717,17 @@ mod tests {
         ]);
 
         let sql_expr = col("field_1") + col("field_2");
+        let original_expr = "field_1 + field_2";
+
         let expected_generated_column = GeneratedColumn {
             expr: sql_expr.clone(),
             source_columns: vec![0, 1],
-            original_expr: sql_expr.to_string(),
+            original_expr: original_expr.to_owned(),
         };
 
         let df_schema = schema.to_dfschema().unwrap();
-        let mut result = GeneratedColumn::try_from_sql_expr(sql_expr, &df_schema).unwrap();
+        let mut result =
+            GeneratedColumn::try_from_sql_expr(sql_expr, &df_schema, original_expr).unwrap();
 
         // Sort the source columns to ensure the order is consistent.
         result.source_columns.sort();
@@ -737,8 +742,11 @@ mod tests {
         ]);
 
         let df_schema = schema.to_dfschema().unwrap();
-        let sql_expr = col("field_1") + col("field_2");
-        let result = GeneratedColumn::try_from_sql_expr(sql_expr, &df_schema);
+        let result = GeneratedColumn::try_from_sql_expr(
+            col("field_1") + col("field_2"),
+            &df_schema,
+            "field_1 + field_2",
+        );
 
         assert!(result.is_err());
     }

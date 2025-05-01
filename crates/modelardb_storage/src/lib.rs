@@ -499,7 +499,7 @@ fn array_to_generated_columns(
         if let Some(expr) = maybe_expr {
             let sql_expr = tokenize_and_parse_sql_expression(expr, df_schema)?;
             generated_columns.push(Some(GeneratedColumn::try_from_sql_expr(
-                sql_expr, df_schema,
+                sql_expr, df_schema, expr,
             )?));
         } else {
             generated_columns.push(None);
