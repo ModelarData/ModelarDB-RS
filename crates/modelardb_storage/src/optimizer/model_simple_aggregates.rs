@@ -296,7 +296,7 @@ fn can_rewrite_aggregate(grid_exec_child: &Arc<dyn ExecutionPlan>) -> DataFusion
                 .as_any()
                 .downcast_ref::<ParquetSource>()
             {
-                if parquet_source.predicate().is_none() && parquet_source.predicate().is_none() {
+                if parquet_source.predicate().is_none() {
                     return Ok(());
                 }
             }
