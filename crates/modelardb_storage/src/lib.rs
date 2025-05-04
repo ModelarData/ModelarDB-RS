@@ -40,6 +40,7 @@ use arrow_flight::{IpcMessage, SchemaAsIpc};
 use bytes::{Buf, Bytes};
 use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, ToDFSchema};
+use datafusion::datasource::sink::DataSink;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::parquet::arrow::async_reader::{
@@ -50,7 +51,6 @@ use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use datafusion::parquet::format::SortingColumn;
-use datafusion::physical_plan::insert::DataSink;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
@@ -191,7 +191,7 @@ pub async fn read_record_batch_from_apache_parquet_file(
         .await
         .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
-    let reader = ParquetObjectReader::new(object_store, file_metadata);
+    let reader = ParquetObjectReader::new(object_store, file_metadata.location);
 
     // Stream the data from the Apache Parquet file into a single record batch.
     let record_batches = read_batches_from_apache_parquet_file(reader).await?;
