@@ -296,9 +296,7 @@ fn can_rewrite_aggregate(grid_exec_child: &Arc<dyn ExecutionPlan>) -> DataFusion
                 .as_any()
                 .downcast_ref::<ParquetSource>()
             {
-                if parquet_source.predicate().is_none()
-                    && parquet_source.pruning_predicate().is_none()
-                {
+                if parquet_source.predicate().is_none() {
                     return Ok(());
                 }
             }
@@ -634,13 +632,13 @@ mod tests {
     use std::fmt::{Debug, Formatter, Result as FmtResult};
 
     use datafusion::arrow::datatypes::Schema;
+    use datafusion::datasource::sink::DataSink;
     use datafusion::execution::session_state::SessionStateBuilder;
     use datafusion::execution::{SendableRecordBatchStream, TaskContext};
     use datafusion::physical_plan::aggregates::AggregateExec;
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
-    use datafusion::physical_plan::insert::DataSink;
     use datafusion::physical_plan::metrics::MetricsSet;
     use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
     use datafusion::prelude::SessionContext;

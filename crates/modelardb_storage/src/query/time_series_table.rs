@@ -28,11 +28,13 @@ use arrow::datatypes::DataType::Utf8;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, TimeUnit};
 use datafusion::catalog::Session;
+use datafusion::catalog::memory::DataSourceExec;
 use datafusion::common::ToDFSchema;
 use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
-use datafusion::datasource::physical_plan::{FileScanConfig, ParquetSource};
+use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
 use datafusion::datasource::provider::TableProviderFilterPushDown;
+use datafusion::datasource::sink::{DataSink, DataSinkExec};
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
@@ -42,7 +44,6 @@ use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{
     LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement, planner,
 };
-use datafusion::physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFile;
 use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
@@ -426,6 +427,7 @@ fn new_data_source_exec(
         .iter()
         .map(|logical_file| logical_file_to_partitioned_file(logical_file))
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
+    let file_group = FileGroup::new(partitioned_files);
 
     let log_store = delta_table.log_store();
     let mut table_parquet_options = TableParquetOptions::new();
@@ -441,12 +443,12 @@ fn new_data_source_exec(
     };
 
     let file_scan_config =
-        FileScanConfig::new(log_store.object_store_url(), file_schema, file_source)
-            .with_file_group(partitioned_files)
+        FileScanConfigBuilder::new(log_store.object_store_url(), file_schema, file_source)
+            .with_file_group(file_group)
             .with_limit(maybe_limit)
             .with_output_ordering(output_ordering);
 
-    Ok(file_scan_config.build())
+    Ok(DataSourceExec::from_data_source(file_scan_config.build()))
 }
 
 /// Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
@@ -461,7 +463,7 @@ fn logical_file_to_partitioned_file(
     let object_meta = ObjectMeta {
         location: logical_file.object_store_path(),
         last_modified,
-        size: logical_file.size() as usize,
+        size: logical_file.size() as u64,
         e_tag: None,
         version: None,
     };
