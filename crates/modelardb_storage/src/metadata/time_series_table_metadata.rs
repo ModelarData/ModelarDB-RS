@@ -183,11 +183,6 @@ impl TimeSeriesTableMetadata {
         index == self.timestamp_column_index
     }
 
-    /// Return `true` if the column at `index` is a field column or a generated field column.
-    pub fn is_field(&self, index: usize) -> bool {
-        !self.is_timestamp(index) && !self.is_tag(index)
-    }
-
     /// Return `true` if the column at `index` is a tag column.
     pub fn is_tag(&self, index: usize) -> bool {
         self.tag_column_indices.contains(&index)
@@ -472,16 +467,6 @@ mod test {
         assert!(!time_series_table_metadata.is_timestamp(1));
         assert!(!time_series_table_metadata.is_timestamp(2));
         assert!(!time_series_table_metadata.is_timestamp(3));
-    }
-
-    #[test]
-    fn test_is_field() {
-        let time_series_table_metadata = test::time_series_table_metadata();
-
-        assert!(!time_series_table_metadata.is_field(0));
-        assert!(time_series_table_metadata.is_field(1));
-        assert!(time_series_table_metadata.is_field(2));
-        assert!(!time_series_table_metadata.is_field(3));
     }
 
     #[test]
