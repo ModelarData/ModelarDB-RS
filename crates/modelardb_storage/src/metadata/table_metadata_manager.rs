@@ -21,12 +21,12 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{Array, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
 use datafusion::prelude::{SessionContext, col};
 use modelardb_common::test::ERROR_BOUND_ZERO;
-use modelardb_types::types::ErrorBound;
+use modelardb_types::types::{ArrowValue, ErrorBound};
 
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
@@ -336,7 +336,7 @@ impl TableMetadataManager {
             .iter()
             .enumerate()
         {
-            if time_series_table_metadata.is_field(query_schema_index) {
+            if field.data_type() == &ArrowValue::DATA_TYPE {
                 let maybe_generated_column_expr = time_series_table_metadata.generated_columns
                     [query_schema_index]
                     .as_ref()
