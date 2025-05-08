@@ -30,7 +30,7 @@ use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadat
 
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
-use crate::parser::tokenize_and_parse_sql_expression;
+use crate::parser::sql_expr_to_generated_column;
 use crate::{
     register_metadata_table, sql_and_concat, try_convert_bytes_to_schema,
     try_convert_schema_to_bytes,
@@ -583,9 +583,8 @@ impl TableMetadataManager {
 
             // If generated_column_expr is null, it is saved as an empty string in the column values.
             if !generated_column_expr.is_empty() {
-                let sql_expr = tokenize_and_parse_sql_expression(generated_column_expr, df_schema)?;
                 let generated_column =
-                    GeneratedColumn::try_from_sql_expr(sql_expr, df_schema, generated_column_expr)?;
+                    sql_expr_to_generated_column(generated_column_expr, df_schema)?;
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
             }

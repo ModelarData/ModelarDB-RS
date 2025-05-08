@@ -20,14 +20,11 @@
 //! of aliases are all for the same underlying type.
 
 use std::fmt;
-use std::result::Result as StdResult;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::array::{RecordBatch, StringArray};
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
-use datafusion::common::DFSchema;
-use datafusion::error::DataFusionError;
 use datafusion::logical_expr::Expr;
 
 use crate::error::{ModelarDbTypesError, Result};
@@ -321,29 +318,6 @@ pub struct GeneratedColumn {
     pub original_expr: String,
 }
 
-impl GeneratedColumn {
-    /// Create a [`GeneratedColumn`] from an [`Expr`] and a [`DFSchema`]. If the SQL expression
-    /// is not valid or refers to columns that are not in the [`DFSchema`],
-    /// a [`ModelarDbTypesError`] is returned.
-    pub fn try_from_sql_expr(
-        expr: Expr,
-        df_schema: &DFSchema,
-        original_expr: &str,
-    ) -> Result<Self> {
-        let source_columns: StdResult<Vec<usize>, DataFusionError> = expr
-            .column_refs()
-            .iter()
-            .map(|column| df_schema.index_of_column(column))
-            .collect();
-
-        Ok(Self {
-            expr,
-            source_columns: source_columns?,
-            original_expr: original_expr.to_owned(),
-        })
-    }
-}
-
 /// The different possible modes of a ModelarDB server, assigned when the server is started.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerMode {
@@ -379,8 +353,6 @@ mod tests {
     use super::*;
 
     use arrow::datatypes::Field;
-    use datafusion::common::ToDFSchema;
-    use datafusion::logical_expr::col;
     use proptest::num;
     use proptest::proptest;
 
@@ -705,49 +677,5 @@ mod tests {
     #[test]
     fn test_relative_error_bound_cannot_be_nan() {
         assert!(ErrorBound::try_new_relative(f32::NAN).is_err())
-    }
-
-    // Tests for GeneratedColumn.
-    #[test]
-    fn test_can_create_generated_column() {
-        let schema = Schema::new(vec![
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
-        ]);
-
-        let sql_expr = col("field_1") + col("field_2");
-        let original_expr = "field_1 + field_2";
-
-        let expected_generated_column = GeneratedColumn {
-            expr: sql_expr.clone(),
-            source_columns: vec![0, 1],
-            original_expr: original_expr.to_owned(),
-        };
-
-        let df_schema = schema.to_dfschema().unwrap();
-        let mut result =
-            GeneratedColumn::try_from_sql_expr(sql_expr, &df_schema, original_expr).unwrap();
-
-        // Sort the source columns to ensure the order is consistent.
-        result.source_columns.sort();
-        assert_eq!(expected_generated_column, result);
-    }
-
-    #[test]
-    fn test_cannot_create_generated_column_with_invalid_sql_expr() {
-        let schema = Schema::new(vec![
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
-        ]);
-
-        let df_schema = schema.to_dfschema().unwrap();
-        let result = GeneratedColumn::try_from_sql_expr(
-            col("field_1") + col("field_2"),
-            &df_schema,
-            "field_1 + field_2",
-        );
-
-        assert!(result.is_err());
     }
 }

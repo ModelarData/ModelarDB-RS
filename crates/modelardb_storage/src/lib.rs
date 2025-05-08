@@ -62,7 +62,7 @@ use object_store::path::Path;
 use sqlparser::ast::Statement;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::parser::tokenize_and_parse_sql_expression;
+use crate::parser::sql_expr_to_generated_column;
 use crate::query::metadata_table::MetadataTable;
 use crate::query::normal_table::NormalTable;
 use crate::query::time_series_table::TimeSeriesTable;
@@ -497,10 +497,7 @@ fn array_to_generated_columns(
     let mut generated_columns = Vec::with_capacity(expr_array.len());
     for maybe_expr in expr_array.iter() {
         if let Some(expr) = maybe_expr {
-            let sql_expr = tokenize_and_parse_sql_expression(expr, df_schema)?;
-            generated_columns.push(Some(GeneratedColumn::try_from_sql_expr(
-                sql_expr, df_schema, expr,
-            )?));
+            generated_columns.push(Some(sql_expr_to_generated_column(expr, df_schema)?));
         } else {
             generated_columns.push(None);
         }
