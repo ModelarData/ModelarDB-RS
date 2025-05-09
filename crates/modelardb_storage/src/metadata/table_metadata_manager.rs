@@ -21,12 +21,12 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{Array, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
 use datafusion::prelude::{SessionContext, col};
 use modelardb_common::test::ERROR_BOUND_ZERO;
-use modelardb_types::types::ErrorBound;
+use modelardb_types::types::{ArrowValue, ErrorBound};
 
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
@@ -336,7 +336,7 @@ impl TableMetadataManager {
             .iter()
             .enumerate()
         {
-            if time_series_table_metadata.is_field(query_schema_index) {
+            if field.data_type() == &ArrowValue::DATA_TYPE {
                 let maybe_generated_column_expr = time_series_table_metadata.generated_columns
                     [query_schema_index]
                     .as_ref()
@@ -936,12 +936,12 @@ mod tests {
             .unwrap();
 
         let query_schema = Arc::new(Schema::new(vec![
+            Field::new("generated_column_1", ArrowValue::DATA_TYPE, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("tag", DataType::Utf8, false),
-            Field::new("generated_column_1", ArrowValue::DATA_TYPE, false),
             Field::new("generated_column_2", ArrowValue::DATA_TYPE, false),
+            Field::new("tag", DataType::Utf8, false),
         ]));
 
         let error_bounds = vec![
@@ -951,18 +951,18 @@ mod tests {
 
         let plus_one_column = Some(GeneratedColumn {
             expr: col("field_1") + Literal(Int64(Some(1))),
-            source_columns: vec![1],
+            source_columns: vec![2],
             original_expr: "field_1 + 1".to_owned(),
         });
 
         let addition_column = Some(GeneratedColumn {
             expr: col("field_1") + col("field_2"),
-            source_columns: vec![1, 2],
+            source_columns: vec![2, 3],
             original_expr: "field_1 + field_2".to_owned(),
         });
 
-        let expected_generated_columns =
-            vec![None, None, None, None, plus_one_column, addition_column];
+        let mut expected_generated_columns =
+            vec![plus_one_column, None, None, None, addition_column, None];
 
         let time_series_table_metadata = TimeSeriesTableMetadata::try_new(
             "generated_columns_table".to_owned(),
@@ -981,24 +981,19 @@ mod tests {
             .query_schema
             .to_dfschema()
             .unwrap();
-        let generated_columns = metadata_manager
+        let mut generated_columns = metadata_manager
             .generated_columns("generated_columns_table", &df_schema)
             .await
             .unwrap();
 
-        assert_eq!(
-            generated_columns[0..generated_columns.len() - 1],
-            expected_generated_columns[0..expected_generated_columns.len() - 1]
-        );
+        let mut actual_addition_column = generated_columns.remove(4).unwrap();
+        let expected_addition_column = expected_generated_columns.remove(4).unwrap();
 
         // Sort the source columns to ensure the order is consistent.
-        let mut last_generated_column = generated_columns.last().unwrap().clone().unwrap();
-        last_generated_column.source_columns.sort();
+        actual_addition_column.source_columns.sort();
+        assert_eq!(actual_addition_column, expected_addition_column);
 
-        assert_eq!(
-            &Some(last_generated_column),
-            expected_generated_columns.last().unwrap()
-        );
+        assert_eq!(generated_columns, expected_generated_columns);
     }
 
     async fn create_metadata_manager_and_save_time_series_table() -> (TempDir, TableMetadataManager)
