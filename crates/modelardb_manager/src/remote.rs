@@ -510,11 +510,10 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the [`RecordBatch`](arrow::record_batch::RecordBatch)
-    /// in the action body. The tables are created for each node in the cluster of nodes controlled
-    /// by the manager. The [`RecordBatch`](arrow::record_batch::RecordBatch) should have the fields
-    /// `is_time_series_table`, `name`, `schema`, `error_bounds` and `generated_columns`.
-    /// `error_bounds` and `generated_columns` should be null if `is_time_series_table` is `false`.
+    /// * `CreateTables`: Create the tables given in the
+    /// [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest) Protocol
+    /// Buffer message in the action body. The tables are created for each node in the cluster of
+    /// nodes controlled by the manager.
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the metadata required
     /// to create the normal tables and time series tables that are missing in the list. The list of
     /// table names is also checked to make sure all given tables actually exist.
@@ -727,8 +726,9 @@ impl FlightService for FlightServiceHandler {
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let create_tables_action = ActionType {
             r#type: "CreateTables".to_owned(),
-            description: "Create the tables given in the record batch in the action body."
-                .to_owned(),
+            description:
+                "Create the tables given in the Protocol Buffer message in the action body."
+                    .to_owned(),
         };
 
         let initialize_database_action = ActionType {

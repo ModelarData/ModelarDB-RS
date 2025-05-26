@@ -577,10 +577,9 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the [`RecordBatch`] in the action body. The
-    /// [`RecordBatch`] should have the fields `is_time_series_table`, `name`, `schema`,
-    /// `error_bounds` and `generated_columns`. `error_bounds` and `generated_columns` should be
-    /// null if `is_time_series_table` is `false`.
+    /// * `CreateTables`: Create the tables given in the
+    /// [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest) Protocol
+    /// Buffer message in the action body.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -785,8 +784,9 @@ impl FlightService for FlightServiceHandler {
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let create_tables_action = ActionType {
             r#type: "CreateTables".to_owned(),
-            description: "Create the tables given in the record batch in the action body."
-                .to_owned(),
+            description:
+                "Create the tables given in the Protocol Buffer message in the action body."
+                    .to_owned(),
         };
 
         let flush_memory_action = ActionType {
