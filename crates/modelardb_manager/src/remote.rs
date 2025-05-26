@@ -24,7 +24,6 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow::compute;
 use arrow::datatypes::Schema;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
@@ -595,7 +594,7 @@ impl FlightService for FlightServiceHandler {
                 .collect();
 
             if invalid_node_tables.is_empty() {
-                // For each table that does not already exist in the node, retrieve the table metadata.
+                // For each table that does not already exist in the node, serialize the table metadata.
                 let missing_cluster_tables = cluster_tables
                     .iter()
                     .filter(|table| !node_tables.contains(&table.as_str()));
@@ -606,43 +605,44 @@ impl FlightService for FlightServiceHandler {
                     .metadata_manager
                     .table_metadata_manager;
 
-                let mut record_batches = vec![];
+                let mut encoded_normal_tables = vec![];
+                let mut encoded_time_series_tables = vec![];
                 for table in missing_cluster_tables {
-                    let record_batch = if table_metadata_manager
+                    if table_metadata_manager
                         .is_normal_table(table)
                         .await
                         .map_err(error_to_status_internal)?
                     {
                         let schema = self.table_schema(table).await?;
-                        modelardb_storage::normal_table_metadata_to_record_batch(table, &schema)
-                            .map_err(error_to_status_internal)?
+
+                        encoded_normal_tables.push(
+                            modelardb_types::flight::encode_normal_table_metadata(table, &schema)
+                                .map_err(error_to_status_internal)?,
+                        )
                     } else {
                         let time_series_table_metadata = table_metadata_manager
                             .time_series_table_metadata_for_time_series_table(table)
                             .await
                             .map_err(error_to_status_internal)?;
 
-                        modelardb_storage::time_series_table_metadata_to_record_batch(
-                            &time_series_table_metadata,
+                        encoded_time_series_tables.push(
+                            modelardb_types::flight::encode_time_series_table_metadata(
+                                &time_series_table_metadata,
+                            )
+                            .map_err(error_to_status_internal)?,
                         )
-                        .map_err(error_to_status_internal)?
                     };
-
-                    record_batches.push(record_batch);
                 }
 
-                let record_batch =
-                    compute::concat_batches(&TABLE_METADATA_SCHEMA.0.clone(), &record_batches)
-                        .map_err(error_to_status_internal)?;
-
-                let record_batch_bytes =
-                    modelardb_storage::try_convert_record_batch_to_bytes(&record_batch)
-                        .map_err(error_to_status_internal)?;
+                let protobuf_bytes = modelardb_types::flight::serialize_create_tables_request(
+                    encoded_normal_tables,
+                    encoded_time_series_tables,
+                );
 
                 // Return the metadata for the tables that need to be created in the requesting node.
                 Ok(Response::new(Box::pin(stream::once(async {
                     Ok(FlightResult {
-                        body: record_batch_bytes.into(),
+                        body: protobuf_bytes.into(),
                     })
                 }))))
             } else {
