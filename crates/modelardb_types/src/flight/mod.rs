@@ -35,6 +35,32 @@ pub fn encode_normal_table_metadata(
     })
 }
 
+/// Return a serializable Protocol Buffer message constructed from the metadata in
+/// `time_series_table_metadata`. If the schema cannot be converted to bytes, return
+/// [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
+pub fn encode_time_series_table_metadata(
+    time_series_table_metadata: TimeSeriesTableMetadata,
+) -> Result<protocol::create_tables_request::TimeSeriesTableMetadata> {
+    let mut generated_column_expressions =
+        Vec::with_capacity(time_series_table_metadata.query_schema.fields.len());
+    for generated_column in &time_series_table_metadata.generated_columns {
+        if let Some(generated_column) = generated_column {
+            let sql_expr = generated_column.original_expr.clone();
+            generated_column_expressions.push(sql_expr);
+        } else {
+            // An empty string is used to represent columns that are not generated.
+            generated_column_expressions.push(String::new());
+        }
+    }
+
+    Ok(protocol::create_tables_request::TimeSeriesTableMetadata {
+        name: time_series_table_metadata.name.clone(),
+        schema: try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?,
+        error_bounds: encode_error_bounds(&time_series_table_metadata),
+        generated_column_expressions,
+    })
+}
+
 /// Return a vector of serializable Protocol Buffer messages for the error bounds of
 /// `time_series_table_metadata`.
 fn encode_error_bounds(
