@@ -28,12 +28,11 @@ use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float32Builder, ListArray,
-    ListBuilder, RecordBatch, StringArray, StringBuilder,
+    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, ListArray, RecordBatch, StringArray,
 };
 use arrow::compute;
 use arrow::compute::concat_batches;
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::Schema;
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::{IpcWriteOptions, StreamWriter};
 use bytes::{Buf, Bytes};
@@ -54,7 +53,7 @@ use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use futures::StreamExt;
-use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
+use modelardb_types::functions::try_convert_bytes_to_schema;
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 use object_store::ObjectStore;
@@ -298,109 +297,6 @@ pub fn try_convert_bytes_to_record_batch(
     concat_batches(schema, &record_batches).map_err(|error| error.into())
 }
 
-/// Return a [`RecordBatch`] constructed from the metadata of a normal table with the name
-/// `table_name` and the schema `schema`. If the schema could not be converted to bytes or the
-/// [`RecordBatch`] could not be created, return [`ModelarDbStorageError`].
-pub fn normal_table_metadata_to_record_batch(
-    table_name: &str,
-    schema: &Schema,
-) -> Result<RecordBatch> {
-    let query_schema_bytes = try_convert_schema_to_bytes(schema)?;
-
-    let error_bounds_field = Arc::new(Field::new("item", DataType::Float32, true));
-    let generated_columns_field = Arc::new(Field::new("item", DataType::Utf8, true));
-
-    RecordBatch::try_new(
-        TABLE_METADATA_SCHEMA.0.clone(),
-        vec![
-            Arc::new(BooleanArray::from(vec![false])),
-            Arc::new(StringArray::from(vec![table_name])),
-            Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
-            Arc::new(ListArray::new_null(error_bounds_field, 1)),
-            Arc::new(ListArray::new_null(generated_columns_field, 1)),
-        ],
-    )
-    .map_err(|error| error.into())
-}
-
-/// Return a [`RecordBatch`] constructed from the metadata in `time_series_table_metadata`. If the
-/// schema could not be converted to bytes or the [`RecordBatch`] could not be created, return
-/// [`ModelarDbStorageError`].
-pub fn time_series_table_metadata_to_record_batch(
-    time_series_table_metadata: &TimeSeriesTableMetadata,
-) -> Result<RecordBatch> {
-    // Since the time series table metadata does not include error bounds for the generated columns,
-    // lossless error bounds are added for each generated column.
-    let mut error_bounds_all =
-        Vec::with_capacity(time_series_table_metadata.query_schema.fields().len());
-
-    let lossless = ErrorBound::try_new_absolute(0.0)?;
-
-    for field in time_series_table_metadata.query_schema.fields() {
-        if let Ok(field_index) = time_series_table_metadata.schema.index_of(field.name()) {
-            error_bounds_all.push(time_series_table_metadata.error_bounds[field_index]);
-        } else {
-            error_bounds_all.push(lossless);
-        }
-    }
-
-    let query_schema_bytes = try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?;
-    let error_bounds_array = error_bounds_to_list_array(error_bounds_all);
-    let generated_columns_array =
-        generated_columns_to_list_array(time_series_table_metadata.generated_columns.clone());
-
-    RecordBatch::try_new(
-        TABLE_METADATA_SCHEMA.0.clone(),
-        vec![
-            Arc::new(BooleanArray::from(vec![true])),
-            Arc::new(StringArray::from(vec![
-                time_series_table_metadata.name.clone(),
-            ])),
-            Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
-            Arc::new(error_bounds_array),
-            Arc::new(generated_columns_array),
-        ],
-    )
-    .map_err(|error| error.into())
-}
-
-/// Convert a list of [`ErrorBounds`](ErrorBound) to a [`ListArray`].
-fn error_bounds_to_list_array(error_bounds: Vec<ErrorBound>) -> ListArray {
-    let mut error_bounds_builder = ListBuilder::new(Float32Builder::new());
-
-    for error_bound in error_bounds {
-        match error_bound {
-            ErrorBound::Absolute(value) => {
-                error_bounds_builder.values().append_value(value);
-            }
-            ErrorBound::Relative(value) => {
-                // Relative error bounds are encoded as negative values for simplicity.
-                error_bounds_builder.values().append_value(-value);
-            }
-        }
-    }
-
-    error_bounds_builder.append(true);
-    error_bounds_builder.finish()
-}
-
-/// Convert a list of optional [`GeneratedColumns`](GeneratedColumn) to a [`ListArray`].
-fn generated_columns_to_list_array(generated_columns: Vec<Option<GeneratedColumn>>) -> ListArray {
-    let mut generated_columns_builder = ListBuilder::new(StringBuilder::new());
-
-    for generated_column in generated_columns {
-        if let Some(generated_column) = generated_column {
-            let sql_expr = generated_column.original_expr;
-            generated_columns_builder.values().append_value(sql_expr);
-        } else {
-            generated_columns_builder.values().append_null();
-        }
-    }
-
-    generated_columns_builder.append(true);
-    generated_columns_builder.finish()
-}
-
 /// Extract the table metadata from `record_batch` and return the table metadata as a tuple of
 /// `(normal_table_metadata, time_series_table_metadata)`. `normal_table_metadata` is a vector of tuples
 /// containing the table name and schema of the normal tables. If the schema of the [`RecordBatch`]
@@ -493,7 +389,6 @@ fn array_to_generated_columns(
 mod tests {
     use super::*;
 
-    use arrow::array::{Array, Float32Array};
     use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use modelardb_types::types::ArrowValue;
     use object_store::local::LocalFileSystem;
@@ -643,53 +538,5 @@ mod tests {
             "Arrow Error: Invalid argument error: column types must match schema types, expected \
             Float32 but found Timestamp(Microsecond, None) at column index 0"
         );
-    }
-
-    // Tests for normal_table_metadata_to_record_batch() and time_series_table_metadata_to_record_batch().
-    #[test]
-    fn test_normal_table_metadata_to_record_batch() {
-        let schema = test::normal_table_schema();
-        let record_batch =
-            normal_table_metadata_to_record_batch(test::NORMAL_TABLE_NAME, &schema).unwrap();
-
-        assert_eq!(**record_batch.column(0), BooleanArray::from(vec![false]));
-        assert_eq!(
-            **record_batch.column(1),
-            StringArray::from(vec![test::NORMAL_TABLE_NAME])
-        );
-        assert_eq!(
-            **record_batch.column(2),
-            BinaryArray::from_vec(vec![&try_convert_schema_to_bytes(&schema).unwrap()])
-        );
-    }
-
-    #[test]
-    fn test_time_series_table_metadata_to_record_batch() {
-        let time_series_table_metadata = test::time_series_table_metadata();
-        let record_batch =
-            time_series_table_metadata_to_record_batch(&time_series_table_metadata).unwrap();
-
-        assert_eq!(**record_batch.column(0), BooleanArray::from(vec![true]));
-        assert_eq!(
-            **record_batch.column(1),
-            StringArray::from(vec![test::TIME_SERIES_TABLE_NAME])
-        );
-
-        let expected_schema_bytes =
-            try_convert_schema_to_bytes(&time_series_table_metadata.query_schema).unwrap();
-        assert_eq!(
-            **record_batch.column(2),
-            BinaryArray::from_vec(vec![&expected_schema_bytes])
-        );
-
-        let error_bounds_array = modelardb_types::array!(record_batch, 3, ListArray).value(0);
-        let value_array = modelardb_types::cast!(error_bounds_array, Float32Array);
-
-        assert_eq!(value_array, &Float32Array::from(vec![0.0, 1.0, -5.0, -0.0]));
-
-        let generated_columns_array = modelardb_types::array!(record_batch, 4, ListArray).value(0);
-        let expr_array = modelardb_types::cast!(generated_columns_array, StringArray);
-
-        assert_eq!(expr_array, &StringArray::new_null(4));
     }
 }
