@@ -445,12 +445,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        let table_record_batch = test::table_metadata_record_batch();
-        let table_record_batch_bytes =
-            modelardb_storage::try_convert_record_batch_to_bytes(&table_record_batch).unwrap();
+        let protobuf_bytes = test::table_metadata_protobuf_bytes();
 
         context
-            .create_tables_from_bytes(table_record_batch_bytes)
+            .create_tables_from_bytes(protobuf_bytes)
             .await
             .unwrap();
 

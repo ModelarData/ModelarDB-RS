@@ -692,36 +692,4 @@ mod tests {
 
         assert_eq!(expr_array, &StringArray::new_null(4));
     }
-
-    // Tests for table_metadata_from_record_batch().
-    #[test]
-    fn test_table_metadata_from_record_batch() {
-        let table_record_batch = test::table_metadata_record_batch();
-
-        let (normal_table_metadata, time_series_table_metadata) =
-            table_metadata_from_record_batch(&table_record_batch).unwrap();
-
-        assert_eq!(normal_table_metadata.len(), 1);
-        assert_eq!(normal_table_metadata[0].0, test::NORMAL_TABLE_NAME);
-        assert_eq!(normal_table_metadata[0].1, test::normal_table_schema());
-
-        let metadata = test::time_series_table_metadata();
-        assert_eq!(time_series_table_metadata.len(), 1);
-        assert_eq!(time_series_table_metadata[0].name, metadata.name);
-        assert_eq!(
-            time_series_table_metadata[0].query_schema,
-            metadata.query_schema
-        );
-    }
-
-    #[test]
-    fn test_table_metadata_from_invalid_record_batch() {
-        let record_batch = test::normal_table_record_batch();
-        let result = table_metadata_from_record_batch(&record_batch);
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid Argument Error: Record batch does not contain the expected table metadata."
-        );
-    }
 }

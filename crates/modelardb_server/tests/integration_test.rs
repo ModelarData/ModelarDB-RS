@@ -1273,13 +1273,11 @@ async fn test_can_get_node_type() {
 async fn test_can_create_tables() {
     let mut test_context = TestContext::new().await;
 
-    let table_record_batch = modelardb_storage::test::table_metadata_record_batch();
-    let table_record_batch_bytes =
-        modelardb_storage::try_convert_record_batch_to_bytes(&table_record_batch).unwrap();
+    let protobuf_bytes = modelardb_storage::test::table_metadata_protobuf_bytes();
 
     let action = Action {
         r#type: "CreateTables".to_owned(),
-        body: table_record_batch_bytes.into(),
+        body: protobuf_bytes.into(),
     };
 
     test_context
