@@ -37,8 +37,8 @@ pub fn serialize_create_tables_request(
     create_tables_request.encode_to_vec()
 }
 
-/// Encode and serialize the metadata for a normal table into a request to create tables in 
-/// ModelarDB. If the schema cannot be converted to bytes, return 
+/// Encode and serialize the metadata for a normal table into a request to create tables in
+/// ModelarDB. If the schema cannot be converted to bytes, return
 /// [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn encode_and_serialize_normal_table_metadata(
     table_name: &str,
@@ -49,12 +49,12 @@ pub fn encode_and_serialize_normal_table_metadata(
         normal_tables: vec![normal_table_metadata],
         time_series_tables: vec![],
     };
-    
+
     Ok(create_tables_request.encode_to_vec())
 }
 
 /// If `schema` can be converted to bytes, encode the normal table metadata into a serializable
-/// Protocol Buffer message, otherwise return [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
+/// protobuf message, otherwise return [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn encode_normal_table_metadata(
     table_name: &str,
     schema: &Schema,
@@ -66,7 +66,7 @@ pub fn encode_normal_table_metadata(
 }
 
 /// Encode and serialize the metadata for a time series table into a request to create tables in
-/// ModelarDB. If the schema cannot be converted to bytes, return 
+/// ModelarDB. If the schema cannot be converted to bytes, return
 /// [ModelarDbTypesError](crate::error::ModelarDbTypesError).
 pub fn encode_and_serialize_time_series_table_metadata(
     time_series_table_metadata: TimeSeriesTableMetadata,
@@ -80,7 +80,7 @@ pub fn encode_and_serialize_time_series_table_metadata(
     Ok(create_tables_request.encode_to_vec())
 }
 
-/// Return a serializable Protocol Buffer message constructed from the metadata in
+/// Return a serializable protobuf message constructed from the metadata in
 /// `time_series_table_metadata`. If the schema cannot be converted to bytes, return
 /// [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn encode_time_series_table_metadata(
@@ -106,7 +106,7 @@ pub fn encode_time_series_table_metadata(
     })
 }
 
-/// Return a vector of serializable Protocol Buffer messages for the error bounds of
+/// Return a vector of serializable protobuf messages for the error bounds of
 /// `time_series_table_metadata`.
 fn encode_error_bounds(
     time_series_table_metadata: &TimeSeriesTableMetadata,

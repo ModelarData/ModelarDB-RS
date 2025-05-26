@@ -156,7 +156,7 @@ impl Operations for Client {
     /// table already exists or if the table could not be created, [`ModelarDbEmbeddedError`] is
     /// returned.
     async fn create(&mut self, table_name: &str, table_type: TableType) -> Result<()> {
-        // Convert the table metadata to a record batch that can be sent to ModelarDB.
+        // Convert the table metadata to a protobuf message that can be sent to ModelarDB.
         let record_batch = match table_type {
             TableType::NormalTable(schema) => {
                 modelardb_storage::normal_table_metadata_to_record_batch(table_name, &schema)?

@@ -726,9 +726,8 @@ impl FlightService for FlightServiceHandler {
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let create_tables_action = ActionType {
             r#type: "CreateTables".to_owned(),
-            description:
-                "Create the tables given in the Protocol Buffer message in the action body."
-                    .to_owned(),
+            description: "Create the tables given in the protobuf message in the action body."
+                .to_owned(),
         };
 
         let initialize_database_action = ActionType {
