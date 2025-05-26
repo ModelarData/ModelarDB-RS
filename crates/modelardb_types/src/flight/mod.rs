@@ -14,6 +14,7 @@
  */
 
 use arrow::datatypes::Schema;
+use prost::Message;
 
 use crate::error::Result;
 use crate::functions::try_convert_schema_to_bytes;
@@ -21,6 +22,35 @@ use crate::types::{ErrorBound, TimeSeriesTableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
+}
+
+/// Serialize a request to create tables in ModelarDB.
+pub fn serialize_create_tables_request(
+    normal_table_metadata: Vec<protocol::create_tables_request::NormalTableMetadata>,
+    time_series_table_metadata: Vec<protocol::create_tables_request::TimeSeriesTableMetadata>,
+) -> Vec<u8> {
+    let create_tables_request = protocol::CreateTablesRequest {
+        normal_tables: normal_table_metadata,
+        time_series_tables: time_series_table_metadata,
+    };
+
+    create_tables_request.encode_to_vec()
+}
+
+/// Encode and serialize the metadata for a normal table into a request to create tables in 
+/// ModelarDB. If the schema cannot be converted to bytes, return 
+/// [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
+pub fn encode_and_serialize_normal_table_metadata(
+    table_name: &str,
+    schema: &Schema,
+) -> Result<Vec<u8>> {
+    let normal_table_metadata = encode_normal_table_metadata(table_name, schema)?;
+    let create_tables_request = protocol::CreateTablesRequest {
+        normal_tables: vec![normal_table_metadata],
+        time_series_tables: vec![],
+    };
+    
+    Ok(create_tables_request.encode_to_vec())
 }
 
 /// If `schema` can be converted to bytes, encode the normal table metadata into a serializable
@@ -33,6 +63,21 @@ pub fn encode_normal_table_metadata(
         name: table_name.to_string(),
         schema: try_convert_schema_to_bytes(schema)?,
     })
+}
+
+/// Encode and serialize the metadata for a time series table into a request to create tables in
+/// ModelarDB. If the schema cannot be converted to bytes, return 
+/// [ModelarDbTypesError](crate::error::ModelarDbTypesError).
+pub fn encode_and_serialize_time_series_table_metadata(
+    time_series_table_metadata: TimeSeriesTableMetadata,
+) -> Result<Vec<u8>> {
+    let time_series_table_metadata = encode_time_series_table_metadata(time_series_table_metadata)?;
+    let create_tables_request = protocol::CreateTablesRequest {
+        normal_tables: vec![],
+        time_series_tables: vec![time_series_table_metadata],
+    };
+
+    Ok(create_tables_request.encode_to_vec())
 }
 
 /// Return a serializable Protocol Buffer message constructed from the metadata in
