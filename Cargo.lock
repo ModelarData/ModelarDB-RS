@@ -3090,6 +3090,7 @@ name = "modelardb_types"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "arrow-flight",
  "datafusion",
  "modelardb_common",
  "modelardb_storage",
