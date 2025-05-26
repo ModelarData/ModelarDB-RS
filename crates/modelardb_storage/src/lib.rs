@@ -36,7 +36,6 @@ use arrow::compute::concat_batches;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::{IpcWriteOptions, StreamWriter};
-use arrow_flight::{IpcMessage, SchemaAsIpc};
 use bytes::{Buf, Bytes};
 use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, ToDFSchema};
@@ -55,6 +54,7 @@ use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use futures::StreamExt;
+use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 use object_store::ObjectStore;
@@ -269,23 +269,6 @@ fn apache_parquet_writer_properties(
         .set_bloom_filter_enabled(false)
         .set_sorting_columns(sorting_columns)
         .build()
-}
-
-/// Convert a [`Schema`] to [`Vec<u8>`].
-pub fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
-    let options = IpcWriteOptions::default();
-    let schema_as_ipc = SchemaAsIpc::new(schema, &options);
-
-    let ipc_message: IpcMessage = schema_as_ipc.try_into()?;
-
-    Ok(ipc_message.0.to_vec())
-}
-
-/// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-/// [`ModelarDbStorageError`].
-pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
-    let ipc_message = IpcMessage(schema_bytes.into());
-    Schema::try_from(ipc_message).map_err(|error| error.into())
 }
 
 /// Convert a [`RecordBatch`] to a [`Vec<u8>`].
@@ -617,27 +600,6 @@ mod tests {
                 .await;
 
         (temp_dir, result)
-    }
-
-    // Tests for try_convert_schema_to_bytes() and try_convert_bytes_to_schema().
-    #[test]
-    fn test_schema_to_bytes_and_bytes_to_schema() {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("field_2", ArrowValue::DATA_TYPE, false),
-        ]));
-
-        // Serialize the schema to bytes.
-        let bytes = try_convert_schema_to_bytes(&schema).unwrap();
-
-        // Deserialize the bytes to the schema.
-        let bytes_schema = try_convert_bytes_to_schema(bytes).unwrap();
-        assert_eq!(*schema, bytes_schema);
-    }
-
-    #[test]
-    fn test_invalid_bytes_to_schema() {
-        assert!(try_convert_bytes_to_schema(vec!(1, 2, 4, 8)).is_err());
     }
 
     // Tests for try_convert_record_batch_to_bytes() and try_convert_bytes_to_record_batch().

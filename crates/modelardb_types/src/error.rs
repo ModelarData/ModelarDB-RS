@@ -18,6 +18,7 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::result::Result as StdResult;
+
 use arrow::error::ArrowError;
 use datafusion::common::DataFusionError;
 

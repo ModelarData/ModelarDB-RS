@@ -26,15 +26,13 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::lit;
 use datafusion::prelude::{SessionContext, col};
 use modelardb_common::test::ERROR_BOUND_ZERO;
+use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::parser::sql_expr_to_generated_column;
-use crate::{
-    register_metadata_table, sql_and_concat, try_convert_bytes_to_schema,
-    try_convert_schema_to_bytes,
-};
+use crate::{register_metadata_table, sql_and_concat};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {

@@ -46,12 +46,12 @@ pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use std::sync::Arc;
-    
-    use arrow::datatypes::Field;
+
     use arrow::array::ArrowPrimitiveType;
-    
+    use arrow::datatypes::Field;
+
     use crate::types::ArrowValue;
 
     // Tests for normalize_name().
