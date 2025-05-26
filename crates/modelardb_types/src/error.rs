@@ -21,6 +21,7 @@ use std::result::Result as StdResult;
 
 use arrow::error::ArrowError;
 use datafusion::common::DataFusionError;
+use prost::DecodeError;
 
 /// Result type used throughout `modelardb_types`.
 pub type Result<T> = StdResult<T, ModelarDbTypesError>;
@@ -34,6 +35,8 @@ pub enum ModelarDbTypesError {
     DataFusion(DataFusionError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
+    /// Error returned by Prost when decoding a message that is not a valid.
+    ProstDecode(DecodeError),
 }
 
 impl Display for ModelarDbTypesError {
@@ -42,6 +45,7 @@ impl Display for ModelarDbTypesError {
             Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
+            Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
         }
     }
 }
@@ -53,6 +57,7 @@ impl Error for ModelarDbTypesError {
             Self::Arrow(reason) => Some(reason),
             Self::DataFusion(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
+            Self::ProstDecode(reason) => Some(reason),
         }
     }
 }
@@ -66,5 +71,11 @@ impl From<ArrowError> for ModelarDbTypesError {
 impl From<DataFusionError> for ModelarDbTypesError {
     fn from(error: DataFusionError) -> Self {
         Self::DataFusion(error)
+    }
+}
+
+impl From<DecodeError> for ModelarDbTypesError {
+    fn from(error: DecodeError) -> Self {
+        Self::ProstDecode(error)
     }
 }
