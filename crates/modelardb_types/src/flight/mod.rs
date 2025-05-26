@@ -69,7 +69,7 @@ pub fn encode_normal_table_metadata(
 /// ModelarDB. If the schema cannot be converted to bytes, return
 /// [ModelarDbTypesError](crate::error::ModelarDbTypesError).
 pub fn encode_and_serialize_time_series_table_metadata(
-    time_series_table_metadata: TimeSeriesTableMetadata,
+    time_series_table_metadata: &TimeSeriesTableMetadata,
 ) -> Result<Vec<u8>> {
     let time_series_table_metadata = encode_time_series_table_metadata(time_series_table_metadata)?;
     let create_tables_request = protocol::CreateTablesRequest {
@@ -84,7 +84,7 @@ pub fn encode_and_serialize_time_series_table_metadata(
 /// `time_series_table_metadata`. If the schema cannot be converted to bytes, return
 /// [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn encode_time_series_table_metadata(
-    time_series_table_metadata: TimeSeriesTableMetadata,
+    time_series_table_metadata: &TimeSeriesTableMetadata,
 ) -> Result<protocol::create_tables_request::TimeSeriesTableMetadata> {
     let mut generated_column_expressions =
         Vec::with_capacity(time_series_table_metadata.query_schema.fields.len());

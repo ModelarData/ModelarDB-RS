@@ -157,9 +157,11 @@ impl Operations for Client {
     /// returned.
     async fn create(&mut self, table_name: &str, table_type: TableType) -> Result<()> {
         // Convert the table metadata to a protobuf message that can be sent to ModelarDB.
-        let record_batch = match table_type {
+        let protobuf_bytes = match table_type {
             TableType::NormalTable(schema) => {
-                modelardb_storage::normal_table_metadata_to_record_batch(table_name, &schema)?
+                modelardb_types::flight::encode_and_serialize_normal_table_metadata(
+                    table_name, &schema,
+                )?
             }
             TableType::TimeSeriesTable(schema, error_bounds, generated_columns) => {
                 let time_series_table_metadata = try_new_time_series_table_metadata(
@@ -169,19 +171,15 @@ impl Operations for Client {
                     generated_columns,
                 )?;
 
-                modelardb_storage::time_series_table_metadata_to_record_batch(
+                modelardb_types::flight::encode_and_serialize_time_series_table_metadata(
                     &time_series_table_metadata,
                 )?
             }
         };
 
-        // Convert the record batch to bytes that can be transferred in an Action request.
-        let record_batch_bytes =
-            modelardb_storage::try_convert_record_batch_to_bytes(&record_batch)?;
-
         let action = Action {
             r#type: "CreateTables".to_owned(),
-            body: record_batch_bytes.into(),
+            body: protobuf_bytes.into(),
         };
 
         self.flight_client.do_action(action).await?;

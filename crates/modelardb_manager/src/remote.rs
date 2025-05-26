@@ -188,15 +188,20 @@ impl FlightServiceHandler {
             .map_err(error_to_status_internal)?;
 
         // Register and save the table to each node in the cluster.
-        let record_batch =
-            modelardb_storage::normal_table_metadata_to_record_batch(table_name, schema)
+        let protobuf_bytes =
+            modelardb_types::flight::encode_and_serialize_normal_table_metadata(table_name, schema)
                 .map_err(error_to_status_internal)?;
+
+        let action = Action {
+            r#type: "CreateTables".to_owned(),
+            body: protobuf_bytes.into(),
+        };
 
         self.context
             .cluster
             .read()
             .await
-            .create_tables(&record_batch, &self.context.key)
+            .cluster_do_action(action, &self.context.key)
             .await
             .map_err(error_to_status_internal)?;
 
@@ -230,16 +235,22 @@ impl FlightServiceHandler {
             .map_err(error_to_status_internal)?;
 
         // Register and save the time series table to each node in the cluster.
-        let record_batch = modelardb_storage::time_series_table_metadata_to_record_batch(
-            &time_series_table_metadata,
-        )
-        .map_err(error_to_status_internal)?;
+        let protobuf_bytes =
+            modelardb_types::flight::encode_and_serialize_time_series_table_metadata(
+                &time_series_table_metadata,
+            )
+            .map_err(error_to_status_internal)?;
+
+        let action = Action {
+            r#type: "CreateTables".to_owned(),
+            body: protobuf_bytes.into(),
+        };
 
         self.context
             .cluster
             .read()
             .await
-            .create_tables(&record_batch, &self.context.key)
+            .cluster_do_action(action, &self.context.key)
             .await
             .map_err(error_to_status_internal)?;
 
