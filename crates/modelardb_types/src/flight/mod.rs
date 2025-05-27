@@ -13,12 +13,17 @@
  * limitations under the License.
  */
 
+use std::sync::Arc;
+
 use arrow::datatypes::Schema;
+use datafusion::common::DFSchema;
+use datafusion_proto::bytes::Serializeable;
+use prost::bytes::Bytes;
 use prost::Message;
 
-use crate::error::Result;
-use crate::functions::try_convert_schema_to_bytes;
-use crate::types::{ErrorBound, TimeSeriesTableMetadata};
+use crate::error::{ModelarDbTypesError, Result};
+use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
+use crate::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
@@ -38,8 +43,7 @@ pub fn serialize_create_tables_request(
 }
 
 /// Encode and serialize the metadata for a normal table into a request to create tables in
-/// ModelarDB. If the schema cannot be converted to bytes, return
-/// [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
+/// ModelarDB. If the schema cannot be converted to bytes, return [`ModelarDbTypesError`].
 pub fn encode_and_serialize_normal_table_metadata(
     table_name: &str,
     schema: &Schema,
@@ -54,7 +58,7 @@ pub fn encode_and_serialize_normal_table_metadata(
 }
 
 /// If `schema` can be converted to bytes, encode the normal table metadata into a serializable
-/// protobuf message, otherwise return [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
+/// protobuf message, otherwise return [`ModelarDbTypesError`].
 pub fn encode_normal_table_metadata(
     table_name: &str,
     schema: &Schema,
@@ -66,8 +70,7 @@ pub fn encode_normal_table_metadata(
 }
 
 /// Encode and serialize the metadata for a time series table into a request to create tables in
-/// ModelarDB. If the schema cannot be converted to bytes, return
-/// [ModelarDbTypesError](crate::error::ModelarDbTypesError).
+/// ModelarDB. If the schema cannot be converted to bytes, return [ModelarDbTypesError].
 pub fn encode_and_serialize_time_series_table_metadata(
     time_series_table_metadata: &TimeSeriesTableMetadata,
 ) -> Result<Vec<u8>> {
@@ -82,7 +85,7 @@ pub fn encode_and_serialize_time_series_table_metadata(
 
 /// Return a serializable protobuf message constructed from the metadata in
 /// `time_series_table_metadata`. If the schema cannot be converted to bytes, return
-/// [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
+/// [`ModelarDbTypesError`].
 pub fn encode_time_series_table_metadata(
     time_series_table_metadata: &TimeSeriesTableMetadata,
 ) -> Result<protocol::create_tables_request::TimeSeriesTableMetadata> {
@@ -90,11 +93,11 @@ pub fn encode_time_series_table_metadata(
         Vec::with_capacity(time_series_table_metadata.query_schema.fields.len());
     for generated_column in &time_series_table_metadata.generated_columns {
         if let Some(generated_column) = generated_column {
-            let sql_expr = generated_column.original_expr.clone();
-            generated_column_expressions.push(sql_expr);
+            let expr_bytes = generated_column.expr.to_bytes()?;
+            generated_column_expressions.push(expr_bytes.to_vec());
         } else {
-            // An empty string is used to represent columns that are not generated.
-            generated_column_expressions.push(String::new());
+            // Empty bytes are used to represent columns that are not generated.
+            generated_column_expressions.push(Bytes::new().to_vec());
         }
     }
 

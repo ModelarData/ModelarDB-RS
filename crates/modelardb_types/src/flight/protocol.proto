@@ -36,7 +36,7 @@ message CreateTablesRequest {
     string name = 1;
     bytes schema = 2;
     repeated ErrorBound error_bounds = 3;
-    repeated string generated_column_expressions = 4;
+    repeated bytes generated_column_expressions = 4;
   }
 
   repeated NormalTableMetadata normal_tables = 1;
