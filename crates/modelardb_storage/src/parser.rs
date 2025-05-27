@@ -163,27 +163,6 @@ pub fn tokenize_and_parse_sql_expression(
         .map_err(|error| error.into())
 }
 
-/// Convert `sql_expression` to a [`GeneratedColumn`] if it is a correct SQL expression that only
-/// references columns in [`DFSchema`], otherwise [`ModelarDbStorageError`] is returned.
-pub fn sql_expr_to_generated_column(
-    sql_expression: &str,
-    df_schema: &DFSchema,
-) -> Result<GeneratedColumn> {
-    let expr = tokenize_and_parse_sql_expression(sql_expression, df_schema)?;
-
-    let source_columns: StdResult<Vec<usize>, DataFusionError> = expr
-        .column_refs()
-        .iter()
-        .map(|column| df_schema.index_of_column(column))
-        .collect();
-
-    Ok(GeneratedColumn {
-        expr,
-        source_columns: source_columns?,
-        original_expr: sql_expression.to_owned(),
-    })
-}
-
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
 /// SERIES TABLE table_name DDL statements and INCLUDE 'address'[, 'address']+ DQL statements.
 #[derive(Debug)]
@@ -1006,11 +985,7 @@ fn extract_generation_exprs_for_all_columns(
                 generated_keyword: _,
             } = &column_def_option.option
             {
-                // The expression is saved as a string, so it can be stored in the metadata Delta
-                // Lake, it is not stored in TimeSeriesTableMetadata as it not used for during query
-                // execution.
                 let sql_expr = generation_expr.as_ref().unwrap();
-                let original_expr = sql_expr.to_string();
 
                 // Ensure that the parsed sqlparser expression can be converted to a logical Apache
                 // Arrow DataFusion expression within the context of schema to check it for errors.
@@ -1023,18 +998,8 @@ fn extract_generation_exprs_for_all_columns(
                 let _physical_expr =
                     planner::create_physical_expr(&expr, &df_schema, &execution_props)?;
 
-                // unwrap() is safe as the loop iterates over the columns in the schema.
-                let source_columns = expr
-                    .column_refs()
-                    .iter()
-                    .map(|column| df_schema.index_of_column(column).unwrap())
-                    .collect();
-
-                generated_column = Some(GeneratedColumn {
-                    expr,
-                    source_columns,
-                    original_expr,
-                });
+                // unwrap() is safe as the expression only references columns in the schema.
+                generated_column = Some(GeneratedColumn::try_from_expr(expr, &df_schema).unwrap());
             }
         }
 
@@ -1129,7 +1094,6 @@ fn semantic_checks_for_truncate(
 mod tests {
     use super::*;
 
-    use datafusion::logical_expr::col;
     use sqlparser::dialect::ClickHouseDialect;
 
     // Tests for tokenize_and_parse_sql_statement().
@@ -1618,42 +1582,5 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_include_zero_addresses_select() {
         assert!(tokenize_and_parse_sql_statement("INCLUDE SELECT * FROM table_name",).is_err());
-    }
-
-    // Tests for sql_expr_to_generated_column().
-    #[test]
-    fn test_sql_expr_to_generated_column() {
-        let schema = Schema::new(vec![
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
-        ]);
-
-        let sql_expr = "field_1 + field_2";
-        let expected_generated_column = GeneratedColumn {
-            expr: col("field_1") + col("field_2"),
-            source_columns: vec![0, 1],
-            original_expr: sql_expr.to_owned(),
-        };
-
-        let df_schema = schema.to_dfschema().unwrap();
-        let mut result = sql_expr_to_generated_column(sql_expr, &df_schema).unwrap();
-
-        // Sort the source columns to ensure the order is consistent.
-        result.source_columns.sort();
-        assert_eq!(expected_generated_column, result);
-    }
-
-    #[test]
-    fn test_sql_expr_to_generated_column_with_invalid_sql_expr() {
-        let schema = Schema::new(vec![
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("generated_column", ArrowValue::DATA_TYPE, false),
-        ]);
-
-        let df_schema = schema.to_dfschema().unwrap();
-        let result = sql_expr_to_generated_column("field_1 + field_2", &df_schema);
-
-        assert!(result.is_err());
     }
 }

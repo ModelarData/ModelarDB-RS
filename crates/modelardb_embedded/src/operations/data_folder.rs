@@ -1096,7 +1096,6 @@ mod tests {
         let expected_generated_column = GeneratedColumn {
             expr: col("field_1") + col("field_2"),
             source_columns: vec![3, 4],
-            original_expr: "field_1 + field_2".to_owned(),
         };
 
         let mut actual_generated_column = time_series_table_metadata

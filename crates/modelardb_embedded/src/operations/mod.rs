@@ -28,8 +28,8 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::DFSchema;
 use datafusion::execution::RecordBatchStream;
-use modelardb_storage::parser::sql_expr_to_generated_column;
-use modelardb_types::types::{ErrorBound, TimeSeriesTableMetadata};
+use modelardb_storage::parser::tokenize_and_parse_sql_expression;
+use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
 use crate::error::Result;
 use crate::{Aggregate, TableType};
@@ -128,8 +128,9 @@ fn try_new_time_series_table_metadata(
     for field in schema.fields() {
         error_bounds_all.push(error_bounds.remove(field.name()).unwrap_or(lossless));
 
-        if let Some(expr) = generated_columns.get(field.name()) {
-            generated_columns_all.push(Some(sql_expr_to_generated_column(expr, &df_schema)?));
+        if let Some(sql_expr) = generated_columns.get(field.name()) {
+            let expr = tokenize_and_parse_sql_expression(sql_expr, &df_schema)?;
+            generated_columns_all.push(Some(GeneratedColumn::try_from_expr(expr, &df_schema)?));
         } else {
             generated_columns_all.push(None);
         }
