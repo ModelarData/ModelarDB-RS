@@ -38,7 +38,6 @@ use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
-use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::{ServerMode, TimeSeriesTableMetadata};
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -521,8 +520,8 @@ impl FlightService for FlightServiceHandler {
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `CreateTables`: Create the tables given in the
-    /// [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest) Protocol
-    /// Buffer message in the action body. The tables are created for each node in the cluster of
+    /// [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest) protobuf 
+    /// message in the action body. The tables are created for each node in the cluster of
     /// nodes controlled by the manager.
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the metadata required
     /// to create the normal tables and time series tables that are missing in the list. The list of
@@ -543,15 +542,9 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTables" {
-            // Extract the record batch from the action body.
-            let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
-                action.body.into(),
-                &TABLE_METADATA_SCHEMA.0.clone(),
-            )
-            .map_err(error_to_status_invalid_argument)?;
-
+            // Deserialize and extract the table metadata from the protobuf in the action body.
             let (normal_table_metadata, time_series_table_metadata) =
-                modelardb_storage::table_metadata_from_record_batch(&record_batch)
+                modelardb_types::flight::deserialize_and_extract_table_metadata(&action.body)
                     .map_err(error_to_status_invalid_argument)?;
 
             for (table_name, schema) in normal_table_metadata {

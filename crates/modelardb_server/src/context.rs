@@ -21,7 +21,6 @@ use std::sync::Arc;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::prelude::SessionContext;
-use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -70,20 +69,13 @@ impl Context {
         })
     }
 
-    /// Convert the bytes to a [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) and
-    /// create tables using the metadata in the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch).
-    /// Returns [`ModelarDbServerError`] if the bytes could not be converted to a
-    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch), the
-    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) could not be parsed, or the
-    /// tables could not be created.
+    /// Deserialize the bytes to a [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest)
+    /// protobuf message and create tables using the metadata in the message. Returns [`ModelarDbServerError`]
+    /// if the bytes could not be deserialized, the table metadata could not be extracted from the
+    /// protobuf message, or the tables could not be created.
     pub(crate) async fn create_tables_from_bytes(&self, bytes: Vec<u8>) -> Result<()> {
-        let record_batch = modelardb_storage::try_convert_bytes_to_record_batch(
-            bytes,
-            &TABLE_METADATA_SCHEMA.0.clone(),
-        )?;
-
         let (normal_table_metadata, time_series_table_metadata) =
-            modelardb_storage::table_metadata_from_record_batch(&record_batch)?;
+            modelardb_types::flight::deserialize_and_extract_table_metadata(&bytes)?;
 
         for (table_name, schema) in normal_table_metadata {
             self.create_normal_table(&table_name, &schema).await?;
