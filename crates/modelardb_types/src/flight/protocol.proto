@@ -53,3 +53,8 @@ message GetConfigurationResponse {
   uint32 compression_threads = 7;
   uint32 writer_threads = 8;
 }
+
+message UpdateConfigurationRequest {
+  string setting = 1;
+  string new_value = 2;
+}

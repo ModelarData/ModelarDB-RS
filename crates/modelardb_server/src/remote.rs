@@ -40,11 +40,13 @@ use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStrea
 use deltalake::arrow::datatypes::Schema;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
+use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
-use modelardb_common::{arguments, remote};
 use modelardb_storage::parser::{self, ModelarDbStatement};
+use modelardb_types::flight::protocol;
 use modelardb_types::functions;
 use modelardb_types::types::TimeSeriesTableMetadata;
+use prost::Message;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -561,9 +563,8 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the
-    /// [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest) protobuf
-    /// message in the action body.
+    /// * `CreateTables`: Create the tables given in the [`CreateTablesRequest`](protocol::CreateTablesRequest)
+    /// protobuf message in the action body.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -576,11 +577,11 @@ impl FlightService for FlightServiceHandler {
     /// that is running the server. Note that since the process is killed, a conventional response
     /// cannot be returned.
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
-    /// configuration is returned in a single [`RecordBatch`].
-    /// * `UpdateConfiguration`: Update a single setting in the configuration. Each argument in the
-    /// body should start with the size of the argument, immediately followed by the argument value.
-    /// The first argument should be the setting to update. The second argument should be the new
-    /// value of the setting as an unsigned integer.
+    /// configuration is returned in a [`GetConfigurationResponse`](protocol::GetConfigurationResponse)
+    /// protobuf message.
+    /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
+    /// and the new value is provided in the [`UpdateConfigurationRequest`](protocol::UpdateConfigurationRequest)
+    /// protobuf message in the action body.
     /// * `NodeType`: Get the type of the node. The type is always `server`. The type of the node
     /// is returned as a string.
     async fn do_action(
@@ -652,10 +653,12 @@ impl FlightService for FlightServiceHandler {
                 })
             }))))
         } else if action.r#type == "UpdateConfiguration" {
-            let (setting, offset_data) =
-                arguments::decode_argument(&action.body).map_err(error_to_status_internal)?;
-            let (new_value, _offset_data) =
-                arguments::decode_argument(offset_data).map_err(error_to_status_internal)?;
+            let update_configuration_request =
+                protocol::UpdateConfigurationRequest::decode(action.body.clone())
+                    .map_err(error_to_status_internal)?;
+
+            let setting = update_configuration_request.setting;
+            let new_value = update_configuration_request.new_value;
 
             // Parse the new value into None if it is empty and a usize integer if it is not empty.
             let new_value: Option<usize> = (!new_value.is_empty())
@@ -674,7 +677,7 @@ impl FlightService for FlightServiceHandler {
             let invalid_empty_error =
                 Status::invalid_argument(format!("New value for {setting} cannot be empty."));
 
-            match setting {
+            match setting.as_str() {
                 "multivariate_reserved_memory_in_bytes" => {
                     let new_value = new_value.ok_or(invalid_empty_error)?;
 
