@@ -578,7 +578,7 @@ impl FlightService for FlightServiceHandler {
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `CreateTables`: Create the tables given in the
-    /// [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest) protobuf 
+    /// [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest) protobuf
     /// message in the action body.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage

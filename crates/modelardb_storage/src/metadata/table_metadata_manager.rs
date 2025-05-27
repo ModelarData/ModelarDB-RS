@@ -23,7 +23,7 @@ use std::sync::Arc;
 use arrow::array::{Array, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use datafusion::common::{DFSchema, ToDFSchema};
-use datafusion::logical_expr::{lit, Expr};
+use datafusion::logical_expr::{Expr, lit};
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
 use modelardb_common::test::ERROR_BOUND_ZERO;
@@ -340,7 +340,9 @@ impl TableMetadataManager {
                     .generated_columns
                     .get(query_schema_index)
                 {
-                    Some(Some(generated_column)) => Some(generated_column.expr.to_bytes()?.to_vec()),
+                    Some(Some(generated_column)) => {
+                        Some(generated_column.expr.to_bytes()?.to_vec())
+                    }
                     _ => None,
                 };
 
@@ -369,7 +371,9 @@ impl TableMetadataManager {
                             Arc::new(Int16Array::from(vec![query_schema_index as i16])),
                             Arc::new(Float32Array::from(vec![error_bound_value])),
                             Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                            Arc::new(BinaryArray::from_opt_vec(vec![maybe_generated_column_expr.as_deref()])),
+                            Arc::new(BinaryArray::from_opt_vec(vec![
+                                maybe_generated_column_expr.as_deref(),
+                            ])),
                         ],
                     )
                     .await?;
