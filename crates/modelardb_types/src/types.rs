@@ -20,11 +20,13 @@
 //! of aliases are all for the same underlying type.
 
 use std::fmt;
+use std::result::Result as StdResult;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::array::{RecordBatch, StringArray};
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
+use datafusion::common::{DFSchema, DataFusionError};
 use datafusion::logical_expr::Expr;
 
 use crate::error::{ModelarDbTypesError, Result};
@@ -313,9 +315,23 @@ pub struct GeneratedColumn {
     pub expr: Expr,
     /// Indices of the stored columns used by `expr` to compute the column's values.
     pub source_columns: Vec<usize>,
-    /// Original representation of `expr`. It is copied from the SQL statement, so it can be stored
-    /// in the metadata Delta Lake as `expr` does not implement serialization and deserialization.
-    pub original_expr: String,
+}
+
+impl GeneratedColumn {
+    /// Return a new [`GeneratedColumn`] with the given expression if it only references columns in
+    /// [`DFSchema`], otherwise return [`ModelarDbTypesError`].
+    pub fn try_from_expr(expr: Expr, df_schema: &DFSchema) -> Result<Self> {
+        let source_columns: StdResult<Vec<usize>, DataFusionError> = expr
+            .column_refs()
+            .iter()
+            .map(|column| df_schema.index_of_column(column))
+            .collect();
+
+        Ok(Self {
+            expr,
+            source_columns: source_columns?,
+        })
+    }
 }
 
 /// The different possible modes of a ModelarDB server, assigned when the server is started.
@@ -470,13 +486,11 @@ mod tests {
         generated_columns[5] = Some(GeneratedColumn {
             expr: Expr::Column("".into()),
             source_columns: vec![],
-            original_expr: "".to_owned(),
         });
 
         generated_columns[6] = Some(GeneratedColumn {
             expr: Expr::Column("".into()),
             source_columns: vec![5],
-            original_expr: "".to_owned(),
         });
 
         let result = TimeSeriesTableMetadata::try_new(
