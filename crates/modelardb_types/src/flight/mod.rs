@@ -16,10 +16,11 @@
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
-use datafusion::common::DFSchema;
+use datafusion::common::{DFSchema, ToDFSchema};
+use datafusion::logical_expr::Expr;
 use datafusion_proto::bytes::Serializeable;
-use prost::bytes::Bytes;
 use prost::Message;
+use prost::bytes::Bytes;
 
 use crate::error::{ModelarDbTypesError, Result};
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
@@ -144,4 +145,83 @@ fn encode_error_bounds(
     }
 
     error_bounds_all
+}
+
+/// Deserialize and extract the table metadata from `bytes` and return the table metadata as a tuple
+/// of `(normal_table_metadata, time_series_table_metadata)`. `normal_table_metadata` is a vector of
+/// tuples containing the table name and schema of the normal tables. If `bytes` cannot be
+/// deserialized, return [`ModelarDbTypesError`].
+pub fn deserialize_and_extract_table_metadata(
+    bytes: &[u8],
+) -> Result<(Vec<(String, Schema)>, Vec<TimeSeriesTableMetadata>)> {
+    let create_tables_request = protocol::CreateTablesRequest::decode(bytes)?;
+
+    let mut normal_table_metadata = Vec::new();
+    let mut time_series_table_metadata = Vec::new();
+
+    for normal_table in create_tables_request.normal_tables {
+        let schema = try_convert_bytes_to_schema(normal_table.schema)?;
+        normal_table_metadata.push((normal_table.name, schema));
+    }
+
+    for time_series_table in create_tables_request.time_series_tables {
+        let schema = Arc::new(try_convert_bytes_to_schema(time_series_table.schema)?);
+        let metadata = TimeSeriesTableMetadata::try_new(
+            time_series_table.name,
+            schema.clone(),
+            decode_error_bounds(&time_series_table.error_bounds)?,
+            decode_generated_column_expressions(
+                &time_series_table.generated_column_expressions,
+                &schema.to_dfschema()?,
+            )?,
+        )?;
+
+        time_series_table_metadata.push(metadata);
+    }
+
+    Ok((normal_table_metadata, time_series_table_metadata))
+}
+
+/// Decode the protobuf encoded error bounds into a vector of [`ErrorBound`]. Return
+/// [`ModelarDbTypesError`] if the error bound type is unknown or the value is invalid.
+fn decode_error_bounds(
+    encoded_error_bounds: &[protocol::create_tables_request::time_series_table_metadata::ErrorBound],
+) -> Result<Vec<ErrorBound>> {
+    let mut error_bounds = Vec::with_capacity(encoded_error_bounds.len());
+
+    for error_bound in encoded_error_bounds {
+        match error_bound.r#type {
+            0 => error_bounds.push(ErrorBound::Absolute(error_bound.value)),
+            1 => error_bounds.push(ErrorBound::Relative(error_bound.value)),
+            _ => {
+                return Err(ModelarDbTypesError::InvalidArgument(format!(
+                    "Unknown error bound type: {}.",
+                    error_bound.r#type
+                )));
+            }
+        };
+    }
+
+    Ok(error_bounds)
+}
+
+/// Decode the generated column expressions from a vector of byte expressions into a vector of
+/// optional [`GeneratedColumn`]. Return [`ModelarDbTypesError`] if the expression is invalid.
+fn decode_generated_column_expressions(
+    generated_column_expressions: &[Vec<u8>],
+    df_schema: &DFSchema,
+) -> Result<Vec<Option<GeneratedColumn>>> {
+    let mut expressions = Vec::with_capacity(generated_column_expressions.len());
+
+    for maybe_expr_bytes in generated_column_expressions {
+        // If the column is not generated, the bytes will be empty.
+        if maybe_expr_bytes.is_empty() {
+            expressions.push(None);
+        } else {
+            let expr = Expr::from_bytes(&maybe_expr_bytes)?;
+            expressions.push(Some(GeneratedColumn::try_from_expr(expr, df_schema)?));
+        }
+    }
+
+    Ok(expressions)
 }
