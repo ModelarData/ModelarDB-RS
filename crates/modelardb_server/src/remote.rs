@@ -31,7 +31,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket, utils,
 };
-use datafusion::arrow::array::{ArrayRef, StringArray, UInt64Array};
+use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
@@ -45,7 +45,6 @@ use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid
 use modelardb_common::{arguments, remote};
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::functions;
-use modelardb_types::schemas::CONFIGURATION_SCHEMA;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
@@ -659,42 +658,14 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "GetConfiguration" {
             // Extract the configuration data from the configuration manager.
             let configuration_manager = self.context.configuration_manager.read().await;
-            let settings = [
-                "uncompressed_reserved_memory_in_bytes",
-                "compressed_reserved_memory_in_bytes",
-                "transfer_batch_size_in_bytes",
-                "transfer_time_in_seconds",
-                "ingestion_threads",
-                "compression_threads",
-                "writer_threads",
-            ];
-            let values = vec![
-                Some(configuration_manager.uncompressed_reserved_memory_in_bytes() as u64),
-                Some(configuration_manager.compressed_reserved_memory_in_bytes() as u64),
-                configuration_manager
-                    .transfer_batch_size_in_bytes()
-                    .map(|n| n as u64),
-                configuration_manager
-                    .transfer_time_in_seconds()
-                    .map(|n| n as u64),
-                Some(configuration_manager.ingestion_threads as u64),
-                Some(configuration_manager.compression_threads as u64),
-                Some(configuration_manager.writer_threads as u64),
-            ];
+            let protobuf_bytes = configuration_manager.encode_and_serialize();
 
-            let schema = CONFIGURATION_SCHEMA.clone();
-
-            // Create the record batch with the current configuration.
-            let batch = RecordBatch::try_new(
-                schema.0.clone(),
-                vec![
-                    Arc::new(StringArray::from_iter_values(settings)),
-                    Arc::new(UInt64Array::from(values)),
-                ],
-            )
-            .unwrap();
-
-            send_record_batch(&batch)
+            // Return the configuration as an encoded and serialized protobuf message.
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: protobuf_bytes.into(),
+                })
+            }))))
         } else if action.r#type == "UpdateConfiguration" {
             let (setting, offset_data) =
                 arguments::decode_argument(&action.body).map_err(error_to_status_internal)?;

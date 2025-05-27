@@ -3051,6 +3051,7 @@ dependencies = [
  "modelardb_types",
  "object_store",
  "proptest",
+ "prost",
  "snmalloc-rs",
  "tempfile",
  "tokio",

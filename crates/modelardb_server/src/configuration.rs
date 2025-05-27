@@ -20,6 +20,7 @@ use std::env;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
+use prost::Message;
 
 use crate::ClusterMode;
 use crate::error::Result;
@@ -213,6 +214,25 @@ impl ConfigurationManager {
         self.transfer_time_in_seconds = new_transfer_time_in_seconds;
 
         Ok(())
+    }
+
+    /// Encode and serialize the current configuration into a byte representation of a protobuf 
+    /// message.
+    pub(crate) fn encode_and_serialize(&self) -> Vec<u8> {
+        let configuration = modelardb_types::flight::protocol::GetConfigurationResponse {
+            multivariate_reserved_memory_in_bytes: self.multivariate_reserved_memory_in_bytes
+                as u64,
+            uncompressed_reserved_memory_in_bytes: self.uncompressed_reserved_memory_in_bytes
+                as u64,
+            compressed_reserved_memory_in_bytes: self.compressed_reserved_memory_in_bytes as u64,
+            transfer_batch_size_in_bytes: self.transfer_batch_size_in_bytes.map(|v| v as u64),
+            transfer_time_in_seconds: self.transfer_time_in_seconds.map(|v| v as u64),
+            ingestion_threads: self.ingestion_threads as u32,
+            compression_threads: self.compression_threads as u32,
+            writer_threads: self.writer_threads as u32,
+        };
+
+        configuration.encode_to_vec()
     }
 }
 

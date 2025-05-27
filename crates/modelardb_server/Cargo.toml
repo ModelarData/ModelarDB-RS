@@ -38,6 +38,7 @@ modelardb_compression = { path = "../modelardb_compression" }
 modelardb_storage = { path = "../modelardb_storage" }
 modelardb_types = { path = "../modelardb_types" }
 object_store = { workspace = true, features = ["aws", "azure"] }
+prost.workspace = true
 snmalloc-rs = { workspace = true, features = ["build_cc"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-stream.workspace = true
