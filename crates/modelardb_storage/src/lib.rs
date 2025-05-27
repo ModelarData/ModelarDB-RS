@@ -27,9 +27,7 @@ pub mod test;
 use std::result::Result as StdResult;
 use std::sync::Arc;
 
-use arrow::array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, ListArray, RecordBatch, StringArray,
-};
+use arrow::array::RecordBatch;
 use arrow::compute;
 use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
@@ -37,7 +35,6 @@ use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::{IpcWriteOptions, StreamWriter};
 use bytes::{Buf, Bytes};
 use datafusion::catalog::TableProvider;
-use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::parquet::arrow::async_reader::{
@@ -53,15 +50,12 @@ use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use futures::StreamExt;
-use modelardb_types::functions::try_convert_bytes_to_schema;
-use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
-use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
+use modelardb_types::types::TimeSeriesTableMetadata;
 use object_store::ObjectStore;
 use object_store::path::Path;
 use sqlparser::ast::Statement;
 
-use crate::error::{ModelarDbStorageError, Result};
-use crate::parser::tokenize_and_parse_sql_expression;
+use crate::error::Result;
 use crate::query::metadata_table::MetadataTable;
 use crate::query::normal_table::NormalTable;
 use crate::query::time_series_table::TimeSeriesTable;
@@ -295,95 +289,6 @@ pub fn try_convert_bytes_to_record_batch(
     }
 
     concat_batches(schema, &record_batches).map_err(|error| error.into())
-}
-
-/// Extract the table metadata from `record_batch` and return the table metadata as a tuple of
-/// `(normal_table_metadata, time_series_table_metadata)`. `normal_table_metadata` is a vector of tuples
-/// containing the table name and schema of the normal tables. If the schema of the [`RecordBatch`]
-/// is invalid or the table metadata could not be extracted, return [`ModelarDbStorageError`].
-#[allow(clippy::type_complexity)]
-pub fn table_metadata_from_record_batch(
-    record_batch: &RecordBatch,
-) -> Result<(Vec<(String, Schema)>, Vec<TimeSeriesTableMetadata>)> {
-    if record_batch.schema() != TABLE_METADATA_SCHEMA.0 {
-        return Err(ModelarDbStorageError::InvalidArgument(
-            "Record batch does not contain the expected table metadata.".to_owned(),
-        ));
-    }
-
-    let mut normal_table_metadata = Vec::new();
-    let mut time_series_table_metadata = Vec::new();
-
-    let is_time_series_table_array = modelardb_types::array!(record_batch, 0, BooleanArray);
-    let name_array = modelardb_types::array!(record_batch, 1, StringArray);
-    let schema_array = modelardb_types::array!(record_batch, 2, BinaryArray);
-    let error_bounds_array = modelardb_types::array!(record_batch, 3, ListArray);
-    let generated_columns_array = modelardb_types::array!(record_batch, 4, ListArray);
-
-    for row_index in 0..record_batch.num_rows() {
-        let is_time_series_table = is_time_series_table_array.value(row_index);
-        let table_name = name_array.value(row_index).to_owned();
-        let schema = try_convert_bytes_to_schema(schema_array.value(row_index).to_vec())?;
-
-        if is_time_series_table {
-            let error_bounds = array_to_error_bounds(error_bounds_array.value(row_index))?;
-
-            let generated_columns = array_to_generated_columns(
-                generated_columns_array.value(row_index),
-                &schema.clone().to_dfschema()?,
-            )?;
-
-            let metadata = TimeSeriesTableMetadata::try_new(
-                table_name,
-                Arc::new(schema),
-                error_bounds,
-                generated_columns,
-            )?;
-
-            time_series_table_metadata.push(metadata);
-        } else {
-            normal_table_metadata.push((table_name, schema));
-        }
-    }
-
-    Ok((normal_table_metadata, time_series_table_metadata))
-}
-
-/// Parse the error bound values in `error_bounds_array` into a list of [`ErrorBounds`](ErrorBound).
-/// Returns [`ModelarDbServerError`] if an error bound value is invalid.
-fn array_to_error_bounds(error_bounds_array: ArrayRef) -> Result<Vec<ErrorBound>> {
-    let value_array = modelardb_types::cast!(error_bounds_array, Float32Array);
-    let mut error_bounds = Vec::with_capacity(value_array.len());
-    for value in value_array.iter().flatten() {
-        if value < 0.0 {
-            error_bounds.push(ErrorBound::try_new_relative(-value)?);
-        } else {
-            error_bounds.push(ErrorBound::try_new_absolute(value)?);
-        }
-    }
-
-    Ok(error_bounds)
-}
-
-/// Parse the generated column expressions in `generated_columns_array` into a list of optional
-/// [`GeneratedColumns`](GeneratedColumn). Returns [`ModelarDbServerError`] if a generated column
-/// expression is invalid.
-fn array_to_generated_columns(
-    generated_columns_array: ArrayRef,
-    df_schema: &DFSchema,
-) -> Result<Vec<Option<GeneratedColumn>>> {
-    let expr_array = modelardb_types::cast!(generated_columns_array, StringArray);
-    let mut generated_columns = Vec::with_capacity(expr_array.len());
-    for maybe_expr in expr_array.iter() {
-        if let Some(sql_expr) = maybe_expr {
-            let expr = tokenize_and_parse_sql_expression(sql_expr, df_schema)?;
-            generated_columns.push(Some(GeneratedColumn::try_from_expr(expr, df_schema)?));
-        } else {
-            generated_columns.push(None);
-        }
-    }
-
-    Ok(generated_columns)
 }
 
 #[cfg(test)]
