@@ -42,3 +42,14 @@ message CreateTablesRequest {
   repeated NormalTableMetadata normal_tables = 1;
   repeated TimeSeriesTableMetadata time_series_tables = 2;
 }
+
+message GetConfigurationResponse {
+  uint64 multivariate_reserved_memory_in_bytes = 1;
+  uint64 uncompressed_reserved_memory_in_bytes = 2;
+  uint64 compressed_reserved_memory_in_bytes = 3;
+  optional uint64 transfer_batch_size_in_bytes = 4;
+  optional uint64 transfer_time_in_seconds = 5;
+  uint32 ingestion_threads = 6;
+  uint32 compression_threads = 7;
+  uint32 writer_threads = 8;
+}
