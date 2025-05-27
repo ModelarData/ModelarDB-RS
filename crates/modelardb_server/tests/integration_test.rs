@@ -28,17 +28,18 @@ use std::time::Duration;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket, utils};
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 use datafusion::arrow::array::{Array, Float64Array, StringArray, UInt64Array};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
 use datafusion::arrow::ipc::convert;
-use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{StreamExt, stream};
 use modelardb_common::test::data_generation;
+use modelardb_types::flight::protocol;
 use modelardb_types::types::ErrorBound;
+use prost::Message;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -437,16 +438,6 @@ impl TestContext {
         };
 
         self.client.do_action(Request::new(action)).await
-    }
-
-    /// Retrieve the response of the [`Action`] with the type `action_type` and convert it into an
-    /// Apache Arrow [`RecordBatch`].
-    async fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
-        let response_bytes = self.retrieve_action_bytes(action_type).await;
-
-        // Convert the bytes in the response into an Apache Arrow record batch.
-        let mut reader = StreamReader::try_new(response_bytes.reader(), None).unwrap();
-        reader.next().unwrap().unwrap()
     }
 
     /// Retrieve the response of the [`Action`] with the type `action_type`.
@@ -1121,64 +1112,71 @@ async fn ingest_time_series_and_flush_data(
 #[tokio::test]
 async fn test_can_get_configuration() {
     let mut test_context = TestContext::new().await;
-    let configuration = test_context
-        .retrieve_action_record_batch("GetConfiguration")
-        .await;
 
-    let settings = modelardb_types::array!(configuration, 0, StringArray);
-    let values = modelardb_types::array!(configuration, 1, UInt64Array);
+    let configuration_bytes = test_context.retrieve_action_bytes("GetConfiguration").await;
+    let configuration = protocol::GetConfigurationResponse::decode(configuration_bytes).unwrap();
 
-    assert_eq!(settings.value(0), "uncompressed_reserved_memory_in_bytes");
-    assert_eq!(values.value(0), 512 * 1024 * 1024);
+    assert_eq!(
+        configuration.multivariate_reserved_memory_in_bytes,
+        512 * 1024 * 1024
+    );
+    assert_eq!(
+        configuration.uncompressed_reserved_memory_in_bytes,
+        512 * 1024 * 1024
+    );
+    assert_eq!(
+        configuration.compressed_reserved_memory_in_bytes,
+        512 * 1024 * 1024
+    );
+    assert_eq!(
+        configuration.transfer_batch_size_in_bytes,
+        Some(64 * 1024 * 1024)
+    );
+    assert_eq!(configuration.transfer_time_in_seconds, None);
+    assert_eq!(configuration.ingestion_threads, 1);
+    assert_eq!(configuration.compression_threads, 1);
+    assert_eq!(configuration.writer_threads, 1);
+}
 
-    assert_eq!(settings.value(1), "compressed_reserved_memory_in_bytes");
-    assert_eq!(values.value(1), 512 * 1024 * 1024);
+#[tokio::test]
+async fn test_can_update_multivariate_reserved_memory_in_bytes() {
+    let updated_configuration =
+        update_and_get_configuration("multivariate_reserved_memory_in_bytes").await;
 
-    assert_eq!(settings.value(2), "transfer_batch_size_in_bytes");
-    assert_eq!(values.value(2), 64 * 1024 * 1024);
-
-    assert_eq!(settings.value(3), "transfer_time_in_seconds");
-    assert_eq!(values.value(3), 0);
-    assert_eq!(values.null_count(), 1);
-
-    assert_eq!(settings.value(4), "ingestion_threads");
-    assert_eq!(values.value(4), 1);
-
-    assert_eq!(settings.value(5), "compression_threads");
-    assert_eq!(values.value(5), 1);
-
-    assert_eq!(settings.value(6), "writer_threads");
-    assert_eq!(values.value(6), 1);
+    assert_eq!(
+        updated_configuration.multivariate_reserved_memory_in_bytes,
+        1
+    );
 }
 
 #[tokio::test]
 async fn test_can_update_uncompressed_reserved_memory_in_bytes() {
-    let values_array =
-        update_and_retrieve_configuration_values("uncompressed_reserved_memory_in_bytes").await;
+    let updated_configuration =
+        update_and_get_configuration("uncompressed_reserved_memory_in_bytes").await;
 
-    assert_eq!(values_array.value(0), 1);
+    assert_eq!(
+        updated_configuration.uncompressed_reserved_memory_in_bytes,
+        1
+    );
 }
 
 #[tokio::test]
 async fn test_can_update_compressed_reserved_memory_in_bytes() {
-    let values_array =
-        update_and_retrieve_configuration_values("compressed_reserved_memory_in_bytes").await;
+    let updated_configuration =
+        update_and_get_configuration("compressed_reserved_memory_in_bytes").await;
 
-    assert_eq!(values_array.value(1), 1);
+    assert_eq!(updated_configuration.compressed_reserved_memory_in_bytes, 1);
 }
 
-async fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
+async fn update_and_get_configuration(setting: &str) -> protocol::GetConfigurationResponse {
     let mut test_context = TestContext::new().await;
     test_context
         .update_configuration(setting, "1")
         .await
         .unwrap();
 
-    let configuration = test_context
-        .retrieve_action_record_batch("GetConfiguration")
-        .await;
-
-    modelardb_types::array!(configuration, 1, UInt64Array).clone()
+    let configuration_bytes = test_context.retrieve_action_bytes("GetConfiguration").await;
+    protocol::GetConfigurationResponse::decode(configuration_bytes).unwrap()
 }
 
 #[tokio::test]
