@@ -33,7 +33,6 @@ use arrow_flight::{
 };
 use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
-use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
@@ -220,20 +219,6 @@ async fn send_flight_data(
         .send(flight_data_or_error)
         .await
         .map_err(error_to_status_internal)
-}
-
-/// Write the [`RecordBatch`] to a stream within a gRPC response.
-fn send_record_batch(
-    batch: &RecordBatch,
-) -> StdResult<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
-    let batch_bytes = modelardb_storage::try_convert_record_batch_to_bytes(batch)
-        .map_err(error_to_status_internal)?;
-
-    Ok(Response::new(Box::pin(stream::once(async {
-        Ok(FlightResult {
-            body: batch_bytes.into(),
-        })
-    }))))
 }
 
 /// Return an empty stream of [`RecordBatches`](RecordBatch) that can be returned when a SQL
