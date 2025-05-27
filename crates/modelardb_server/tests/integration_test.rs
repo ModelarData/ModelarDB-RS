@@ -421,20 +421,15 @@ impl TestContext {
     /// `UpdateConfiguration` action.
     async fn update_configuration(
         &mut self,
-        setting: &str,
-        setting_value: &str,
+        setting: i32,
+        new_value: Option<u64>,
     ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
-        let setting = setting.as_bytes();
-        let setting_size = &[0, setting.len() as u8];
-
-        let setting_value = setting_value.as_bytes();
-        let setting_value_size = &[0, setting_value.len() as u8];
+        let update_configuration_request =
+            protocol::UpdateConfigurationRequest { setting, new_value };
 
         let action = Action {
             r#type: "UpdateConfiguration".to_owned(),
-            body: [setting_size, setting, setting_value_size, setting_value]
-                .concat()
-                .into(),
+            body: update_configuration_request.encode_to_vec().into(),
         };
 
         self.client.do_action(Request::new(action)).await
@@ -1140,8 +1135,10 @@ async fn test_can_get_configuration() {
 
 #[tokio::test]
 async fn test_can_update_multivariate_reserved_memory_in_bytes() {
-    let updated_configuration =
-        update_and_get_configuration("multivariate_reserved_memory_in_bytes").await;
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration_request::Setting::MultivariateReservedMemoryInBytes as i32,
+    )
+    .await;
 
     assert_eq!(
         updated_configuration.multivariate_reserved_memory_in_bytes,
@@ -1151,8 +1148,10 @@ async fn test_can_update_multivariate_reserved_memory_in_bytes() {
 
 #[tokio::test]
 async fn test_can_update_uncompressed_reserved_memory_in_bytes() {
-    let updated_configuration =
-        update_and_get_configuration("uncompressed_reserved_memory_in_bytes").await;
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration_request::Setting::UncompressedReservedMemoryInBytes as i32,
+    )
+    .await;
 
     assert_eq!(
         updated_configuration.uncompressed_reserved_memory_in_bytes,
@@ -1162,16 +1161,18 @@ async fn test_can_update_uncompressed_reserved_memory_in_bytes() {
 
 #[tokio::test]
 async fn test_can_update_compressed_reserved_memory_in_bytes() {
-    let updated_configuration =
-        update_and_get_configuration("compressed_reserved_memory_in_bytes").await;
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration_request::Setting::CompressedReservedMemoryInBytes as i32,
+    )
+    .await;
 
     assert_eq!(updated_configuration.compressed_reserved_memory_in_bytes, 1);
 }
 
-async fn update_and_get_configuration(setting: &str) -> protocol::GetConfigurationResponse {
+async fn update_and_get_configuration(setting: i32) -> protocol::GetConfigurationResponse {
     let mut test_context = TestContext::new().await;
     test_context
-        .update_configuration(setting, "1")
+        .update_configuration(setting, Some(1))
         .await
         .unwrap();
 
@@ -1184,8 +1185,8 @@ async fn test_cannot_update_transfer_batch_size_in_bytes() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
-        "transfer_batch_size_in_bytes",
-        "1",
+        protocol::update_configuration_request::Setting::TransferBatchSizeInBytes as i32,
+        Some(1),
         "Invalid State Error: Storage engine is not configured to transfer data.",
     )
     .await;
@@ -1196,64 +1197,42 @@ async fn test_cannot_update_transfer_time_in_seconds() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
-        "transfer_time_in_seconds",
-        "1",
+        protocol::update_configuration_request::Setting::TransferTimeInSeconds as i32,
+        Some(1),
         "Invalid State Error: Storage engine is not configured to transfer data.",
     )
     .await;
 }
 
 #[tokio::test]
-async fn test_cannot_update_non_existing_setting() {
+async fn test_cannot_update_non_updatable_setting() {
     update_configuration_and_assert_error(
-        "invalid",
-        "1",
-        "invalid is not a setting in the server configuration.",
+        999,
+        Some(1),
+        "999 is not an updatable setting in the server configuration.",
     )
     .await;
 }
 
 #[tokio::test]
-async fn test_cannot_update_non_nullable_setting_with_empty_value() {
+async fn test_cannot_update_non_nullable_setting_with_null_value() {
     for setting in [
-        "uncompressed_reserved_memory_in_bytes",
-        "compressed_reserved_memory_in_bytes",
+        protocol::update_configuration_request::Setting::MultivariateReservedMemoryInBytes as i32,
+        protocol::update_configuration_request::Setting::UncompressedReservedMemoryInBytes as i32,
+        protocol::update_configuration_request::Setting::CompressedReservedMemoryInBytes as i32,
     ] {
         update_configuration_and_assert_error(
             setting,
-            "",
-            format!("New value for {setting} cannot be empty.").as_str(),
+            None,
+            format!("New value for {setting} cannot be null.").as_str(),
         )
         .await;
     }
 }
 
-#[tokio::test]
-async fn test_cannot_update_non_updatable_setting() {
-    for setting in ["ingestion_threads", "compression_threads", "writer_threads"] {
-        update_configuration_and_assert_error(
-            setting,
-            "1",
-            format!("{setting} is not an updatable setting in the server configuration.").as_str(),
-        )
-        .await;
-    }
-}
-
-#[tokio::test]
-async fn test_cannot_update_setting_with_invalid_value() {
-    update_configuration_and_assert_error(
-        "compressed_reserved_memory_in_bytes",
-        "-1",
-        "New value for compressed_reserved_memory_in_bytes is not valid: invalid digit found in string",
-    ).await;
-}
-
-async fn update_configuration_and_assert_error(setting: &str, setting_value: &str, error: &str) {
+async fn update_configuration_and_assert_error(setting: i32, new_value: Option<u64>, error: &str) {
     let mut test_context = TestContext::new().await;
-    let response = test_context
-        .update_configuration(setting, setting_value)
-        .await;
+    let response = test_context.update_configuration(setting, new_value).await;
 
     assert!(response.is_err());
     assert_eq!(response.err().unwrap().message(), error);

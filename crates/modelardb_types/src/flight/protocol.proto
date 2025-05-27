@@ -55,6 +55,14 @@ message GetConfigurationResponse {
 }
 
 message UpdateConfigurationRequest {
-  string setting = 1;
-  string new_value = 2;
+  enum Setting {
+    MULTIVARIATE_RESERVED_MEMORY_IN_BYTES = 0;
+    UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES = 1;
+    COMPRESSED_RESERVED_MEMORY_IN_BYTES = 2;
+    TRANSFER_BATCH_SIZE_IN_BYTES = 3;
+    TRANSFER_TIME_IN_SECONDS = 4;
+  }
+
+  Setting setting = 1;
+  optional uint64 new_value = 2;
 }
