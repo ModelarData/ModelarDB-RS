@@ -26,6 +26,7 @@ async-trait.workspace = true
 bytes.workspace = true
 dashmap.workspace = true
 datafusion.workspace = true
+datafusion-proto.workspace = true
 deltalake = { workspace = true, features = ["datafusion", "s3"] }
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }

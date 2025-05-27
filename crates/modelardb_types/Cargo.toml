@@ -23,6 +23,7 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 arrow.workspace = true
 arrow-flight.workspace = true
 datafusion.workspace = true
+datafusion-proto.workspace = true
 prost.workspace = true
 
 [build-dependencies]
