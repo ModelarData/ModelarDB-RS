@@ -577,8 +577,7 @@ impl FlightService for FlightServiceHandler {
     /// that is running the server. Note that since the process is killed, a conventional response
     /// cannot be returned.
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
-    /// configuration is returned in a [`GetConfigurationResponse`](protocol::GetConfigurationResponse)
-    /// protobuf message.
+    /// configuration is returned in a [`Configuration`](protocol::Configuration) protobuf message.
     /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
     /// and the new value is provided in the [`UpdateConfigurationRequest`](protocol::UpdateConfigurationRequest)
     /// protobuf message in the action body.

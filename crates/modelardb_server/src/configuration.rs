@@ -19,8 +19,9 @@
 use std::env;
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use modelardb_types::flight::protocol;
 use prost::Message;
+use tokio::sync::RwLock;
 
 use crate::ClusterMode;
 use crate::error::Result;
@@ -216,10 +217,10 @@ impl ConfigurationManager {
         Ok(())
     }
 
-    /// Encode and serialize the current configuration into a byte representation of a protobuf 
-    /// message.
+    /// Encode the current configuration into a [`Configuration`](protocol::Configuration)
+    /// protobuf message and serialize it.
     pub(crate) fn encode_and_serialize(&self) -> Vec<u8> {
-        let configuration = modelardb_types::flight::protocol::GetConfigurationResponse {
+        let configuration = protocol::Configuration {
             multivariate_reserved_memory_in_bytes: self.multivariate_reserved_memory_in_bytes
                 as u64,
             uncompressed_reserved_memory_in_bytes: self.uncompressed_reserved_memory_in_bytes

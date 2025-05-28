@@ -1109,7 +1109,7 @@ async fn test_can_get_configuration() {
     let mut test_context = TestContext::new().await;
 
     let configuration_bytes = test_context.retrieve_action_bytes("GetConfiguration").await;
-    let configuration = protocol::GetConfigurationResponse::decode(configuration_bytes).unwrap();
+    let configuration = protocol::Configuration::decode(configuration_bytes).unwrap();
 
     assert_eq!(
         configuration.multivariate_reserved_memory_in_bytes,
@@ -1169,7 +1169,7 @@ async fn test_can_update_compressed_reserved_memory_in_bytes() {
     assert_eq!(updated_configuration.compressed_reserved_memory_in_bytes, 1);
 }
 
-async fn update_and_get_configuration(setting: i32) -> protocol::GetConfigurationResponse {
+async fn update_and_get_configuration(setting: i32) -> protocol::Configuration {
     let mut test_context = TestContext::new().await;
     test_context
         .update_configuration(setting, Some(1))
@@ -1177,7 +1177,7 @@ async fn update_and_get_configuration(setting: i32) -> protocol::GetConfiguratio
         .unwrap();
 
     let configuration_bytes = test_context.retrieve_action_bytes("GetConfiguration").await;
-    protocol::GetConfigurationResponse::decode(configuration_bytes).unwrap()
+    protocol::Configuration::decode(configuration_bytes).unwrap()
 }
 
 #[tokio::test]

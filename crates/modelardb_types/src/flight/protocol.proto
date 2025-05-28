@@ -43,7 +43,7 @@ message TableMetadata {
   repeated TimeSeriesTableMetadata time_series_tables = 2;
 }
 
-message GetConfigurationResponse {
+message Configuration {
   uint64 multivariate_reserved_memory_in_bytes = 1;
   uint64 uncompressed_reserved_memory_in_bytes = 2;
   uint64 compressed_reserved_memory_in_bytes = 3;
