@@ -30,66 +30,69 @@ pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
 }
 
-/// Serialize a request to create tables in ModelarDB.
-pub fn serialize_create_tables_request(
-    normal_table_metadata: Vec<protocol::create_tables_request::NormalTableMetadata>,
-    time_series_table_metadata: Vec<protocol::create_tables_request::TimeSeriesTableMetadata>,
+/// Serialize the table metadata into a [`TableMetadata`](protocol::TableMetadata) protobuf message.
+pub fn serialize_table_metadata(
+    normal_table_metadata: Vec<protocol::table_metadata::NormalTableMetadata>,
+    time_series_table_metadata: Vec<protocol::table_metadata::TimeSeriesTableMetadata>,
 ) -> Vec<u8> {
-    let create_tables_request = protocol::CreateTablesRequest {
+    let table_metadata = protocol::TableMetadata {
         normal_tables: normal_table_metadata,
         time_series_tables: time_series_table_metadata,
     };
 
-    create_tables_request.encode_to_vec()
+    table_metadata.encode_to_vec()
 }
 
-/// Encode and serialize the metadata for a normal table into a request to create tables in
-/// ModelarDB. If the schema cannot be converted to bytes, return [`ModelarDbTypesError`].
+/// Encode the metadata for a normal table into a [`TableMetadata`](protocol::TableMetadata)
+/// protobuf message and serialize it. If the schema cannot be converted to bytes, return
+/// [`ModelarDbTypesError`].
 pub fn encode_and_serialize_normal_table_metadata(
     table_name: &str,
     schema: &Schema,
 ) -> Result<Vec<u8>> {
     let normal_table_metadata = encode_normal_table_metadata(table_name, schema)?;
-    let create_tables_request = protocol::CreateTablesRequest {
+    let table_metadata = protocol::TableMetadata {
         normal_tables: vec![normal_table_metadata],
         time_series_tables: vec![],
     };
 
-    Ok(create_tables_request.encode_to_vec())
+    Ok(table_metadata.encode_to_vec())
 }
 
-/// If `schema` can be converted to bytes, encode the normal table metadata into a serializable
-/// protobuf message, otherwise return [`ModelarDbTypesError`].
+/// If `schema` can be converted to bytes, encode the normal table metadata into a
+/// [`NormalTableMetadata`](protocol::table_metadata::NormalTableMetadata) protobuf message,
+/// otherwise return [`ModelarDbTypesError`].
 pub fn encode_normal_table_metadata(
     table_name: &str,
     schema: &Schema,
-) -> Result<protocol::create_tables_request::NormalTableMetadata> {
-    Ok(protocol::create_tables_request::NormalTableMetadata {
+) -> Result<protocol::table_metadata::NormalTableMetadata> {
+    Ok(protocol::table_metadata::NormalTableMetadata {
         name: table_name.to_string(),
         schema: try_convert_schema_to_bytes(schema)?,
     })
 }
 
-/// Encode and serialize the metadata for a time series table into a request to create tables in
-/// ModelarDB. If the schema cannot be converted to bytes, return [ModelarDbTypesError].
+/// Encode the metadata for a time series table into a [`TableMetadata`](protocol::TableMetadata)
+/// protobuf message and serialize it. If the schema cannot be converted to bytes, return
+/// [ModelarDbTypesError].
 pub fn encode_and_serialize_time_series_table_metadata(
     time_series_table_metadata: &TimeSeriesTableMetadata,
 ) -> Result<Vec<u8>> {
     let time_series_table_metadata = encode_time_series_table_metadata(time_series_table_metadata)?;
-    let create_tables_request = protocol::CreateTablesRequest {
+    let table_metadata = protocol::TableMetadata {
         normal_tables: vec![],
         time_series_tables: vec![time_series_table_metadata],
     };
 
-    Ok(create_tables_request.encode_to_vec())
+    Ok(table_metadata.encode_to_vec())
 }
 
-/// Return a serializable protobuf message constructed from the metadata in
-/// `time_series_table_metadata`. If the schema cannot be converted to bytes, return
-/// [`ModelarDbTypesError`].
+/// If `schema` can be converted to bytes, encode `time_series_table_metadata` into a 
+/// [`TimeSeriesTableMetadata`](protocol::table_metadata::TimeSeriesTableMetadata) protobuf message, 
+/// otherwise return [`ModelarDbTypesError`].
 pub fn encode_time_series_table_metadata(
     time_series_table_metadata: &TimeSeriesTableMetadata,
-) -> Result<protocol::create_tables_request::TimeSeriesTableMetadata> {
+) -> Result<protocol::table_metadata::TimeSeriesTableMetadata> {
     let mut generated_column_expressions =
         Vec::with_capacity(time_series_table_metadata.query_schema.fields.len());
     for generated_column in &time_series_table_metadata.generated_columns {
@@ -102,7 +105,7 @@ pub fn encode_time_series_table_metadata(
         }
     }
 
-    Ok(protocol::create_tables_request::TimeSeriesTableMetadata {
+    Ok(protocol::table_metadata::TimeSeriesTableMetadata {
         name: time_series_table_metadata.name.clone(),
         schema: try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?,
         error_bounds: encode_error_bounds(&time_series_table_metadata),
@@ -114,13 +117,13 @@ pub fn encode_time_series_table_metadata(
 /// `time_series_table_metadata`.
 fn encode_error_bounds(
     time_series_table_metadata: &TimeSeriesTableMetadata,
-) -> Vec<protocol::create_tables_request::time_series_table_metadata::ErrorBound> {
+) -> Vec<protocol::table_metadata::time_series_table_metadata::ErrorBound> {
     // Since the time series table metadata does not include error bounds for the generated columns,
     // lossless error bounds are added for each generated column.
     let mut error_bounds_all =
         Vec::with_capacity(time_series_table_metadata.query_schema.fields().len());
 
-    let lossless = protocol::create_tables_request::time_series_table_metadata::ErrorBound {
+    let lossless = protocol::table_metadata::time_series_table_metadata::ErrorBound {
         r#type: 0,
         value: 0.0,
     };
@@ -134,7 +137,7 @@ fn encode_error_bounds(
                 };
 
             error_bounds_all.push(
-                protocol::create_tables_request::time_series_table_metadata::ErrorBound {
+                protocol::table_metadata::time_series_table_metadata::ErrorBound {
                     r#type: error_bound_type,
                     value,
                 },
@@ -154,17 +157,17 @@ fn encode_error_bounds(
 pub fn deserialize_and_extract_table_metadata(
     bytes: &[u8],
 ) -> Result<(Vec<(String, Schema)>, Vec<TimeSeriesTableMetadata>)> {
-    let create_tables_request = protocol::CreateTablesRequest::decode(bytes)?;
+    let table_metadata = protocol::TableMetadata::decode(bytes)?;
 
     let mut normal_table_metadata = Vec::new();
     let mut time_series_table_metadata = Vec::new();
 
-    for normal_table in create_tables_request.normal_tables {
+    for normal_table in table_metadata.normal_tables {
         let schema = try_convert_bytes_to_schema(normal_table.schema)?;
         normal_table_metadata.push((normal_table.name, schema));
     }
 
-    for time_series_table in create_tables_request.time_series_tables {
+    for time_series_table in table_metadata.time_series_tables {
         let schema = Arc::new(try_convert_bytes_to_schema(time_series_table.schema)?);
         let metadata = TimeSeriesTableMetadata::try_new(
             time_series_table.name,
@@ -185,7 +188,7 @@ pub fn deserialize_and_extract_table_metadata(
 /// Decode the protobuf encoded error bounds into a vector of [`ErrorBound`]. Return
 /// [`ModelarDbTypesError`] if the error bound type is unknown or the value is invalid.
 fn decode_error_bounds(
-    encoded_error_bounds: &[protocol::create_tables_request::time_series_table_metadata::ErrorBound],
+    encoded_error_bounds: &[protocol::table_metadata::time_series_table_metadata::ErrorBound],
 ) -> Result<Vec<ErrorBound>> {
     let mut error_bounds = Vec::with_capacity(encoded_error_bounds.len());
 

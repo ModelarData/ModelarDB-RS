@@ -50,7 +50,7 @@ pub fn table_metadata_protobuf_bytes() -> Vec<u8> {
         modelardb_types::flight::encode_time_series_table_metadata(&time_series_table_metadata())
             .unwrap();
 
-    modelardb_types::flight::serialize_create_tables_request(
+    modelardb_types::flight::serialize_table_metadata(
         vec![encoded_normal_table],
         vec![encoded_time_series_table],
     )

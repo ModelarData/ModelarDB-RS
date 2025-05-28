@@ -520,7 +520,7 @@ impl FlightService for FlightServiceHandler {
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `CreateTables`: Create the tables given in the
-    /// [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest) protobuf
+    /// [`TableMetadata`](modelardb_types::flight::protocol::TableMetadata) protobuf
     /// message in the action body. The tables are created for each node in the cluster of
     /// nodes controlled by the manager.
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the metadata required
@@ -627,7 +627,7 @@ impl FlightService for FlightServiceHandler {
                     };
                 }
 
-                let protobuf_bytes = modelardb_types::flight::serialize_create_tables_request(
+                let protobuf_bytes = modelardb_types::flight::serialize_table_metadata(
                     encoded_normal_tables,
                     encoded_time_series_tables,
                 );

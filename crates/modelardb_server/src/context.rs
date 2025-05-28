@@ -69,7 +69,7 @@ impl Context {
         })
     }
 
-    /// Deserialize the bytes to a [`CreateTablesRequest`](modelardb_types::flight::protocol::CreateTablesRequest)
+    /// Deserialize the bytes to a [`TableMetadata`](modelardb_types::flight::protocol::TableMetadata)
     /// protobuf message and create tables using the metadata in the message. Returns [`ModelarDbServerError`]
     /// if the bytes could not be deserialized, the table metadata could not be extracted from the
     /// protobuf message, or the tables could not be created.
