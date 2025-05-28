@@ -424,12 +424,11 @@ impl TestContext {
         setting: i32,
         new_value: Option<u64>,
     ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
-        let update_configuration_request =
-            protocol::UpdateConfigurationRequest { setting, new_value };
+        let update_configuration = protocol::UpdateConfiguration { setting, new_value };
 
         let action = Action {
             r#type: "UpdateConfiguration".to_owned(),
-            body: update_configuration_request.encode_to_vec().into(),
+            body: update_configuration.encode_to_vec().into(),
         };
 
         self.client.do_action(Request::new(action)).await
@@ -1136,7 +1135,7 @@ async fn test_can_get_configuration() {
 #[tokio::test]
 async fn test_can_update_multivariate_reserved_memory_in_bytes() {
     let updated_configuration = update_and_get_configuration(
-        protocol::update_configuration_request::Setting::MultivariateReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes as i32,
     )
     .await;
 
@@ -1149,7 +1148,7 @@ async fn test_can_update_multivariate_reserved_memory_in_bytes() {
 #[tokio::test]
 async fn test_can_update_uncompressed_reserved_memory_in_bytes() {
     let updated_configuration = update_and_get_configuration(
-        protocol::update_configuration_request::Setting::UncompressedReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes as i32,
     )
     .await;
 
@@ -1162,7 +1161,7 @@ async fn test_can_update_uncompressed_reserved_memory_in_bytes() {
 #[tokio::test]
 async fn test_can_update_compressed_reserved_memory_in_bytes() {
     let updated_configuration = update_and_get_configuration(
-        protocol::update_configuration_request::Setting::CompressedReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::CompressedReservedMemoryInBytes as i32,
     )
     .await;
 
@@ -1185,7 +1184,7 @@ async fn test_cannot_update_transfer_batch_size_in_bytes() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
-        protocol::update_configuration_request::Setting::TransferBatchSizeInBytes as i32,
+        protocol::update_configuration::Setting::TransferBatchSizeInBytes as i32,
         Some(1),
         "Invalid State Error: Storage engine is not configured to transfer data.",
     )
@@ -1197,7 +1196,7 @@ async fn test_cannot_update_transfer_time_in_seconds() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
-        protocol::update_configuration_request::Setting::TransferTimeInSeconds as i32,
+        protocol::update_configuration::Setting::TransferTimeInSeconds as i32,
         Some(1),
         "Invalid State Error: Storage engine is not configured to transfer data.",
     )
@@ -1217,9 +1216,9 @@ async fn test_cannot_update_non_updatable_setting() {
 #[tokio::test]
 async fn test_cannot_update_non_nullable_setting_with_null_value() {
     for setting in [
-        protocol::update_configuration_request::Setting::MultivariateReservedMemoryInBytes as i32,
-        protocol::update_configuration_request::Setting::UncompressedReservedMemoryInBytes as i32,
-        protocol::update_configuration_request::Setting::CompressedReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::CompressedReservedMemoryInBytes as i32,
     ] {
         update_configuration_and_assert_error(
             setting,

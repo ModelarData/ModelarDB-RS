@@ -87,8 +87,8 @@ pub fn encode_and_serialize_time_series_table_metadata(
     Ok(table_metadata.encode_to_vec())
 }
 
-/// If `schema` can be converted to bytes, encode `time_series_table_metadata` into a 
-/// [`TimeSeriesTableMetadata`](protocol::table_metadata::TimeSeriesTableMetadata) protobuf message, 
+/// If `schema` can be converted to bytes, encode `time_series_table_metadata` into a
+/// [`TimeSeriesTableMetadata`](protocol::table_metadata::TimeSeriesTableMetadata) protobuf message,
 /// otherwise return [`ModelarDbTypesError`].
 pub fn encode_time_series_table_metadata(
     time_series_table_metadata: &TimeSeriesTableMetadata,

@@ -579,7 +579,7 @@ impl FlightService for FlightServiceHandler {
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
     /// configuration is returned in a [`Configuration`](protocol::Configuration) protobuf message.
     /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
-    /// and the new value is provided in the [`UpdateConfigurationRequest`](protocol::UpdateConfigurationRequest)
+    /// and the new value is provided in the [`UpdateConfiguration`](protocol::UpdateConfiguration)
     /// protobuf message in the action body.
     /// * `NodeType`: Get the type of the node. The type is always `server`. The type of the node
     /// is returned as a string.
@@ -652,12 +652,11 @@ impl FlightService for FlightServiceHandler {
                 })
             }))))
         } else if action.r#type == "UpdateConfiguration" {
-            let update_configuration_request =
-                protocol::UpdateConfigurationRequest::decode(action.body.clone())
-                    .map_err(error_to_status_internal)?;
+            let update_configuration = protocol::UpdateConfiguration::decode(action.body.clone())
+                .map_err(error_to_status_internal)?;
 
-            let setting = update_configuration_request.setting;
-            let new_value = update_configuration_request
+            let setting = update_configuration.setting;
+            let new_value = update_configuration
                 .new_value
                 .map(|new_value| new_value as usize);
 
@@ -667,8 +666,8 @@ impl FlightService for FlightServiceHandler {
             let invalid_null_error =
                 Status::invalid_argument(format!("New value for {setting} cannot be null."));
 
-            match protocol::update_configuration_request::Setting::try_from(setting) {
-                Ok(protocol::update_configuration_request::Setting::MultivariateReservedMemoryInBytes) => {
+            match protocol::update_configuration::Setting::try_from(setting) {
+                Ok(protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes) => {
                     let new_value = new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
@@ -677,7 +676,7 @@ impl FlightService for FlightServiceHandler {
 
                     Ok(())
                 }
-                Ok(protocol::update_configuration_request::Setting::UncompressedReservedMemoryInBytes) => {
+                Ok(protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes) => {
                     let new_value = new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
@@ -685,7 +684,7 @@ impl FlightService for FlightServiceHandler {
                         .await
                         .map_err(error_to_status_internal)
                 }
-                Ok(protocol::update_configuration_request::Setting::CompressedReservedMemoryInBytes) => {
+                Ok(protocol::update_configuration::Setting::CompressedReservedMemoryInBytes) => {
                     let new_value = new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
@@ -693,14 +692,18 @@ impl FlightService for FlightServiceHandler {
                         .await
                         .map_err(error_to_status_internal)
                 }
-                Ok(protocol::update_configuration_request::Setting::TransferBatchSizeInBytes) =>
-                    configuration_manager.set_transfer_batch_size_in_bytes(new_value, storage_engine)
-                    .await
-                    .map_err(error_to_status_internal),
-                Ok(protocol::update_configuration_request::Setting::TransferTimeInSeconds) => configuration_manager
-                    .set_transfer_time_in_seconds(new_value, storage_engine)
-                    .await
-                    .map_err(error_to_status_internal),
+                Ok(protocol::update_configuration::Setting::TransferBatchSizeInBytes) => {
+                    configuration_manager
+                        .set_transfer_batch_size_in_bytes(new_value, storage_engine)
+                        .await
+                        .map_err(error_to_status_internal)
+                }
+                Ok(protocol::update_configuration::Setting::TransferTimeInSeconds) => {
+                    configuration_manager
+                        .set_transfer_time_in_seconds(new_value, storage_engine)
+                        .await
+                        .map_err(error_to_status_internal)
+                }
                 _ => Err(Status::unimplemented(format!(
                     "{setting} is not an updatable setting in the server configuration."
                 ))),
