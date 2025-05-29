@@ -521,15 +521,13 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the
-    /// [`TableMetadata`](modelardb_types::flight::protocol::TableMetadata) protobuf
-    /// message in the action body. The tables are created for each node in the cluster of
+    /// * `CreateTables`: Create the tables given in the [`TableMetadata`](protocol::TableMetadata) 
+    /// protobuf message in the action body. The tables are created for each node in the cluster of
     /// nodes controlled by the manager.
     /// * `InitializeDatabase`: Given a list of existing table names in a
-    /// [`DatabaseMetadata`](modelardb_types::flight::protocol::DatabaseMetadata) protobuf message,
-    /// respond with the metadata required to create the normal tables and time series tables that
-    /// are missing in the list. The list of table names is also checked to make sure all given
-    /// tables actually exist.
+    /// [`DatabaseMetadata`](protocol::DatabaseMetadata) protobuf message, respond with the metadata 
+    /// required to create the normal tables and time series tables that are missing in the list. 
+    /// The list of table names is also checked to make sure all given tables actually exist.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
     /// to the cluster of nodes controlled by the manager and the key and object store used in the
     /// cluster is returned.

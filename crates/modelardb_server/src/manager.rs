@@ -22,7 +22,9 @@ use std::{env, str};
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
 use modelardb_common::arguments;
+use modelardb_types::flight::protocol;
 use modelardb_types::types::ServerMode;
+use prost::Message;
 use tokio::sync::RwLock;
 use tonic::Request;
 use tonic::metadata::MetadataMap;
@@ -87,12 +89,15 @@ impl Manager {
     /// managers database schema. If the tables to create could not be retrieved from the manager,
     /// or the tables could not be created, return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
-        let existing_tables = context.default_database_schema()?.table_names();
-
         // Add the already existing tables to the action request.
+        let existing_tables = context.default_database_schema()?.table_names();
+        let database_metadata = protocol::DatabaseMetadata {
+            table_names: existing_tables,
+        };
+
         let action = Action {
             r#type: "InitializeDatabase".to_owned(),
-            body: existing_tables.join(",").into_bytes().into(),
+            body: database_metadata.encode_to_vec().into(),
         };
 
         let message = do_action_and_extract_result(&self.flight_client, action).await?;
