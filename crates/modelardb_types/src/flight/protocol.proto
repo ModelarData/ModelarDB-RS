@@ -66,3 +66,7 @@ message UpdateConfiguration {
   Setting setting = 1;
   optional uint64 new_value = 2;
 }
+
+message DatabaseMetadata {
+  repeated string table_names = 1;
+}

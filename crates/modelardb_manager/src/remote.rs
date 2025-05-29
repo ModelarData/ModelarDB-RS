@@ -38,7 +38,9 @@ use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
+use modelardb_types::flight::protocol;
 use modelardb_types::types::{ServerMode, TimeSeriesTableMetadata};
+use prost::Message;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
@@ -523,9 +525,11 @@ impl FlightService for FlightServiceHandler {
     /// [`TableMetadata`](modelardb_types::flight::protocol::TableMetadata) protobuf
     /// message in the action body. The tables are created for each node in the cluster of
     /// nodes controlled by the manager.
-    /// * `InitializeDatabase`: Given a list of existing table names, respond with the metadata required
-    /// to create the normal tables and time series tables that are missing in the list. The list of
-    /// table names is also checked to make sure all given tables actually exist.
+    /// * `InitializeDatabase`: Given a list of existing table names in a
+    /// [`DatabaseMetadata`](modelardb_types::flight::protocol::DatabaseMetadata) protobuf message,
+    /// respond with the metadata required to create the normal tables and time series tables that
+    /// are missing in the list. The list of table names is also checked to make sure all given
+    /// tables actually exist.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
     /// to the cluster of nodes controlled by the manager and the key and object store used in the
     /// cluster is returned.
@@ -562,12 +566,11 @@ impl FlightService for FlightServiceHandler {
             // Confirm the tables were created.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "InitializeDatabase" {
-            // Extract the list of comma seperated tables that already exist in the node.
-            let node_tables: Vec<&str> = str::from_utf8(&action.body)
-                .map_err(error_to_status_invalid_argument)?
-                .split(',')
-                .filter(|table| !table.is_empty())
-                .collect();
+            // Extract the list of tables that already exist in the node.
+            let database_metadata = protocol::DatabaseMetadata::decode(action.body)
+                .map_err(error_to_status_invalid_argument)?;
+
+            let node_tables = database_metadata.table_names;
 
             // Get the table names in the clusters current database schema.
             let cluster_tables = self
@@ -580,9 +583,9 @@ impl FlightService for FlightServiceHandler {
                 .map_err(error_to_status_internal)?;
 
             // Check that all the node's tables exist in the cluster's database schema already.
-            let invalid_node_tables: Vec<&str> = node_tables
+            let invalid_node_tables: Vec<String> = node_tables
                 .iter()
-                .filter(|table| !cluster_tables.contains(&table.to_string()))
+                .filter(|table| !cluster_tables.contains(table))
                 .cloned()
                 .collect();
 
@@ -590,7 +593,7 @@ impl FlightService for FlightServiceHandler {
                 // For each table that does not already exist in the node, serialize the table metadata.
                 let missing_cluster_tables = cluster_tables
                     .iter()
-                    .filter(|table| !node_tables.contains(&table.as_str()));
+                    .filter(|table| !node_tables.contains(table));
 
                 let table_metadata_manager = &self
                     .context
