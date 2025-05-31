@@ -21,7 +21,6 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::result::Result as StdResult;
 use std::str;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
@@ -39,7 +38,7 @@ use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
 use modelardb_types::flight::protocol;
-use modelardb_types::types::{Node, ServerMode, TimeSeriesTableMetadata};
+use modelardb_types::types::TimeSeriesTableMetadata;
 use prost::Message;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -530,7 +529,8 @@ impl FlightService for FlightServiceHandler {
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The url and mode
     /// of the node must be provided in the action body as a [`NodeMetadata`](protocol::NodeMetadata)
     /// protobuf message. The node is added to the cluster of nodes controlled by the manager and
-    /// the key and object store used in the cluster is returned.
+    /// the key and object store used in the cluster is returned as a
+    /// [`ManagerConfiguration`](protocol::ManagerConfiguration) protobuf message.
     /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
     /// kill the process running on the node. The specific node to remove is given through the
     /// uniquely identifying URL of the node.
@@ -672,15 +672,22 @@ impl FlightService for FlightServiceHandler {
                 .map_err(error_to_status_internal)?;
 
             // unwrap() is safe since the key cannot contain invalid characters.
-            let mut response_body = arguments::encode_argument(self.context.key.to_str().unwrap());
+            let manager_configuration = protocol::ManagerConfiguration {
+                key: self.context.key.to_str().unwrap().to_owned(),
+                remote_storage_configuration: Some(
+                    self.context
+                        .remote_data_folder
+                        .storage_configuration
+                        .clone(),
+                ),
+            };
 
-            let mut connection_info = self.context.remote_data_folder.connection_info.clone();
-            response_body.append(&mut connection_info);
+            let protobuf_bytes = manager_configuration.encode_to_vec();
 
             // Return the key for the manager and the connection info for the remote object store.
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
-                    body: response_body.into(),
+                    body: protobuf_bytes.into(),
                 })
             }))))
         } else if action.r#type == "RemoveNode" {

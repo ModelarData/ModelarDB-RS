@@ -17,6 +17,11 @@ syntax = "proto3";
 
 package modelardb.flight.protocol;
 
+message ManagerConfiguration {
+  string key = 1;
+  StorageConfiguration remote_storage_configuration = 2;
+}
+
 message StorageConfiguration {
   message S3Connection {
     string endpoint = 1;

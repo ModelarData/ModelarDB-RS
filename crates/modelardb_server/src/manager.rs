@@ -21,7 +21,6 @@ use std::{env, str};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
-use modelardb_common::arguments;
 use modelardb_types::flight::protocol;
 use modelardb_types::types::{Node, ServerMode};
 use prost::Message;
@@ -55,7 +54,7 @@ impl Manager {
     pub(crate) async fn register_node(
         manager_url: &str,
         server_mode: ServerMode,
-    ) -> Result<(Self, Vec<u8>)> {
+    ) -> Result<(Self, protocol::StorageConfiguration)> {
         let flight_client = Arc::new(RwLock::new(
             FlightServiceClient::connect(manager_url.to_owned()).await?,
         ));
@@ -74,12 +73,13 @@ impl Manager {
 
         let message = do_action_and_extract_result(&flight_client, action).await?;
 
-        // Extract the key and the connection information for the remote object store from the response.
-        let (key, offset_data) = arguments::decode_argument(&message.body)?;
+        // Extract the key and the storage configuration for the remote object store from the response.
+        let manager_configuration = protocol::ManagerConfiguration::decode(message.body)?;
 
+        // unwrap() is safe since the manager always has a remote storage configuration.
         Ok((
-            Manager::new(flight_client, key.to_owned()),
-            offset_data.into(),
+            Manager::new(flight_client, manager_configuration.key),
+            manager_configuration.remote_storage_configuration.unwrap(),
         ))
     }
 
