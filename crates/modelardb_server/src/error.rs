@@ -29,6 +29,7 @@ use modelardb_common::error::ModelarDbCommonError;
 use modelardb_storage::error::ModelarDbStorageError;
 use modelardb_types::error::ModelarDbTypesError;
 use object_store::Error as ObjectStoreError;
+use prost::DecodeError;
 use tonic::Status as TonicStatusError;
 use tonic::transport::Error as TonicTransportError;
 
@@ -54,14 +55,16 @@ pub enum ModelarDbServerError {
     InvalidState(String),
     /// Error returned from IO operations.
     Io(IoError),
-    /// Error returned by ObjectStore.
-    ObjectStore(ObjectStoreError),
     /// Error returned by modelardb_common.
     ModelarDbCommon(ModelarDbCommonError),
     /// Error returned by modelardb_storage.
     ModelarDbStorage(ModelarDbStorageError),
     /// Error returned by modelardb_types.
     ModelarDbTypes(ModelarDbTypesError),
+    /// Error returned by ObjectStore.
+    ObjectStore(ObjectStoreError),
+    /// Error returned by Prost when decoding a message that is not a valid.
+    ProstDecode(DecodeError),
     /// Status returned by Tonic.
     TonicStatus(TonicStatusError),
     /// Error returned by Tonic.
@@ -79,10 +82,11 @@ impl Display for ModelarDbServerError {
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::InvalidState(reason) => write!(f, "Invalid State Error: {reason}"),
             Self::Io(reason) => write!(f, "IO Error: {reason}"),
-            Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
             Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
+            Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
+            Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
         }
@@ -101,10 +105,11 @@ impl Error for ModelarDbServerError {
             Self::InvalidArgument(_reason) => None,
             Self::InvalidState(_reason) => None,
             Self::Io(reason) => Some(reason),
-            Self::ObjectStore(reason) => Some(reason),
             Self::ModelarDbCommon(reason) => Some(reason),
             Self::ModelarDbStorage(reason) => Some(reason),
             Self::ModelarDbTypes(reason) => Some(reason),
+            Self::ObjectStore(reason) => Some(reason),
+            Self::ProstDecode(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
         }
@@ -168,6 +173,12 @@ impl From<ModelarDbTypesError> for ModelarDbServerError {
 impl From<ObjectStoreError> for ModelarDbServerError {
     fn from(error: ObjectStoreError) -> Self {
         Self::ObjectStore(error)
+    }
+}
+
+impl From<DecodeError> for ModelarDbServerError {
+    fn from(error: DecodeError) -> Self {
+        Self::ProstDecode(error)
     }
 }
 
