@@ -15,6 +15,7 @@
 
 //! The [`Error`] and [`Result`] types used throughout `modelardb_types`.
 
+use std::env::VarError;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::result::Result as StdResult;
@@ -37,6 +38,8 @@ pub enum ModelarDbTypesError {
     InvalidArgument(String),
     /// Error returned by Prost when decoding a message that is not a valid.
     ProstDecode(DecodeError),
+    /// Error returned by environment variables.
+    Var(VarError),
 }
 
 impl Display for ModelarDbTypesError {
@@ -46,6 +49,7 @@ impl Display for ModelarDbTypesError {
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
+            Self::Var(reason) => write!(f, "Environment Variable Error: {reason}"),
         }
     }
 }
@@ -58,6 +62,7 @@ impl Error for ModelarDbTypesError {
             Self::DataFusion(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
             Self::ProstDecode(reason) => Some(reason),
+            Self::Var(reason) => Some(reason),
         }
     }
 }
@@ -77,5 +82,11 @@ impl From<DataFusionError> for ModelarDbTypesError {
 impl From<DecodeError> for ModelarDbTypesError {
     fn from(error: DecodeError) -> Self {
         Self::ProstDecode(error)
+    }
+}
+
+impl From<VarError> for ModelarDbTypesError {
+    fn from(error: VarError) -> Self {
+        Self::Var(error)
     }
 }
