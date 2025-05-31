@@ -25,6 +25,7 @@ use std::sync::{Arc, LazyLock};
 
 use modelardb_common::arguments;
 use modelardb_storage::delta_lake::DeltaLake;
+use modelardb_types::flight::protocol;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
@@ -40,12 +41,12 @@ use crate::remote::start_apache_arrow_flight_server;
 pub static PORT: LazyLock<u16> =
     LazyLock::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
 
-/// Stores the connection information with the remote data folder to ensure that the information
+/// Stores the storage configuration with the remote data folder to ensure that the information
 /// is consistent with the remote data folder.
 pub struct RemoteDataFolder {
-    /// Connection information saved as bytes to make it possible to transfer the information using
-    /// Apache Arrow Flight.
-    connection_info: Vec<u8>,
+    /// Storage configuration encoded as a [`StorageConfiguration`](protocol::StorageConfiguration)
+    /// protobuf message to make it possible to transfer the configuration using Apache Arrow Flight.
+    storage_configuration: protocol::StorageConfiguration,
     /// Remote object store for storing data and metadata in Apache Parquet files.
     delta_lake: Arc<DeltaLake>,
     /// Manager for the access to the metadata Delta Lake.
@@ -54,12 +55,12 @@ pub struct RemoteDataFolder {
 
 impl RemoteDataFolder {
     pub fn new(
-        connection_info: Vec<u8>,
+        storage_configuration: protocol::StorageConfiguration,
         delta_lake: Arc<DeltaLake>,
         metadata_manager: Arc<MetadataManager>,
     ) -> Self {
         Self {
-            connection_info,
+            storage_configuration,
             delta_lake,
             metadata_manager,
         }
@@ -69,14 +70,16 @@ impl RemoteDataFolder {
     /// cannot be parsed or a connection to the object store cannot be created,
     /// [`ModelarDbManagerError`] is returned.
     async fn try_new(remote_data_folder_str: &str) -> Result<Self> {
-        let connection_info = arguments::argument_to_connection_info(remote_data_folder_str)?;
+        let storage_configuration =
+            modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
 
-        let delta_lake = DeltaLake::try_remote_from_connection_info(&connection_info)?;
+        let delta_lake = DeltaLake::try_remote_from_connection_info(&storage_configuration)?;
 
-        let metadata_manager = MetadataManager::try_from_connection_info(&connection_info).await?;
+        let metadata_manager =
+            MetadataManager::try_from_connection_info(&storage_configuration).await?;
 
         Ok(Self::new(
-            connection_info,
+            storage_configuration,
             Arc::new(delta_lake),
             Arc::new(metadata_manager),
         ))
