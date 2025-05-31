@@ -32,7 +32,6 @@ use arrow_flight::{
     SchemaResult, Ticket,
 };
 use futures::{Stream, stream};
-use modelardb_common::arguments;
 use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_storage::parser;
@@ -531,9 +530,9 @@ impl FlightService for FlightServiceHandler {
     /// protobuf message. The node is added to the cluster of nodes controlled by the manager and
     /// the key and object store used in the cluster is returned as a
     /// [`ManagerConfiguration`](protocol::ManagerConfiguration) protobuf message.
-    /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
-    /// kill the process running on the node. The specific node to remove is given through the
-    /// uniquely identifying URL of the node.
+    /// * `RemoveNode`: Remove the node given in the [`NodeMetadata`](protocol::NodeMetadata)
+    /// protobuf message in the action body. The node is removed from the cluster of nodes
+    /// controlled by the manager and the process running on the node is killed.
     /// * `NodeType`: Get the type of the node. The type is always `manager`. The type of the node
     /// is returned as a string.
     async fn do_action(
@@ -691,14 +690,14 @@ impl FlightService for FlightServiceHandler {
                 })
             }))))
         } else if action.r#type == "RemoveNode" {
-            let (url, _offset_data) = arguments::decode_argument(&action.body)
+            let node_metadata = protocol::NodeMetadata::decode(action.body)
                 .map_err(error_to_status_invalid_argument)?;
 
             // Remove the node with the given url from the metadata Delta Lake.
             self.context
                 .remote_data_folder
                 .metadata_manager
-                .remove_node(url)
+                .remove_node(&node_metadata.url)
                 .await
                 .map_err(error_to_status_internal)?;
 
@@ -708,7 +707,7 @@ impl FlightService for FlightServiceHandler {
                 .cluster
                 .write()
                 .await
-                .remove_node(url, &self.context.key)
+                .remove_node(&node_metadata.url, &self.context.key)
                 .await
                 .map_err(error_to_status_internal)?;
 
