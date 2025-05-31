@@ -27,6 +27,7 @@ use datafusion::logical_expr::{Expr, lit};
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
 use modelardb_common::test::ERROR_BOUND_ZERO;
+use modelardb_types::flight::protocol;
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
@@ -99,12 +100,13 @@ impl TableMetadataManager {
     }
 
     /// Create a new [`TableMetadataManager`] that saves the metadata to a remote object store given
-    /// by `connection_info` and initialize the metadata tables. If `connection_info` could not be
-    /// parsed, the connection cannot be made, or the metadata tables could not be created, return
-    /// [`ModelarDbStorageError`].
-    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
+    /// by `storage_configuration` and initialize the metadata tables. If a connection cannot be 
+    /// made or the metadata tables could not be created, return [`ModelarDbStorageError`].
+    pub async fn try_from_storage_configuration(
+        storage_configuration: protocol::StorageConfiguration,
+    ) -> Result<Self> {
         let table_metadata_manager = Self {
-            delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
+            delta_lake: DeltaLake::try_remote_from_storage_configuration(storage_configuration)?,
             session_context: Arc::new(SessionContext::new()),
         };
 
