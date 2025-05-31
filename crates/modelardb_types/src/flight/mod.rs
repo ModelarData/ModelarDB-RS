@@ -311,6 +311,11 @@ mod test {
 
     use std::sync::{LazyLock, Mutex};
 
+    use arrow::array::ArrowPrimitiveType;
+    use arrow::datatypes::Field;
+
+    use crate::types::{ArrowTimestamp, ArrowValue};
+
     /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
     static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -373,8 +378,8 @@ mod test {
                 .to_owned()
         );
     }
-    
-    // Tests for encode_node() and decode_node_metadata().
+
+    // Test for encode_node() and decode_node_metadata().
     #[test]
     fn test_encode_and_decode_node() {
         let node = Node {
@@ -387,5 +392,49 @@ mod test {
 
         assert_eq!(node.url, decoded_node.url);
         assert_eq!(node.mode, decoded_node.mode);
+    }
+
+    // Test for encoding and decoding table metadata.
+    #[test]
+    fn test_encode_and_decode_table_metadata() {
+        // Encode normal table metadata.
+        let normal_table_schema =
+            Schema::new(vec![Field::new("metadata", ArrowValue::DATA_TYPE, false)]);
+        let encoded_normal_table =
+            encode_normal_table_metadata("test_normal_table", &normal_table_schema).unwrap();
+
+        // Encode time series table metadata.
+        let time_series_table_schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+        ]));
+
+        let time_series_table_metadata = TimeSeriesTableMetadata::try_new(
+            "test_time_series_table".to_owned(),
+            time_series_table_schema.clone(),
+            vec![
+                ErrorBound::try_new_absolute(0.0).unwrap(),
+                ErrorBound::try_new_absolute(0.0).unwrap(),
+            ],
+            vec![None, None],
+        )
+        .unwrap();
+
+        let encoded_time_series_table =
+            encode_time_series_table_metadata(&time_series_table_metadata).unwrap();
+
+        // Serialize the table metadata.
+        let serialized_metadata =
+            serialize_table_metadata(vec![encoded_normal_table], vec![encoded_time_series_table]);
+
+        // Deserialize and extract the table metadata.
+        let (normal_tables, time_series_tables) =
+            deserialize_and_extract_table_metadata(&serialized_metadata).unwrap();
+
+        assert_eq!(normal_tables[0].0, "test_normal_table");
+        assert_eq!(normal_tables[0].1, normal_table_schema);
+
+        assert_eq!(time_series_tables[0].name, "test_time_series_table");
+        assert_eq!(time_series_tables[0].query_schema, time_series_table_schema);
     }
 }
