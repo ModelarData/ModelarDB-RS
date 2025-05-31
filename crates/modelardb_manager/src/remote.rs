@@ -39,7 +39,7 @@ use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
 use modelardb_types::flight::protocol;
-use modelardb_types::types::{ServerMode, TimeSeriesTableMetadata};
+use modelardb_types::types::{Node, ServerMode, TimeSeriesTableMetadata};
 use prost::Message;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -47,7 +47,6 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
 use crate::Context;
-use crate::cluster::Node;
 use crate::error::{ModelarDbManagerError, Result};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.

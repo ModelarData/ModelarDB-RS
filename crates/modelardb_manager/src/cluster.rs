@@ -22,27 +22,11 @@ use arrow_flight::{Action, Ticket};
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use log::info;
-use modelardb_types::types::ServerMode;
+use modelardb_types::types::{Node, ServerMode};
 use tonic::Request;
 use tonic::metadata::{Ascii, MetadataValue};
 
 use crate::error::{ModelarDbManagerError, Result};
-
-/// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
-/// or a cloud node. A node cannot be another manager.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Node {
-    /// Apache Arrow Flight URL for the node. This URL uniquely identifies the node.
-    pub url: String,
-    /// The mode the node was started in.
-    pub mode: ServerMode,
-}
-
-impl Node {
-    pub fn new(url: String, mode: ServerMode) -> Self {
-        Self { url, mode }
-    }
-}
 
 /// Stores the currently managed nodes in the cluster and allows for performing operations that need
 /// to be applied to every single node in the cluster.

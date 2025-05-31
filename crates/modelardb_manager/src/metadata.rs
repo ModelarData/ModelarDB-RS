@@ -28,10 +28,9 @@ use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_storage::{register_metadata_table, sql_and_concat};
 use modelardb_types::flight::protocol;
-use modelardb_types::types::ServerMode;
+use modelardb_types::types::{Node, ServerMode};
 use uuid::Uuid;
 
-use crate::cluster::Node;
 use crate::error::Result;
 
 /// Stores the metadata required for reading from and writing to the normal tables and time series tables

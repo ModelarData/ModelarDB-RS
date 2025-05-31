@@ -328,6 +328,22 @@ impl GeneratedColumn {
     }
 }
 
+/// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
+/// or a cloud node. A node cannot be another manager.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Node {
+    /// Apache Arrow Flight URL for the node. This URL uniquely identifies the node.
+    pub url: String,
+    /// The mode the node was started in.
+    pub mode: ServerMode,
+}
+
+impl Node {
+    pub fn new(url: String, mode: ServerMode) -> Self {
+        Self { url, mode }
+    }
+}
+
 /// The different possible modes of a ModelarDB server, assigned when the server is started.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerMode {
