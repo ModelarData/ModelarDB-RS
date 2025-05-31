@@ -271,3 +271,73 @@ fn decode_generated_column_expressions(
 
     Ok(expressions)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use std::sync::{LazyLock, Mutex};
+
+    /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
+    static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    // Tests for argument_to_storage_configuration().
+    #[test]
+    fn test_s3_argument_to_storage_configuration() {
+        // env::set_var is safe to call in a single-threaded program.
+        unsafe {
+            let _mutex_guard = SET_VAR_LOCK.lock();
+            env::set_var("AWS_ENDPOINT", "test_endpoint");
+            env::set_var("AWS_ACCESS_KEY_ID", "test_access_key_id");
+            env::set_var("AWS_SECRET_ACCESS_KEY", "test_secret_access_key");
+        }
+
+        let storage_configuration =
+            argument_to_storage_configuration("s3://test_bucket_name").unwrap();
+
+        match storage_configuration.connection {
+            Some(protocol::storage_configuration::Connection::S3Connection(s3_connection)) => {
+                assert_eq!(s3_connection.endpoint, "test_endpoint");
+                assert_eq!(s3_connection.bucket_name, "test_bucket_name");
+                assert_eq!(s3_connection.access_key_id, "test_access_key_id");
+                assert_eq!(s3_connection.secret_access_key, "test_secret_access_key");
+            }
+            _ => panic!("Expected S3 connection type."),
+        }
+    }
+
+    #[test]
+    fn test_azureblobstorage_argument_to_storage_configuration() {
+        // env::set_var is safe to call in a single-threaded program.
+        unsafe {
+            let _mutex_guard = SET_VAR_LOCK.lock();
+            env::set_var("AZURE_STORAGE_ACCOUNT_NAME", "test_storage_account_name");
+            env::set_var("AZURE_STORAGE_ACCESS_KEY", "test_storage_access_key");
+        }
+
+        let storage_configuration =
+            argument_to_storage_configuration("azureblobstorage://test_container_name").unwrap();
+
+        match storage_configuration.connection {
+            Some(protocol::storage_configuration::Connection::AzureConnection(
+                azure_connection,
+            )) => {
+                assert_eq!(azure_connection.account_name, "test_storage_account_name");
+                assert_eq!(azure_connection.access_key, "test_storage_access_key");
+                assert_eq!(azure_connection.container_name, "test_container_name");
+            }
+            _ => panic!("Expected Azure connection type."),
+        }
+    }
+
+    #[test]
+    fn test_invalid_argument_to_storage_configuration() {
+        let result = argument_to_storage_configuration("googlecloudstorage://test");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
+                .to_owned()
+        );
+    }
+}
