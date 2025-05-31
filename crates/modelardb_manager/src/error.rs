@@ -23,6 +23,7 @@ use std::result::Result as StdResult;
 use deltalake::errors::DeltaTableError;
 use modelardb_common::error::ModelarDbCommonError;
 use modelardb_storage::error::ModelarDbStorageError;
+use modelardb_types::error::ModelarDbTypesError;
 use tonic::Status as TonicStatusError;
 use tonic::transport::Error as TonicTransportError;
 
@@ -44,6 +45,8 @@ pub enum ModelarDbManagerError {
     ModelarDbCommon(ModelarDbCommonError),
     /// Error returned by modelardb_storage.
     ModelarDbStorage(ModelarDbStorageError),
+    /// Error returned by modelardb_types.
+    ModelarDbTypes(ModelarDbTypesError),
     /// Status returned by Tonic.
     TonicStatus(TonicStatusError),
     /// Error returned by Tonic.
@@ -59,6 +62,7 @@ impl Display for ModelarDbManagerError {
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
             Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
+            Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
         }
@@ -75,6 +79,7 @@ impl Error for ModelarDbManagerError {
             Self::Io(reason) => Some(reason),
             Self::ModelarDbCommon(reason) => Some(reason),
             Self::ModelarDbStorage(reason) => Some(reason),
+            Self::ModelarDbTypes(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
         }
@@ -102,6 +107,12 @@ impl From<ModelarDbCommonError> for ModelarDbManagerError {
 impl From<ModelarDbStorageError> for ModelarDbManagerError {
     fn from(error: ModelarDbStorageError) -> Self {
         Self::ModelarDbStorage(error)
+    }
+}
+
+impl From<ModelarDbTypesError> for ModelarDbManagerError {
+    fn from(error: ModelarDbTypesError) -> Self {
+        Self::ModelarDbTypes(error)
     }
 }
 
