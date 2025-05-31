@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+use std::env;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
@@ -28,6 +29,48 @@ use crate::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
+}
+
+/// Parse `argument` and encode it into a [`StorageConfiguration`](protocol::StorageConfiguration)
+/// protobuf message. If `argument` is not a valid remote data folder, return [`ModelarDbTypesError`].
+pub fn argument_to_storage_configuration(argument: &str) -> Result<protocol::StorageConfiguration> {
+    let connection =
+        match argument.split_once("://") {
+            Some(("s3", bucket_name)) => {
+                let endpoint = env::var("AWS_ENDPOINT")?;
+                let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
+                let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
+
+                protocol::storage_configuration::Connection::S3Connection(
+                    protocol::storage_configuration::S3Connection {
+                        endpoint,
+                        bucket_name: bucket_name.to_owned(),
+                        access_key_id,
+                        secret_access_key,
+                    },
+                )
+            }
+            Some(("azureblobstorage", container_name)) => {
+                let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
+                let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
+
+                protocol::storage_configuration::Connection::AzureConnection(
+                    protocol::storage_configuration::AzureConnection {
+                        account_name,
+                        access_key,
+                        container_name: container_name.to_owned(),
+                    },
+                )
+            }
+            _ => return Err(ModelarDbTypesError::InvalidArgument(
+                "Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
+                    .to_owned(),
+            )),
+        };
+
+    Ok(protocol::StorageConfiguration {
+        connection: Some(connection),
+    })
 }
 
 /// Serialize the table metadata into a [`TableMetadata`](protocol::TableMetadata) protobuf message.
