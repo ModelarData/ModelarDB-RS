@@ -73,10 +73,11 @@ impl RemoteDataFolder {
         let storage_configuration =
             modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
 
-        let delta_lake = DeltaLake::try_remote_from_connection_info(&storage_configuration)?;
+        let delta_lake =
+            DeltaLake::try_remote_from_storage_configuration(storage_configuration.clone())?;
 
         let metadata_manager =
-            MetadataManager::try_from_connection_info(&storage_configuration).await?;
+            MetadataManager::try_from_storage_configuration(storage_configuration.clone()).await?;
 
         Ok(Self::new(
             storage_configuration,

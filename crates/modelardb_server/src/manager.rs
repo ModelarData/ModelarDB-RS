@@ -23,7 +23,7 @@ use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
 use modelardb_common::arguments;
 use modelardb_types::flight::protocol;
-use modelardb_types::types::ServerMode;
+use modelardb_types::types::{Node, ServerMode};
 use prost::Message;
 use tokio::sync::RwLock;
 use tonic::Request;
@@ -61,17 +61,15 @@ impl Manager {
         ));
 
         let ip_address = env::var("MODELARDBD_IP_ADDRESS").unwrap_or("127.0.0.1".to_string());
+        let url_with_port = format!("grpc://{ip_address}:{}", &PORT.to_string());
 
         // Add the url and mode of the server to the action request.
-        let url_with_port = format!("grpc://{ip_address}:{}", &PORT.to_string());
-        let mut body = arguments::encode_argument(url_with_port.as_str());
-        body.append(&mut arguments::encode_argument(
-            server_mode.to_string().as_str(),
-        ));
+        let node = Node::new(url_with_port, server_mode);
+        let node_metadata = modelardb_types::flight::encode_node(&node)?;
 
         let action = Action {
             r#type: "RegisterNode".to_owned(),
-            body: body.into(),
+            body: node_metadata.encode_to_vec().into(),
         };
 
         let message = do_action_and_extract_result(&flight_client, action).await?;

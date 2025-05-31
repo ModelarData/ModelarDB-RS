@@ -520,16 +520,17 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the [`TableMetadata`](protocol::TableMetadata) 
+    /// * `CreateTables`: Create the tables given in the [`TableMetadata`](protocol::TableMetadata)
     /// protobuf message in the action body. The tables are created for each node in the cluster of
     /// nodes controlled by the manager.
     /// * `InitializeDatabase`: Given a list of existing table names in a
-    /// [`DatabaseMetadata`](protocol::DatabaseMetadata) protobuf message, respond with the metadata 
-    /// required to create the normal tables and time series tables that are missing in the list. 
+    /// [`DatabaseMetadata`](protocol::DatabaseMetadata) protobuf message, respond with the metadata
+    /// required to create the normal tables and time series tables that are missing in the list.
     /// The list of table names is also checked to make sure all given tables actually exist.
-    /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
-    /// to the cluster of nodes controlled by the manager and the key and object store used in the
-    /// cluster is returned.
+    /// * `RegisterNode`: Register either an edge or cloud node with the manager. The url and mode
+    /// of the node must be provided in the action body as a [`NodeMetadata`](protocol::NodeMetadata)
+    /// protobuf message. The node is added to the cluster of nodes controlled by the manager and
+    /// the key and object store used in the cluster is returned.
     /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
     /// kill the process running on the node. The specific node to remove is given through the
     /// uniquely identifying URL of the node.
@@ -646,14 +647,10 @@ impl FlightService for FlightServiceHandler {
             }
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
-            let (url, offset_data) = arguments::decode_argument(&action.body)
+            let node_metadata = protocol::NodeMetadata::decode(action.body)
                 .map_err(error_to_status_invalid_argument)?;
-            let (mode, _offset_data) = arguments::decode_argument(offset_data)
+            let node = modelardb_types::flight::decode_node_metadata(&node_metadata)
                 .map_err(error_to_status_invalid_argument)?;
-
-            let server_mode =
-                ServerMode::from_str(mode).map_err(error_to_status_invalid_argument)?;
-            let node = Node::new(url.to_string(), server_mode.clone());
 
             // Use the cluster to register the node in memory. This returns an error if the node is
             // already registered.
