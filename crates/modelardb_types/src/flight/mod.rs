@@ -25,7 +25,7 @@ use prost::bytes::Bytes;
 
 use crate::error::{ModelarDbTypesError, Result};
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use crate::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
+use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, TimeSeriesTableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
@@ -70,6 +70,39 @@ pub fn argument_to_storage_configuration(argument: &str) -> Result<protocol::Sto
 
     Ok(protocol::StorageConfiguration {
         connection: Some(connection),
+    })
+}
+
+/// Encode `node` into a [`NodeMetadata`](protocol::NodeMetadata) protobuf message.
+pub fn encode_node(node: &Node) -> Result<protocol::NodeMetadata> {
+    let server_mode = match node.mode {
+        ServerMode::Edge => protocol::node_metadata::ServerMode::Edge,
+        ServerMode::Cloud => protocol::node_metadata::ServerMode::Cloud,
+    };
+
+    Ok(protocol::NodeMetadata {
+        url: node.url.clone(),
+        server_mode: server_mode as i32,
+    })
+}
+
+/// Decode a [`NodeMetadata`](protocol::NodeMetadata) protobuf message into a [`Node`].
+pub fn decode_node_metadata(node_metadata: &protocol::NodeMetadata) -> Result<Node> {
+    let server_mode = match protocol::node_metadata::ServerMode::try_from(node_metadata.server_mode)
+    {
+        Ok(protocol::node_metadata::ServerMode::Edge) => ServerMode::Edge,
+        Ok(protocol::node_metadata::ServerMode::Cloud) => ServerMode::Cloud,
+        _ => {
+            return Err(ModelarDbTypesError::InvalidArgument(format!(
+                "Unknown server mode: {}.",
+                node_metadata.server_mode
+            )));
+        }
+    };
+
+    Ok(Node {
+        url: node_metadata.url.clone(),
+        mode: server_mode,
     })
 }
 
