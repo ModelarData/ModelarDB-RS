@@ -17,6 +17,26 @@ syntax = "proto3";
 
 package modelardb.flight.protocol;
 
+message StorageConfiguration {
+  message S3Connection {
+    string endpoint = 1;
+    string bucket_name = 2;
+    string access_key_id = 3;
+    string secret_access_key = 4;
+  }
+
+  message AzureConnection {
+    string account_name = 1;
+    string access_key = 2;
+    string container_name = 3;
+  }
+
+  oneof connection {
+    S3Connection s3_connection = 1;
+    AzureConnection azure_connection = 2;
+  }
+}
+
 message TableMetadata {
   message NormalTableMetadata {
     string name = 1;
