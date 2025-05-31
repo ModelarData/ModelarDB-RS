@@ -100,7 +100,7 @@ impl TableMetadataManager {
     }
 
     /// Create a new [`TableMetadataManager`] that saves the metadata to a remote object store given
-    /// by `storage_configuration` and initialize the metadata tables. If a connection cannot be 
+    /// by `storage_configuration` and initialize the metadata tables. If a connection could not be 
     /// made or the metadata tables could not be created, return [`ModelarDbStorageError`].
     pub async fn try_from_storage_configuration(
         storage_configuration: protocol::StorageConfiguration,
