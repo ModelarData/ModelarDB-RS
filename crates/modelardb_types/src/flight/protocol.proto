@@ -37,6 +37,16 @@ message StorageConfiguration {
   }
 }
 
+message NodeMetadata {
+  enum ServerMode {
+    CLOUD = 0;
+    EDGE = 1;
+  }
+
+  string url = 1;
+  ServerMode server_mode = 2;
+}
+
 message TableMetadata {
   message NormalTableMetadata {
     string name = 1;
