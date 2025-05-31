@@ -373,4 +373,19 @@ mod test {
                 .to_owned()
         );
     }
+    
+    // Tests for encode_node() and decode_node_metadata().
+    #[test]
+    fn test_encode_and_decode_node() {
+        let node = Node {
+            url: "grpc://server:9999".to_string(),
+            mode: ServerMode::Edge,
+        };
+
+        let encoded_node = encode_node(&node).unwrap();
+        let decoded_node = decode_node_metadata(&encoded_node).unwrap();
+
+        assert_eq!(node.url, decoded_node.url);
+        assert_eq!(node.mode, decoded_node.mode);
+    }
 }
