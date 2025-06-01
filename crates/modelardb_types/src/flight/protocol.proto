@@ -17,28 +17,25 @@ syntax = "proto3";
 
 package modelardb.flight.protocol;
 
-message ManagerConfiguration {
+message ManagerMetadata {
   string key = 1;
-  StorageConfiguration remote_storage_configuration = 2;
-}
 
-message StorageConfiguration {
-  message S3Connection {
+  message S3Configuration {
     string endpoint = 1;
     string bucket_name = 2;
     string access_key_id = 3;
     string secret_access_key = 4;
   }
 
-  message AzureConnection {
+  message AzureConfiguration {
     string account_name = 1;
     string access_key = 2;
     string container_name = 3;
   }
 
-  oneof connection {
-    S3Connection s3_connection = 1;
-    AzureConnection azure_connection = 2;
+  oneof storage_configuration {
+    S3Configuration s3_configuration = 2;
+    AzureConfiguration azure_configuration = 3;
   }
 }
 
