@@ -63,7 +63,7 @@ impl DataFolder {
     /// not be made or if the metadata tables could not be created, [`ModelarDbServerError`] is
     /// returned.
     pub async fn try_from_storage_configuration(
-        storage_configuration: protocol::StorageConfiguration,
+        storage_configuration: protocol::manager_metadata::StorageConfiguration,
     ) -> Result<Self> {
         let remote_delta_lake =
             DeltaLake::try_remote_from_storage_configuration(storage_configuration.clone())?;

@@ -51,7 +51,7 @@ impl MetadataManager {
     /// made or the metadata tables could not be created, return
     /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     pub async fn try_from_storage_configuration(
-        storage_configuration: protocol::StorageConfiguration,
+        storage_configuration: protocol::manager_metadata::StorageConfiguration,
     ) -> Result<MetadataManager> {
         let metadata_manager = Self {
             delta_lake: DeltaLake::try_remote_from_storage_configuration(

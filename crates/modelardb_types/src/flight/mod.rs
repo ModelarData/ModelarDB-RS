@@ -31,46 +31,47 @@ pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
 }
 
-/// Parse `argument` and encode it into a [`StorageConfiguration`](protocol::StorageConfiguration)
+/// Parse `argument` and encode it into a [`StorageConfiguration`](protocol::manager_metadata::StorageConfiguration)
 /// protobuf message. If `argument` is not a valid remote data folder, return [`ModelarDbTypesError`].
-pub fn argument_to_storage_configuration(argument: &str) -> Result<protocol::StorageConfiguration> {
-    let connection =
-        match argument.split_once("://") {
-            Some(("s3", bucket_name)) => {
-                let endpoint = env::var("AWS_ENDPOINT")?;
-                let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
-                let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
+pub fn argument_to_storage_configuration(
+    argument: &str,
+) -> Result<protocol::manager_metadata::StorageConfiguration> {
+    match argument.split_once("://") {
+        Some(("s3", bucket_name)) => {
+            let endpoint = env::var("AWS_ENDPOINT")?;
+            let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
+            let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
 
-                protocol::storage_configuration::Connection::S3Connection(
-                    protocol::storage_configuration::S3Connection {
+            Ok(
+                protocol::manager_metadata::StorageConfiguration::S3Configuration(
+                    protocol::manager_metadata::S3Configuration {
                         endpoint,
                         bucket_name: bucket_name.to_owned(),
                         access_key_id,
                         secret_access_key,
                     },
-                )
-            }
-            Some(("azureblobstorage", container_name)) => {
-                let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
-                let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
+                ),
+            )
+        }
+        Some(("azureblobstorage", container_name)) => {
+            let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
+            let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
 
-                protocol::storage_configuration::Connection::AzureConnection(
-                    protocol::storage_configuration::AzureConnection {
+            Ok(
+                protocol::manager_metadata::StorageConfiguration::AzureConfiguration(
+                    protocol::manager_metadata::AzureConfiguration {
                         account_name,
                         access_key,
                         container_name: container_name.to_owned(),
                     },
-                )
-            }
-            _ => return Err(ModelarDbTypesError::InvalidArgument(
-                "Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
-                    .to_owned(),
-            )),
-        };
-
-    Ok(protocol::StorageConfiguration {
-        connection: Some(connection),
-    })
+                ),
+            )
+        }
+        _ => Err(ModelarDbTypesError::InvalidArgument(
+            "Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
+                .to_owned(),
+        )),
+    }
 }
 
 /// Encode `node` into a [`NodeMetadata`](protocol::NodeMetadata) protobuf message.
@@ -333,12 +334,12 @@ mod test {
         let storage_configuration =
             argument_to_storage_configuration("s3://test_bucket_name").unwrap();
 
-        match storage_configuration.connection {
-            Some(protocol::storage_configuration::Connection::S3Connection(s3_connection)) => {
-                assert_eq!(s3_connection.endpoint, "test_endpoint");
-                assert_eq!(s3_connection.bucket_name, "test_bucket_name");
-                assert_eq!(s3_connection.access_key_id, "test_access_key_id");
-                assert_eq!(s3_connection.secret_access_key, "test_secret_access_key");
+        match storage_configuration {
+            protocol::manager_metadata::StorageConfiguration::S3Configuration(s3_configuration) => {
+                assert_eq!(s3_configuration.endpoint, "test_endpoint");
+                assert_eq!(s3_configuration.bucket_name, "test_bucket_name");
+                assert_eq!(s3_configuration.access_key_id, "test_access_key_id");
+                assert_eq!(s3_configuration.secret_access_key, "test_secret_access_key");
             }
             _ => panic!("Expected S3 connection type."),
         }
@@ -356,13 +357,16 @@ mod test {
         let storage_configuration =
             argument_to_storage_configuration("azureblobstorage://test_container_name").unwrap();
 
-        match storage_configuration.connection {
-            Some(protocol::storage_configuration::Connection::AzureConnection(
-                azure_connection,
-            )) => {
-                assert_eq!(azure_connection.account_name, "test_storage_account_name");
-                assert_eq!(azure_connection.access_key, "test_storage_access_key");
-                assert_eq!(azure_connection.container_name, "test_container_name");
+        match storage_configuration {
+            protocol::manager_metadata::StorageConfiguration::AzureConfiguration(
+                azure_configuration,
+            ) => {
+                assert_eq!(
+                    azure_configuration.account_name,
+                    "test_storage_account_name"
+                );
+                assert_eq!(azure_configuration.access_key, "test_storage_access_key");
+                assert_eq!(azure_configuration.container_name, "test_container_name");
             }
             _ => panic!("Expected Azure connection type."),
         }

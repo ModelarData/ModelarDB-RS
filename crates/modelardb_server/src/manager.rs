@@ -54,7 +54,7 @@ impl Manager {
     pub(crate) async fn register_node(
         manager_url: &str,
         server_mode: ServerMode,
-    ) -> Result<(Self, protocol::StorageConfiguration)> {
+    ) -> Result<(Self, protocol::manager_metadata::StorageConfiguration)> {
         let flight_client = Arc::new(RwLock::new(
             FlightServiceClient::connect(manager_url.to_owned()).await?,
         ));
@@ -74,12 +74,12 @@ impl Manager {
         let message = do_action_and_extract_result(&flight_client, action).await?;
 
         // Extract the key and the storage configuration for the remote object store from the response.
-        let manager_configuration = protocol::ManagerConfiguration::decode(message.body)?;
+        let manager_metadata = protocol::ManagerMetadata::decode(message.body)?;
 
         // unwrap() is safe since the manager always has a remote storage configuration.
         Ok((
-            Manager::new(flight_client, manager_configuration.key),
-            manager_configuration.remote_storage_configuration.unwrap(),
+            Manager::new(flight_client, manager_metadata.key),
+            manager_metadata.storage_configuration.unwrap(),
         ))
     }
 

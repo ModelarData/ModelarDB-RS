@@ -115,32 +115,29 @@ impl DeltaLake {
     /// `storage_configuration`. Returns [`ModelarDbStorageError`] if a connection to the specified
     /// object store could not be created.
     pub fn try_remote_from_storage_configuration(
-        storage_configuration: protocol::StorageConfiguration,
+        storage_configuration: protocol::manager_metadata::StorageConfiguration,
     ) -> Result<Self> {
-        match storage_configuration.connection {
-            Some(protocol::storage_configuration::Connection::S3Connection(s3_connection)) => {
+        match storage_configuration {
+            protocol::manager_metadata::StorageConfiguration::S3Configuration(s3_configuration) => {
                 // Register the S3 storage handlers to allow the use of Amazon S3 object stores.
                 // This is required at runtime to initialize the S3 storage implementation in the
                 // deltalake_aws storage subcrate.
                 deltalake::aws::register_handlers(None);
 
                 Self::try_from_s3_configuration(
-                    s3_connection.endpoint,
-                    s3_connection.bucket_name,
-                    s3_connection.access_key_id,
-                    s3_connection.secret_access_key,
+                    s3_configuration.endpoint,
+                    s3_configuration.bucket_name,
+                    s3_configuration.access_key_id,
+                    s3_configuration.secret_access_key,
                 )
             }
-            Some(protocol::storage_configuration::Connection::AzureConnection(
-                azure_connection,
-            )) => Self::try_from_azure_configuration(
-                azure_connection.account_name,
-                azure_connection.access_key,
-                azure_connection.container_name,
+            protocol::manager_metadata::StorageConfiguration::AzureConfiguration(
+                azure_configuration,
+            ) => Self::try_from_azure_configuration(
+                azure_configuration.account_name,
+                azure_configuration.access_key,
+                azure_configuration.container_name,
             ),
-            _ => Err(ModelarDbStorageError::InvalidArgument(
-                "Storage configuration is not supported.".to_owned(),
-            )),
         }
     }
 

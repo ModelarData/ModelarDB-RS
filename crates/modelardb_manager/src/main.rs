@@ -44,9 +44,9 @@ pub static PORT: LazyLock<u16> =
 /// Stores the storage configuration with the remote data folder to ensure that the information
 /// is consistent with the remote data folder.
 pub struct RemoteDataFolder {
-    /// Storage configuration encoded as a [`StorageConfiguration`](protocol::StorageConfiguration)
+    /// Storage configuration encoded as a [`StorageConfiguration`](protocol::manager_metadata::StorageConfiguration)
     /// protobuf message to make it possible to transfer the configuration using Apache Arrow Flight.
-    storage_configuration: protocol::StorageConfiguration,
+    storage_configuration: protocol::manager_metadata::StorageConfiguration,
     /// Remote object store for storing data and metadata in Apache Parquet files.
     delta_lake: Arc<DeltaLake>,
     /// Manager for the access to the metadata Delta Lake.
@@ -55,7 +55,7 @@ pub struct RemoteDataFolder {
 
 impl RemoteDataFolder {
     pub fn new(
-        storage_configuration: protocol::StorageConfiguration,
+        storage_configuration: protocol::manager_metadata::StorageConfiguration,
         delta_lake: Arc<DeltaLake>,
         metadata_manager: Arc<MetadataManager>,
     ) -> Self {

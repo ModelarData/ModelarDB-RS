@@ -103,7 +103,7 @@ impl TableMetadataManager {
     /// by `storage_configuration` and initialize the metadata tables. If a connection could not be 
     /// made or the metadata tables could not be created, return [`ModelarDbStorageError`].
     pub async fn try_from_storage_configuration(
-        storage_configuration: protocol::StorageConfiguration,
+        storage_configuration: protocol::manager_metadata::StorageConfiguration,
     ) -> Result<Self> {
         let table_metadata_manager = Self {
             delta_lake: DeltaLake::try_remote_from_storage_configuration(storage_configuration)?,
