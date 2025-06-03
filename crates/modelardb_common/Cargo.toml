@@ -25,6 +25,3 @@ arrow.workspace = true
 modelardb_types = { path = "../modelardb_types" }
 rand.workspace = true
 tonic.workspace = true
-
-[dev-dependencies]
-proptest.workspace = true

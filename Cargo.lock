@@ -2977,7 +2977,6 @@ dependencies = [
  "arrow",
  "arrow-flight",
  "modelardb_types",
- "proptest",
  "rand 0.9.0",
  "tonic",
 ]
@@ -3068,7 +3067,6 @@ name = "modelardb_storage"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "arrow-flight",
  "async-trait",
  "bytes",
  "dashmap",
@@ -3105,9 +3103,9 @@ dependencies = [
 
 [[package]]
 name = "multimap"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "defc4c55412d89136f966bbb339008b474350e5e6e78d2714439c386b3137a03"
+checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "nibble_vec"
@@ -3502,9 +3500,9 @@ dependencies = [
 
 [[package]]
 name = "prettyplease"
-version = "0.2.32"
+version = "0.2.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "664ec5419c51e34154eec046ebcba56312d5a2fc3b09a06da188e1ad21afadf6"
+checksum = "9dee91521343f4c5c6a63edd65e54f31f5c92fe8978c40a4282f8372194c6a7d"
 dependencies = [
  "proc-macro2",
  "syn 2.0.100",

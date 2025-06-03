@@ -33,3 +33,6 @@ prost-build.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 modelardb_storage = { path = "../modelardb_storage" }
 proptest.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["prost-build"]

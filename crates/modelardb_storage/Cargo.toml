@@ -20,7 +20,6 @@ edition = "2024"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-arrow-flight.workspace = true
 arrow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
