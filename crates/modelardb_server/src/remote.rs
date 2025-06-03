@@ -169,9 +169,9 @@ async fn execute_query_at_address(
     )))
 }
 
-/// Read [`RecordBatches`](RecordBatch) from `query_result_stream` and send them one at a time to
-/// [`FlightService`] using `sender`. Returns [`Status`] with the code [`tonic::Code::Internal`] if
-/// the result cannot be sent through `sender`.
+/// Read [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) from `query_result_stream`
+/// and send them one at a time to [`FlightService`] using `sender`. Returns [`Status`] with the
+/// code [`tonic::Code::Internal`] if the result cannot be sent through `sender`.
 async fn send_query_result(
     mut query_result_stream: SendableRecordBatchStream,
     sender: Sender<StdResult<FlightData, Status>>,
@@ -223,8 +223,9 @@ async fn send_flight_data(
         .map_err(error_to_status_internal)
 }
 
-/// Return an empty stream of [`RecordBatches`](RecordBatch) that can be returned when a SQL
-/// command has been successfully executed but did not produce any rows to return.
+/// Return an empty stream of [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) that
+/// can be returned when a SQL command has been successfully executed but did not produce any rows
+/// to return.
 fn empty_record_batch_stream() -> SendableRecordBatchStream {
     Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
 }

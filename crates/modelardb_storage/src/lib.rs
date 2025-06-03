@@ -86,7 +86,7 @@ pub fn create_session_context() -> SessionContext {
 
 /// Register the metadata table stored in `delta_table` with `table_name` in `session_context`. If
 /// the metadata table could not be registered with Apache DataFusion, return
-/// [`ModelarDbStorageError`].
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub fn register_metadata_table(
     session_context: &SessionContext,
     table_name: &str,
@@ -100,7 +100,7 @@ pub fn register_metadata_table(
 
 /// Register the normal table stored in `delta_table` with `table_name` and `data_sink` in
 /// `session_context`. If the normal table could not be registered with Apache DataFusion, return
-/// [`ModelarDbStorageError`].
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub fn register_normal_table(
     session_context: &SessionContext,
     table_name: &str,
@@ -115,7 +115,7 @@ pub fn register_normal_table(
 
 /// Register the time series table stored in `delta_table` with `time_series_table_metadata` and
 /// `data_sink` in `session_context`. If the time series table could not be registered with Apache
-/// DataFusion, return [`ModelarDbStorageError`].
+/// DataFusion, return [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub fn register_time_series_table(
     session_context: &SessionContext,
     delta_table: DeltaTable,
@@ -143,7 +143,7 @@ pub fn maybe_table_provider_to_time_series_table_metadata(
 
 /// Execute `statement` in `session_context` and return the result as a
 /// [`SendableRecordBatchStream`]. If `statement` could not be executed successfully,
-/// [`ModelarDbStorageError`] is returned.
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError) is returned.
 pub async fn execute_statement(
     session_context: &SessionContext,
     statement: Statement,
@@ -160,7 +160,7 @@ pub async fn execute_statement(
 
 /// Execute the SQL query `sql` in `session_context` and return the result as a single
 /// [`RecordBatch`]. If the query could not be executed successfully, return
-/// [`ModelarDbStorageError`].
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub async fn sql_and_concat(session_context: &SessionContext, sql: &str) -> Result<RecordBatch> {
     let dataframe = session_context.sql(sql).await?;
     let schema = Schema::from(dataframe.schema());
@@ -173,7 +173,7 @@ pub async fn sql_and_concat(session_context: &SessionContext, sql: &str) -> Resu
 
 /// Read all rows from the Apache Parquet file at the location given by `file_path` in
 /// `object_store` and return them as a [`RecordBatch`]. If the file could not be read successfully,
-/// [`ModelarDbStorageError`] is returned.
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError) is returned.
 pub async fn read_record_batch_from_apache_parquet_file(
     file_path: &Path,
     object_store: Arc<dyn ObjectStore>,
@@ -195,7 +195,7 @@ pub async fn read_record_batch_from_apache_parquet_file(
 
 /// Read each batch of data from the Apache Parquet file given by `reader` and return them as a
 /// [`Vec`] of [`RecordBatch`]. If the file could not be read successfully,
-/// [`ModelarDbStorageError`] is returned.
+/// [`ModelarDbStorageError`](error::ModelarDbStorageError) is returned.
 pub async fn read_batches_from_apache_parquet_file<R>(reader: R) -> Result<Vec<RecordBatch>>
 where
     R: AsyncFileReader + Send + Unpin + 'static,
@@ -216,7 +216,7 @@ where
 /// Write the rows in `record_batch` to an Apache Parquet file at the location given by `file_path`
 /// in `object_store`. `file_path` must use the extension `.parquet`. `sorting_columns` can be set
 /// to control the sorting order of the rows in the written file. Return [`Ok`] if the file was
-/// written successfully, otherwise return [`ModelarDbStorageError`].
+/// written successfully, otherwise return [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub async fn write_record_batch_to_apache_parquet_file(
     file_path: &Path,
     record_batch: &RecordBatch,
@@ -274,7 +274,7 @@ pub fn try_convert_record_batch_to_bytes(record_batch: &RecordBatch) -> Result<V
 }
 
 /// Return [`RecordBatch`] if `record_batch_bytes` can be converted to an Apache Arrow [`RecordBatch`],
-/// otherwise [`ModelarDbStorageError`].
+/// otherwise [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub fn try_convert_bytes_to_record_batch(
     record_batch_bytes: Vec<u8>,
     schema: &Arc<Schema>,

@@ -529,7 +529,7 @@ impl FlightService for FlightServiceHandler {
     /// of the node must be provided in the action body as a [`NodeMetadata`](protocol::NodeMetadata)
     /// protobuf message. The node is added to the cluster of nodes controlled by the manager and
     /// the key and object store used in the cluster is returned as a
-    /// [`ManagerConfiguration`](protocol::ManagerConfiguration) protobuf message.
+    /// [`ManagerMetadata`](protocol::ManagerMetadata) protobuf message.
     /// * `RemoveNode`: Remove the node given in the [`NodeMetadata`](protocol::NodeMetadata)
     /// protobuf message in the action body. The node is removed from the cluster of nodes
     /// controlled by the manager and the process running on the node is killed.
