@@ -185,7 +185,7 @@ pub fn encode_time_series_table_metadata(
     Ok(protocol::table_metadata::TimeSeriesTableMetadata {
         name: time_series_table_metadata.name.clone(),
         schema: try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?,
-        error_bounds: encode_error_bounds(&time_series_table_metadata),
+        error_bounds: encode_error_bounds(time_series_table_metadata),
         generated_column_expressions,
     })
 }
@@ -209,7 +209,7 @@ fn encode_error_bounds(
         if let Ok(field_index) = time_series_table_metadata.schema.index_of(field.name()) {
             let (error_bound_type, value) =
                 match time_series_table_metadata.error_bounds[field_index] {
-                    ErrorBound::Absolute(value) => (0, value as f32),
+                    ErrorBound::Absolute(value) => (0, value),
                     ErrorBound::Relative(value) => (1, value),
                 };
 
@@ -231,6 +231,7 @@ fn encode_error_bounds(
 /// of `(normal_table_metadata, time_series_table_metadata)`. `normal_table_metadata` is a vector of
 /// tuples containing the table name and schema of the normal tables. If `bytes` cannot be
 /// deserialized, return [`ModelarDbTypesError`].
+#[allow(clippy::type_complexity)]
 pub fn deserialize_and_extract_table_metadata(
     bytes: &[u8],
 ) -> Result<(Vec<(String, Schema)>, Vec<TimeSeriesTableMetadata>)> {
@@ -298,7 +299,7 @@ fn decode_generated_column_expressions(
         if maybe_expr_bytes.is_empty() {
             expressions.push(None);
         } else {
-            let expr = Expr::from_bytes(&maybe_expr_bytes)?;
+            let expr = Expr::from_bytes(maybe_expr_bytes)?;
             expressions.push(Some(GeneratedColumn::try_from_expr(expr, df_schema)?));
         }
     }

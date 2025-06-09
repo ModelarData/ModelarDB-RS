@@ -27,6 +27,7 @@ use tonic::Status;
 
 /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
 /// [`Status`] that specifies that the table name is missing.
+#[allow(clippy::result_large_err)]
 pub fn table_name_from_flight_descriptor(
     flight_descriptor: &FlightDescriptor,
 ) -> Result<&String, Status> {
@@ -38,6 +39,7 @@ pub fn table_name_from_flight_descriptor(
 
 /// Convert `flight_data` to a [`RecordBatch`]. If `schema` does not match the data or `flight_data`
 /// could not be converted, [`Status`] is returned.
+#[allow(clippy::result_large_err)]
 pub fn flight_data_to_record_batch(
     flight_data: &FlightData,
     schema: &Arc<Schema>,

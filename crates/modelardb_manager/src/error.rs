@@ -47,8 +47,8 @@ pub enum ModelarDbManagerError {
     ModelarDbStorage(ModelarDbStorageError),
     /// Error returned by modelardb_types.
     ModelarDbTypes(ModelarDbTypesError),
-    /// Status returned by Tonic.
-    TonicStatus(TonicStatusError),
+    /// Status returned by Tonic. It is wrapped in a Box to decrease the size of the error variant.
+    TonicStatus(Box<TonicStatusError>),
     /// Error returned by Tonic.
     TonicTransport(TonicTransportError),
 }
@@ -118,7 +118,7 @@ impl From<ModelarDbTypesError> for ModelarDbManagerError {
 
 impl From<TonicStatusError> for ModelarDbManagerError {
     fn from(error: TonicStatusError) -> Self {
-        Self::TonicStatus(error)
+        Self::TonicStatus(Box::new(error))
     }
 }
 

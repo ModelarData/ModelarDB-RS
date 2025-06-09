@@ -39,8 +39,8 @@ pub enum ModelarDbClientError {
     Io(IoError),
     /// Error returned by RustyLine.
     RustyLine(RustyLineError),
-    /// Status returned by Tonic.
-    TonicStatus(TonicStatusError),
+    /// Status returned by Tonic. It is wrapped in a Box to decrease the size of the error variant.
+    TonicStatus(Box<TonicStatusError>),
     /// Error returned by Tonic.
     TonicTransport(TonicTransportError),
 }
@@ -92,7 +92,7 @@ impl From<RustyLineError> for ModelarDbClientError {
 
 impl From<TonicStatusError> for ModelarDbClientError {
     fn from(error: TonicStatusError) -> Self {
-        Self::TonicStatus(error)
+        Self::TonicStatus(Box::new(error))
     }
 }
 

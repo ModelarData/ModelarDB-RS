@@ -65,8 +65,8 @@ pub enum ModelarDbServerError {
     ObjectStore(ObjectStoreError),
     /// Error returned by Prost when decoding a message that is not a valid.
     ProstDecode(DecodeError),
-    /// Status returned by Tonic.
-    TonicStatus(TonicStatusError),
+    /// Status returned by Tonic. It is wrapped in a Box to decrease the size of the error variant.
+    TonicStatus(Box<TonicStatusError>),
     /// Error returned by Tonic.
     TonicTransport(TonicTransportError),
 }
@@ -184,7 +184,7 @@ impl From<DecodeError> for ModelarDbServerError {
 
 impl From<TonicStatusError> for ModelarDbServerError {
     fn from(error: TonicStatusError) -> Self {
-        Self::TonicStatus(error)
+        Self::TonicStatus(Box::new(error))
     }
 }
 

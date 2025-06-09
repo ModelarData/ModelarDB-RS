@@ -591,8 +591,8 @@ impl TableMetadataManager {
 
             // If generated_column_expr is null, it is saved as empty bytes in the column values.
             if !expr_bytes.is_empty() {
-                let expr = Expr::from_bytes(&expr_bytes)?;
-                let generated_column = GeneratedColumn::try_from_expr(expr, &df_schema)?;
+                let expr = Expr::from_bytes(expr_bytes)?;
+                let generated_column = GeneratedColumn::try_from_expr(expr, df_schema)?;
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
             }
