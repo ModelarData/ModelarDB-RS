@@ -26,7 +26,8 @@ pub fn normalize_name(name: &str) -> String {
     name.to_lowercase()
 }
 
-/// Convert a [`Schema`] to [`Vec<u8>`].
+/// Return the Apache Arrow schema as bytes if `schema` can be converted to [`Vec<u8>`], otherwise
+/// return [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
     let options = IpcWriteOptions::default();
     let schema_as_ipc = SchemaAsIpc::new(schema, &options);
@@ -37,7 +38,7 @@ pub fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
 }
 
 /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-/// [`ModelarDbStorageError`].
+/// return [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
     let ipc_message = IpcMessage(schema_bytes.into());
     Schema::try_from(ipc_message).map_err(|error| error.into())
