@@ -39,9 +39,9 @@ use modelardb_types::types::{
 };
 use sqlparser::ast::{
     CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType,
-    Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectType, Query,
-    Setting, Statement, TableEngine, TimezoneInfo, TruncateIdentityOption, TruncateTableTarget,
-    Value,
+    Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectNamePart,
+    ObjectType, Query, Setting, Statement, TableEngine, TimezoneInfo, TruncateIdentityOption,
+    TruncateTableTarget, Value,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{ALL_KEYWORDS, Keyword};
@@ -222,7 +222,7 @@ impl ModelarDbDialect {
         let columns = self.parse_columns(parser)?;
 
         // Return Statement::CreateTable with the extracted information.
-        let name = ObjectName(vec![Ident::new(table_name)]);
+        let name = ObjectName(vec![ObjectNamePart::Identifier(Ident::new(table_name))]);
         Ok(Self::new_create_time_series_table_statement(name, columns))
     }
 
@@ -349,7 +349,6 @@ impl ModelarDbDialect {
         ColumnDef {
             name: Ident::new(column_name),
             data_type,
-            collation: None,
             options,
         }
     }
@@ -383,6 +382,7 @@ impl ModelarDbDialect {
             if_not_exists: false,
             transient: false,
             volatile: false,
+            iceberg: false,
             name: table_name,
             columns,
             constraints: vec![],
@@ -427,6 +427,11 @@ impl ModelarDbDialect {
             with_aggregation_policy: None,
             with_row_access_policy: None,
             with_tags: None,
+            external_volume: None,
+            base_location: None,
+            catalog: None,
+            catalog_sync: None,
+            storage_serialization_policy: None,
         })
     }
 
@@ -608,7 +613,8 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     }
 
     // Check if the table name contains whitespace, e.g., spaces or tabs.
-    let normalized_name = normalize_name(&name.0[0].value);
+    // unwrap() is safe as ObjectNamePart is an enum with only one variant.
+    let normalized_name = normalize_name(&name.0[0].as_ident().unwrap().value);
     if normalized_name.contains(char::is_whitespace) {
         let message = "Table name cannot contain whitespace.";
         return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
@@ -711,6 +717,7 @@ fn check_unsupported_features_are_disabled(
         if_not_exists,
         transient,
         volatile,
+        iceberg,
         name: _name,
         columns: _columns,
         constraints,
@@ -747,6 +754,11 @@ fn check_unsupported_features_are_disabled(
         with_aggregation_policy,
         with_row_access_policy,
         with_tags,
+        external_volume,
+        base_location,
+        catalog,
+        catalog_sync,
+        storage_serialization_policy,
     } = create_table;
 
     check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
@@ -755,6 +767,7 @@ fn check_unsupported_features_are_disabled(
     check_unsupported_feature_is_disabled(global.is_some(), "GLOBAL")?;
     check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
     check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
+    check_unsupported_feature_is_disabled(*iceberg, "ICEBERG")?;
     check_unsupported_feature_is_disabled(*volatile, "VOLATILE")?;
     check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
     check_unsupported_feature_is_disabled(
@@ -819,6 +832,14 @@ fn check_unsupported_features_are_disabled(
         "WITH_ROW_ACCESS_POLICY",
     )?;
     check_unsupported_feature_is_disabled(with_tags.is_some(), "WITH_TAGS")?;
+    check_unsupported_feature_is_disabled(external_volume.is_some(), "EXTERNAL_VOLUME")?;
+    check_unsupported_feature_is_disabled(base_location.is_some(), "BASE_LOCATION")?;
+    check_unsupported_feature_is_disabled(catalog.is_some(), "CATALOG")?;
+    check_unsupported_feature_is_disabled(catalog_sync.is_some(), "CATALOG_SYNC")?;
+    check_unsupported_feature_is_disabled(
+        storage_serialization_policy.is_some(),
+        "STORAGE_SERIALIZATION_POLICY",
+    )?;
     Ok(())
 }
 
@@ -1039,10 +1060,10 @@ fn semantic_checks_for_drop(
         let mut table_names = Vec::with_capacity(names.len());
 
         for parts in names {
-            let table_name = parts
-                .0
-                .iter()
-                .fold(String::new(), |name, part| name + &part.value);
+            let table_name = parts.0.iter().fold(String::new(), |name, part| {
+                // unwrap() is safe as ObjectNamePart is an enum with only one variant.
+                name + &part.as_ident().unwrap().value
+            });
 
             table_names.push(table_name);
         }
@@ -1077,11 +1098,10 @@ fn semantic_checks_for_truncate(
         let mut table_names = Vec::with_capacity(names.len());
 
         for parts in names {
-            let table_name = parts
-                .name
-                .0
-                .iter()
-                .fold(String::new(), |name, part| name + &part.value);
+            // unwrap() is safe as ObjectNamePart is an enum with only one variant.
+            let table_name = parts.name.0.iter().fold(String::new(), |name, part| {
+                name + &part.as_ident().unwrap().value
+            });
 
             table_names.push(table_name);
         }

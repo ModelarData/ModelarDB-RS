@@ -80,7 +80,7 @@ impl DataTransfer {
             let object_store = delta_table.object_store();
             for file_path in delta_table.get_files_iter()? {
                 let object_meta = object_store.head(&file_path).await?;
-                *table_size_in_bytes += object_meta.size;
+                *table_size_in_bytes += object_meta.size as usize;
             }
         }
 
@@ -552,7 +552,7 @@ mod tests {
             files_size += object_meta.unwrap().size;
         }
 
-        files_size
+        files_size as usize
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
