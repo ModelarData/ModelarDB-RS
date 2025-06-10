@@ -34,7 +34,8 @@ services:
       - minio-server
     entrypoint:
       /bin/sh -c "
-      /usr/bin/mc config host add modelardb-minio http://minio-server:9000 minioadmin minioadmin;
+      sleep 2;
+      /usr/bin/mc alias set modelardb-minio http://minio-server:9000 minioadmin minioadmin;
       /usr/bin/mc mb modelardb-minio/modelardb;
       exit 0;
       "
@@ -54,8 +55,11 @@ services:
       AWS_ENDPOINT: http://minio-server:9000
       AWS_ALLOW_HTTP: "true"
     depends_on:
-      - minio-server
-      - create-bucket
+      create-bucket:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ "CMD", "echo", "ready" ]
+      interval: 2s
 
   modelardb-edge:
     image: modelardb
@@ -68,11 +72,14 @@ services:
       MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES: 10000
       MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES: 10000
       MODELARDBD_IP_ADDRESS: host.docker.internal
-    restart: on-failure:10
-    depends_on:
-      - modelardb-manager
     volumes:
       - ./data/edge:/usr/src/app/data/edge
+    depends_on:
+      modelardb-manager:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "echo", "ready" ]
+      interval: 1s
 
   modelardb-cloud:
     image: modelardb
@@ -83,9 +90,8 @@ services:
     environment:
       MODELARDBD_PORT: 9997
       MODELARDBD_IP_ADDRESS: host.docker.internal
-    restart: on-failure:10
-    depends_on:
-      - modelardb-manager
-      - modelardb-edge
     volumes:
       - ./data/cloud:/usr/src/app/data/cloud
+    depends_on:
+      modelardb-edge:
+        condition: service_healthy
