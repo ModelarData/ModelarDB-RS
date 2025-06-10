@@ -53,7 +53,7 @@ services:
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_DEFAULT_REGION: eu-central-1
       AWS_ENDPOINT: http://minio-server:9000
-      AWS_ALLOW_HTTP: "true"
+      AWS_ALLOW_HTTP: true
     depends_on:
       create-bucket:
         condition: service_completed_successfully
@@ -72,8 +72,7 @@ services:
       MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES: 10000
       MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES: 10000
       MODELARDBD_IP_ADDRESS: host.docker.internal
-    volumes:
-      - ./data/edge:/usr/src/app/data/edge
+      AWS_ALLOW_HTTP: true
     depends_on:
       modelardb-manager:
         condition: service_healthy
@@ -90,8 +89,7 @@ services:
     environment:
       MODELARDBD_PORT: 9997
       MODELARDBD_IP_ADDRESS: host.docker.internal
-    volumes:
-      - ./data/cloud:/usr/src/app/data/cloud
+      AWS_ALLOW_HTTP: true
     depends_on:
       modelardb-edge:
         condition: service_healthy
