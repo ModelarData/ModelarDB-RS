@@ -31,9 +31,7 @@ use arrow::array::RecordBatch;
 use arrow::compute;
 use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
-use arrow::ipc::reader::StreamReader;
-use arrow::ipc::writer::{IpcWriteOptions, StreamWriter};
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 use datafusion::catalog::TableProvider;
 use datafusion::datasource::sink::DataSink;
 use datafusion::execution::SendableRecordBatchStream;
@@ -264,39 +262,11 @@ fn apache_parquet_writer_properties(
         .build()
 }
 
-/// Convert a [`RecordBatch`] to a [`Vec<u8>`].
-pub fn try_convert_record_batch_to_bytes(record_batch: &RecordBatch) -> Result<Vec<u8>> {
-    let options = IpcWriteOptions::default();
-    let mut writer = StreamWriter::try_new_with_options(vec![], &record_batch.schema(), options)?;
-
-    writer.write(record_batch)?;
-    writer.into_inner().map_err(|error| error.into())
-}
-
-/// Return [`RecordBatch`] if `record_batch_bytes` can be converted to an Apache Arrow [`RecordBatch`],
-/// otherwise [`ModelarDbStorageError`](error::ModelarDbStorageError).
-pub fn try_convert_bytes_to_record_batch(
-    record_batch_bytes: Vec<u8>,
-    schema: &Arc<Schema>,
-) -> Result<RecordBatch> {
-    let bytes: Bytes = record_batch_bytes.into();
-    let reader = StreamReader::try_new(bytes.reader(), None)?;
-
-    let mut record_batches = vec![];
-    for maybe_record_batch in reader {
-        let record_batch = maybe_record_batch?;
-        record_batches.push(record_batch);
-    }
-
-    concat_batches(schema, &record_batches).map_err(|error| error.into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
-    use modelardb_types::types::ArrowValue;
+    use arrow::datatypes::{Field, Schema};
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
 
@@ -401,48 +371,5 @@ mod tests {
                 .await;
 
         (temp_dir, result)
-    }
-
-    // Tests for try_convert_record_batch_to_bytes() and try_convert_bytes_to_record_batch().
-    #[test]
-    fn test_convert_record_batch_to_bytes_and_bytes_to_record_batch() {
-        let record_batch = test::normal_table_record_batch();
-
-        // Serialize the record batch to bytes.
-        let bytes = try_convert_record_batch_to_bytes(&record_batch).unwrap();
-
-        // Deserialize the bytes to the record batch.
-        let bytes_record_batch =
-            try_convert_bytes_to_record_batch(bytes, &record_batch.schema()).unwrap();
-
-        assert_eq!(record_batch, bytes_record_batch);
-    }
-
-    #[test]
-    fn test_convert_invalid_bytes_to_record_batch() {
-        let result = try_convert_bytes_to_record_batch(
-            vec![1, 2, 4, 8],
-            &Arc::new(test::normal_table_schema()),
-        );
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Arrow Error: Io error: failed to fill whole buffer"
-        );
-    }
-
-    #[test]
-    fn test_convert_bytes_with_invalid_schema_to_record_batch() {
-        let bytes = try_convert_record_batch_to_bytes(&test::normal_table_record_batch()).unwrap();
-
-        let field = Field::new("field", ArrowValue::DATA_TYPE, false);
-        let schema = Arc::new(Schema::new(vec![field]));
-        let result = try_convert_bytes_to_record_batch(bytes, &schema);
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Arrow Error: Invalid argument error: column types must match schema types, expected \
-            Float32 but found Timestamp(Microsecond, None) at column index 0"
-        );
     }
 }
