@@ -543,7 +543,7 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTables" {
-            // Deserialize and extract the table metadata from the protobuf in the action body.
+            // Deserialize and extract the table metadata from the protobuf message in the action body.
             let (normal_table_metadata, time_series_table_metadata) =
                 modelardb_types::flight::deserialize_and_extract_table_metadata(&action.body)
                     .map_err(error_to_status_invalid_argument)?;
@@ -683,7 +683,7 @@ impl FlightService for FlightServiceHandler {
 
             let protobuf_bytes = manager_metadata.encode_to_vec();
 
-            // Return the key for the manager and the connection info for the remote object store.
+            // Return the key for the manager and the storage configuration for the remote object store.
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
                     body: protobuf_bytes.into(),

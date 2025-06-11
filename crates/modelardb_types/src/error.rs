@@ -36,7 +36,7 @@ pub enum ModelarDbTypesError {
     DataFusion(DataFusionError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
-    /// Error returned by Prost when decoding a message that is not a valid.
+    /// Error returned by Prost when decoding a message that is not valid.
     ProstDecode(DecodeError),
     /// Error returned by environment variables.
     Var(VarError),

@@ -63,7 +63,7 @@ pub enum ModelarDbServerError {
     ModelarDbTypes(ModelarDbTypesError),
     /// Error returned by ObjectStore.
     ObjectStore(ObjectStoreError),
-    /// Error returned by Prost when decoding a message that is not a valid.
+    /// Error returned by Prost when decoding a message that is not valid.
     ProstDecode(DecodeError),
     /// Status returned by Tonic.
     TonicStatus(TonicStatusError),
