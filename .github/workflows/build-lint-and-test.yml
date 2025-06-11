@@ -81,6 +81,8 @@ jobs:
     # Setup Protobuf Compiler.
     - name: Install Protoc
       uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
 
     # Update Rust.
     - name: Rustup Update
