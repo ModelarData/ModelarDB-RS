@@ -29,7 +29,7 @@ use datafusion_proto::bytes::Serializeable;
 use modelardb_common::test::ERROR_BOUND_ZERO;
 use modelardb_types::flight::protocol;
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
+use modelardb_types::types::{ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};

@@ -35,7 +35,6 @@ use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::{IpcWriteOptions, StreamWriter};
 use bytes::{Buf, Bytes};
 use datafusion::catalog::TableProvider;
-use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::datasource::sink::DataSink;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::execution::session_state::SessionStateBuilder;
