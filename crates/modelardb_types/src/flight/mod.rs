@@ -402,8 +402,10 @@ mod test {
         assert_eq!(normal_tables[0].0, test::NORMAL_TABLE_NAME);
         assert_eq!(normal_tables[0].1, test::normal_table_schema());
 
-        let time_series_table_metadata = test::time_series_table_metadata();
         assert_eq!(time_series_tables[0].name, test::TIME_SERIES_TABLE_NAME);
-        assert_eq!(time_series_tables[0].query_schema, time_series_table_metadata.query_schema);
+        assert_eq!(
+            time_series_tables[0].query_schema,
+            test::time_series_table_metadata().query_schema
+        );
     }
 }
