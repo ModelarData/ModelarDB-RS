@@ -56,8 +56,8 @@ pub enum ModelarDbEmbeddedError {
     ObjectStore(ObjectStoreError),
     /// Error returned by Apache Parquet.
     Parquet(ParquetError),
-    /// Status returned by Tonic. It is wrapped in a Box to decrease the size of the error variant.
-    TonicStatus(Box<TonicStatusError>),
+    /// Status returned by Tonic.
+    TonicStatus(TonicStatusError),
     /// Error returned by Tonic.
     TonicTransport(TonicTransportError),
     /// Error returned when a feature is unimplemented.
@@ -160,7 +160,7 @@ impl From<ParquetError> for ModelarDbEmbeddedError {
 
 impl From<TonicStatusError> for ModelarDbEmbeddedError {
     fn from(error: TonicStatusError) -> Self {
-        Self::TonicStatus(Box::new(error))
+        Self::TonicStatus(error)
     }
 }
 
