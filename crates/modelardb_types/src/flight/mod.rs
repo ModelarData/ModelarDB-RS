@@ -101,10 +101,7 @@ pub fn decode_node_metadata(node_metadata: &protocol::NodeMetadata) -> Result<No
         }
     };
 
-    Ok(Node {
-        url: node_metadata.url.clone(),
-        mode: server_mode,
-    })
+    Ok(Node::new(node_metadata.url.clone(), server_mode))
 }
 
 /// Serialize the table metadata into a [`TableMetadata`](protocol::TableMetadata) protobuf message.
@@ -313,10 +310,7 @@ mod test {
 
     use std::sync::{LazyLock, Mutex};
 
-    use arrow::array::ArrowPrimitiveType;
-    use arrow::datatypes::Field;
-
-    use crate::types::{ArrowTimestamp, ArrowValue};
+    use modelardb_storage::test;
 
     /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
     static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -386,14 +380,11 @@ mod test {
 
     // Test for encode_node() and decode_node_metadata().
     #[test]
-    fn test_encode_and_decode_node() {
-        let node = Node {
-            url: "grpc://server:9999".to_string(),
-            mode: ServerMode::Edge,
-        };
+    fn test_encode_and_decode_node_metadata() {
+        let node = Node::new("grpc://server:9999".to_string(), ServerMode::Edge);
 
-        let encoded_node = encode_node(&node).unwrap();
-        let decoded_node = decode_node_metadata(&encoded_node).unwrap();
+        let encoded_node_metadata = encode_node(&node).unwrap();
+        let decoded_node = decode_node_metadata(&encoded_node_metadata).unwrap();
 
         assert_eq!(node.url, decoded_node.url);
         assert_eq!(node.mode, decoded_node.mode);
@@ -402,44 +393,17 @@ mod test {
     // Test for encoding and decoding table metadata.
     #[test]
     fn test_encode_and_decode_table_metadata() {
-        // Encode normal table metadata.
-        let normal_table_schema =
-            Schema::new(vec![Field::new("metadata", ArrowValue::DATA_TYPE, false)]);
-        let encoded_normal_table =
-            encode_normal_table_metadata("test_normal_table", &normal_table_schema).unwrap();
-
-        // Encode time series table metadata.
-        let time_series_table_schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-        ]));
-
-        let time_series_table_metadata = TimeSeriesTableMetadata::try_new(
-            "test_time_series_table".to_owned(),
-            time_series_table_schema.clone(),
-            vec![
-                ErrorBound::try_new_absolute(0.0).unwrap(),
-                ErrorBound::try_new_absolute(0.0).unwrap(),
-            ],
-            vec![None, None],
-        )
-        .unwrap();
-
-        let encoded_time_series_table =
-            encode_time_series_table_metadata(&time_series_table_metadata).unwrap();
-
-        // Serialize the table metadata.
-        let serialized_metadata =
-            serialize_table_metadata(vec![encoded_normal_table], vec![encoded_time_series_table]);
+        let protobuf_bytes = test::table_metadata_protobuf_bytes();
 
         // Deserialize and extract the table metadata.
         let (normal_tables, time_series_tables) =
-            deserialize_and_extract_table_metadata(&serialized_metadata).unwrap();
+            deserialize_and_extract_table_metadata(&protobuf_bytes).unwrap();
 
-        assert_eq!(normal_tables[0].0, "test_normal_table");
-        assert_eq!(normal_tables[0].1, normal_table_schema);
+        assert_eq!(normal_tables[0].0, test::NORMAL_TABLE_NAME);
+        assert_eq!(normal_tables[0].1, test::normal_table_schema());
 
-        assert_eq!(time_series_tables[0].name, "test_time_series_table");
-        assert_eq!(time_series_tables[0].query_schema, time_series_table_schema);
+        let time_series_table_metadata = test::time_series_table_metadata();
+        assert_eq!(time_series_tables[0].name, test::TIME_SERIES_TABLE_NAME);
+        assert_eq!(time_series_tables[0].query_schema, time_series_table_metadata.query_schema);
     }
 }
