@@ -31,29 +31,6 @@ from .table import NormalTable, TimeSeriesTable
 from .ffi_array import FFIArray
 
 
-@dataclass
-class Server:
-    """A ModelarDB edge or cloud server node.
-
-    :param url: The URL of the ModelarDB server node.
-    :type url: str
-    """
-
-    def __init__(self, url: str):
-        self.url: str = url
-
-
-@dataclass
-class Manager:
-    """A ModelarDB manager node.
-
-    :param url: The URL of the ModelarDB manager node.
-    :type url: str
-    """
-
-    def __init__(self, url: str):
-        self.url: str = url
-
 
 class Aggregate(Enum):
     """Aggregate operations supported by :meth:`Operations.read`."""
