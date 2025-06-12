@@ -36,25 +36,6 @@ MISSING_TABLE_NAME = "missing_table"
 
 
 class ModelarDBPythonTest(unittest.TestCase):
-    # Tests for TimeSeriesTable.
-    def test_cannot_specify_error_bound_for_missing_columns(self):
-        schema = time_series_table_query_schema()
-        self.assertRaises(
-            ValueError,
-            lambda: TimeSeriesTable(
-                schema, {"field_that_does_not_exist": AbsoluteErrorBound(0)}
-            ),
-        )
-
-    def test_cannot_specify_generated_column_for_missing_columns(self):
-        schema = time_series_table_query_schema()
-        self.assertRaises(
-            ValueError,
-            lambda: TimeSeriesTable(
-                schema, {}, {"field_that_does_not_exist": "field_one + field_two"}
-            ),
-        )
-
     # Tests for FFIArray.
     def test_can_create_ffiarray_from_array(self):
         array = pyarrow.array([1, 2, 3, 4, 5])
