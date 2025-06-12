@@ -99,7 +99,7 @@ class FFIArray:
 
     def array(self) -> Array | RecordBatch:
         """Returns the contents of :attr:`array_ptr` as a :attr:`array_type`
-        with the schema in :attr:`array_schema_ptr.`
+        with the schema in :attr:`schema_ptr`.
         """
         # If FFIArray was constructed by passing only array_type, no data was
         # available when it was created, so the conversion must be done now.

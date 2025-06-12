@@ -38,7 +38,7 @@ class RelativeErrorBound:
 
     param value: A value between 0 and 100 that specifies the error bound.
     :type value: float
-    :raises ValueError: If `value` is not between 0 an 100.
+    :raises ValueError: If `value` is not between 0 and 100.
     """
 
     def __init__(self, value: float):

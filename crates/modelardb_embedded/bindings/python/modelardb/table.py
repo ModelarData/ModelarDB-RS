@@ -50,7 +50,7 @@ class TimeSeriesTable:
     :param generated_columns: SQL expressions for generating field columns of
     type :class:`pyarrow.float32()` in `schema`. If no generated column is
     specified for a field column, it will be stored.
-    :type error_bounds: dict[str, str], optional
+    :type generated_columns: dict[str, str], optional
     """
 
     def __init__(
@@ -65,7 +65,7 @@ class TimeSeriesTable:
         self.generated_columns = {} if generated_columns is None else generated_columns
         self.__check_if_column_exists(self.generated_columns.keys(), schema)
 
-    def __check_if_column_exists(self, columns: [str], schema: Schema):
+    def __check_if_column_exists(self, columns: list[str], schema: Schema):
         """Raise an error if a column in :attr:`columns` does not exist in
         :attr:`schema`
 
