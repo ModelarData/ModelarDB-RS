@@ -20,7 +20,6 @@ from . import time_series_table_query_schema
 
 
 class TestTable(unittest.TestCase):
-    # Tests for TimeSeriesTable.
     def test_cannot_specify_error_bound_for_missing_columns(self):
         schema = time_series_table_query_schema()
         self.assertRaises(

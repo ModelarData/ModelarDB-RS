@@ -24,11 +24,9 @@ from modelardb import (
     TimeSeriesTable,
     NormalTable,
     Operations,
-    FFIArray,
     RelativeErrorBound,
 )
-from pyarrow import Int64Array, RecordBatch, Schema
-from pyarrow.cffi import ffi
+from pyarrow import RecordBatch, Schema
 
 NORMAL_TABLE_NAME = "normal_table"
 TIME_SERIES_TABLE_NAME = "time_series_table"
@@ -36,29 +34,6 @@ MISSING_TABLE_NAME = "missing_table"
 
 
 class ModelarDBPythonTest(unittest.TestCase):
-    # Tests for FFIArray.
-    def test_can_create_ffiarray_from_array(self):
-        array = pyarrow.array([1, 2, 3, 4, 5])
-        array_ffi = FFIArray.from_array(array)
-        self.assertEqual(array, array_ffi.array())
-
-    def test_can_create_ffiarray_from_array_type_array_ptr_and_schema_ptr(self):
-        array = pyarrow.array([1, 2, 3, 4, 5])
-        array_ptr = ffi.new("struct ArrowArray*")
-        schema_ptr = ffi.new("struct ArrowSchema*")
-        array_ptr_int = int(ffi.cast("uintptr_t", array_ptr))
-        schema_ptr_int = int(ffi.cast("uintptr_t", schema_ptr))
-        array._export_to_c(array_ptr_int, schema_ptr_int)
-
-        array_ffi = FFIArray.from_ffi(
-            Int64Array, array_ptr=array_ptr, schema_ptr=schema_ptr
-        )
-
-        self.assertEqual(array, array_ffi.array())
-
-    def test_can_create_ffiarray_from_array_type(self):
-        _ = FFIArray.from_type(Int64Array)
-
     # Tests for DataFolder.
     def test_data_folder_init(self):
         with TemporaryDirectory() as temp_dir:
