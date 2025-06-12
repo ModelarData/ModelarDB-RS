@@ -16,7 +16,7 @@ import unittest
 
 from modelardb import TimeSeriesTable, AbsoluteErrorBound
 
-from . import time_series_table_query_schema
+from .test_operations import time_series_table_query_schema
 
 
 class TestTable(unittest.TestCase):
