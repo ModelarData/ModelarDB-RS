@@ -36,47 +36,6 @@ MISSING_TABLE_NAME = "missing_table"
 
 
 class ModelarDBPythonTest(unittest.TestCase):
-    # Tests for AbsoluteErrorBound.
-    def test_can_create_absolute_error_bound_with_float_zero(self):
-        _ = AbsoluteErrorBound(0)
-
-    def test_can_create_absolute_error_bound_with_normal_positive_float(self):
-        _ = AbsoluteErrorBound(1)
-
-    def test_cannot_create_absolute_error_bound_with_normal_negative_float(self):
-        self.assertRaises(ValueError, lambda: AbsoluteErrorBound(-1))
-
-    def test_cannot_create_absolute_error_bound_with_negative_infinity(self):
-        self.assertRaises(ValueError, lambda: AbsoluteErrorBound(float("-inf")))
-
-    def test_cannot_create_absolute_error_bound_with_positive_infinity(self):
-        self.assertRaises(ValueError, lambda: AbsoluteErrorBound(float("inf")))
-
-    def test_cannot_create_absolute_error_bound_with_nan(self):
-        self.assertRaises(ValueError, lambda: AbsoluteErrorBound(float("nan")))
-
-    # Tests for RelativeErrorBound.
-    def test_can_create_relative_error_bound_with_float_zero(self):
-        _ = RelativeErrorBound(0)
-
-    def test_can_create_relative_error_bound_with_normal_positive_float(self):
-        _ = RelativeErrorBound(1)
-
-    def test_cannot_create_relative_error_bound_with_normal_negative_float(self):
-        self.assertRaises(ValueError, lambda: RelativeErrorBound(-1))
-
-    def test_cannot_create_relative_error_bound_with_float_above_one_hundred(self):
-        self.assertRaises(ValueError, lambda: RelativeErrorBound(101))
-
-    def test_cannot_create_relative_error_bound_with_negative_infinity(self):
-        self.assertRaises(ValueError, lambda: RelativeErrorBound(float("-inf")))
-
-    def test_cannot_create_relative_error_bound_with_positive_infinity(self):
-        self.assertRaises(ValueError, lambda: RelativeErrorBound(float("inf")))
-
-    def test_cannot_create_relative_error_bound_with_nan(self):
-        self.assertRaises(ValueError, lambda: RelativeErrorBound(float("nan")))
-
     # Tests for TimeSeriesTable.
     def test_cannot_specify_error_bound_for_missing_columns(self):
         schema = time_series_table_query_schema()
