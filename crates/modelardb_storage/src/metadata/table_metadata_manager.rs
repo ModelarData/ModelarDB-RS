@@ -23,18 +23,17 @@ use std::sync::Arc;
 use arrow::array::{Array, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray};
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::common::{DFSchema, ToDFSchema};
-use datafusion::logical_expr::lit;
+use datafusion::logical_expr::{Expr, lit};
 use datafusion::prelude::{SessionContext, col};
+use datafusion_proto::bytes::Serializeable;
 use modelardb_common::test::ERROR_BOUND_ZERO;
-use modelardb_types::types::{ArrowValue, ErrorBound};
+use modelardb_types::flight::protocol;
+use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
+use modelardb_types::types::{ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
 use crate::delta_lake::DeltaLake;
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
-use crate::{
-    register_metadata_table, sql_and_concat, try_convert_bytes_to_schema,
-    try_convert_schema_to_bytes,
-};
+use crate::{register_metadata_table, sql_and_concat};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -101,12 +100,13 @@ impl TableMetadataManager {
     }
 
     /// Create a new [`TableMetadataManager`] that saves the metadata to a remote object store given
-    /// by `connection_info` and initialize the metadata tables. If `connection_info` could not be
-    /// parsed, the connection cannot be made, or the metadata tables could not be created, return
-    /// [`ModelarDbStorageError`].
-    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
+    /// by `storage_configuration` and initialize the metadata tables. If a connection could not be
+    /// made or the metadata tables could not be created, return [`ModelarDbStorageError`].
+    pub async fn try_from_storage_configuration(
+        storage_configuration: protocol::manager_metadata::StorageConfiguration,
+    ) -> Result<Self> {
         let table_metadata_manager = Self {
-            delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
+            delta_lake: DeltaLake::try_remote_from_storage_configuration(storage_configuration)?,
             session_context: Arc::new(SessionContext::new()),
         };
 
@@ -220,7 +220,7 @@ impl TableMetadataManager {
                     Field::new("column_index", DataType::Int16, false),
                     Field::new("error_bound_value", DataType::Float32, false),
                     Field::new("error_bound_is_relative", DataType::Boolean, false),
-                    Field::new("generated_column_expr", DataType::Utf8, true),
+                    Field::new("generated_column_expr", DataType::Binary, true),
                 ]),
             )
             .await?;
@@ -337,10 +337,16 @@ impl TableMetadataManager {
             .enumerate()
         {
             if field.data_type() == &ArrowValue::DATA_TYPE {
-                let maybe_generated_column_expr = time_series_table_metadata.generated_columns
-                    [query_schema_index]
-                    .as_ref()
-                    .map(|generated_column| generated_column.original_expr.clone());
+                // Convert the generated column expression to bytes, if it exists.
+                let maybe_generated_column_expr = match time_series_table_metadata
+                    .generated_columns
+                    .get(query_schema_index)
+                {
+                    Some(Some(generated_column)) => {
+                        Some(generated_column.expr.to_bytes()?.to_vec())
+                    }
+                    _ => None,
+                };
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of time series tables.
@@ -367,7 +373,9 @@ impl TableMetadataManager {
                             Arc::new(Int16Array::from(vec![query_schema_index as i16])),
                             Arc::new(Float32Array::from(vec![error_bound_value])),
                             Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                            Arc::new(StringArray::from(vec![maybe_generated_column_expr])),
+                            Arc::new(BinaryArray::from_opt_vec(vec![
+                                maybe_generated_column_expr.as_deref(),
+                            ])),
                         ],
                     )
                     .await?;
@@ -515,6 +523,7 @@ impl TableMetadataManager {
             error_bounds,
             generated_columns,
         )
+        .map_err(|error| error.into())
     }
 
     /// Return the error bounds for the columns in the time series table with `table_name`. If a
@@ -574,16 +583,16 @@ impl TableMetadataManager {
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
-        let generated_column_expr_array = modelardb_types::array!(batch, 1, StringArray);
+        let generated_column_expr_array = modelardb_types::array!(batch, 1, BinaryArray);
 
         for row_index in 0..batch.num_rows() {
             let generated_column_index = column_index_array.value(row_index);
-            let generated_column_expr = generated_column_expr_array.value(row_index);
+            let expr_bytes = generated_column_expr_array.value(row_index);
 
-            // If generated_column_expr is null, it is saved as an empty string in the column values.
-            if !generated_column_expr.is_empty() {
-                let generated_column =
-                    GeneratedColumn::try_from_sql_expr(generated_column_expr, df_schema)?;
+            // If generated_column_expr is null, it is saved as empty bytes in the column values.
+            if !expr_bytes.is_empty() {
+                let expr = Expr::from_bytes(expr_bytes)?;
+                let generated_column = GeneratedColumn::try_from_expr(expr, df_schema)?;
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
             }
@@ -785,7 +794,7 @@ mod tests {
         assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
         assert_eq!(
             **batch.column(5),
-            StringArray::from(vec![None, None] as Vec<Option<&str>>)
+            BinaryArray::from_opt_vec(vec![None, None])
         );
     }
 
@@ -952,13 +961,11 @@ mod tests {
         let plus_one_column = Some(GeneratedColumn {
             expr: col("field_1") + Literal(Int64(Some(1))),
             source_columns: vec![2],
-            original_expr: "field_1 + 1".to_owned(),
         });
 
         let addition_column = Some(GeneratedColumn {
             expr: col("field_1") + col("field_2"),
             source_columns: vec![2, 3],
-            original_expr: "field_1 + field_2".to_owned(),
         });
 
         let mut expected_generated_columns =

@@ -27,10 +27,10 @@ use deltalake::datafusion::prelude::SessionContext;
 use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_storage::{register_metadata_table, sql_and_concat};
-use modelardb_types::types::ServerMode;
+use modelardb_types::flight::protocol;
+use modelardb_types::types::{Node, ServerMode};
 use uuid::Uuid;
 
-use crate::cluster::Node;
 use crate::error::Result;
 
 /// Stores the metadata required for reading from and writing to the normal tables and time series tables
@@ -47,14 +47,20 @@ pub struct MetadataManager {
 
 impl MetadataManager {
     /// Create a new [`MetadataManager`] that saves the metadata to a remote object store given by
-    /// `connection_info` and initialize the metadata tables. If `connection_info` could not be
-    /// parsed or the metadata tables could not be created, return
+    /// `storage_configuration` and initialize the metadata tables. If a connection could not be
+    /// made or the metadata tables could not be created, return
     /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
-    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<MetadataManager> {
+    pub async fn try_from_storage_configuration(
+        storage_configuration: protocol::manager_metadata::StorageConfiguration,
+    ) -> Result<MetadataManager> {
         let metadata_manager = Self {
-            delta_lake: DeltaLake::try_remote_from_connection_info(connection_info)?,
-            table_metadata_manager: TableMetadataManager::try_from_connection_info(connection_info)
-                .await?,
+            delta_lake: DeltaLake::try_remote_from_storage_configuration(
+                storage_configuration.clone(),
+            )?,
+            table_metadata_manager: TableMetadataManager::try_from_storage_configuration(
+                storage_configuration,
+            )
+            .await?,
             session_context: Arc::new(SessionContext::new()),
         };
 

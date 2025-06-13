@@ -22,16 +22,17 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 
 ### All
 2. Install the latest stable [Rust Toolchain](https://rustup.rs/).
-3. Clone the repository: `git clone https://github.com/ModelarData/ModelarDB-RS`
-4. Build, test, and run the system using Cargo:
+3. Install the [Protocol Buffer Compiler](https://protobuf.dev/installation/).
+4. Clone the repository: `git clone https://github.com/ModelarData/ModelarDB-RS`
+5. Build, test, and run the system using Cargo:
    - Debug Build: `cargo build`
    - Release Build: `cargo build --release`
    - Run Tests: `cargo test`
    - Run DBMS Server: `cargo run --bin modelardbd path_to_local_data_folder`
    - Run Client: `cargo run --bin modelardb [server_address] [query_file]`
-5. Move `modelardbd`, `modelardbm`,`modelardb`, and `modelardbb` from the `target` directory to any
+6. Move `modelardbd`, `modelardbm`,`modelardb`, and `modelardbb` from the `target` directory to any
    directory.
-6. Install and test the Python bindings for `modelardb_embedded` using Python:
+7. Install and test the Python bindings for `modelardb_embedded` using Python:
    * Install: `python3 -m pip install .`
    * Run Tests: `python3 -m unittest`
 

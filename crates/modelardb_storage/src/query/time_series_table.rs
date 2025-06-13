@@ -48,9 +48,8 @@ use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFile;
 use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
 use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
-use modelardb_types::types::{ArrowTimestamp, ArrowValue};
+use modelardb_types::types::{ArrowTimestamp, ArrowValue, TimeSeriesTableMetadata};
 
-use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};

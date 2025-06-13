@@ -18,16 +18,12 @@
 use std::sync::Arc;
 
 use arrow::array::{BinaryArray, Float32Array, Int8Array, Int16Array, RecordBatch, StringArray};
-use arrow::compute::concat_batches;
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
-use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
 use modelardb_types::types::{
-    ArrowTimestamp, ArrowValue, ErrorBound, Timestamp, TimestampArray, Value, ValueArray,
+    ArrowTimestamp, ArrowValue, ErrorBound, TimeSeriesTableMetadata, Timestamp, TimestampArray,
+    Value, ValueArray,
 };
-
-use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
-use crate::{normal_table_metadata_to_record_batch, time_series_table_metadata_to_record_batch};
 
 /// SQL to create a normal table with a timestamp column and two floating point columns.
 pub const NORMAL_TABLE_SQL: &str =
@@ -42,20 +38,22 @@ pub const TIME_SERIES_TABLE_SQL: &str = "CREATE TIME SERIES TABLE time_series_ta
 /// Name of the time series table used in tests.
 pub const TIME_SERIES_TABLE_NAME: &str = "time_series_table";
 
-/// Return a [`RecordBatch`] containing metadata for a normal table and a time series table.
-pub fn table_metadata_record_batch() -> RecordBatch {
-    let normal_table_record_batch =
-        normal_table_metadata_to_record_batch(NORMAL_TABLE_NAME, &normal_table_schema()).unwrap();
-
-    let metadata = time_series_table_metadata();
-    let time_series_table_record_batch =
-        time_series_table_metadata_to_record_batch(&metadata).unwrap();
-
-    concat_batches(
-        &TABLE_METADATA_SCHEMA.0,
-        &vec![normal_table_record_batch, time_series_table_record_batch],
+/// Return protobuf message bytes containing metadata for a normal table and a time series table.
+pub fn table_metadata_protobuf_bytes() -> Vec<u8> {
+    let encoded_normal_table = modelardb_types::flight::encode_normal_table_metadata(
+        NORMAL_TABLE_NAME,
+        &normal_table_schema(),
     )
-    .unwrap()
+    .unwrap();
+
+    let encoded_time_series_table =
+        modelardb_types::flight::encode_time_series_table_metadata(&time_series_table_metadata())
+            .unwrap();
+
+    modelardb_types::flight::serialize_table_metadata(
+        vec![encoded_normal_table],
+        vec![encoded_time_series_table],
+    )
 }
 
 /// Return a [`Schema`] for a normal table with a timestamp column and two floating point columns.

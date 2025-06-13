@@ -25,8 +25,9 @@ use std::{iter, mem};
 use datafusion::arrow::array::{Array, ArrayBuilder, StringArray};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
-use modelardb_types::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
+use modelardb_types::types::{
+    TimeSeriesTableMetadata, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
+};
 use object_store::ObjectStore;
 use object_store::path::Path;
 use tracing::debug;

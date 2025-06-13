@@ -19,6 +19,9 @@ license = "Apache-2.0"
 edition = "2024"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "modelardbm"
 path = "src/main.rs"
@@ -31,6 +34,7 @@ futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 modelardb_storage = { path = "../modelardb_storage" }
 modelardb_types = { path = "../modelardb_types" }
+prost.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tonic.workspace = true
 uuid.workspace = true

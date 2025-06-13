@@ -21,8 +21,9 @@ use std::{env, str};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
-use modelardb_common::arguments;
-use modelardb_types::types::ServerMode;
+use modelardb_types::flight::protocol;
+use modelardb_types::types::{Node, ServerMode};
+use prost::Message;
 use tokio::sync::RwLock;
 use tonic::Request;
 use tonic::metadata::MetadataMap;
@@ -53,33 +54,32 @@ impl Manager {
     pub(crate) async fn register_node(
         manager_url: &str,
         server_mode: ServerMode,
-    ) -> Result<(Self, Vec<u8>)> {
+    ) -> Result<(Self, protocol::manager_metadata::StorageConfiguration)> {
         let flight_client = Arc::new(RwLock::new(
             FlightServiceClient::connect(manager_url.to_owned()).await?,
         ));
 
         let ip_address = env::var("MODELARDBD_IP_ADDRESS").unwrap_or("127.0.0.1".to_string());
+        let url_with_port = format!("grpc://{ip_address}:{}", &PORT.to_string());
 
         // Add the url and mode of the server to the action request.
-        let url_with_port = format!("grpc://{ip_address}:{}", &PORT.to_string());
-        let mut body = arguments::encode_argument(url_with_port.as_str());
-        body.append(&mut arguments::encode_argument(
-            server_mode.to_string().as_str(),
-        ));
+        let node = Node::new(url_with_port, server_mode);
+        let node_metadata = modelardb_types::flight::encode_node(&node)?;
 
         let action = Action {
             r#type: "RegisterNode".to_owned(),
-            body: body.into(),
+            body: node_metadata.encode_to_vec().into(),
         };
 
         let message = do_action_and_extract_result(&flight_client, action).await?;
 
-        // Extract the key and the connection information for the remote object store from the response.
-        let (key, offset_data) = arguments::decode_argument(&message.body)?;
+        // Extract the key and the storage configuration for the remote object store from the response.
+        let manager_metadata = protocol::ManagerMetadata::decode(message.body)?;
 
+        // unwrap() is safe since the manager always has a remote storage configuration.
         Ok((
-            Manager::new(flight_client, key.to_owned()),
-            offset_data.into(),
+            Manager::new(flight_client, manager_metadata.key),
+            manager_metadata.storage_configuration.unwrap(),
         ))
     }
 
@@ -87,12 +87,15 @@ impl Manager {
     /// managers database schema. If the tables to create could not be retrieved from the manager,
     /// or the tables could not be created, return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
-        let existing_tables = context.default_database_schema()?.table_names();
-
         // Add the already existing tables to the action request.
+        let existing_tables = context.default_database_schema()?.table_names();
+        let database_metadata = protocol::DatabaseMetadata {
+            table_names: existing_tables,
+        };
+
         let action = Action {
             r#type: "InitializeDatabase".to_owned(),
-            body: existing_tables.join(",").into_bytes().into(),
+            body: database_metadata.encode_to_vec().into(),
         };
 
         let message = do_action_and_extract_result(&self.flight_client, action).await?;

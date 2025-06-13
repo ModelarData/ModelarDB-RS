@@ -19,9 +19,23 @@ license = "Apache-2.0"
 edition = "2024"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
+[lints]
+workspace = true
+
 [dependencies]
 arrow.workspace = true
+arrow-flight.workspace = true
+datafusion.workspace = true
+datafusion-proto.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true
 
 [dev-dependencies]
 modelardb_common = { path = "../modelardb_common" }
+modelardb_storage = { path = "../modelardb_storage" }
 proptest.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["prost-build"]
