@@ -94,6 +94,10 @@ jobs:
     - name: Cargo Install machete
       run: cargo install cargo-machete
 
+    # Cache Cargo Dependencies.
+    - name: Cache Dependencies
+      uses: Swatinem/rust-cache@v2
+
     # Run Rust Lints and Tests.
     - name: Cargo Build
       run: cargo build --verbose --all-targets
