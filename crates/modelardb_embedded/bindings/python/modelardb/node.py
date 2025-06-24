@@ -12,26 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[package]
-name = "modelardb_bulkloader"
-version = "0.1.0"
-license = "Apache-2.0"
-edition = "2024"
-authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
+from dataclasses import dataclass
 
-[lints]
-workspace = true
 
-[[bin]]
-name = "modelardbb"
-path = "src/main.rs"
+@dataclass
+class Server:
+    """A ModelarDB edge or cloud server node.
 
-[dependencies]
-arrow = { workspace = true, features = ["ffi"] }
-datafusion.workspace = true
-deltalake.workspace = true
-futures.workspace = true
-modelardb_embedded = { path = "../modelardb_embedded" }
-modelardb_storage = { path = "../modelardb_storage" }
-sysinfo.workspace = true
-tokio.workspace = true
+    :param url: The URL of the ModelarDB server node.
+    :type url: str
+    """
+
+    def __init__(self, url: str):
+        self.url: str = url
+
+
+@dataclass
+class Manager:
+    """A ModelarDB manager node.
+
+    :param url: The URL of the ModelarDB manager node.
+    :type url: str
+    """
+
+    def __init__(self, url: str):
+        self.url: str = url

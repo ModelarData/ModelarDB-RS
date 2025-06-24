@@ -19,6 +19,9 @@ license = "Apache-2.0"
 edition = "2024"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
+[lints]
+workspace = true
+
 [dependencies]
 arrow.workspace = true
 
