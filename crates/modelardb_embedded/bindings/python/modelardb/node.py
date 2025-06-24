@@ -11,3 +11,29 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from dataclasses import dataclass
+
+
+@dataclass
+class Server:
+    """A ModelarDB edge or cloud server node.
+
+    :param url: The URL of the ModelarDB server node.
+    :type url: str
+    """
+
+    def __init__(self, url: str):
+        self.url: str = url
+
+
+@dataclass
+class Manager:
+    """A ModelarDB manager node.
+
+    :param url: The URL of the ModelarDB manager node.
+    :type url: str
+    """
+
+    def __init__(self, url: str):
+        self.url: str = url
