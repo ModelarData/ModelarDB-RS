@@ -221,7 +221,7 @@ impl StorageEngine {
     {
         for thread_number in 0..num_threads {
             let join_handle = thread::Builder::new()
-                .name(format!("{} {}", name, thread_number))
+                .name(format!("{name} {thread_number}"))
                 .spawn(function.clone())?;
 
             join_handles.push(join_handle);

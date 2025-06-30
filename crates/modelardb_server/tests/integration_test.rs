@@ -1038,11 +1038,11 @@ async fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound:
     let data_point_query = format!("{segment_query} WHERE timestamp >= 0::TIMESTAMP");
 
     let data_point_query_plans = test_context
-        .execute_query(format!("EXPLAIN {}", data_point_query))
+        .execute_query(format!("EXPLAIN {data_point_query}"))
         .await
         .unwrap();
     let segment_query_plans = test_context
-        .execute_query(format!("EXPLAIN {}", segment_query))
+        .execute_query(format!("EXPLAIN {segment_query}"))
         .await
         .unwrap();
 

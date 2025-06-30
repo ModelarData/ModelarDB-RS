@@ -625,8 +625,7 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     for keyword in ALL_KEYWORDS {
         if &table_name_uppercase == keyword {
             return Err(ModelarDbStorageError::InvalidArgument(format!(
-                "Reserved keyword '{}' cannot be used as a table name.",
-                name
+                "Reserved keyword '{name}' cannot be used as a table name."
             )));
         }
     }

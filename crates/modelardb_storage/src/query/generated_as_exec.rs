@@ -231,9 +231,9 @@ impl GeneratedAsStream {
                         let formated_value = if let Some(naive_date_time) =
                             temporal_conversions::timestamp_ms_to_datetime(timestamp)
                         {
-                            format!("{name}: {}", naive_date_time)
+                            format!("{name}: {naive_date_time}")
                         } else {
-                            format!("{name}: {}", timestamp)
+                            format!("{name}: {timestamp}")
                         };
                         formatted_values.push(formated_value);
                     } else if let Some(fields) = column.as_any().downcast_ref::<ValueArray>() {
