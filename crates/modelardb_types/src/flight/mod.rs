@@ -13,6 +13,10 @@
  * limitations under the License.
  */
 
+//! Implementation of helper functions to encode and decode types to and from the protobuf messages
+//! defined in `flight/protocol.proto`. The module also provides functions to serialize and
+//! deserialize encoded messages to and from bytes.
+
 use std::env;
 use std::sync::Arc;
 
@@ -197,8 +201,13 @@ fn encode_error_bounds(
     let mut error_bounds_all =
         Vec::with_capacity(time_series_table_metadata.query_schema.fields().len());
 
+    let absolute_error_bound =
+        protocol::table_metadata::time_series_table_metadata::error_bound::Type::Absolute as i32;
+    let relative_error_bound =
+        protocol::table_metadata::time_series_table_metadata::error_bound::Type::Relative as i32;
+
     let lossless = protocol::table_metadata::time_series_table_metadata::ErrorBound {
-        r#type: 0,
+        r#type: absolute_error_bound,
         value: 0.0,
     };
 
@@ -206,8 +215,8 @@ fn encode_error_bounds(
         if let Ok(field_index) = time_series_table_metadata.schema.index_of(field.name()) {
             let (error_bound_type, value) =
                 match time_series_table_metadata.error_bounds[field_index] {
-                    ErrorBound::Absolute(value) => (0, value),
-                    ErrorBound::Relative(value) => (1, value),
+                    ErrorBound::Absolute(value) => (absolute_error_bound, value),
+                    ErrorBound::Relative(value) => (relative_error_bound, value),
                 };
 
             error_bounds_all.push(
@@ -268,9 +277,15 @@ fn decode_error_bounds(
     let mut error_bounds = Vec::with_capacity(encoded_error_bounds.len());
 
     for error_bound in encoded_error_bounds {
-        match error_bound.r#type {
-            0 => error_bounds.push(ErrorBound::Absolute(error_bound.value)),
-            1 => error_bounds.push(ErrorBound::Relative(error_bound.value)),
+        match protocol::table_metadata::time_series_table_metadata::error_bound::Type::try_from(
+            error_bound.r#type,
+        ) {
+            Ok(
+                protocol::table_metadata::time_series_table_metadata::error_bound::Type::Absolute,
+            ) => error_bounds.push(ErrorBound::Absolute(error_bound.value)),
+            Ok(
+                protocol::table_metadata::time_series_table_metadata::error_bound::Type::Relative,
+            ) => error_bounds.push(ErrorBound::Relative(error_bound.value)),
             _ => {
                 return Err(ModelarDbTypesError::InvalidArgument(format!(
                     "Unknown error bound type: {}.",

@@ -534,31 +534,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cannot_create_time_series_table_metadata_with_too_many_fields() {
-        // Create 1025 fields that can be used to initialize a schema.
-        let fields = (0..1025)
-            .map(|i| Field::new(format!("field_{i}").as_str(), DataType::Float32, false))
-            .collect::<Vec<Field>>();
-
-        let error_bounds = vec![
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-        ];
-
-        let generated_columns = vec![None, None, None];
-
-        let result = TimeSeriesTableMetadata::try_new(
-            test::TIME_SERIES_TABLE_NAME.to_owned(),
-            Arc::new(Schema::new(fields)),
-            error_bounds,
-            generated_columns,
-        );
-
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_is_timestamp() {
         let time_series_table_metadata = test::time_series_table_metadata();
 

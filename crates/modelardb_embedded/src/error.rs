@@ -44,6 +44,8 @@ pub enum ModelarDbEmbeddedError {
     DataFusion(DataFusionError),
     /// Error returned by Delta Lake.
     DeltaLake(DeltaTableError),
+    /// Error returned by environment variables.
+    EnvironmentVar(VarError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
     /// Error returned by modelardb_common.
@@ -64,8 +66,6 @@ pub enum ModelarDbEmbeddedError {
     Unimplemented(String),
     /// Error returned by UTF-8.
     Utf8(Utf8Error),
-    /// Error returned by environment variables.
-    Var(VarError),
 }
 
 impl Display for ModelarDbEmbeddedError {
@@ -74,6 +74,7 @@ impl Display for ModelarDbEmbeddedError {
             Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
             Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
+            Self::EnvironmentVar(reason) => write!(f, "Environment Variable Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
             Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
@@ -84,7 +85,6 @@ impl Display for ModelarDbEmbeddedError {
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
             Self::Unimplemented(reason) => write!(f, "Unimplemented Error: {reason}"),
             Self::Utf8(reason) => write!(f, "UTF-8 Error: {reason}"),
-            Self::Var(reason) => write!(f, "Environment Variable Error: {reason}"),
         }
     }
 }
@@ -95,6 +95,7 @@ impl Error for ModelarDbEmbeddedError {
             Self::Arrow(reason) => Some(reason),
             Self::DataFusion(reason) => Some(reason),
             Self::DeltaLake(reason) => Some(reason),
+            Self::EnvironmentVar(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
             Self::ModelarDbCommon(reason) => Some(reason),
             Self::ModelarDbStorage(reason) => Some(reason),
@@ -105,7 +106,6 @@ impl Error for ModelarDbEmbeddedError {
             Self::TonicTransport(reason) => Some(reason),
             Self::Unimplemented(_reason) => None,
             Self::Utf8(reason) => Some(reason),
-            Self::Var(reason) => Some(reason),
         }
     }
 }
@@ -125,6 +125,12 @@ impl From<DataFusionError> for ModelarDbEmbeddedError {
 impl From<DeltaTableError> for ModelarDbEmbeddedError {
     fn from(error: DeltaTableError) -> Self {
         Self::DeltaLake(error)
+    }
+}
+
+impl From<VarError> for ModelarDbEmbeddedError {
+    fn from(error: VarError) -> Self {
+        Self::EnvironmentVar(error)
     }
 }
 
@@ -173,11 +179,5 @@ impl From<TonicTransportError> for ModelarDbEmbeddedError {
 impl From<Utf8Error> for ModelarDbEmbeddedError {
     fn from(error: Utf8Error) -> Self {
         Self::Utf8(error)
-    }
-}
-
-impl From<VarError> for ModelarDbEmbeddedError {
-    fn from(error: VarError) -> Self {
-        Self::Var(error)
     }
 }

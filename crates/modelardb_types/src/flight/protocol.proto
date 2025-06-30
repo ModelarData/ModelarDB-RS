@@ -19,7 +19,7 @@ package modelardb.flight.protocol;
 
 // Metadata for the ModelarDB cluster manager, including its unique key and storage configuration.
 message ManagerMetadata {
-  // key used to uniquely identify the cluster manager.
+  // Key used to uniquely identify the cluster manager.
   string key = 1;
 
   // Storage configuration used to connect to an S3 object store.

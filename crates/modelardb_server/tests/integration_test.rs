@@ -418,7 +418,8 @@ impl TestContext {
     }
 
     /// Update `setting` to `setting_value` in the server configuration using the
-    /// `UpdateConfiguration` action.
+    /// `UpdateConfiguration` action. `setting` is an integer that corresponds to the
+    /// [`Setting`](protocol::update_configuration::Setting) enum variant to update.
     async fn update_configuration(
         &mut self,
         setting: i32,

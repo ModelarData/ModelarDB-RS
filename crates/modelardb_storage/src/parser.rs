@@ -1019,7 +1019,8 @@ fn extract_generation_exprs_for_all_columns(
                 let _physical_expr =
                     planner::create_physical_expr(&expr, &df_schema, &execution_props)?;
 
-                // unwrap() is safe as the expression only references columns in the schema.
+                // unwrap() is safe as sql_to_expr() validates that the expression only
+                // references columns in the schema.
                 generated_column = Some(GeneratedColumn::try_from_expr(expr, &df_schema).unwrap());
             }
         }

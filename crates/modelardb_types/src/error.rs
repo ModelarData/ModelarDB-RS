@@ -34,12 +34,12 @@ pub enum ModelarDbTypesError {
     Arrow(ArrowError),
     /// Error returned by Apache DataFusion.
     DataFusion(DataFusionError),
+    /// Error returned by environment variables.
+    EnvironmentVar(VarError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
     /// Error returned by Prost when decoding a message that is not valid.
     ProstDecode(DecodeError),
-    /// Error returned by environment variables.
-    Var(VarError),
 }
 
 impl Display for ModelarDbTypesError {
@@ -47,9 +47,9 @@ impl Display for ModelarDbTypesError {
         match self {
             Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
+            Self::EnvironmentVar(reason) => write!(f, "Environment Variable Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
-            Self::Var(reason) => write!(f, "Environment Variable Error: {reason}"),
         }
     }
 }
@@ -60,9 +60,9 @@ impl Error for ModelarDbTypesError {
         match self {
             Self::Arrow(reason) => Some(reason),
             Self::DataFusion(reason) => Some(reason),
+            Self::EnvironmentVar(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
             Self::ProstDecode(reason) => Some(reason),
-            Self::Var(reason) => Some(reason),
         }
     }
 }
@@ -79,14 +79,14 @@ impl From<DataFusionError> for ModelarDbTypesError {
     }
 }
 
-impl From<DecodeError> for ModelarDbTypesError {
-    fn from(error: DecodeError) -> Self {
-        Self::ProstDecode(error)
+impl From<VarError> for ModelarDbTypesError {
+    fn from(error: VarError) -> Self {
+        Self::EnvironmentVar(error)
     }
 }
 
-impl From<VarError> for ModelarDbTypesError {
-    fn from(error: VarError) -> Self {
-        Self::Var(error)
+impl From<DecodeError> for ModelarDbTypesError {
+    fn from(error: DecodeError) -> Self {
+        Self::ProstDecode(error)
     }
 }
