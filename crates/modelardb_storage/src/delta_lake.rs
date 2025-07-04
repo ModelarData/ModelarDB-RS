@@ -34,8 +34,9 @@ use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
 use deltalake::protocol::{DeltaOperation, SaveMode};
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
-use modelardb_common::arguments;
+use modelardb_types::flight::protocol;
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
+use modelardb_types::types::TimeSeriesTableMetadata;
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -45,7 +46,6 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store.
@@ -112,44 +112,32 @@ impl DeltaLake {
     }
 
     /// Create a new [`DeltaLake`] that manages Delta tables in the remote object store given by
-    /// `connection_info`. Returns [`ModelarDbStorageError`] if `connection_info` could not be
-    /// parsed or a connection to the specified object store could not be created.
-    pub fn try_remote_from_connection_info(connection_info: &[u8]) -> Result<Self> {
-        let (object_store_type, offset_data) = arguments::decode_argument(connection_info)
-            .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
-
-        match object_store_type {
-            "s3" => {
+    /// `storage_configuration`. Returns [`ModelarDbStorageError`] if a connection to the specified
+    /// object store could not be created.
+    pub fn try_remote_from_storage_configuration(
+        storage_configuration: protocol::manager_metadata::StorageConfiguration,
+    ) -> Result<Self> {
+        match storage_configuration {
+            protocol::manager_metadata::StorageConfiguration::S3Configuration(s3_configuration) => {
                 // Register the S3 storage handlers to allow the use of Amazon S3 object stores.
                 // This is required at runtime to initialize the S3 storage implementation in the
                 // deltalake_aws storage subcrate.
                 deltalake::aws::register_handlers(None);
 
-                let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
-                    arguments::extract_s3_arguments(offset_data)
-                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
-
                 Self::try_from_s3_configuration(
-                    endpoint.to_owned(),
-                    bucket_name.to_owned(),
-                    access_key_id.to_owned(),
-                    secret_access_key.to_owned(),
+                    s3_configuration.endpoint,
+                    s3_configuration.bucket_name,
+                    s3_configuration.access_key_id,
+                    s3_configuration.secret_access_key,
                 )
             }
-            "azureblobstorage" => {
-                let (account, access_key, container_name, _offset_data) =
-                    arguments::extract_azure_blob_storage_arguments(offset_data)
-                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
-
-                Self::try_from_azure_configuration(
-                    account.to_owned(),
-                    access_key.to_owned(),
-                    container_name.to_owned(),
-                )
-            }
-            _ => Err(ModelarDbStorageError::InvalidArgument(format!(
-                "{object_store_type} is not supported."
-            ))),
+            protocol::manager_metadata::StorageConfiguration::AzureConfiguration(
+                azure_configuration,
+            ) => Self::try_from_azure_configuration(
+                azure_configuration.account_name,
+                azure_configuration.access_key,
+                azure_configuration.container_name,
+            ),
         }
     }
 

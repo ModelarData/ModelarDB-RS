@@ -34,7 +34,7 @@ use std::sync::{Arc, LazyLock};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
+use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::error;
@@ -221,7 +221,7 @@ impl StorageEngine {
     {
         for thread_number in 0..num_threads {
             let join_handle = thread::Builder::new()
-                .name(format!("{} {}", name, thread_number))
+                .name(format!("{name} {thread_number}"))
                 .spawn(function.clone())?;
 
             join_handles.push(join_handle);

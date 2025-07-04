@@ -31,9 +31,8 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket, utils,
 };
-use datafusion::arrow::array::{ArrayRef, StringArray, UInt64Array};
+use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
-use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
@@ -41,12 +40,13 @@ use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStrea
 use deltalake::arrow::datatypes::Schema;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
+use modelardb_common::remote;
 use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
-use modelardb_common::{arguments, remote};
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
 use modelardb_storage::parser::{self, ModelarDbStatement};
+use modelardb_types::flight::protocol;
 use modelardb_types::functions;
-use modelardb_types::schemas::CONFIGURATION_SCHEMA;
+use modelardb_types::types::TimeSeriesTableMetadata;
+use prost::Message;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -169,9 +169,9 @@ async fn execute_query_at_address(
     )))
 }
 
-/// Read [`RecordBatches`](RecordBatch) from `query_result_stream` and send them one at a time to
-/// [`FlightService`] using `sender`. Returns [`Status`] with the code [`tonic::Code::Internal`] if
-/// the result cannot be sent through `sender`.
+/// Read [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) from `query_result_stream`
+/// and send them one at a time to [`FlightService`] using `sender`. Returns [`Status`] with the
+/// code [`tonic::Code::Internal`] if the result cannot be sent through `sender`.
 async fn send_query_result(
     mut query_result_stream: SendableRecordBatchStream,
     sender: Sender<StdResult<FlightData, Status>>,
@@ -223,22 +223,9 @@ async fn send_flight_data(
         .map_err(error_to_status_internal)
 }
 
-/// Write the [`RecordBatch`] to a stream within a gRPC response.
-fn send_record_batch(
-    batch: &RecordBatch,
-) -> StdResult<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
-    let batch_bytes = modelardb_storage::try_convert_record_batch_to_bytes(batch)
-        .map_err(error_to_status_internal)?;
-
-    Ok(Response::new(Box::pin(stream::once(async {
-        Ok(FlightResult {
-            body: batch_bytes.into(),
-        })
-    }))))
-}
-
-/// Return an empty stream of [`RecordBatches`](RecordBatch) that can be returned when a SQL
-/// command has been successfully executed but did not produce any rows to return.
+/// Return an empty stream of [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) that
+/// can be returned when a SQL command has been successfully executed but did not produce any rows
+/// to return.
 fn empty_record_batch_stream() -> SendableRecordBatchStream {
     Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
 }
@@ -577,10 +564,8 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the [`RecordBatch`] in the action body. The
-    /// [`RecordBatch`] should have the fields `is_time_series_table`, `name`, `schema`,
-    /// `error_bounds` and `generated_columns`. `error_bounds` and `generated_columns` should be
-    /// null if `is_time_series_table` is `false`.
+    /// * `CreateTables`: Create the tables given in the [`TableMetadata`](protocol::TableMetadata)
+    /// protobuf message in the action body.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
     /// engine to disk.
@@ -593,11 +578,10 @@ impl FlightService for FlightServiceHandler {
     /// that is running the server. Note that since the process is killed, a conventional response
     /// cannot be returned.
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
-    /// configuration is returned in a single [`RecordBatch`].
-    /// * `UpdateConfiguration`: Update a single setting in the configuration. Each argument in the
-    /// body should start with the size of the argument, immediately followed by the argument value.
-    /// The first argument should be the setting to update. The second argument should be the new
-    /// value of the setting as an unsigned integer.
+    /// configuration is returned in a [`Configuration`](protocol::Configuration) protobuf message.
+    /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
+    /// and the new value are provided in the [`UpdateConfiguration`](protocol::UpdateConfiguration)
+    /// protobuf message in the action body.
     /// * `NodeType`: Get the type of the node. The type is always `server`. The type of the node
     /// is returned as a string.
     async fn do_action(
@@ -660,68 +644,32 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "GetConfiguration" {
             // Extract the configuration data from the configuration manager.
             let configuration_manager = self.context.configuration_manager.read().await;
-            let settings = [
-                "uncompressed_reserved_memory_in_bytes",
-                "compressed_reserved_memory_in_bytes",
-                "transfer_batch_size_in_bytes",
-                "transfer_time_in_seconds",
-                "ingestion_threads",
-                "compression_threads",
-                "writer_threads",
-            ];
-            let values = vec![
-                Some(configuration_manager.uncompressed_reserved_memory_in_bytes() as u64),
-                Some(configuration_manager.compressed_reserved_memory_in_bytes() as u64),
-                configuration_manager
-                    .transfer_batch_size_in_bytes()
-                    .map(|n| n as u64),
-                configuration_manager
-                    .transfer_time_in_seconds()
-                    .map(|n| n as u64),
-                Some(configuration_manager.ingestion_threads as u64),
-                Some(configuration_manager.compression_threads as u64),
-                Some(configuration_manager.writer_threads as u64),
-            ];
+            let protobuf_bytes = configuration_manager.encode_and_serialize();
 
-            let schema = CONFIGURATION_SCHEMA.clone();
-
-            // Create the record batch with the current configuration.
-            let batch = RecordBatch::try_new(
-                schema.0.clone(),
-                vec![
-                    Arc::new(StringArray::from_iter_values(settings)),
-                    Arc::new(UInt64Array::from(values)),
-                ],
-            )
-            .unwrap();
-
-            send_record_batch(&batch)
-        } else if action.r#type == "UpdateConfiguration" {
-            let (setting, offset_data) =
-                arguments::decode_argument(&action.body).map_err(error_to_status_internal)?;
-            let (new_value, _offset_data) =
-                arguments::decode_argument(offset_data).map_err(error_to_status_internal)?;
-
-            // Parse the new value into None if it is empty and a usize integer if it is not empty.
-            let new_value: Option<usize> = (!new_value.is_empty())
-                .then(|| {
-                    new_value.parse().map_err(|error| {
-                        Status::invalid_argument(format!(
-                            "New value for {setting} is not valid: {error}"
-                        ))
-                    })
+            // Return the configuration as an encoded and serialized protobuf message.
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: protobuf_bytes.into(),
                 })
-                .transpose()?;
+            }))))
+        } else if action.r#type == "UpdateConfiguration" {
+            let update_configuration = protocol::UpdateConfiguration::decode(action.body.clone())
+                .map_err(error_to_status_internal)?;
+
+            let setting = update_configuration.setting;
+            let new_value = update_configuration
+                .new_value
+                .map(|new_value| new_value as usize);
 
             let mut configuration_manager = self.context.configuration_manager.write().await;
             let storage_engine = self.context.storage_engine.clone();
 
-            let invalid_empty_error =
-                Status::invalid_argument(format!("New value for {setting} cannot be empty."));
+            let invalid_null_error =
+                Status::invalid_argument(format!("New value for {setting} cannot be null."));
 
-            match setting {
-                "multivariate_reserved_memory_in_bytes" => {
-                    let new_value = new_value.ok_or(invalid_empty_error)?;
+            match protocol::update_configuration::Setting::try_from(setting) {
+                Ok(protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes) => {
+                    let new_value = new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
                         .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
@@ -729,37 +677,36 @@ impl FlightService for FlightServiceHandler {
 
                     Ok(())
                 }
-                "uncompressed_reserved_memory_in_bytes" => {
-                    let new_value = new_value.ok_or(invalid_empty_error)?;
+                Ok(protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes) => {
+                    let new_value = new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
                         .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
                         .await
                         .map_err(error_to_status_internal)
                 }
-                "compressed_reserved_memory_in_bytes" => {
-                    let new_value = new_value.ok_or(invalid_empty_error)?;
+                Ok(protocol::update_configuration::Setting::CompressedReservedMemoryInBytes) => {
+                    let new_value = new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
                         .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
                         .await
                         .map_err(error_to_status_internal)
                 }
-                "transfer_batch_size_in_bytes" => configuration_manager
-                    .set_transfer_batch_size_in_bytes(new_value, storage_engine)
-                    .await
-                    .map_err(error_to_status_internal),
-                "transfer_time_in_seconds" => configuration_manager
-                    .set_transfer_time_in_seconds(new_value, storage_engine)
-                    .await
-                    .map_err(error_to_status_internal),
-                "ingestion_threads" | "compression_threads" | "writer_threads" => {
-                    Err(Status::unimplemented(format!(
-                        "{setting} is not an updatable setting in the server configuration."
-                    )))
+                Ok(protocol::update_configuration::Setting::TransferBatchSizeInBytes) => {
+                    configuration_manager
+                        .set_transfer_batch_size_in_bytes(new_value, storage_engine)
+                        .await
+                        .map_err(error_to_status_internal)
+                }
+                Ok(protocol::update_configuration::Setting::TransferTimeInSeconds) => {
+                    configuration_manager
+                        .set_transfer_time_in_seconds(new_value, storage_engine)
+                        .await
+                        .map_err(error_to_status_internal)
                 }
                 _ => Err(Status::unimplemented(format!(
-                    "{setting} is not a setting in the server configuration."
+                    "{setting} is not an updatable setting in the server configuration."
                 ))),
             }?;
 
@@ -785,7 +732,7 @@ impl FlightService for FlightServiceHandler {
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let create_tables_action = ActionType {
             r#type: "CreateTables".to_owned(),
-            description: "Create the tables given in the record batch in the action body."
+            description: "Create the tables given in the protobuf message in the action body."
                 .to_owned(),
         };
 

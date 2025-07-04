@@ -40,8 +40,7 @@ use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_storage::metadata::time_series_table_metadata::TimeSeriesTableMetadata;
-use modelardb_types::types::TimestampArray;
+use modelardb_types::types::{TimeSeriesTableMetadata, TimestampArray};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
@@ -721,7 +720,7 @@ impl Operations for DataFolder {
             "WHERE ".to_owned() + &where_clause_values.join(" AND ")
         };
 
-        let sql = format!("SELECT * FROM {} {}", source_table_name, where_clause,);
+        let sql = format!("SELECT * FROM {source_table_name} {where_clause}");
 
         // Read data to copy from source_table_name in source.
         let source_table = Arc::new(self.delta_lake.delta_table(source_table_name).await?);
@@ -928,8 +927,9 @@ mod tests {
     use arrow_flight::flight_service_client::FlightServiceClient;
     use datafusion::datasource::TableProvider;
     use datafusion::logical_expr::col;
-    use modelardb_storage::metadata::time_series_table_metadata::GeneratedColumn;
-    use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ValueArray};
+    use modelardb_types::types::{
+        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, ValueArray,
+    };
     use tempfile::TempDir;
     use tonic::transport::Channel;
 
@@ -1096,7 +1096,6 @@ mod tests {
         let expected_generated_column = GeneratedColumn {
             expr: col("field_1") + col("field_2"),
             source_columns: vec![3, 4],
-            original_expr: "field_1 + field_2".to_owned(),
         };
 
         let mut actual_generated_column = time_series_table_metadata
@@ -1169,7 +1168,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "ModelarDB Storage Error: Invalid Argument Error: \
+            "ModelarDB Types Error: Invalid Argument Error: \
             There needs to be exactly one timestamp column."
         );
     }
@@ -1937,7 +1936,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
         let (_temp_dir, mut target) = create_data_folder_with_time_series_table().await;
 
-        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
+        let sql = format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}");
         let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(target_actual_result.num_rows(), 0);
 
@@ -1971,7 +1970,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
         let (_temp_dir, mut target) = create_data_folder_with_time_series_table().await;
 
-        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
+        let sql = format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}");
         let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(target_actual_result.num_rows(), 0);
 
@@ -2044,10 +2043,7 @@ mod tests {
         let (_temp_dir, mut target) =
             create_data_folder_with_time_series_table_with_generated_column().await;
 
-        let target_sql = format!(
-            "SELECT * FROM {}",
-            TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME
-        );
+        let target_sql = format!("SELECT * FROM {TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME}");
         let target_actual_result = data_folder_read(&mut target, &target_sql).await.unwrap();
         assert_eq!(target_actual_result.num_rows(), 0);
 
@@ -2069,7 +2065,7 @@ mod tests {
             .await
             .unwrap();
 
-        let source_sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
+        let source_sql = format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}");
         let source_actual_result = data_folder_read(&mut source, &source_sql).await.unwrap();
 
         let target_actual_result = data_folder_read(&mut target, &target_sql).await.unwrap();
@@ -2110,7 +2106,7 @@ mod tests {
             .await
             .unwrap();
 
-        let sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {NORMAL_TABLE_NAME}");
         let actual_result = data_folder_read(&mut data_folder, &sql).await.unwrap();
 
         assert_eq!(actual_result, expected_result);
@@ -2120,7 +2116,7 @@ mod tests {
     async fn test_read_empty_normal_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
 
-        let sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {NORMAL_TABLE_NAME}");
         let actual_result = data_folder_read(&mut data_folder, &sql).await.unwrap();
 
         assert_eq!(
@@ -2138,7 +2134,7 @@ mod tests {
             .await
             .unwrap();
 
-        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
+        let sql = format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}");
         let actual_result = data_folder_read(&mut data_folder, &sql).await.unwrap();
 
         assert_eq!(actual_result, sorted_time_series_table_data());
@@ -2148,7 +2144,7 @@ mod tests {
     async fn test_read_empty_time_series_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
-        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
+        let sql = format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}");
         let actual_result = data_folder_read(&mut data_folder, &sql).await.unwrap();
 
         assert_eq!(
@@ -2162,7 +2158,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let sql = format!("SELECT * FROM {}", MISSING_TABLE_NAME);
+        let sql = format!("SELECT * FROM {MISSING_TABLE_NAME}");
         let result = data_folder_read(&mut data_folder, &sql).await;
 
         assert_eq!(
@@ -2179,7 +2175,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
         let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
 
-        let sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {NORMAL_TABLE_NAME}");
         let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(target_actual_result.num_rows(), 0);
 
@@ -2188,7 +2184,7 @@ mod tests {
             .await
             .unwrap();
 
-        let copy_sql = format!("SELECT * FROM {} LIMIT 3", NORMAL_TABLE_NAME);
+        let copy_sql = format!("SELECT * FROM {NORMAL_TABLE_NAME} LIMIT 3");
         source
             .copy(&copy_sql, &mut target, NORMAL_TABLE_NAME)
             .await
@@ -2214,7 +2210,7 @@ mod tests {
             .await
             .unwrap();
 
-        let sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {NORMAL_TABLE_NAME}");
         let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(target_actual_result.num_rows(), 0);
 
@@ -2223,7 +2219,7 @@ mod tests {
             .await
             .unwrap();
 
-        let copy_sql = format!("SELECT id, name FROM {}", NORMAL_TABLE_NAME);
+        let copy_sql = format!("SELECT id, name FROM {NORMAL_TABLE_NAME}");
         source
             .copy(&copy_sql, &mut target, NORMAL_TABLE_NAME)
             .await
@@ -2249,7 +2245,7 @@ mod tests {
             .await
             .unwrap();
 
-        let copy_sql = format!("SELECT id, name FROM {}", NORMAL_TABLE_NAME);
+        let copy_sql = format!("SELECT id, name FROM {NORMAL_TABLE_NAME}");
         let result = source.copy(&copy_sql, &mut target, NORMAL_TABLE_NAME).await;
 
         assert_eq!(
@@ -2275,7 +2271,7 @@ mod tests {
             .await
             .unwrap();
 
-        let target_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let target_sql = format!("SELECT * FROM {NORMAL_TABLE_NAME}");
         let target_actual_result = data_folder_read(&mut target, &target_sql).await.unwrap();
         assert_eq!(target_actual_result.num_rows(), 0);
 
@@ -2284,7 +2280,7 @@ mod tests {
             .await
             .unwrap();
 
-        let copy_sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
+        let copy_sql = format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}");
         source
             .copy(&copy_sql, &mut target, NORMAL_TABLE_NAME)
             .await
@@ -2307,7 +2303,7 @@ mod tests {
             .await
             .unwrap();
 
-        let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let copy_sql = format!("SELECT * FROM {NORMAL_TABLE_NAME}");
         let result = source
             .copy(&copy_sql, &mut target, TIME_SERIES_TABLE_NAME)
             .await;
@@ -2330,7 +2326,7 @@ mod tests {
             .await
             .unwrap();
 
-        let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let copy_sql = format!("SELECT * FROM {NORMAL_TABLE_NAME}");
         let result = source
             .copy(&copy_sql, &mut target, MISSING_TABLE_NAME)
             .await;
@@ -2348,7 +2344,7 @@ mod tests {
 
         let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
 
-        let copy_sql = format!("SELECT * FROM {}", MISSING_TABLE_NAME);
+        let copy_sql = format!("SELECT * FROM {MISSING_TABLE_NAME}");
         let result = source.copy(&copy_sql, &mut target, NORMAL_TABLE_NAME).await;
 
         assert_eq!(
@@ -2365,7 +2361,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
         let mut target_client = lazy_modelardb_client();
 
-        let copy_sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let copy_sql = format!("SELECT * FROM {NORMAL_TABLE_NAME}");
         let result = source
             .copy(&copy_sql, &mut target_client, NORMAL_TABLE_NAME)
             .await;
@@ -2549,7 +2545,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
         let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
 
-        let sql = format!("SELECT * FROM {}", NORMAL_TABLE_NAME);
+        let sql = format!("SELECT * FROM {NORMAL_TABLE_NAME}");
         let actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(actual_result.num_rows(), 0);
 
@@ -2719,7 +2715,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
         let (_temp_dir, mut target) = create_data_folder_with_time_series_table().await;
 
-        let sql = format!("SELECT * FROM {}", TIME_SERIES_TABLE_NAME);
+        let sql = format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}");
         let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(target_actual_result.num_rows(), 0);
 
@@ -2762,10 +2758,7 @@ mod tests {
         let (_temp_dir, mut target) =
             create_data_folder_with_time_series_table_with_generated_column().await;
 
-        let sql = format!(
-            "SELECT * FROM {}",
-            TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME
-        );
+        let sql = format!("SELECT * FROM {TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME}");
         let actual_result = data_folder_read(&mut target, &sql).await.unwrap();
         assert_eq!(actual_result.num_rows(), 0);
 

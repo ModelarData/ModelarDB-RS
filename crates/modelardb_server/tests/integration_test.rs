@@ -28,17 +28,18 @@ use std::time::Duration;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket, utils};
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 use datafusion::arrow::array::{Array, Float64Array, StringArray, UInt64Array};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
 use datafusion::arrow::ipc::convert;
-use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{StreamExt, stream};
 use modelardb_common::test::data_generation;
+use modelardb_types::flight::protocol;
 use modelardb_types::types::ErrorBound;
+use prost::Message;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -417,36 +418,21 @@ impl TestContext {
     }
 
     /// Update `setting` to `setting_value` in the server configuration using the
-    /// `UpdateConfiguration` action.
+    /// `UpdateConfiguration` action. `setting` is an integer that corresponds to the
+    /// [`Setting`](protocol::update_configuration::Setting) enum variant to update.
     async fn update_configuration(
         &mut self,
-        setting: &str,
-        setting_value: &str,
+        setting: i32,
+        new_value: Option<u64>,
     ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
-        let setting = setting.as_bytes();
-        let setting_size = &[0, setting.len() as u8];
-
-        let setting_value = setting_value.as_bytes();
-        let setting_value_size = &[0, setting_value.len() as u8];
+        let update_configuration = protocol::UpdateConfiguration { setting, new_value };
 
         let action = Action {
             r#type: "UpdateConfiguration".to_owned(),
-            body: [setting_size, setting, setting_value_size, setting_value]
-                .concat()
-                .into(),
+            body: update_configuration.encode_to_vec().into(),
         };
 
         self.client.do_action(Request::new(action)).await
-    }
-
-    /// Retrieve the response of the [`Action`] with the type `action_type` and convert it into an
-    /// Apache Arrow [`RecordBatch`].
-    async fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
-        let response_bytes = self.retrieve_action_bytes(action_type).await;
-
-        // Convert the bytes in the response into an Apache Arrow record batch.
-        let mut reader = StreamReader::try_new(response_bytes.reader(), None).unwrap();
-        reader.next().unwrap().unwrap()
     }
 
     /// Retrieve the response of the [`Action`] with the type `action_type`.
@@ -1052,11 +1038,11 @@ async fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound:
     let data_point_query = format!("{segment_query} WHERE timestamp >= 0::TIMESTAMP");
 
     let data_point_query_plans = test_context
-        .execute_query(format!("EXPLAIN {}", data_point_query))
+        .execute_query(format!("EXPLAIN {data_point_query}"))
         .await
         .unwrap();
     let segment_query_plans = test_context
-        .execute_query(format!("EXPLAIN {}", segment_query))
+        .execute_query(format!("EXPLAIN {segment_query}"))
         .await
         .unwrap();
 
@@ -1121,64 +1107,77 @@ async fn ingest_time_series_and_flush_data(
 #[tokio::test]
 async fn test_can_get_configuration() {
     let mut test_context = TestContext::new().await;
-    let configuration = test_context
-        .retrieve_action_record_batch("GetConfiguration")
-        .await;
 
-    let settings = modelardb_types::array!(configuration, 0, StringArray);
-    let values = modelardb_types::array!(configuration, 1, UInt64Array);
+    let configuration_bytes = test_context.retrieve_action_bytes("GetConfiguration").await;
+    let configuration = protocol::Configuration::decode(configuration_bytes).unwrap();
 
-    assert_eq!(settings.value(0), "uncompressed_reserved_memory_in_bytes");
-    assert_eq!(values.value(0), 512 * 1024 * 1024);
+    assert_eq!(
+        configuration.multivariate_reserved_memory_in_bytes,
+        512 * 1024 * 1024
+    );
+    assert_eq!(
+        configuration.uncompressed_reserved_memory_in_bytes,
+        512 * 1024 * 1024
+    );
+    assert_eq!(
+        configuration.compressed_reserved_memory_in_bytes,
+        512 * 1024 * 1024
+    );
+    assert_eq!(
+        configuration.transfer_batch_size_in_bytes,
+        Some(64 * 1024 * 1024)
+    );
+    assert_eq!(configuration.transfer_time_in_seconds, None);
+    assert_eq!(configuration.ingestion_threads, 1);
+    assert_eq!(configuration.compression_threads, 1);
+    assert_eq!(configuration.writer_threads, 1);
+}
 
-    assert_eq!(settings.value(1), "compressed_reserved_memory_in_bytes");
-    assert_eq!(values.value(1), 512 * 1024 * 1024);
+#[tokio::test]
+async fn test_can_update_multivariate_reserved_memory_in_bytes() {
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes as i32,
+    )
+    .await;
 
-    assert_eq!(settings.value(2), "transfer_batch_size_in_bytes");
-    assert_eq!(values.value(2), 64 * 1024 * 1024);
-
-    assert_eq!(settings.value(3), "transfer_time_in_seconds");
-    assert_eq!(values.value(3), 0);
-    assert_eq!(values.null_count(), 1);
-
-    assert_eq!(settings.value(4), "ingestion_threads");
-    assert_eq!(values.value(4), 1);
-
-    assert_eq!(settings.value(5), "compression_threads");
-    assert_eq!(values.value(5), 1);
-
-    assert_eq!(settings.value(6), "writer_threads");
-    assert_eq!(values.value(6), 1);
+    assert_eq!(
+        updated_configuration.multivariate_reserved_memory_in_bytes,
+        1
+    );
 }
 
 #[tokio::test]
 async fn test_can_update_uncompressed_reserved_memory_in_bytes() {
-    let values_array =
-        update_and_retrieve_configuration_values("uncompressed_reserved_memory_in_bytes").await;
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes as i32,
+    )
+    .await;
 
-    assert_eq!(values_array.value(0), 1);
+    assert_eq!(
+        updated_configuration.uncompressed_reserved_memory_in_bytes,
+        1
+    );
 }
 
 #[tokio::test]
 async fn test_can_update_compressed_reserved_memory_in_bytes() {
-    let values_array =
-        update_and_retrieve_configuration_values("compressed_reserved_memory_in_bytes").await;
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration::Setting::CompressedReservedMemoryInBytes as i32,
+    )
+    .await;
 
-    assert_eq!(values_array.value(1), 1);
+    assert_eq!(updated_configuration.compressed_reserved_memory_in_bytes, 1);
 }
 
-async fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
+async fn update_and_get_configuration(setting: i32) -> protocol::Configuration {
     let mut test_context = TestContext::new().await;
     test_context
-        .update_configuration(setting, "1")
+        .update_configuration(setting, Some(1))
         .await
         .unwrap();
 
-    let configuration = test_context
-        .retrieve_action_record_batch("GetConfiguration")
-        .await;
-
-    modelardb_types::array!(configuration, 1, UInt64Array).clone()
+    let configuration_bytes = test_context.retrieve_action_bytes("GetConfiguration").await;
+    protocol::Configuration::decode(configuration_bytes).unwrap()
 }
 
 #[tokio::test]
@@ -1186,8 +1185,8 @@ async fn test_cannot_update_transfer_batch_size_in_bytes() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
-        "transfer_batch_size_in_bytes",
-        "1",
+        protocol::update_configuration::Setting::TransferBatchSizeInBytes as i32,
+        Some(1),
         "Invalid State Error: Storage engine is not configured to transfer data.",
     )
     .await;
@@ -1198,64 +1197,42 @@ async fn test_cannot_update_transfer_time_in_seconds() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
     update_configuration_and_assert_error(
-        "transfer_time_in_seconds",
-        "1",
+        protocol::update_configuration::Setting::TransferTimeInSeconds as i32,
+        Some(1),
         "Invalid State Error: Storage engine is not configured to transfer data.",
     )
     .await;
 }
 
 #[tokio::test]
-async fn test_cannot_update_non_existing_setting() {
+async fn test_cannot_update_non_updatable_setting() {
     update_configuration_and_assert_error(
-        "invalid",
-        "1",
-        "invalid is not a setting in the server configuration.",
+        999,
+        Some(1),
+        "999 is not an updatable setting in the server configuration.",
     )
     .await;
 }
 
 #[tokio::test]
-async fn test_cannot_update_non_nullable_setting_with_empty_value() {
+async fn test_cannot_update_non_nullable_setting_with_null_value() {
     for setting in [
-        "uncompressed_reserved_memory_in_bytes",
-        "compressed_reserved_memory_in_bytes",
+        protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::CompressedReservedMemoryInBytes as i32,
     ] {
         update_configuration_and_assert_error(
             setting,
-            "",
-            format!("New value for {setting} cannot be empty.").as_str(),
+            None,
+            format!("New value for {setting} cannot be null.").as_str(),
         )
         .await;
     }
 }
 
-#[tokio::test]
-async fn test_cannot_update_non_updatable_setting() {
-    for setting in ["ingestion_threads", "compression_threads", "writer_threads"] {
-        update_configuration_and_assert_error(
-            setting,
-            "1",
-            format!("{setting} is not an updatable setting in the server configuration.").as_str(),
-        )
-        .await;
-    }
-}
-
-#[tokio::test]
-async fn test_cannot_update_setting_with_invalid_value() {
-    update_configuration_and_assert_error(
-        "compressed_reserved_memory_in_bytes",
-        "-1",
-        "New value for compressed_reserved_memory_in_bytes is not valid: invalid digit found in string",
-    ).await;
-}
-
-async fn update_configuration_and_assert_error(setting: &str, setting_value: &str, error: &str) {
+async fn update_configuration_and_assert_error(setting: i32, new_value: Option<u64>, error: &str) {
     let mut test_context = TestContext::new().await;
-    let response = test_context
-        .update_configuration(setting, setting_value)
-        .await;
+    let response = test_context.update_configuration(setting, new_value).await;
 
     assert!(response.is_err());
     assert_eq!(response.err().unwrap().message(), error);
@@ -1273,13 +1250,11 @@ async fn test_can_get_node_type() {
 async fn test_can_create_tables() {
     let mut test_context = TestContext::new().await;
 
-    let table_record_batch = modelardb_storage::test::table_metadata_record_batch();
-    let table_record_batch_bytes =
-        modelardb_storage::try_convert_record_batch_to_bytes(&table_record_batch).unwrap();
+    let protobuf_bytes = modelardb_storage::test::table_metadata_protobuf_bytes();
 
     let action = Action {
         r#type: "CreateTables".to_owned(),
-        body: table_record_batch_bytes.into(),
+        body: protobuf_bytes.into(),
     };
 
     test_context
@@ -1297,21 +1272,4 @@ async fn test_can_create_tables() {
             modelardb_storage::test::TIME_SERIES_TABLE_NAME.to_owned(),
         ]
     );
-}
-
-#[tokio::test]
-async fn test_cannot_create_tables_with_invalid_record_batch() {
-    let mut test_context = TestContext::new().await;
-
-    let invalid_record_batch = modelardb_storage::test::normal_table_record_batch();
-    let invalid_record_batch_bytes =
-        modelardb_storage::try_convert_record_batch_to_bytes(&invalid_record_batch).unwrap();
-
-    let action = Action {
-        r#type: "CreateTables".to_owned(),
-        body: invalid_record_batch_bytes.into(),
-    };
-
-    let response = test_context.client.do_action(Request::new(action)).await;
-    assert!(response.is_err());
 }

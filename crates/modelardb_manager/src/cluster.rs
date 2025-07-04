@@ -17,34 +17,16 @@
 
 use std::collections::VecDeque;
 
-use arrow::record_batch::RecordBatch;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Ticket};
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use log::info;
-use modelardb_types::schemas::TABLE_METADATA_SCHEMA;
-use modelardb_types::types::ServerMode;
+use modelardb_types::types::{Node, ServerMode};
 use tonic::Request;
 use tonic::metadata::{Ascii, MetadataValue};
 
 use crate::error::{ModelarDbManagerError, Result};
-
-/// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
-/// or a cloud node. A node cannot be another manager.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Node {
-    /// Apache Arrow Flight URL for the node. This URL uniquely identifies the node.
-    pub url: String,
-    /// The mode the node was started in.
-    pub mode: ServerMode,
-}
-
-impl Node {
-    pub fn new(url: String, mode: ServerMode) -> Self {
-        Self { url, mode }
-    }
-}
 
 /// Stores the currently managed nodes in the cluster and allows for performing operations that need
 /// to be applied to every single node in the cluster.
@@ -135,28 +117,6 @@ impl Cluster {
         } else {
             Err(ModelarDbManagerError::InvalidState(
                 "There are no cloud nodes to execute the query in the cluster.".to_owned(),
-            ))
-        }
-    }
-
-    /// Create tables on each node in the cluster with the given `record_batch` and `key` as metadata.
-    /// If the tables were successfully created on each node, return [`Ok`], otherwise return
-    /// [`ModelarDbManagerError`].
-    pub async fn create_tables(
-        &self,
-        record_batch: &RecordBatch,
-        key: &MetadataValue<Ascii>,
-    ) -> Result<()> {
-        if record_batch.schema() == TABLE_METADATA_SCHEMA.0 {
-            let action = Action {
-                r#type: "CreateTables".to_owned(),
-                body: modelardb_storage::try_convert_record_batch_to_bytes(record_batch)?.into(),
-            };
-
-            self.cluster_do_action(action, key).await
-        } else {
-            Err(ModelarDbManagerError::InvalidArgument(
-                "Record batch does not contain the expected table metadata.".to_owned(),
             ))
         }
     }

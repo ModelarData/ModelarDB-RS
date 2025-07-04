@@ -34,7 +34,9 @@ use datafusion::physical_expr::planner;
 use datafusion::sql::TableReference;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use modelardb_types::functions::normalize_name; // Fully imported to not conflict.
-use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound};
+use modelardb_types::types::{
+    ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata,
+};
 use sqlparser::ast::{
     CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType,
     Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectNamePart,
@@ -47,7 +49,6 @@ use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::{Span, Token};
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::metadata::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 
 /// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, etc.) that have been tokenized,
 /// parsed, and for which semantic checks have verified that it is compatible with ModelarDB.
@@ -624,8 +625,7 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     for keyword in ALL_KEYWORDS {
         if &table_name_uppercase == keyword {
             return Err(ModelarDbStorageError::InvalidArgument(format!(
-                "Reserved keyword '{}' cannot be used as a table name.",
-                name
+                "Reserved keyword '{name}' cannot be used as a table name."
             )));
         }
     }
@@ -1005,11 +1005,7 @@ fn extract_generation_exprs_for_all_columns(
                 generated_keyword: _,
             } = &column_def_option.option
             {
-                // The expression is saved as a string, so it can be stored in the metadata Delta
-                // Lake, it is not stored in TimeSeriesTableMetadata as it not used for during query
-                // execution.
                 let sql_expr = generation_expr.as_ref().unwrap();
-                let original_expr = sql_expr.to_string();
 
                 // Ensure that the parsed sqlparser expression can be converted to a logical Apache
                 // Arrow DataFusion expression within the context of schema to check it for errors.
@@ -1022,18 +1018,9 @@ fn extract_generation_exprs_for_all_columns(
                 let _physical_expr =
                     planner::create_physical_expr(&expr, &df_schema, &execution_props)?;
 
-                // unwrap() is safe as the loop iterates over the columns in the schema.
-                let source_columns = expr
-                    .column_refs()
-                    .iter()
-                    .map(|column| df_schema.index_of_column(column).unwrap())
-                    .collect();
-
-                generated_column = Some(GeneratedColumn {
-                    expr,
-                    source_columns,
-                    original_expr,
-                });
+                // unwrap() is safe as sql_to_expr() validates that the expression only
+                // references columns in the schema.
+                generated_column = Some(GeneratedColumn::try_from_expr(expr, &df_schema).unwrap());
             }
         }
 

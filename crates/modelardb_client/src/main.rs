@@ -239,7 +239,7 @@ async fn execute_command(
             for field in schema.fields() {
                 print!("{}: {}", field.name(), field.data_type());
                 for (metadata_name, metadata_value) in field.metadata() {
-                    print!(", {} {}", metadata_name, metadata_value);
+                    print!(", {metadata_name} {metadata_value}");
                 }
                 println!();
             }

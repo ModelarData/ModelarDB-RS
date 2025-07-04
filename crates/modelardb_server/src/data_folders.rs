@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
+use modelardb_types::flight::protocol;
 use modelardb_types::types::ServerMode;
 use tracing::warn;
 
@@ -58,14 +59,17 @@ impl DataFolder {
         })
     }
 
-    /// Return a [`DataFolder`] created from `connection_info`. If the connection information could
-    /// not be parsed or if the metadata tables could not be created, [`ModelarDbServerError`] is
+    /// Return a [`DataFolder`] created from `storage_configuration`. If a connection could
+    /// not be made or if the metadata tables could not be created, [`ModelarDbServerError`] is
     /// returned.
-    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self> {
-        let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info)?;
+    pub async fn try_from_storage_configuration(
+        storage_configuration: protocol::manager_metadata::StorageConfiguration,
+    ) -> Result<Self> {
+        let remote_delta_lake =
+            DeltaLake::try_remote_from_storage_configuration(storage_configuration.clone())?;
 
         let remote_table_metadata_manager =
-            TableMetadataManager::try_from_connection_info(connection_info).await?;
+            TableMetadataManager::try_from_storage_configuration(storage_configuration).await?;
 
         Ok(Self {
             delta_lake: Arc::new(remote_delta_lake),
@@ -119,14 +123,14 @@ impl DataFolders {
                 ))
             }
             &["cloud", local_data_folder_url, manager_url] => {
-                let (manager, connection_info) =
+                let (manager, storage_configuration) =
                     Manager::register_node(manager_url, ServerMode::Cloud).await?;
 
                 let local_data_folder =
                     DataFolder::try_from_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
-                    DataFolder::try_from_connection_info(&connection_info).await?;
+                    DataFolder::try_from_storage_configuration(storage_configuration).await?;
 
                 Ok((
                     ClusterMode::MultiNode(manager),
@@ -139,14 +143,14 @@ impl DataFolders {
             }
             &["edge", local_data_folder_url, manager_url]
             | &[local_data_folder_url, manager_url] => {
-                let (manager, connection_info) =
+                let (manager, storage_configuration) =
                     Manager::register_node(manager_url, ServerMode::Edge).await?;
 
                 let local_data_folder =
                     DataFolder::try_from_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
-                    DataFolder::try_from_connection_info(&connection_info).await?;
+                    DataFolder::try_from_storage_configuration(storage_configuration).await?;
 
                 Ok((
                     ClusterMode::MultiNode(manager),
