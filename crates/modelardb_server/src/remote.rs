@@ -580,7 +580,7 @@ impl FlightService for FlightServiceHandler {
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
     /// configuration is returned in a [`Configuration`](protocol::Configuration) protobuf message.
     /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
-    /// and the new value is provided in the [`UpdateConfiguration`](protocol::UpdateConfiguration)
+    /// and the new value are provided in the [`UpdateConfiguration`](protocol::UpdateConfiguration)
     /// protobuf message in the action body.
     /// * `NodeType`: Get the type of the node. The type is always `server`. The type of the node
     /// is returned as a string.
