@@ -228,7 +228,7 @@ pub fn flight_data_to_record_batch(
     flight_data: &FlightData,
     schema: &Arc<Schema>,
     dictionaries_by_id: &HashMap<i64, ArrayRef>,
-) -> std::result::Result<RecordBatch, Status> {
+) -> StdResult<RecordBatch, Status> {
     debug_assert_eq!(flight_data.flight_descriptor, None);
 
     utils::flight_data_to_arrow_batch(flight_data, schema.clone(), dictionaries_by_id)
@@ -239,7 +239,7 @@ pub fn flight_data_to_record_batch(
 /// [`Status`] that specifies that the table name is missing.
 pub fn table_name_from_flight_descriptor(
     flight_descriptor: &FlightDescriptor,
-) -> std::result::Result<&String, Status> {
+) -> StdResult<&String, Status> {
     flight_descriptor
         .path
         .first()
