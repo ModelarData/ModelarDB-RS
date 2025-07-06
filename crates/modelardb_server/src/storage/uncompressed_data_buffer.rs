@@ -597,8 +597,7 @@ mod tests {
             .unwrap();
 
         let uncompressed_path = temp_dir.path().join(format!(
-            "{UNCOMPRESSED_DATA_FOLDER}/{}/{TAG_HASH}",
-            TIME_SERIES_TABLE_NAME
+            "{UNCOMPRESSED_DATA_FOLDER}/{TIME_SERIES_TABLE_NAME}/{TAG_HASH}"
         ));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
@@ -623,8 +622,7 @@ mod tests {
             .unwrap();
 
         let uncompressed_path = temp_dir.path().join(format!(
-            "{UNCOMPRESSED_DATA_FOLDER}/{}/{TAG_HASH}",
-            TIME_SERIES_TABLE_NAME
+            "{UNCOMPRESSED_DATA_FOLDER}/{TIME_SERIES_TABLE_NAME}/{TAG_HASH}"
         ));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
