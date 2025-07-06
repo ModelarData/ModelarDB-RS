@@ -288,7 +288,7 @@ fn read_decode_and_compute_delta(bits: &mut BitReader, bits_to_read: u8, last_de
 mod tests {
     use super::*;
 
-    use modelardb_common::test::data_generation::generate_timestamps;
+    use modelardb_test::data_generation::generate_timestamps;
     use proptest::num::i64 as ProptestTimestamp;
     use proptest::{collection, proptest};
 

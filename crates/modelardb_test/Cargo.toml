@@ -23,3 +23,5 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 workspace = true
 
 [dependencies]
+modelardb_types = { path = "../modelardb_types" }
+rand.workspace = true

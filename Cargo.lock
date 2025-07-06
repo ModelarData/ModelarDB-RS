@@ -3186,6 +3186,10 @@ dependencies = [
 [[package]]
 name = "modelardb_test"
 version = "0.1.0"
+dependencies = [
+ "modelardb_types",
+ "rand 0.9.1",
+]
 
 [[package]]
 name = "modelardb_types"

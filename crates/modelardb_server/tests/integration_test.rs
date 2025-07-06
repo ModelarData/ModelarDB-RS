@@ -36,7 +36,7 @@ use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{StreamExt, stream};
-use modelardb_common::test::data_generation;
+use modelardb_test::data_generation;
 use modelardb_types::flight::protocol;
 use modelardb_types::types::ErrorBound;
 use prost::Message;
