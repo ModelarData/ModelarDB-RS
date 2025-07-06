@@ -512,7 +512,7 @@ mod tests {
     use arrow::array::BinaryArray;
     use arrow::datatypes::{DataType, Field};
     use modelardb_common::test::data_generation::{self, ValuesStructure};
-    use modelardb_common::test::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
+    use modelardb_test::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
     use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampArray, ValueArray};
 

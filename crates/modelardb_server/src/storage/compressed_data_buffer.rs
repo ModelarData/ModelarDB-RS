@@ -124,8 +124,8 @@ mod tests {
     use super::*;
 
     use deltalake::arrow::compute;
-    use modelardb_common::test::COMPRESSED_SEGMENTS_SIZE;
     use modelardb_storage::test;
+    use modelardb_test::COMPRESSED_SEGMENTS_SIZE;
 
     #[test]
     fn test_can_append_valid_compressed_segments() {

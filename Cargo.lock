@@ -3081,6 +3081,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "modelardb_common",
+ "modelardb_test",
  "modelardb_types",
  "proptest",
 ]
@@ -3142,6 +3143,7 @@ dependencies = [
  "modelardb_common",
  "modelardb_compression",
  "modelardb_storage",
+ "modelardb_test",
  "modelardb_types",
  "object_store",
  "proptest",
@@ -3170,6 +3172,7 @@ dependencies = [
  "futures",
  "modelardb_common",
  "modelardb_compression",
+ "modelardb_test",
  "modelardb_types",
  "object_store",
  "sqlparser 0.55.0",
@@ -3194,6 +3197,7 @@ dependencies = [
  "datafusion-proto",
  "modelardb_common",
  "modelardb_storage",
+ "modelardb_test",
  "proptest",
  "prost",
  "prost-build",

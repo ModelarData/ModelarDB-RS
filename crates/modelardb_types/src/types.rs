@@ -377,8 +377,8 @@ mod tests {
     use proptest::num;
     use proptest::proptest;
 
-    use modelardb_common::test::ERROR_BOUND_ZERO;
     use modelardb_storage::test;
+    use modelardb_test::ERROR_BOUND_ZERO;
 
     // Tests for TimeSeriesTableMetadata.
     #[test]

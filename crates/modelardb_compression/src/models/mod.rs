@@ -282,7 +282,7 @@ fn residuals_length(residuals: &[u8]) -> usize {
 mod tests {
     use super::*;
 
-    use modelardb_common::test::{
+    use modelardb_test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_ONE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_TEN,
         ERROR_BOUND_ZERO,
     };

@@ -655,11 +655,11 @@ mod tests {
 
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::record_batch::RecordBatch;
-    use modelardb_common::test::{
+    use modelardb_storage::test;
+    use modelardb_test::{
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
         UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
-    use modelardb_storage::test;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;

@@ -407,8 +407,8 @@ mod tests {
     use super::*;
 
     use futures::StreamExt;
-    use modelardb_common::test::UNCOMPRESSED_BUFFER_SIZE;
     use modelardb_storage::test;
+    use modelardb_test::UNCOMPRESSED_BUFFER_SIZE;
     use object_store::local::LocalFileSystem;
     use proptest::num::u64 as ProptestTimestamp;
     use proptest::{collection, proptest};

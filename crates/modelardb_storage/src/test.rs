@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow::array::{BinaryArray, Float32Array, Int8Array, Int16Array, RecordBatch, StringArray};
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
-use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
+use modelardb_test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
 use modelardb_types::types::{
     ArrowTimestamp, ArrowValue, ErrorBound, TimeSeriesTableMetadata, Timestamp, TimestampArray,
     Value, ValueArray,

@@ -112,7 +112,7 @@ pub fn grid(value: Value, timestamps: &[Timestamp], value_builder: &mut ValueBui
 mod tests {
     use super::*;
 
-    use modelardb_common::test::{
+    use modelardb_test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
     };
     use proptest::num::f32 as ProptestValue;

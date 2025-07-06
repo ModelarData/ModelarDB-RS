@@ -26,7 +26,6 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::{Expr, lit};
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
-use modelardb_common::test::ERROR_BOUND_ZERO;
 use modelardb_types::flight::protocol;
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::types::{ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
@@ -542,7 +541,7 @@ impl TableMetadataManager {
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
         let mut column_to_error_bound =
-            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO)?; query_schema_columns];
+            vec![ErrorBound::try_new_absolute(0.0)?; query_schema_columns];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
         let error_bound_value_array = modelardb_types::array!(batch, 1, Float32Array);
@@ -610,6 +609,7 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
+    use modelardb_test::ERROR_BOUND_ZERO;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue};
     use tempfile::TempDir;
 

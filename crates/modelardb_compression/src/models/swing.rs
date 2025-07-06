@@ -348,7 +348,7 @@ mod tests {
 
     use arrow::array::{BinaryArray, Float32Array, Int8Array};
     use arrow::datatypes::{DataType, Field, Schema};
-    use modelardb_common::test::{
+    use modelardb_test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
     };
     use modelardb_types::schemas::COMPRESSED_SCHEMA;
