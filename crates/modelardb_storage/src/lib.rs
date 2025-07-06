@@ -22,7 +22,6 @@ pub mod metadata;
 mod optimizer;
 pub mod parser;
 mod query;
-pub mod test;
 
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -267,15 +266,14 @@ mod tests {
     use super::*;
 
     use arrow::datatypes::{Field, Schema};
+    use modelardb_test::table::compressed_segments_record_batch;
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
-
-    use crate::test;
 
     // Tests for read_record_batch_from_apache_parquet_file().
     #[tokio::test]
     async fn test_read_record_batch_from_apache_parquet_file() {
-        let record_batch = test::compressed_segments_record_batch();
+        let record_batch = compressed_segments_record_batch();
         let apache_parquet_path = Path::from("test.parquet");
 
         let (temp_dir, _result) =
@@ -318,7 +316,7 @@ mod tests {
     // Tests for write_record_batch_to_apache_parquet_file().
     #[tokio::test]
     async fn test_write_record_batch_to_apache_parquet_file() {
-        let record_batch = test::compressed_segments_record_batch();
+        let record_batch = compressed_segments_record_batch();
         let (temp_dir, result) =
             write_record_batch_to_temp_dir(&Path::from("test.parquet"), &record_batch).await;
 
@@ -341,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_record_batch_to_file_path_with_invalid_extension() {
-        let record_batch = test::compressed_segments_record_batch();
+        let record_batch = compressed_segments_record_batch();
         let (temp_dir, result) =
             write_record_batch_to_temp_dir(&Path::from("test.txt"), &record_batch).await;
 
@@ -351,7 +349,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_record_batch_to_file_path_without_extension() {
-        let record_batch = test::compressed_segments_record_batch();
+        let record_batch = compressed_segments_record_batch();
         let (temp_dir, result) =
             write_record_batch_to_temp_dir(&Path::from("test"), &record_batch).await;
 

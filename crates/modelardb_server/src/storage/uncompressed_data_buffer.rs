@@ -407,8 +407,10 @@ mod tests {
     use super::*;
 
     use futures::StreamExt;
-    use modelardb_storage::test;
     use modelardb_test::UNCOMPRESSED_BUFFER_SIZE;
+    use modelardb_test::table::{
+        TIME_SERIES_TABLE_NAME, time_series_table_metadata, time_series_table_metadata_arc,
+    };
     use object_store::local::LocalFileSystem;
     use proptest::num::u64 as ProptestTimestamp;
     use proptest::{collection, proptest};
@@ -425,7 +427,7 @@ mod tests {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -437,9 +439,7 @@ mod tests {
             assert_eq!(values.capacity(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
         }
 
-        let number_of_fields = test::time_series_table_metadata()
-            .field_column_indices
-            .len();
+        let number_of_fields = time_series_table_metadata().field_column_indices.len();
         let expected = (uncompressed_buffer.timestamps.capacity() * mem::size_of::<Timestamp>())
             + (number_of_fields
                 * uncompressed_buffer.values[0].capacity()
@@ -454,7 +454,7 @@ mod tests {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -466,7 +466,7 @@ mod tests {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(1, &mut uncompressed_buffer);
@@ -479,7 +479,7 @@ mod tests {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX - 1,
         );
 
@@ -498,7 +498,7 @@ mod tests {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
@@ -511,7 +511,7 @@ mod tests {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -525,7 +525,7 @@ mod tests {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -534,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_record_batch_from_in_memory_data_buffer() {
-        let time_series_table_metadata = test::time_series_table_metadata_arc();
+        let time_series_table_metadata = time_series_table_metadata_arc();
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
@@ -556,7 +556,7 @@ mod tests {
         // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
-        let time_series_table_metadata = test::time_series_table_metadata_arc();
+        let time_series_table_metadata = time_series_table_metadata_arc();
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
@@ -582,7 +582,7 @@ mod tests {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(1, &mut uncompressed_buffer);
@@ -598,7 +598,7 @@ mod tests {
 
         let uncompressed_path = temp_dir.path().join(format!(
             "{UNCOMPRESSED_DATA_FOLDER}/{}/{TAG_HASH}",
-            test::TIME_SERIES_TABLE_NAME
+            TIME_SERIES_TABLE_NAME
         ));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
@@ -608,7 +608,7 @@ mod tests {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
@@ -624,7 +624,7 @@ mod tests {
 
         let uncompressed_path = temp_dir.path().join(format!(
             "{UNCOMPRESSED_DATA_FOLDER}/{}/{TAG_HASH}",
-            test::TIME_SERIES_TABLE_NAME
+            TIME_SERIES_TABLE_NAME
         ));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
@@ -638,14 +638,14 @@ mod tests {
         let spilled_buffer_path = temp_dir
             .path()
             .join(UNCOMPRESSED_DATA_FOLDER)
-            .join(test::TIME_SERIES_TABLE_NAME)
+            .join(TIME_SERIES_TABLE_NAME)
             .join(TAG_HASH.to_string())
             .join("1234567890123.parquet");
         assert!(spilled_buffer_path.exists());
 
         let data = uncompressed_on_disk_buffer.record_batch().await.unwrap();
 
-        assert_eq!(data.schema(), test::time_series_table_metadata().schema);
+        assert_eq!(data.schema(), time_series_table_metadata().schema);
         assert_eq!(data.num_rows(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
 
         assert!(!spilled_buffer_path.exists());
@@ -656,7 +656,7 @@ mod tests {
         // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
-        let time_series_table_metadata = test::time_series_table_metadata_arc();
+        let time_series_table_metadata = time_series_table_metadata_arc();
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
@@ -713,7 +713,7 @@ mod tests {
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -749,7 +749,7 @@ mod tests {
         let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
             TAG_HASH,
             vec![TAG_VALUE.to_owned()],
-            test::time_series_table_metadata_arc(),
+            time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 

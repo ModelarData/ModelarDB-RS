@@ -655,7 +655,9 @@ mod tests {
 
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::record_batch::RecordBatch;
-    use modelardb_storage::test;
+    use modelardb_test::table::{
+        time_series_table_metadata, uncompressed_time_series_table_record_batch,
+    };
     use modelardb_test::{
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
         UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
@@ -690,7 +692,7 @@ mod tests {
         );
 
         // Create a time series table in the context.
-        let time_series_table_metadata = Arc::new(test::time_series_table_metadata());
+        let time_series_table_metadata = Arc::new(time_series_table_metadata());
         context
             .create_time_series_table(&time_series_table_metadata)
             .await
@@ -698,7 +700,7 @@ mod tests {
 
         // Ingest a single data point and sleep to allow the ingestion thread to finish.
         let mut storage_engine = context.storage_engine.write().await;
-        let data = test::uncompressed_time_series_table_record_batch(1);
+        let data = uncompressed_time_series_table_record_batch(1);
 
         storage_engine
             .insert_data_points(time_series_table_metadata, data)
@@ -743,7 +745,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (data_manager, time_series_table_metadata) = create_managers(&temp_dir).await;
 
-        let data = test::uncompressed_time_series_table_record_batch(1);
+        let data = uncompressed_time_series_table_record_batch(1);
         let ingested_data_buffer = IngestedDataBuffer::new(time_series_table_metadata, data);
 
         data_manager
@@ -760,7 +762,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (data_manager, time_series_table_metadata) = create_managers(&temp_dir).await;
 
-        let data = test::uncompressed_time_series_table_record_batch(2);
+        let data = uncompressed_time_series_table_record_batch(2);
         let ingested_data_buffer = IngestedDataBuffer::new(time_series_table_metadata, data);
 
         data_manager
@@ -777,7 +779,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (data_manager, time_series_table_metadata) = create_managers(&temp_dir).await;
 
-        let data = test::uncompressed_time_series_table_record_batch(2);
+        let data = uncompressed_time_series_table_record_batch(2);
         let data_size = data.get_array_memory_size();
 
         // Simulate StorageEngine decrementing ingested memory when receiving ingested data.
@@ -1137,7 +1139,7 @@ mod tests {
             runtime.block_on(create_managers(&temp_dir));
 
         // Add the spilled buffer.
-        let uncompressed_data = test::uncompressed_time_series_table_record_batch(3);
+        let uncompressed_data = uncompressed_time_series_table_record_batch(3);
         let spilled_buffer = runtime
             .block_on(UncompressedOnDiskDataBuffer::try_spill(
                 0,
@@ -1274,7 +1276,7 @@ mod tests {
         let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
 
         // Ensure the expected metadata is available through the metadata manager.
-        let time_series_table_metadata = test::time_series_table_metadata();
+        let time_series_table_metadata = time_series_table_metadata();
 
         local_data_folder
             .table_metadata_manager

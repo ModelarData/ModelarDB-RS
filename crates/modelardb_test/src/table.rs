@@ -1,4 +1,4 @@
-/* Copyright 2023 The ModelarDB Contributors
+/* Copyright 2025 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,18 @@
  * limitations under the License.
  */
 
-//! Implementation of storage related functions and constants used throughout ModelarDB's tests.
+//! Implementation of table related functions and constants used throughout ModelarDB for testing purposes.
 
 use std::sync::Arc;
 
 use arrow::array::{BinaryArray, Float32Array, Int8Array, Int16Array, RecordBatch, StringArray};
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
-use modelardb_test::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
 use modelardb_types::types::{
     ArrowTimestamp, ArrowValue, ErrorBound, TimeSeriesTableMetadata, Timestamp, TimestampArray,
     Value, ValueArray,
 };
+
+use crate::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
 
 /// SQL to create a normal table with a timestamp column and two floating point columns.
 pub const NORMAL_TABLE_SQL: &str =

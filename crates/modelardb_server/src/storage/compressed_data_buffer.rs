@@ -124,18 +124,18 @@ mod tests {
     use super::*;
 
     use deltalake::arrow::compute;
-    use modelardb_storage::test;
     use modelardb_test::COMPRESSED_SEGMENTS_SIZE;
+    use modelardb_test::table::{compressed_segments_record_batch, time_series_table_metadata_arc};
 
     #[test]
     fn test_can_append_valid_compressed_segments() {
         let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::time_series_table_metadata_arc());
+            CompressedDataBuffer::new(time_series_table_metadata_arc());
 
         compressed_data_buffer
             .append_compressed_segments(vec![
-                test::compressed_segments_record_batch(),
-                test::compressed_segments_record_batch(),
+                compressed_segments_record_batch(),
+                compressed_segments_record_batch(),
             ])
             .unwrap();
 
@@ -147,12 +147,12 @@ mod tests {
     #[test]
     fn test_compressed_data_buffer_size_updated_when_appending() {
         let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::time_series_table_metadata_arc());
+            CompressedDataBuffer::new(time_series_table_metadata_arc());
 
         compressed_data_buffer
             .append_compressed_segments(vec![
-                test::compressed_segments_record_batch(),
-                test::compressed_segments_record_batch(),
+                compressed_segments_record_batch(),
+                compressed_segments_record_batch(),
             ])
             .unwrap();
 
@@ -162,11 +162,11 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_record_batches_from_compressed_data_buffer() {
         let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::time_series_table_metadata_arc());
+            CompressedDataBuffer::new(time_series_table_metadata_arc());
 
         let compressed_segments = vec![
-            test::compressed_segments_record_batch(),
-            test::compressed_segments_record_batch(),
+            compressed_segments_record_batch(),
+            compressed_segments_record_batch(),
         ];
         compressed_data_buffer
             .append_compressed_segments(compressed_segments)
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_get_size_of_compressed_data_buffer() {
-        let compressed_data_buffer = test::compressed_segments_record_batch();
+        let compressed_data_buffer = compressed_segments_record_batch();
 
         assert_eq!(
             CompressedDataBuffer::size_of_compressed_segments(&compressed_data_buffer),
