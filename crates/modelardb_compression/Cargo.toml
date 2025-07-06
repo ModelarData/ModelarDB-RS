@@ -27,6 +27,5 @@ arrow.workspace = true
 modelardb_types = { path = "../modelardb_types" }
 
 [dev-dependencies]
-modelardb_common = { path = "../modelardb_common" }
 modelardb_test = { path = "../modelardb_test" }
 proptest.workspace = true

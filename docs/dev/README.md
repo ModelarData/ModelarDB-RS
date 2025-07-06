@@ -23,12 +23,6 @@ The ModelarDB project consists of the following crates and major components:
 - [modelardb_client](/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **Helper** - Enhances the command-line client with autocompletion of keywords and names.
-- [modelardb_common](/crates/modelardb_common) - Library of shared functions for use by the other crates.
-  - **Test** - Constants and functionality for data generation for use in tests.
-  - **Arguments** - Parses command-line arguments and serializes and deserializes arguments for use with Apache Arrow
-  Flight.
-  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
-  - **Remote** - Functions used by the public Apache Arrow Flight interfaces.
 - [modelardb_compression](/crates/modelardb_compression) - Library providing lossless and lossy model-based compression
 of time series.
   - **Models** - Multiple types of models used for compressing time series within different kinds of error bounds
@@ -76,7 +70,9 @@ storage.
   - **Parser** - Extensions to Apache DataFusion's SQL parser. The first extension adds support for creating time series
   tables with a timestamp, one or more fields, and zero or more tags. The second adds support for adding a `INCLUDE
   address[, address+]` clause before `SELECT`.
-  - **Test** - Constants and functionality for data generation for use in tests.
+- [modelardb_test](/crates/modelardb_test) - Library providing functionality for testing ModelarDB.
+  - **Data Generation** - Functionality for generating data with a specific structure for use in tests.
+  - **Table** - Constants and functionality for testing normal tables and time series tables.
 - [modelardb_types](/crates/modelardb_types) - Library of shared macros and types for use by the other crates.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **Functions** - Functions for operating on the types.
