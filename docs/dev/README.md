@@ -84,8 +84,7 @@ storage.
   error bounds.
 
 ## Development
-All code must be formatted according to the [Rust Style
-Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md) using
+All code must be formatted according to the [Rust Style Guide](https://doc.rust-lang.org/nightly/style-guide/) using
 [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific to
 this repository, are covered here.
 
