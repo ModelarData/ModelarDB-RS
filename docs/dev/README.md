@@ -102,6 +102,12 @@ All public and private structs, traits, functions, and methods must have accompa
 purpose. Generally, these doc comments should include a description of the main parameters, the return value, and, if
 beneficial, examples.
 
+### Imports
+All imports must be grouped such that the first group contains imports from the standard library, the second group
+contains imports from external crates, and the third group contains imports from local crates. When importing, 
+constants and types should be imported directly, e.g., `use modelardb_types::types::TimeSeriesTableMetadata;`, and 
+functions should be imported through the module name, e.g., `use modelardb_types::functions;`.
+
 ### Terminology
 The following terminology must be used throughout the ModelarDB project.
 
