@@ -642,7 +642,7 @@ mod tests {
     use datafusion::physical_plan::metrics::MetricsSet;
     use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
     use datafusion::prelude::SessionContext;
-    use modelardb_test::table::{TIME_SERIES_TABLE_NAME, time_series_table_metadata_arc};
+    use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
     use tempfile::TempDir;
     use tonic::async_trait;
 
@@ -797,7 +797,7 @@ mod tests {
         let session_context = SessionContext::new_with_state(session_state);
 
         // Create time series table.
-        let time_series_table_metadata = time_series_table_metadata_arc();
+        let time_series_table_metadata = table::time_series_table_metadata_arc();
 
         let delta_table = delta_lake
             .create_time_series_table(&time_series_table_metadata)

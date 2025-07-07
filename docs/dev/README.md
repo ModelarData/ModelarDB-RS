@@ -104,7 +104,7 @@ beneficial, examples.
 
 ### Imports
 All imports must be grouped such that the first group contains imports from the standard library, the second group
-contains imports from external crates, and the third group contains imports from local crates. When importing, 
+contains imports from external crates, and the third group contains imports from the crate itself. When importing, 
 constants and types should be imported directly, e.g., `use modelardb_types::types::TimeSeriesTableMetadata;`, and 
 functions should be imported through the module name, e.g., `use modelardb_types::functions;`.
 

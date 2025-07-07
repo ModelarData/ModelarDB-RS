@@ -699,7 +699,7 @@ mod tests {
 
     use datafusion::logical_expr::lit;
     use datafusion::prelude::Expr;
-    use modelardb_test::table::time_series_table_metadata;
+    use modelardb_test::table;
     use modelardb_types::types::Timestamp;
 
     const TIMESTAMP_PREDICATE_VALUE: Timestamp = 37;
@@ -707,7 +707,7 @@ mod tests {
     // Tests for rewrite_and_combine_filters().
     #[test]
     fn test_rewrite_empty_vec() {
-        let schema = time_series_table_metadata().schema;
+        let schema = table::time_series_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &[]);
         assert!(parquet_filter.is_none());
         assert!(grid_filter.is_none());
@@ -716,7 +716,7 @@ mod tests {
     #[test]
     fn test_rewrite_greater_than_timestamp() {
         let filters = new_timestamp_filters(Operator::Gt);
-        let schema = time_series_table_metadata().schema;
+        let schema = table::time_series_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         assert_binary_expr(
@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn test_rewrite_greater_than_or_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::GtEq);
-        let schema = time_series_table_metadata().schema;
+        let schema = table::time_series_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         assert_binary_expr(
@@ -758,7 +758,7 @@ mod tests {
     #[test]
     fn test_rewrite_less_than_timestamp() {
         let filters = new_timestamp_filters(Operator::Lt);
-        let schema = time_series_table_metadata().schema;
+        let schema = table::time_series_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         assert_binary_expr(
@@ -779,7 +779,7 @@ mod tests {
     #[test]
     fn test_rewrite_less_than_or_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::LtEq);
-        let schema = time_series_table_metadata().schema;
+        let schema = table::time_series_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         assert_binary_expr(
@@ -800,7 +800,7 @@ mod tests {
     #[test]
     fn test_rewrite_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::Eq);
-        let schema = time_series_table_metadata().schema;
+        let schema = table::time_series_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = parquet_filter.unwrap() {

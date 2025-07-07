@@ -610,7 +610,7 @@ mod tests {
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
     use modelardb_test::ERROR_BOUND_ZERO;
-    use modelardb_test::table::{TIME_SERIES_TABLE_NAME, time_series_table_metadata};
+    use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::{ArrowTimestamp, ArrowValue};
     use tempfile::TempDir;
 
@@ -697,7 +697,7 @@ mod tests {
     async fn test_table_names() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
-        let time_series_table_metadata = time_series_table_metadata();
+        let time_series_table_metadata = table::time_series_table_metadata();
         metadata_manager
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
@@ -761,7 +761,8 @@ mod tests {
         assert_eq!(
             **batch.column(1),
             BinaryArray::from_vec(vec![
-                &try_convert_schema_to_bytes(&time_series_table_metadata().query_schema).unwrap()
+                &try_convert_schema_to_bytes(&table::time_series_table_metadata().query_schema)
+                    .unwrap()
             ])
         );
 
@@ -870,12 +871,12 @@ mod tests {
         let (_temp_dir, metadata_manager) =
             create_metadata_manager_and_save_time_series_table().await;
 
-        let actual_time_series_table_metadata =
+        let time_series_table_metadata =
             metadata_manager.time_series_table_metadata().await.unwrap();
 
         assert_eq!(
-            actual_time_series_table_metadata.first().unwrap().name,
-            time_series_table_metadata().name,
+            time_series_table_metadata.first().unwrap().name,
+            table::time_series_table_metadata().name,
         );
     }
 
@@ -884,14 +885,14 @@ mod tests {
         let (_temp_dir, metadata_manager) =
             create_metadata_manager_and_save_time_series_table().await;
 
-        let actual_time_series_table_metadata = metadata_manager
+        let time_series_table_metadata = metadata_manager
             .time_series_table_metadata_for_time_series_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
         assert_eq!(
-            actual_time_series_table_metadata.name,
-            time_series_table_metadata().name,
+            time_series_table_metadata.name,
+            table::time_series_table_metadata().name,
         );
     }
 
@@ -1002,7 +1003,7 @@ mod tests {
             .unwrap();
 
         // Save a time series table to the metadata Delta Lake.
-        let time_series_table_metadata = time_series_table_metadata();
+        let time_series_table_metadata = table::time_series_table_metadata();
         metadata_manager
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await

@@ -36,10 +36,8 @@ use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{StreamExt, stream};
-use modelardb_test::data_generation::generate_multivariate_time_series;
-use modelardb_test::table::{
-    NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME, table_metadata_protobuf_bytes,
-};
+use modelardb_test::data_generation;
+use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
 use modelardb_types::flight::protocol;
 use modelardb_types::types::ErrorBound;
 use prost::Message;
@@ -265,14 +263,15 @@ impl TestContext {
         multiply_noise_range: Option<Range<f32>>,
         maybe_tag: Option<&str>,
     ) -> RecordBatch {
-        let (uncompressed_timestamps, mut uncompressed_values) = generate_multivariate_time_series(
-            TIME_SERIES_TEST_LENGTH,
-            5,
-            SEGMENT_TEST_MINIMUM_LENGTH..2 * SEGMENT_TEST_MINIMUM_LENGTH + 1,
-            generate_irregular_timestamps,
-            multiply_noise_range,
-            100.0..200.0,
-        );
+        let (uncompressed_timestamps, mut uncompressed_values) =
+            data_generation::generate_multivariate_time_series(
+                TIME_SERIES_TEST_LENGTH,
+                5,
+                SEGMENT_TEST_MINIMUM_LENGTH..2 * SEGMENT_TEST_MINIMUM_LENGTH + 1,
+                generate_irregular_timestamps,
+                multiply_noise_range,
+                100.0..200.0,
+            );
 
         let time_series_len = uncompressed_timestamps.len();
 
@@ -1252,7 +1251,7 @@ async fn test_can_get_node_type() {
 async fn test_can_create_tables() {
     let mut test_context = TestContext::new().await;
 
-    let protobuf_bytes = table_metadata_protobuf_bytes();
+    let protobuf_bytes = table::table_metadata_protobuf_bytes();
 
     let action = Action {
         r#type: "CreateTables".to_owned(),

@@ -427,11 +427,7 @@ mod tests {
     use super::*;
 
     use crate::data_folders::DataFolder;
-    use modelardb_test::table::{
-        NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME, compressed_segments_record_batch,
-        normal_table_record_batch, normal_table_schema, table_metadata_protobuf_bytes,
-        time_series_table_metadata,
-    };
+    use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use tempfile::TempDir;
 
     // Tests for Context.
@@ -440,7 +436,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        let protobuf_bytes = table_metadata_protobuf_bytes();
+        let protobuf_bytes = table::table_metadata_protobuf_bytes();
 
         context
             .create_tables_from_bytes(protobuf_bytes)
@@ -469,7 +465,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_normal_table(NORMAL_TABLE_NAME, &normal_table_schema())
+            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
             .await
             .unwrap();
 
@@ -509,14 +505,14 @@ mod tests {
 
         assert!(
             context
-                .create_normal_table(NORMAL_TABLE_NAME, &normal_table_schema())
+                .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
                 .await
                 .is_ok()
         );
 
         assert!(
             context
-                .create_normal_table(NORMAL_TABLE_NAME, &normal_table_schema())
+                .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
                 .await
                 .is_err()
         );
@@ -528,12 +524,12 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_time_series_table(&time_series_table_metadata())
+            .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
 
         // The time series table should be saved to the metadata Delta Lake.
-        let actual_time_series_table_metadata = context
+        let time_series_table_metadata = context
             .data_folders
             .local_data_folder
             .table_metadata_manager
@@ -542,8 +538,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            actual_time_series_table_metadata.first().unwrap().name,
-            time_series_table_metadata().name
+            time_series_table_metadata.first().unwrap().name,
+            table::time_series_table_metadata().name
         );
 
         // The time series table should be registered in the Apache DataFusion catalog.
@@ -562,14 +558,14 @@ mod tests {
 
         assert!(
             context
-                .create_time_series_table(&time_series_table_metadata())
+                .create_time_series_table(&table::time_series_table_metadata())
                 .await
                 .is_ok()
         );
 
         assert!(
             context
-                .create_time_series_table(&time_series_table_metadata())
+                .create_time_series_table(&table::time_series_table_metadata())
                 .await
                 .is_err()
         );
@@ -584,7 +580,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_normal_table(NORMAL_TABLE_NAME, &normal_table_schema())
+            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
             .await
             .unwrap();
 
@@ -604,7 +600,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_time_series_table(&time_series_table_metadata())
+            .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -621,7 +617,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_normal_table(NORMAL_TABLE_NAME, &normal_table_schema())
+            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
             .await
             .unwrap();
 
@@ -663,7 +659,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_time_series_table(&time_series_table_metadata())
+            .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -713,7 +709,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_normal_table(NORMAL_TABLE_NAME, &normal_table_schema())
+            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
             .await
             .unwrap();
 
@@ -729,7 +725,7 @@ mod tests {
             .delta_lake
             .write_record_batches_to_normal_table(
                 NORMAL_TABLE_NAME,
-                vec![normal_table_record_batch()],
+                vec![table::normal_table_record_batch()],
             )
             .await
             .unwrap();
@@ -759,7 +755,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_time_series_table(&time_series_table_metadata())
+            .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -771,7 +767,7 @@ mod tests {
             .unwrap();
 
         // Write data to the time series table that should be deleted when the table is truncated.
-        let record_batch = compressed_segments_record_batch();
+        let record_batch = table::compressed_segments_record_batch();
         local_data_folder
             .delta_lake
             .write_compressed_segments_to_time_series_table(
@@ -822,7 +818,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_time_series_table(&time_series_table_metadata())
+            .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -832,7 +828,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(metadata.name, time_series_table_metadata().name);
+        assert_eq!(metadata.name, table::time_series_table_metadata().name);
     }
 
     #[tokio::test]
@@ -841,7 +837,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_normal_table(NORMAL_TABLE_NAME, &normal_table_schema())
+            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
             .await
             .unwrap();
 
@@ -873,7 +869,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_time_series_table(&time_series_table_metadata())
+            .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -904,7 +900,7 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         context
-            .create_time_series_table(&time_series_table_metadata())
+            .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -913,7 +909,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(schema, time_series_table_metadata().schema)
+        assert_eq!(schema, table::time_series_table_metadata().schema)
     }
 
     #[tokio::test]

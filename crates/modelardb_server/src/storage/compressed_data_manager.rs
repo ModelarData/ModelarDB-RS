@@ -292,10 +292,7 @@ mod tests {
 
     use datafusion::arrow::array::{Array, Int8Array};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use modelardb_test::table::{
-        NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME, compressed_segments_record_batch_with_time,
-        time_series_table_metadata, time_series_table_metadata_arc,
-    };
+    use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use modelardb_test::{
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, COMPRESSED_SEGMENTS_SIZE,
         INGESTED_RESERVED_MEMORY_IN_BYTES, UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
@@ -393,7 +390,7 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_time_series_table(&time_series_table_metadata())
+            .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -564,7 +561,7 @@ mod tests {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
 
-        let time_series_table_metadata = time_series_table_metadata();
+        let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder
             .table_metadata_manager
             .save_time_series_table_metadata(&time_series_table_metadata)
@@ -593,10 +590,14 @@ mod tests {
     /// value range is from `offset` + 5.2 to `offset` + 34.2.
     fn compressed_segment_batch_with_time(time_ms: i64, offset: f32) -> CompressedSegmentBatch {
         CompressedSegmentBatch::new(
-            time_series_table_metadata_arc(),
+            table::time_series_table_metadata_arc(),
             vec![
-                compressed_segments_record_batch_with_time(COLUMN_INDEX, time_ms, offset),
-                compressed_segments_record_batch_with_time(COLUMN_INDEX + 1, time_ms, offset),
+                table::compressed_segments_record_batch_with_time(COLUMN_INDEX, time_ms, offset),
+                table::compressed_segments_record_batch_with_time(
+                    COLUMN_INDEX + 1,
+                    time_ms,
+                    offset,
+                ),
             ],
         )
     }

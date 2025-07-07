@@ -288,7 +288,7 @@ fn read_decode_and_compute_delta(bits: &mut BitReader, bits_to_read: u8, last_de
 mod tests {
     use super::*;
 
-    use modelardb_test::data_generation::generate_timestamps;
+    use modelardb_test::data_generation;
     use proptest::num::i64 as ProptestTimestamp;
     use proptest::{collection, proptest};
 
@@ -399,13 +399,13 @@ mod tests {
 
     #[test]
     fn test_compress_and_decompress_timestamps_for_a_generated_regular_time_series() {
-        let timestamps = generate_timestamps(1000, false);
+        let timestamps = data_generation::generate_timestamps(1000, false);
         compress_and_decompress_timestamps_for_a_time_series(timestamps.values(), None);
     }
 
     #[test]
     fn test_compress_and_decompress_timestamps_for_a_generated_irregular_time_series() {
-        let timestamps = generate_timestamps(1000, true);
+        let timestamps = data_generation::generate_timestamps(1000, true);
         compress_and_decompress_timestamps_for_a_time_series(timestamps.values(), None);
     }
 

@@ -281,10 +281,7 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
-    use modelardb_test::table::{
-        NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME, compressed_segments_record_batch,
-        normal_table_record_batch, normal_table_schema, time_series_table_metadata,
-    };
+    use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use tempfile::{self, TempDir};
 
     const EXPECTED_TIME_SERIES_TABLE_FILE_SIZE: usize = 2038;
@@ -480,7 +477,7 @@ mod tests {
         // Create a normal table.
         local_data_folder
             .delta_lake
-            .create_normal_table(NORMAL_TABLE_NAME, &normal_table_schema())
+            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
             .await
             .unwrap();
 
@@ -491,7 +488,7 @@ mod tests {
             .unwrap();
 
         // Create a time series table.
-        let time_series_table_metadata = time_series_table_metadata();
+        let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder
             .delta_lake
             .create_time_series_table(&time_series_table_metadata)
@@ -519,7 +516,7 @@ mod tests {
                 .delta_lake
                 .write_record_batches_to_normal_table(
                     NORMAL_TABLE_NAME,
-                    vec![normal_table_record_batch()],
+                    vec![table::normal_table_record_batch()],
                 )
                 .await
                 .unwrap();
@@ -529,7 +526,7 @@ mod tests {
                 .delta_lake
                 .write_compressed_segments_to_time_series_table(
                     TIME_SERIES_TABLE_NAME,
-                    vec![compressed_segments_record_batch()],
+                    vec![table::compressed_segments_record_batch()],
                 )
                 .await
                 .unwrap();
