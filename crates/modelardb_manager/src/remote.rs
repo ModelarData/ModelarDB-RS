@@ -17,6 +17,7 @@
 //! An Apache Arrow Flight server that process requests using [`FlightServiceHandler`] can be started
 //! with [`start_apache_arrow_flight_server()`].
 
+use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::result::Result as StdResult;
@@ -32,8 +33,6 @@ use arrow_flight::{
     SchemaResult, Ticket,
 };
 use futures::{Stream, stream};
-use modelardb_common::remote;
-use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
 use modelardb_types::flight::protocol;
@@ -72,6 +71,18 @@ pub fn start_apache_arrow_flight_server(
                 .await
         })
         .map_err(|error| error.into())
+}
+
+/// Convert an `error` to a [`Status`] with [`tonic::Code::InvalidArgument`] as the code and `error`
+/// converted to a [`String`] as the message.
+pub fn error_to_status_invalid_argument(error: impl Error) -> Status {
+    Status::invalid_argument(error.to_string())
+}
+
+/// Convert an `error` to a [`Status`] with [`tonic::Code::Internal`] as the code and `error`
+/// converted to a [`String`] as the message.
+pub fn error_to_status_internal(error: impl Error) -> Status {
+    Status::internal(error.to_string())
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -427,7 +438,10 @@ impl FlightService for FlightServiceHandler {
         request: Request<FlightDescriptor>,
     ) -> StdResult<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
-        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
+        let table_name = flight_descriptor
+            .path
+            .first()
+            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))?;
 
         let schema = self.table_schema(table_name).await?;
 

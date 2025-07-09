@@ -377,8 +377,8 @@ mod tests {
     use proptest::num;
     use proptest::proptest;
 
-    use modelardb_common::test::ERROR_BOUND_ZERO;
-    use modelardb_storage::test;
+    use modelardb_test::ERROR_BOUND_ZERO;
+    use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
 
     // Tests for TimeSeriesTableMetadata.
     #[test]
@@ -386,7 +386,7 @@ mod tests {
         let (query_schema, error_bounds, generated_columns) =
             time_series_table_schema_error_bounds_and_generated_columns();
         let result = TimeSeriesTableMetadata::try_new(
-            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            TIME_SERIES_TABLE_NAME.to_owned(),
             query_schema,
             error_bounds,
             generated_columns,
@@ -447,7 +447,7 @@ mod tests {
         query_schema: Schema,
     ) -> Result<TimeSeriesTableMetadata> {
         TimeSeriesTableMetadata::try_new(
-            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            TIME_SERIES_TABLE_NAME.to_owned(),
             Arc::new(query_schema),
             vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap()],
             vec![None],
@@ -459,7 +459,7 @@ mod tests {
         let (query_schema, _error_bounds, generated_columns) =
             time_series_table_schema_error_bounds_and_generated_columns();
         let result = TimeSeriesTableMetadata::try_new(
-            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            TIME_SERIES_TABLE_NAME.to_owned(),
             query_schema,
             vec![],
             generated_columns,
@@ -473,7 +473,7 @@ mod tests {
         let (query_schema, error_bounds, _generated_columns) =
             time_series_table_schema_error_bounds_and_generated_columns();
         let result = TimeSeriesTableMetadata::try_new(
-            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            TIME_SERIES_TABLE_NAME.to_owned(),
             query_schema,
             error_bounds,
             vec![],
@@ -499,7 +499,7 @@ mod tests {
         });
 
         let result = TimeSeriesTableMetadata::try_new(
-            test::TIME_SERIES_TABLE_NAME.to_owned(),
+            TIME_SERIES_TABLE_NAME.to_owned(),
             query_schema,
             error_bounds,
             generated_columns,
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_is_timestamp() {
-        let time_series_table_metadata = test::time_series_table_metadata();
+        let time_series_table_metadata = table::time_series_table_metadata();
 
         assert!(time_series_table_metadata.is_timestamp(0));
         assert!(!time_series_table_metadata.is_timestamp(1));
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_is_tag() {
-        let time_series_table_metadata = test::time_series_table_metadata();
+        let time_series_table_metadata = table::time_series_table_metadata();
 
         assert!(!time_series_table_metadata.is_tag(0));
         assert!(!time_series_table_metadata.is_tag(1));
@@ -555,8 +555,8 @@ mod tests {
 
     #[test]
     fn test_column_arrays() {
-        let time_series_table_metadata = test::time_series_table_metadata();
-        let record_batch = test::uncompressed_time_series_table_record_batch(1);
+        let time_series_table_metadata = table::time_series_table_metadata();
+        let record_batch = table::uncompressed_time_series_table_record_batch(1);
 
         let (timestamp_column_array, field_column_arrays, tag_column_arrays) =
             time_series_table_metadata
@@ -583,8 +583,8 @@ mod tests {
 
     #[test]
     fn test_column_arrays_with_invalid_schema() {
-        let time_series_table_metadata = test::time_series_table_metadata();
-        let record_batch = test::normal_table_record_batch();
+        let time_series_table_metadata = table::time_series_table_metadata();
+        let record_batch = table::normal_table_record_batch();
 
         let result = time_series_table_metadata.column_arrays(&record_batch);
 

@@ -36,7 +36,6 @@ dashmap.workspace = true
 datafusion.workspace = true
 deltalake = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
-modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }
 modelardb_storage = { path = "../modelardb_storage" }
 modelardb_types = { path = "../modelardb_types" }
@@ -54,6 +53,7 @@ tracing = { workspace = true, features = ["max_level_debug", "release_max_level_
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+modelardb_test = { path = "../modelardb_test" }
 proptest.workspace = true
 tempfile.workspace = true
 

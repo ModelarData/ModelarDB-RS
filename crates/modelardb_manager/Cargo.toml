@@ -31,7 +31,6 @@ arrow-flight.workspace = true
 arrow.workspace = true
 deltalake.workspace = true
 futures.workspace = true
-modelardb_common = { path = "../modelardb_common" }
 modelardb_storage = { path = "../modelardb_storage" }
 modelardb_types = { path = "../modelardb_types" }
 prost.workspace = true

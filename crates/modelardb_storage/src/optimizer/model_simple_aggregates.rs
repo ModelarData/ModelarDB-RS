@@ -642,6 +642,7 @@ mod tests {
     use datafusion::physical_plan::metrics::MetricsSet;
     use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
     use datafusion::prelude::SessionContext;
+    use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
     use tempfile::TempDir;
     use tonic::async_trait;
 
@@ -649,7 +650,6 @@ mod tests {
     use crate::optimizer;
     use crate::query::grid_exec::GridExec;
     use crate::query::time_series_table::TimeSeriesTable;
-    use crate::test;
 
     // DataSink for testing.
     struct NoOpDataSink {}
@@ -693,10 +693,7 @@ mod tests {
     #[tokio::test]
     async fn test_rewrite_aggregate_on_one_column_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let query = &format!(
-            "SELECT COUNT(field_1) FROM {}",
-            test::TIME_SERIES_TABLE_NAME
-        );
+        let query = &format!("SELECT COUNT(field_1) FROM {TIME_SERIES_TABLE_NAME}");
         let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
@@ -714,10 +711,9 @@ mod tests {
         // Apache DataFusion 30 creates two input columns to AggregateExec when both SUM and AVG is
         // computed in the same query, so for now, multiple queries are used for the test.
         let query_no_avg = &format!(
-            "SELECT COUNT(field_1), MIN(field_1), MAX(field_1), SUM(field_1) FROM {}",
-            test::TIME_SERIES_TABLE_NAME
+            "SELECT COUNT(field_1), MIN(field_1), MAX(field_1), SUM(field_1) FROM {TIME_SERIES_TABLE_NAME}"
         );
-        let query_only_avg = &format!("SELECT AVG(field_1) FROM {}", test::TIME_SERIES_TABLE_NAME);
+        let query_only_avg = &format!("SELECT AVG(field_1) FROM {TIME_SERIES_TABLE_NAME}");
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -737,10 +733,8 @@ mod tests {
     #[tokio::test]
     async fn test_do_not_rewrite_aggregate_on_one_column_with_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let query = &format!(
-            "SELECT COUNT(field_1) FROM {} WHERE field_1 = 37.0",
-            test::TIME_SERIES_TABLE_NAME
-        );
+        let query =
+            &format!("SELECT COUNT(field_1) FROM {TIME_SERIES_TABLE_NAME} WHERE field_1 = 37.0",);
         let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
@@ -761,10 +755,8 @@ mod tests {
     #[tokio::test]
     async fn test_do_not_rewrite_aggregate_on_multiple_columns_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let query = &format!(
-            "SELECT COUNT(field_1), COUNT(field_2) FROM {}",
-            test::TIME_SERIES_TABLE_NAME
-        );
+        let query =
+            &format!("SELECT COUNT(field_1), COUNT(field_2) FROM {TIME_SERIES_TABLE_NAME}",);
         let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
@@ -805,7 +797,7 @@ mod tests {
         let session_context = SessionContext::new_with_state(session_state);
 
         // Create time series table.
-        let time_series_table_metadata = test::time_series_table_metadata_arc();
+        let time_series_table_metadata = table::time_series_table_metadata_arc();
 
         let delta_table = delta_lake
             .create_time_series_table(&time_series_table_metadata)
@@ -821,7 +813,7 @@ mod tests {
         );
 
         session_context
-            .register_table(test::TIME_SERIES_TABLE_NAME, time_series_table)
+            .register_table(TIME_SERIES_TABLE_NAME, time_series_table)
             .unwrap();
 
         session_context

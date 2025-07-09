@@ -292,11 +292,11 @@ mod tests {
 
     use datafusion::arrow::array::{Array, Int8Array};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use modelardb_common::test::{
+    use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
+    use modelardb_test::{
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, COMPRESSED_SEGMENTS_SIZE,
         INGESTED_RESERVED_MEMORY_IN_BYTES, UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
     };
-    use modelardb_storage::test;
     use tempfile::{self, TempDir};
 
     const COLUMN_INDEX: i16 = 1;
@@ -316,13 +316,13 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_normal_table(test::NORMAL_TABLE_NAME, &record_batch.schema())
+            .create_normal_table(NORMAL_TABLE_NAME, &record_batch.schema())
             .await
             .unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
 
         data_manager
-            .insert_record_batch(test::NORMAL_TABLE_NAME, record_batch)
+            .insert_record_batch(NORMAL_TABLE_NAME, record_batch)
             .await
             .unwrap();
         delta_table.load().await.unwrap();
@@ -334,7 +334,7 @@ mod tests {
     async fn test_can_insert_compressed_segment_into_new_compressed_data_buffer() {
         let segments = compressed_segments_record_batch();
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-        let key = test::TIME_SERIES_TABLE_NAME;
+        let key = TIME_SERIES_TABLE_NAME;
 
         data_manager
             .insert_compressed_segments(segments)
@@ -364,7 +364,7 @@ mod tests {
             .unwrap();
         let previous_size = data_manager
             .compressed_data_buffers
-            .get(test::TIME_SERIES_TABLE_NAME)
+            .get(TIME_SERIES_TABLE_NAME)
             .unwrap()
             .size_in_bytes;
 
@@ -376,7 +376,7 @@ mod tests {
         assert!(
             data_manager
                 .compressed_data_buffers
-                .get(test::TIME_SERIES_TABLE_NAME)
+                .get(TIME_SERIES_TABLE_NAME)
                 .unwrap()
                 .size_in_bytes
                 > previous_size
@@ -390,7 +390,7 @@ mod tests {
 
         let mut delta_table = local_data_folder
             .delta_lake
-            .create_time_series_table(&test::time_series_table_metadata())
+            .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -561,7 +561,7 @@ mod tests {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
 
-        let time_series_table_metadata = test::time_series_table_metadata();
+        let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder
             .table_metadata_manager
             .save_time_series_table_metadata(&time_series_table_metadata)
@@ -590,10 +590,14 @@ mod tests {
     /// value range is from `offset` + 5.2 to `offset` + 34.2.
     fn compressed_segment_batch_with_time(time_ms: i64, offset: f32) -> CompressedSegmentBatch {
         CompressedSegmentBatch::new(
-            test::time_series_table_metadata_arc(),
+            table::time_series_table_metadata_arc(),
             vec![
-                test::compressed_segments_record_batch_with_time(COLUMN_INDEX, time_ms, offset),
-                test::compressed_segments_record_batch_with_time(COLUMN_INDEX + 1, time_ms, offset),
+                table::compressed_segments_record_batch_with_time(COLUMN_INDEX, time_ms, offset),
+                table::compressed_segments_record_batch_with_time(
+                    COLUMN_INDEX + 1,
+                    time_ms,
+                    offset,
+                ),
             ],
         )
     }

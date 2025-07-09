@@ -25,7 +25,6 @@ use crossbeam_channel::SendError as CrossbeamSendError;
 use datafusion::arrow::error::ArrowError;
 use datafusion::error::DataFusionError;
 use deltalake::errors::DeltaTableError;
-use modelardb_common::error::ModelarDbCommonError;
 use modelardb_storage::error::ModelarDbStorageError;
 use modelardb_types::error::ModelarDbTypesError;
 use object_store::Error as ObjectStoreError;
@@ -55,8 +54,6 @@ pub enum ModelarDbServerError {
     InvalidState(String),
     /// Error returned from IO operations.
     Io(IoError),
-    /// Error returned by modelardb_common.
-    ModelarDbCommon(ModelarDbCommonError),
     /// Error returned by modelardb_storage.
     ModelarDbStorage(ModelarDbStorageError),
     /// Error returned by modelardb_types.
@@ -82,7 +79,6 @@ impl Display for ModelarDbServerError {
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::InvalidState(reason) => write!(f, "Invalid State Error: {reason}"),
             Self::Io(reason) => write!(f, "IO Error: {reason}"),
-            Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
             Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
@@ -105,7 +101,6 @@ impl Error for ModelarDbServerError {
             Self::InvalidArgument(_reason) => None,
             Self::InvalidState(_reason) => None,
             Self::Io(reason) => Some(reason),
-            Self::ModelarDbCommon(reason) => Some(reason),
             Self::ModelarDbStorage(reason) => Some(reason),
             Self::ModelarDbTypes(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
@@ -149,12 +144,6 @@ impl From<DeltaTableError> for ModelarDbServerError {
 impl From<IoError> for ModelarDbServerError {
     fn from(error: IoError) -> Self {
         Self::Io(error)
-    }
-}
-
-impl From<ModelarDbCommonError> for ModelarDbServerError {
-    fn from(error: ModelarDbCommonError) -> Self {
-        Self::ModelarDbCommon(error)
     }
 }
 

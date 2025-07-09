@@ -18,6 +18,7 @@
 //! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
 use std::collections::HashMap;
+use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::result::Result as StdResult;
@@ -31,7 +32,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket, utils,
 };
-use datafusion::arrow::array::ArrayRef;
+use datafusion::arrow::array::{ArrayRef, RecordBatch};
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
@@ -40,8 +41,6 @@ use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStrea
 use deltalake::arrow::datatypes::Schema;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
-use modelardb_common::remote;
-use modelardb_common::remote::{error_to_status_internal, error_to_status_invalid_argument};
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::flight::protocol;
 use modelardb_types::functions;
@@ -223,11 +222,47 @@ async fn send_flight_data(
         .map_err(error_to_status_internal)
 }
 
+/// Convert `flight_data` to a [`RecordBatch`]. If `schema` does not match the data or `flight_data`
+/// could not be converted, [`Status`] is returned.
+pub fn flight_data_to_record_batch(
+    flight_data: &FlightData,
+    schema: &Arc<Schema>,
+    dictionaries_by_id: &HashMap<i64, ArrayRef>,
+) -> StdResult<RecordBatch, Status> {
+    debug_assert_eq!(flight_data.flight_descriptor, None);
+
+    utils::flight_data_to_arrow_batch(flight_data, schema.clone(), dictionaries_by_id)
+        .map_err(|error| Status::invalid_argument(error.to_string()))
+}
+
+/// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
+/// [`Status`] that specifies that the table name is missing.
+pub fn table_name_from_flight_descriptor(
+    flight_descriptor: &FlightDescriptor,
+) -> StdResult<&String, Status> {
+    flight_descriptor
+        .path
+        .first()
+        .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
+}
+
 /// Return an empty stream of [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) that
 /// can be returned when a SQL command has been successfully executed but did not produce any rows
 /// to return.
 fn empty_record_batch_stream() -> SendableRecordBatchStream {
     Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
+}
+
+/// Convert an `error` to a [`Status`] with [`tonic::Code::InvalidArgument`] as the code and `error`
+/// converted to a [`String`] as the message.
+pub fn error_to_status_invalid_argument(error: impl Error) -> Status {
+    Status::invalid_argument(error.to_string())
+}
+
+/// Convert an `error` to a [`Status`] with [`tonic::Code::Internal`] as the code and `error`
+/// converted to a [`String`] as the message.
+pub fn error_to_status_internal(error: impl Error) -> Status {
+    Status::internal(error.to_string())
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -264,11 +299,8 @@ impl FlightServiceHandler {
     ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let record_batch = remote::flight_data_to_record_batch(
-                &flight_data?,
-                schema,
-                &self.dictionaries_by_id,
-            )?;
+            let record_batch =
+                flight_data_to_record_batch(&flight_data?, schema, &self.dictionaries_by_id)?;
             let storage_engine = self.context.storage_engine.write().await;
 
             // Write record_batch to the normal table with table_name as a compressed Apache Parquet file.
@@ -293,7 +325,7 @@ impl FlightServiceHandler {
     ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let data_points = remote::flight_data_to_record_batch(
+            let data_points = flight_data_to_record_batch(
                 &flight_data?,
                 &time_series_table_metadata.schema,
                 &self.dictionaries_by_id,
@@ -387,7 +419,7 @@ impl FlightService for FlightServiceHandler {
         request: Request<FlightDescriptor>,
     ) -> StdResult<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
-        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
+        let table_name = table_name_from_flight_descriptor(&flight_descriptor)?;
         let schema = self
             .context
             .schema_of_table_in_default_database_schema(table_name)
@@ -523,7 +555,7 @@ impl FlightService for FlightServiceHandler {
         let flight_descriptor = flight_data
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
-        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
+        let table_name = table_name_from_flight_descriptor(&flight_descriptor)?;
         let normalized_table_name = functions::normalize_name(table_name);
 
         // Handle the data based on whether it is a normal table or a time series table.

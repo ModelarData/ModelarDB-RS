@@ -26,7 +26,6 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::logical_expr::{Expr, lit};
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
-use modelardb_common::test::ERROR_BOUND_ZERO;
 use modelardb_types::flight::protocol;
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::types::{ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
@@ -542,7 +541,7 @@ impl TableMetadataManager {
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
         let mut column_to_error_bound =
-            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO)?; query_schema_columns];
+            vec![ErrorBound::try_new_absolute(0.0)?; query_schema_columns];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
         let error_bound_value_array = modelardb_types::array!(batch, 1, Float32Array);
@@ -610,10 +609,10 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
+    use modelardb_test::ERROR_BOUND_ZERO;
+    use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::{ArrowTimestamp, ArrowValue};
     use tempfile::TempDir;
-
-    use crate::test;
 
     // Tests for TableMetadataManager.
     #[tokio::test]
@@ -665,7 +664,7 @@ mod tests {
             create_metadata_manager_and_save_time_series_table().await;
         assert!(
             !metadata_manager
-                .is_normal_table(test::TIME_SERIES_TABLE_NAME)
+                .is_normal_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -677,7 +676,7 @@ mod tests {
             create_metadata_manager_and_save_time_series_table().await;
         assert!(
             metadata_manager
-                .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
+                .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -698,7 +697,7 @@ mod tests {
     async fn test_table_names() {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_normal_tables().await;
 
-        let time_series_table_metadata = test::time_series_table_metadata();
+        let time_series_table_metadata = table::time_series_table_metadata();
         metadata_manager
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
@@ -707,11 +706,7 @@ mod tests {
         let table_names = metadata_manager.table_names().await.unwrap();
         assert_eq!(
             table_names,
-            vec![
-                "normal_table_2",
-                "normal_table_1",
-                test::TIME_SERIES_TABLE_NAME
-            ]
+            vec!["normal_table_2", "normal_table_1", TIME_SERIES_TABLE_NAME]
         );
     }
 
@@ -729,7 +724,7 @@ mod tests {
             create_metadata_manager_and_save_time_series_table().await;
 
         let time_series_table_names = metadata_manager.time_series_table_names().await.unwrap();
-        assert_eq!(time_series_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
+        assert_eq!(time_series_table_names, vec![TIME_SERIES_TABLE_NAME]);
     }
 
     #[tokio::test]
@@ -761,12 +756,12 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![test::TIME_SERIES_TABLE_NAME])
+            StringArray::from(vec![TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
             BinaryArray::from_vec(vec![
-                &try_convert_schema_to_bytes(&test::time_series_table_metadata().query_schema)
+                &try_convert_schema_to_bytes(&table::time_series_table_metadata().query_schema)
                     .unwrap()
             ])
         );
@@ -780,10 +775,7 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![
-                test::TIME_SERIES_TABLE_NAME,
-                test::TIME_SERIES_TABLE_NAME
-            ])
+            StringArray::from(vec![TIME_SERIES_TABLE_NAME, TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
@@ -822,7 +814,7 @@ mod tests {
             create_metadata_manager_and_save_time_series_table().await;
 
         metadata_manager
-            .drop_table_metadata(test::TIME_SERIES_TABLE_NAME)
+            .drop_table_metadata(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -884,7 +876,7 @@ mod tests {
 
         assert_eq!(
             time_series_table_metadata.first().unwrap().name,
-            test::time_series_table_metadata().name,
+            table::time_series_table_metadata().name,
         );
     }
 
@@ -894,13 +886,13 @@ mod tests {
             create_metadata_manager_and_save_time_series_table().await;
 
         let time_series_table_metadata = metadata_manager
-            .time_series_table_metadata_for_time_series_table(test::TIME_SERIES_TABLE_NAME)
+            .time_series_table_metadata_for_time_series_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
         assert_eq!(
             time_series_table_metadata.name,
-            test::time_series_table_metadata().name,
+            table::time_series_table_metadata().name,
         );
     }
 
@@ -922,7 +914,7 @@ mod tests {
             create_metadata_manager_and_save_time_series_table().await;
 
         let error_bounds = metadata_manager
-            .error_bounds(test::TIME_SERIES_TABLE_NAME, 4)
+            .error_bounds(TIME_SERIES_TABLE_NAME, 4)
             .await
             .unwrap();
 
@@ -1011,7 +1003,7 @@ mod tests {
             .unwrap();
 
         // Save a time series table to the metadata Delta Lake.
-        let time_series_table_metadata = test::time_series_table_metadata();
+        let time_series_table_metadata = table::time_series_table_metadata();
         metadata_manager
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await

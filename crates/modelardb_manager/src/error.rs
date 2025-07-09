@@ -21,7 +21,6 @@ use std::io::Error as IoError;
 use std::result::Result as StdResult;
 
 use deltalake::errors::DeltaTableError;
-use modelardb_common::error::ModelarDbCommonError;
 use modelardb_storage::error::ModelarDbStorageError;
 use modelardb_types::error::ModelarDbTypesError;
 use tonic::Status as TonicStatusError;
@@ -41,8 +40,6 @@ pub enum ModelarDbManagerError {
     InvalidState(String),
     /// Error returned from IO operations.
     Io(IoError),
-    /// Error returned by modelardb_common.
-    ModelarDbCommon(ModelarDbCommonError),
     /// Error returned by modelardb_storage.
     ModelarDbStorage(ModelarDbStorageError),
     /// Error returned by modelardb_types.
@@ -60,7 +57,6 @@ impl Display for ModelarDbManagerError {
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::InvalidState(reason) => write!(f, "Invalid State Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
-            Self::ModelarDbCommon(reason) => write!(f, "ModelarDB Common Error: {reason}"),
             Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
@@ -77,7 +73,6 @@ impl Error for ModelarDbManagerError {
             Self::InvalidArgument(_reason) => None,
             Self::InvalidState(_reason) => None,
             Self::Io(reason) => Some(reason),
-            Self::ModelarDbCommon(reason) => Some(reason),
             Self::ModelarDbStorage(reason) => Some(reason),
             Self::ModelarDbTypes(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
@@ -95,12 +90,6 @@ impl From<DeltaTableError> for ModelarDbManagerError {
 impl From<IoError> for ModelarDbManagerError {
     fn from(error: IoError) -> Self {
         Self::Io(error)
-    }
-}
-
-impl From<ModelarDbCommonError> for ModelarDbManagerError {
-    fn from(error: ModelarDbCommonError) -> Self {
-        Self::ModelarDbCommon(error)
     }
 }
 

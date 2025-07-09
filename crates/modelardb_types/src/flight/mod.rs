@@ -325,7 +325,7 @@ mod test {
 
     use std::sync::{LazyLock, Mutex};
 
-    use modelardb_storage::test;
+    use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
 
     /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
     static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -408,19 +408,19 @@ mod test {
     // Test for encoding and decoding table metadata.
     #[test]
     fn test_encode_and_decode_table_metadata() {
-        let protobuf_bytes = test::table_metadata_protobuf_bytes();
+        let protobuf_bytes = table::table_metadata_protobuf_bytes();
 
         // Deserialize and extract the table metadata.
         let (normal_tables, time_series_tables) =
             deserialize_and_extract_table_metadata(&protobuf_bytes).unwrap();
 
-        assert_eq!(normal_tables[0].0, test::NORMAL_TABLE_NAME);
-        assert_eq!(normal_tables[0].1, test::normal_table_schema());
+        assert_eq!(normal_tables[0].0, NORMAL_TABLE_NAME);
+        assert_eq!(normal_tables[0].1, table::normal_table_schema());
 
-        assert_eq!(time_series_tables[0].name, test::TIME_SERIES_TABLE_NAME);
+        assert_eq!(time_series_tables[0].name, TIME_SERIES_TABLE_NAME);
         assert_eq!(
             time_series_tables[0].query_schema,
-            test::time_series_table_metadata().query_schema
+            table::time_series_table_metadata().query_schema
         );
     }
 }

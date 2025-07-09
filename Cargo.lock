@@ -3065,22 +3065,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "modelardb_common"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "arrow-flight",
- "modelardb_types",
- "rand 0.9.1",
- "tonic",
-]
-
-[[package]]
 name = "modelardb_compression"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "modelardb_common",
+ "modelardb_test",
  "modelardb_types",
  "proptest",
 ]
@@ -3095,7 +3084,6 @@ dependencies = [
  "datafusion",
  "deltalake",
  "futures",
- "modelardb_common",
  "modelardb_compression",
  "modelardb_storage",
  "modelardb_types",
@@ -3113,7 +3101,6 @@ dependencies = [
  "deltalake",
  "futures",
  "log",
- "modelardb_common",
  "modelardb_storage",
  "modelardb_types",
  "prost",
@@ -3139,9 +3126,9 @@ dependencies = [
  "deltalake",
  "futures",
  "log",
- "modelardb_common",
  "modelardb_compression",
  "modelardb_storage",
+ "modelardb_test",
  "modelardb_types",
  "object_store",
  "proptest",
@@ -3168,8 +3155,8 @@ dependencies = [
  "datafusion-proto",
  "deltalake",
  "futures",
- "modelardb_common",
  "modelardb_compression",
+ "modelardb_test",
  "modelardb_types",
  "object_store",
  "sqlparser 0.55.0",
@@ -3181,6 +3168,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "modelardb_test"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "modelardb_types",
+ "rand 0.9.1",
+]
+
+[[package]]
 name = "modelardb_types"
 version = "0.1.0"
 dependencies = [
@@ -3188,8 +3184,7 @@ dependencies = [
  "arrow-flight",
  "datafusion",
  "datafusion-proto",
- "modelardb_common",
- "modelardb_storage",
+ "modelardb_test",
  "proptest",
  "prost",
  "prost-build",

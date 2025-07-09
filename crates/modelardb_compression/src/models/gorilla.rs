@@ -267,7 +267,7 @@ pub fn grid(
 mod tests {
     use super::*;
 
-    use modelardb_common::test::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
+    use modelardb_test::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
     use proptest::num::f32 as ProptestValue;
     use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
 

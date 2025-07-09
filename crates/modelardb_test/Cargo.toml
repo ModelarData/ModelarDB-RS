@@ -1,4 +1,4 @@
-# Copyright 2023 The ModelarDB Contributors
+# Copyright 2025 The ModelarDB Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 [package]
-name = "modelardb_common"
+name = "modelardb_test"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2024"
@@ -23,8 +23,6 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 workspace = true
 
 [dependencies]
-arrow-flight.workspace = true
 arrow.workspace = true
 modelardb_types = { path = "../modelardb_types" }
 rand.workspace = true
-tonic.workspace = true

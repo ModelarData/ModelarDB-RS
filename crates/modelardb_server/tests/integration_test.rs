@@ -36,7 +36,8 @@ use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{StreamExt, stream};
-use modelardb_common::test::data_generation;
+use modelardb_test::data_generation;
+use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
 use modelardb_types::flight::protocol;
 use modelardb_types::types::ErrorBound;
 use prost::Message;
@@ -1250,7 +1251,7 @@ async fn test_can_get_node_type() {
 async fn test_can_create_tables() {
     let mut test_context = TestContext::new().await;
 
-    let protobuf_bytes = modelardb_storage::test::table_metadata_protobuf_bytes();
+    let protobuf_bytes = table::table_metadata_protobuf_bytes();
 
     let action = Action {
         r#type: "CreateTables".to_owned(),
@@ -1268,8 +1269,8 @@ async fn test_can_create_tables() {
     assert_eq!(
         retrieved_table_names,
         vec![
-            modelardb_storage::test::NORMAL_TABLE_NAME.to_owned(),
-            modelardb_storage::test::TIME_SERIES_TABLE_NAME.to_owned(),
+            NORMAL_TABLE_NAME.to_owned(),
+            TIME_SERIES_TABLE_NAME.to_owned(),
         ]
     );
 }

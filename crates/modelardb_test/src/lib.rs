@@ -13,9 +13,10 @@
  * limitations under the License.
  */
 
-//! Implementation of functions and types used throughout ModelarDB's tests.
+//! Implementation of functions and types used throughout ModelarDB for testing purposes.
 
 pub mod data_generation;
+pub mod table;
 
 /// Expected size of the ingested data buffer produced in the tests.
 pub const INGESTED_BUFFER_SIZE: usize = 1438392;
