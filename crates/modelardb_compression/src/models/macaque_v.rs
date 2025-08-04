@@ -13,20 +13,21 @@
  * limitations under the License.
  */
 
-//! Implementation of MacaqueV model type which extends the lossless 
+//! Implementation of MacaqueV model type which extends the lossless
 //! compression method for floating-point values proposed for the time series
 //! management system Gorilla in the [Gorilla paper] by 1) adding support for
-//! error-bounded lossy compression, and 2) optimizing flag bits for better 
-//! compression of real-life sensor data. MacaqueV adds support for lossy 
-//! compression by 1) replacing values with the previous value if possible
-//! within the error bound, and 2) rewriting the least mantissa bits of a value 
-//! within the error bound so that Gorilla uses fewer bits for encoding. 
-//! MacaqueV optimizes Gorilla's flag bits by swapping the flag bits 0 and 10. 
-//! This modification proved to be effective when Gorilla is used alongside 
-//! PMC-Mean and Swing for multi-model compression. As this compression method 
-//! compresses the values of a time series segment using XOR and a 
-//! variable length binary encoding, aggregates are computed by iterating 
-//! over all values in the segment.
+//! error-bounded lossy compression, and 2) optimizing flag bits for better
+//! compression of real-life sensor data. MacaqueV adds support for lossy
+//! compression by 1) replacing a value with the previous value if possible
+//! within the error bound, or 2) rewriting the least mantissa bits of the value
+//! within the error bound so that Gorilla uses fewer bits for encoding.
+//! MacaqueV optimizes Gorilla's flag bits by swapping the flag bits 0 and 10.
+//! This modification proved to be effective when Gorilla is used alongside
+//! PMC-Mean and Swing for multi-model compression. As this compression method
+//! uses Gorilla that compresses the values of a time series segment using
+//! XOR and a variable length binary encoding, aggregates are computed by
+//! iterating over all values in the segment. A paper describing MacaqueV 
+//! was submitted to ICDE 2026.
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
@@ -318,15 +319,16 @@ pub fn grid(
     }
 }
 
+// Extract the unbiased exponent from single precision float.
 fn get_exponent(value: f32) -> i32 {
     let n_bits: u32 = value.to_bits();
     let exponent_ = ((n_bits >> 23) & 0xff) as i32;
-    let exponent = exponent_ - 127;
-    exponent
+    exponent_ - 127
 }
 
-fn rewrite_bits_by_n(bits_to_rewrite: u32, erase_by_n: i32) -> u32 {
-    let mask = u32::MAX << erase_by_n;
+// Left shift unsigned 32-bit integer by a given number of places.
+fn rewrite_bits_by_n(bits_to_rewrite: u32, left_shift_by: i32) -> u32 {
+    let mask = u32::MAX << left_shift_by;
     bits_to_rewrite & mask
 }
 
