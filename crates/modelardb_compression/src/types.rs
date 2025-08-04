@@ -27,7 +27,7 @@ use modelardb_types::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
-use crate::models::gorilla::Gorilla;
+use crate::models::macaque_v::MacaqueV;
 use crate::models::pmc_mean::PMCMean;
 use crate::models::swing::Swing;
 use crate::models::{PMC_MEAN_ID, SWING_ID};
@@ -271,7 +271,7 @@ impl CompressedSegmentBuilder {
         error_bound: ErrorBound,
         uncompressed_residuals: &[Value],
     ) -> (Vec<u8>, Value, Value) {
-        let mut gorilla = Gorilla::new(error_bound);
+        let mut gorilla = MacaqueV::new(error_bound);
         gorilla.compress_values_without_first(uncompressed_residuals, self.model_last_value);
         gorilla.model()
     }
