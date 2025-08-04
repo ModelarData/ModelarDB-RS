@@ -37,7 +37,7 @@ use crate::models;
 use crate::models::bits::{BitReader, BitVecBuilder};
 use crate::models::ErrorBound;
 
-/// The state the Gorilla model type needs while compressing the values of a
+/// The state the MacaqueV model type needs while compressing the values of a
 /// time series segment.
 pub struct MacaqueV {
     /// Maximum relative error for the value of each data point.
@@ -74,7 +74,7 @@ impl MacaqueV {
         }
     }
 
-    /// Store the first value in full if this instance of [`Gorilla`] is empty and then compress the
+    /// Store the first value in full if this instance of [`MacaqueV`] is empty and then compress the
     /// remaining `values` using XOR and a variable length binary encoding before storing them.
     pub fn compress_values(&mut self, values: &[Value]) {
         for value in values {
@@ -106,7 +106,7 @@ impl MacaqueV {
             value
         } else {
             // If compression is lossy we try to rewrite value first.
-            // The best case for Gorilla is storing duplicate values.
+            // The best case for MacaqueV is storing duplicate values.
             if models::is_value_within_error_bound(self.error_bound, value, self.last_value) {
                 self.last_value
             } else {
@@ -212,13 +212,12 @@ impl MacaqueV {
 }
 
 /// Compute the sum of the values for a time series segment whose values are compressed using
-/// Gorilla's compression method for floating-point values. If `maybe_model_last_value` is provided,
-/// it is assumed the first value in `values` is compressed against it instead of being stored in
-/// full, i.e., uncompressed.
+/// MacaqueV. If `maybe_model_last_value` is provided, it is assumed the first value in `values`
+/// is compressed against it instead of being stored in full, i.e., uncompressed.
 pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) -> Value {
-    // This function replicates code from gorilla::grid() as it isn't necessary to store the
+    // This function replicates code from macaque_v::grid() as it isn't necessary to store the
     // timestamps and values in arrays for a sum. So any changes to the decompression must be
-    // mirrored in gorilla::grid().
+    // mirrored in macaque_v::grid().
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;
@@ -263,8 +262,8 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
 }
 
 /// Decompress all the values in `values` for the `timestamps` without matching values in
-/// `value_builder`. The values in `values` are compressed using Gorilla's compression method for
-/// floating-point values. `values` are appended to `value_builder`. If `maybe_model_last_value`
+/// `value_builder`. The values in `values` are compressed using MacaqueV. 
+/// `values` are appended to `value_builder`. If `maybe_model_last_value`
 /// is provided, it is assumed the first value in `values` is compressed against it instead of being
 /// stored in full, i.e., uncompressed.
 pub fn grid(
@@ -273,7 +272,7 @@ pub fn grid(
     value_builder: &mut ValueBuilder,
     maybe_model_last_value: Option<Value>,
 ) {
-    // Changes to the decompression must be mirrored in gorilla::sum().
+    // Changes to the decompression must be mirrored in macaque_v::sum().
     // unwrap() is safe as values is from a segment and thus cannot be empty.
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
@@ -342,7 +341,7 @@ mod tests {
 
     use crate::models;
 
-    // Tests for Gorilla.
+    // Tests for MacaqueV.
     #[test]
     fn test_empty_sequence_with_absolute_error_bound_zero() {
         let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
@@ -494,7 +493,7 @@ mod tests {
     fn test_sum_with_absolute_error_bound_zero(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let expected_sum = values.iter().sum::<f32>();
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             &values, None);
         let sum = sum(values.len(), &compressed_values, None);
@@ -505,7 +504,7 @@ mod tests {
     fn test_sum_with_relative_error_bound_zero(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let expected_sum = values.iter().sum::<f32>();
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             &values, None);
         let sum = sum(values.len(), &compressed_values, None);
@@ -515,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_sum_model_single_value_with_absolute_error_bound_zero() {
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             &[37.0],
             None,
@@ -526,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_sum_model_single_value_with_relative_error_bound_zero() {
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             &[37.0],
             None,
@@ -538,7 +537,7 @@ mod tests {
     #[test]
     fn test_sum_residuals_single_value_with_absolute_error_bound_zero() {
         let maybe_model_last_value = Some(37.0);
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             &[37.0],
             maybe_model_last_value,
@@ -550,7 +549,7 @@ mod tests {
     #[test]
     fn test_sum_residuals_single_value_with_relative_error_bound_zero() {
         let maybe_model_last_value = Some(37.0);
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             &[37.0],
             maybe_model_last_value,
@@ -579,7 +578,7 @@ mod tests {
     }
 
     fn assert_grid_with_error_bound(error_bound: ErrorBound, values: &[Value]) {
-        let compressed_values = compress_values_using_gorilla(error_bound, values, None);
+        let compressed_values = compress_values_using_macaque_v(error_bound, values, None);
 
         let timestamps: Vec<Timestamp> = (1..=values.len() as i64).step_by(1).collect();
         let mut value_builder = ValueBuilder::with_capacity(values.len());
@@ -628,7 +627,7 @@ mod tests {
 
     fn assert_grid_single(error_bound: ErrorBound, maybe_model_last_value: Option<Value>) {
         let compressed_values =
-            compress_values_using_gorilla(error_bound, &[37.0], maybe_model_last_value);
+            compress_values_using_macaque_v(error_bound, &[37.0], maybe_model_last_value);
         let mut value_builder = ValueBuilder::new();
 
         grid(
@@ -644,7 +643,7 @@ mod tests {
         assert_eq!(values.value(0), 37.0);
     }
 
-    fn compress_values_using_gorilla(
+    fn compress_values_using_macaque_v(
         error_bound: ErrorBound,
         values: &[Value],
         maybe_model_last_value: Option<Value>,
