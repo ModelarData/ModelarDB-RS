@@ -271,9 +271,9 @@ impl CompressedSegmentBuilder {
         error_bound: ErrorBound,
         uncompressed_residuals: &[Value],
     ) -> (Vec<u8>, Value, Value) {
-        let mut gorilla = MacaqueV::new(error_bound);
-        gorilla.compress_values_without_first(uncompressed_residuals, self.model_last_value);
-        gorilla.model()
+        let mut macaque_v = MacaqueV::new(error_bound);
+        macaque_v.compress_values_without_first(uncompressed_residuals, self.model_last_value);
+        macaque_v.model()
     }
 
     /// Encode the information required for a [`PMCMean`] model where the `residuals_min_value`

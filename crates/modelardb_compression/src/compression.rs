@@ -238,10 +238,10 @@ fn compress_and_store_residuals_in_a_separate_segment(
 
     // Compute metadata and compress the values stored in this segment without residuals.
     let uncompressed_values = &uncompressed_values.values()[start_index..=end_index];
-    let mut gorilla = MacaqueV::new(error_bound);
-    gorilla.compress_values(uncompressed_values);
+    let mut macaque_v = MacaqueV::new(error_bound);
+    macaque_v.compress_values(uncompressed_values);
 
-    let (values, min_value, max_value) = gorilla.model();
+    let (values, min_value, max_value) = macaque_v.model();
 
     compressed_segment_batch_builder.append_compressed_segment(
         MACAQUE_V_ID,
