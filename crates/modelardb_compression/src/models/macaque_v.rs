@@ -26,7 +26,7 @@
 //! PMC-Mean and Swing for multi-model compression. As this compression method
 //! uses Gorilla that compresses the values of a time series segment using
 //! XOR and a variable length binary encoding, aggregates are computed by
-//! iterating over all values in the segment. A paper describing MacaqueV 
+//! iterating over all values in the segment. A paper describing MacaqueV
 //! was submitted to ICDE 2026.
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
@@ -166,7 +166,7 @@ impl MacaqueV {
         self.update_min_max_and_last_value(value);
     }
 
-    /// MacaqueV's value rewrite method. 
+    /// MacaqueV's value rewrite method.
     fn rewrite_value_with_log_method(&self, value: Value) -> Value {
         if value == 0.0 || value.is_infinite() || value.is_nan() {
             return value;
@@ -176,10 +176,10 @@ impl MacaqueV {
             models::maximum_allowed_deviation(self.error_bound, value as f64) as f32;
         let exponent = get_exponent(value);
         let factorized_epsilon = abs_error_bound / 2f32.powi(exponent);
-        // Rewriting value using by 23 - ⌈log2 factorized_epsilon⌉ bits 
-        // never exceeds the error bound. However, one more bit can be 
-        // rewritten when the majority of the least mantissa bits are 0, 
-        // thus we use 23 - ⌊log2 factorized_epsilon⌋ and then 
+        // Rewriting value using by 23 - ⌈log2 factorized_epsilon⌉ bits
+        // never exceeds the error bound. However, one more bit can be
+        // rewritten when the majority of the least mantissa bits are 0,
+        // thus we use 23 - ⌊log2 factorized_epsilon⌋ and then
         // perform extra check if the error bound is not exceeded.
         let mut rewrite_position = 23 - factorized_epsilon.log2().abs().floor() as i32;
         // Extra check to ensure if the error is within the error_bound
@@ -262,7 +262,7 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
 }
 
 /// Decompress all the values in `values` for the `timestamps` without matching values in
-/// `value_builder`. The values in `values` are compressed using MacaqueV. 
+/// `value_builder`. The values in `values` are compressed using MacaqueV.
 /// `values` are appended to `value_builder`. If `maybe_model_last_value`
 /// is provided, it is assumed the first value in `values` is compressed against it instead of being
 /// stored in full, i.e., uncompressed.
