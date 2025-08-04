@@ -79,7 +79,7 @@ impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages the Delta tables in memory.
     pub fn new_in_memory() -> Self {
         Self {
-            location: "memory://modelardb".to_owned(),
+            location: "memory:///modelardb".to_owned(),
             storage_options: HashMap::new(),
             object_store: Arc::new(InMemory::new()),
             delta_table_cache: DashMap::new(),
