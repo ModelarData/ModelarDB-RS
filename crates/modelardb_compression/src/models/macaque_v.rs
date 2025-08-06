@@ -167,7 +167,7 @@ impl MacaqueV {
 
     /// MacaqueV's value rewrite method.
     fn rewrite_value_with_log_method(&self, value: Value) -> Value {
-        if value == 0.0 || value.is_infinite() || value.is_nan() {
+        if value.abs() == 0.0 || value.is_infinite() || value.is_nan() {
             return value;
         }
         let value_as_u32 = value.to_bits();
