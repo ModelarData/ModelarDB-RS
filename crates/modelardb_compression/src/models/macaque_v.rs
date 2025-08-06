@@ -18,16 +18,15 @@
 //! management system Gorilla in the [Gorilla paper] by 1) adding support for
 //! error-bounded lossy compression, and 2) optimizing flag bits for better
 //! compression of real-life sensor data. MacaqueV adds support for lossy
-//! compression by 1) replacing a value with the previous value if possible
+//! compression by 1) rewriting the current value with the previous one if possible
 //! within the error bound, or 2) rewriting the least mantissa bits of the value
-//! within the error bound so that Gorilla uses fewer bits for encoding.
+//! to zero within the error bound so that Gorilla uses fewer bits for encoding.
 //! MacaqueV optimizes Gorilla's flag bits by swapping the flag bits 0 and 10.
 //! This modification proved to be effective when Gorilla is used alongside
 //! PMC-Mean and Swing for multi-model compression. As this compression method
 //! uses Gorilla that compresses the values of a time series segment using
 //! XOR and a variable length binary encoding, aggregates are computed by
-//! iterating over all values in the segment. A paper describing MacaqueV
-//! was submitted to ICDE 2026.
+//! iterating over all values in the segment.
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
@@ -101,16 +100,16 @@ impl MacaqueV {
 
     /// Compress `value` using XOR and a variable length binary encoding and then store it.
     fn compress_value_xor_last_value(&mut self, value: Value) {
-        // Rewrite the value bits using the error bound
         let value = if models::is_lossless_compression(self.error_bound) {
             value
         } else {
-            // If compression is lossy we try to rewrite value first.
-            // The best case for MacaqueV is storing duplicate values.
+            // The best case for MacaqueV is rewriting the current value
+            // with the previous one.
             if models::is_value_within_error_bound(self.error_bound, value, self.last_value) {
                 self.last_value
             } else {
-                // we only do binary rewriting if value rewriting is not possible
+                // If value rewriting is not possible, the least mantissa bits of the 
+                // value are rewritten to zero.
                 self.rewrite_value_with_log_method(value)
             }
         };
@@ -182,7 +181,7 @@ impl MacaqueV {
         // thus we use 23 - ⌊log2 factorized_epsilon⌋ and then
         // perform extra check if the error bound is not exceeded.
         let mut rewrite_position = 23 - factorized_epsilon.log2().abs().floor() as i32;
-        // Extra check to ensure if the error is within the error_bound
+        // Extra check to ensure if the error is within the error_bound.
         let mut rewritten_value = f32::from_bits(rewrite_bits_by_n(value_as_u32, rewrite_position));
         // If the error bound exceeded, value is rewritten with one les bit i.e., 23 − ⌈log2 factorized_epsilon⌉.
         if !models::is_value_within_error_bound(self.error_bound, value, rewritten_value) {
