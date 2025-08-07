@@ -87,7 +87,7 @@ pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
     }
 }
 
-/// Returns true is compression is lossless i.e., `error_bound` is 0.
+/// Returns true if compression is lossless i.e., `error_bound` value is 0.
 pub fn is_lossless_compression(error_bound: ErrorBound) -> bool {
     match error_bound {
         ErrorBound::Absolute(error_bound) => error_bound == 0.0,
