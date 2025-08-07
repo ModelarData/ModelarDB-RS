@@ -13,28 +13,25 @@
  * limitations under the License.
  */
 
-//! Implementation of MacaqueV model type which extends the lossless
-//! compression method for floating-point values proposed for the time series
-//! management system Gorilla in the [Gorilla paper] by 1) adding support for
-//! error-bounded lossy compression, and 2) optimizing flag bits for better
-//! compression of real-life sensor data. MacaqueV adds support for lossy
-//! compression by 1) rewriting the current value with the previous one if possible
-//! within the error bound, or 2) rewriting the least mantissa bits of the value
-//! to zero within the error bound so that Gorilla uses fewer bits for encoding.
-//! MacaqueV optimizes Gorilla's flag bits by swapping the flag bits 0 and 10.
-//! This modification proved to be effective when Gorilla is used alongside
-//! PMC-Mean and Swing for multi-model compression. As this compression method
-//! uses Gorilla that compresses the values of a time series segment using
-//! XOR and a variable length binary encoding, aggregates are computed by
-//! iterating over all values in the segment.
+//! Implementation of the MacaqueV model type which extends the lossless compression method for 
+//! floating-point values proposed for the time series management system Gorilla in the [Gorilla 
+//! paper] by 1) adding support for error-bounded lossy compression, and 2) optimizing flag bits
+//! for better compression of real-life sensor data. MacaqueV adds support for lossy compression by
+//! 1) rewriting the current value with the previous one if possible within the error bound, or 
+//! 2) rewriting the least mantissa bits of the value to zero within the error bound so that Gorilla 
+//! uses fewer bits for encoding. MacaqueV optimizes Gorilla's flag bits by swapping the flag bits
+//! 0 and 10. This modification proved to be effective when Gorilla is used alongside PMC-Mean 
+//! and Swing for multi-model compression. As this compression method uses Gorilla that compresses
+//! the values of a time series segment using XOR and a variable length binary encoding, aggregates
+//! are computed by iterating over all values in the segment.
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
 use modelardb_types::types::{Timestamp, Value, ValueBuilder};
 
 use crate::models;
-use crate::models::ErrorBound;
 use crate::models::bits::{BitReader, BitVecBuilder};
+use crate::models::ErrorBound;
 
 /// The state the MacaqueV model type needs while compressing the values of a
 /// time series segment.
@@ -103,13 +100,12 @@ impl MacaqueV {
         let value = if models::is_lossless_compression(self.error_bound) {
             value
         } else {
-            // The best case for MacaqueV is rewriting the current value
-            // with the previous one.
+            // The best case for MacaqueV is rewriting the current value with the previous one.
             if models::is_value_within_error_bound(self.error_bound, value, self.last_value) {
                 self.last_value
             } else {
-                // If value rewriting is not possible, the least mantissa bits of the
-                // value are rewritten to zero.
+                // If rewriting the value is not possible, the least mantissa bits of the value
+                // are rewritten to zero.
                 self.rewrite_value_with_log_method(value)
             }
         };
@@ -131,7 +127,7 @@ impl MacaqueV {
             if leading_zero_bits >= self.last_leading_zero_bits
                 && trailing_zero_bits >= self.last_trailing_zero_bits
             {
-                // Store only the meaningful bits after a flag bit zero.
+                // Store only the meaningful bits after a flag zero bit.
                 self.compressed_values.append_a_zero_bit();
                 let meaningful_bits = models::VALUE_SIZE_IN_BITS
                     - self.last_leading_zero_bits
@@ -165,29 +161,31 @@ impl MacaqueV {
         self.update_min_max_and_last_value(value);
     }
 
-    /// MacaqueV's value rewrite method.
+    /// Rewrite least mantissa bits of the `value` to zero within the `error_bound`.
     fn rewrite_value_with_log_method(&self, value: Value) -> Value {
         if value.abs() == 0.0 || value.is_infinite() || value.is_nan() {
             return value;
         }
+
         let value_as_u32 = value.to_bits();
         let abs_error_bound =
             models::maximum_allowed_deviation(self.error_bound, value as f64) as f32;
         let exponent = get_exponent(value);
         let factorized_epsilon = abs_error_bound / 2f32.powi(exponent);
-        // Rewriting value using by 23 - ⌈log2 factorized_epsilon⌉ bits
-        // never exceeds the error bound. However, one more bit can be
-        // rewritten when the majority of the least mantissa bits are 0,
-        // thus we use 23 - ⌊log2 factorized_epsilon⌋ and then
-        // perform extra check if the error bound is not exceeded.
+        // Rewriting value using 23 - ⌈log2 factorized_epsilon⌉ bits never exceeds the error bound.
+        // However, one more bit can be rewritten when the majority of the least mantissa bits
+        // are 0. Thus we use 23 - ⌊log2 factorized_epsilon⌋ and then perform an extra check
+        // to ensure if the error bound is not exceeded.
         let mut rewrite_position = 23 - factorized_epsilon.log2().abs().floor() as i32;
-        // Extra check to ensure if the error is within the error_bound.
         let mut rewritten_value = f32::from_bits(rewrite_bits_by_n(value_as_u32, rewrite_position));
-        // If the error bound exceeded, value is rewritten with one les bit i.e., 23 − ⌈log2 factorized_epsilon⌉.
+
+        // If the error bound is exceeded, value is rewritten with one less bit i.e.,
+        // using 23 − ⌈log2 factorized_epsilon⌉.
         if !models::is_value_within_error_bound(self.error_bound, value, rewritten_value) {
             rewrite_position -= 1;
             rewritten_value = f32::from_bits(rewrite_bits_by_n(value.to_bits(), rewrite_position));
         }
+
         rewritten_value
     }
 
@@ -586,11 +584,9 @@ mod tests {
         let values_array = value_builder.finish();
 
         assert!(values.len() == timestamps.len() && values.len() == values_array.len());
-        assert!(
-            timestamps
-                .windows(2)
-                .all(|window| window[1] - window[0] == 1)
-        );
+        assert!(timestamps
+            .windows(2)
+            .all(|window| window[1] - window[0] == 1));
         assert!(slice_of_value_equal(values_array.values(), values));
     }
 
