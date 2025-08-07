@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::{debug_assert, iter};
 
 use arrow::array::{
-    ArrayBuilder, ArrayRef, BinaryBuilder, Float32Builder, Int16Array, Int8Builder, StringArray,
+    ArrayBuilder, ArrayRef, BinaryBuilder, Float32Builder, Int8Builder, Int16Array, StringArray,
 };
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
@@ -30,8 +30,8 @@ use modelardb_types::types::{
 use crate::models::macaque_v::MacaqueV;
 use crate::models::pmc_mean::PMCMean;
 use crate::models::swing::Swing;
-use crate::models::{timestamps, VALUE_SIZE_IN_BYTES};
 use crate::models::{PMC_MEAN_ID, SWING_ID};
+use crate::models::{VALUE_SIZE_IN_BYTES, timestamps};
 
 /// A model being built from an uncompressed segment using the potentially lossy model types in
 /// [`models`]. Each of the potentially lossy model types is used to fit models to the data points,
