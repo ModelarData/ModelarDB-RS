@@ -15,12 +15,12 @@
 
 //! Implementation of the MacaqueV model type which extends the lossless compression method for 
 //! floating-point values proposed for the time series management system Gorilla in the [Gorilla 
-//! paper] by 1) adding support for error-bounded lossy compression, and 2) optimizing flag bits
+//! paper] by adding support for error-bounded lossy compression, and optimizing flag bits
 //! for better compression of real-life sensor data. MacaqueV adds support for lossy compression by
-//! 1) rewriting the current value with the previous one if possible within the error bound, or 
-//! 2) rewriting the least mantissa bits of the value to zero within the error bound so that Gorilla 
+//! rewriting the current value with the previous one if possible within the error bound, or
+//! rewriting the least mantissa bits of the value to zero within the error bound so that Gorilla
 //! uses fewer bits for encoding. MacaqueV optimizes Gorilla's flag bits by swapping the flag bits
-//! 0 and 10. This modification proved to be effective when Gorilla is used alongside PMC-Mean 
+//! 0 and 10. This modification proved to be effective when Gorilla is used alongside PMC-Mean
 //! and Swing for multi-model compression. As this compression method uses Gorilla that compresses
 //! the values of a time series segment using XOR and a variable length binary encoding, aggregates
 //! are computed by iterating over all values in the segment.
