@@ -17,7 +17,6 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::{iter, slice};
 use std::ops::Range;
 use std::process::Stdio;
 use std::str;
@@ -25,6 +24,7 @@ use std::string::String;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
+use std::{iter, slice};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket, utils};
