@@ -182,22 +182,22 @@ impl ModelarDbDialect {
     /// [`false`] is returned. The method does not consume tokens.
     fn next_tokens_are_create_time_series_table(&self, parser: &Parser) -> bool {
         // CREATE.
-        if let Token::Word(word) = parser.peek_nth_token(0).token {
-            if word.keyword == Keyword::CREATE {
-                // TIME.
-                if let Token::Word(word) = parser.peek_nth_token(1).token {
-                    if word.value.to_uppercase() == "TIME" {
-                        // SERIES.
-                        if let Token::Word(word) = parser.peek_nth_token(2).token {
-                            if word.value.to_uppercase() == "SERIES" {
-                                // TABLE.
-                                if let Token::Word(word) = parser.peek_nth_token(3).token {
-                                    if word.keyword == Keyword::TABLE {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
+        if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::CREATE
+        {
+            // TIME.
+            if let Token::Word(word) = parser.peek_nth_token(1).token
+                && word.value.to_uppercase() == "TIME"
+            {
+                // SERIES.
+                if let Token::Word(word) = parser.peek_nth_token(2).token
+                    && word.value.to_uppercase() == "SERIES"
+                {
+                    // TABLE.
+                    if let Token::Word(word) = parser.peek_nth_token(3).token
+                        && word.keyword == Keyword::TABLE
+                    {
+                        return true;
                     }
                 }
             }
@@ -298,10 +298,10 @@ impl ModelarDbDialect {
     /// Return [`Ok`] if the next [`Token`] is a [`Token::Word`] with the value `expected`,
     /// otherwise a [`ParserError`] is returned.
     fn expect_word_value(&self, parser: &mut Parser, expected: &str) -> StdResult<(), ParserError> {
-        if let Ok(string) = self.parse_word_value(parser) {
-            if string.to_uppercase() == expected.to_uppercase() {
-                return Ok(());
-            }
+        if let Ok(string) = self.parse_word_value(parser)
+            && string.to_uppercase() == expected.to_uppercase()
+        {
+            return Ok(());
         }
         parser.expected(expected, parser.peek_token())
     }
