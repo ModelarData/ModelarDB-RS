@@ -218,8 +218,8 @@ async fn import_time_series_table(
         // Write the current batch if it uses more than half the memory so concatenation is
         // possible. The amount of available memory is reduced by 20% for other variables.
         system.refresh_memory();
-        if current_batch_size > (system.available_memory() as usize / 10 * 8) {
-            if let Err(write_error) = import_and_clear_time_series_table_batch(
+        if current_batch_size > (system.available_memory() as usize / 10 * 8)
+            && let Err(write_error) = import_and_clear_time_series_table_batch(
                 data_folder,
                 &mut delta_table_writer,
                 time_series_table_metadata,
@@ -227,10 +227,9 @@ async fn import_time_series_table(
                 &mut current_batch_size,
             )
             .await
-            {
-                delta_table_writer.rollback().await?;
-                return Err(write_error);
-            }
+        {
+            delta_table_writer.rollback().await?;
+            return Err(write_error);
         }
     }
 

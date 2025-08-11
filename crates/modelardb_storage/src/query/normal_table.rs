@@ -82,7 +82,7 @@ impl TableProvider for NormalTable {
     }
 
     /// Get the [`LogicalPlan`] of this normal table, if available.
-    fn get_logical_plan(&self) -> Option<Cow<LogicalPlan>> {
+    fn get_logical_plan(&self) -> Option<Cow<'_, LogicalPlan>> {
         self.delta_table.get_logical_plan()
     }
 

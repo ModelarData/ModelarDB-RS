@@ -17,7 +17,6 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::iter;
 use std::ops::Range;
 use std::process::Stdio;
 use std::str;
@@ -25,6 +24,7 @@ use std::string::String;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
+use std::{iter, slice};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket, utils};
@@ -626,7 +626,7 @@ async fn test_can_truncate_normal_table() {
 
     ingest_time_series_and_flush_data(
         &mut test_context,
-        &[time_series.clone()],
+        slice::from_ref(&time_series),
         TableType::NormalTable,
     )
     .await;
@@ -649,7 +649,7 @@ async fn test_can_truncate_time_series_table() {
 
     ingest_time_series_and_flush_data(
         &mut test_context,
-        &[time_series.clone()],
+        slice::from_ref(&time_series),
         TableType::TimeSeriesTable,
     )
     .await;
@@ -736,7 +736,7 @@ async fn test_do_put_can_ingest_time_series_with_tags() {
 
     ingest_time_series_and_flush_data(
         &mut test_context,
-        &[time_series.clone()],
+        slice::from_ref(&time_series),
         TableType::TimeSeriesTable,
     )
     .await;
@@ -787,7 +787,7 @@ async fn test_do_put_can_ingest_time_series_without_tags() {
 
     ingest_time_series_and_flush_data(
         &mut test_context,
-        &[time_series.clone()],
+        slice::from_ref(&time_series),
         TableType::TimeSeriesTableNoTag,
     )
     .await;
@@ -838,7 +838,7 @@ async fn test_do_put_can_ingest_time_series_with_generated_field() {
 
     ingest_time_series_and_flush_data(
         &mut test_context,
-        &[time_series.clone()],
+        slice::from_ref(&time_series),
         TableType::TimeSeriesTableAsField,
     )
     .await;
