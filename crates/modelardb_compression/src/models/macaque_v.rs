@@ -13,16 +13,16 @@
  * limitations under the License.
  */
 
-//! Implementation of the MacaqueV model type which extends the lossless compression method for 
-//! floating-point values proposed for the time series management system Gorilla in the [Gorilla 
+//! Implementation of the MacaqueV model type which extends the lossless compression method for
+//! floating-point values proposed for the time series management system Gorilla in the [Gorilla
 //! paper] by adding support for error-bounded lossy compression, and optimizing flag bits
 //! for better compression of real-life sensor data. MacaqueV adds support for lossy compression by
 //! rewriting the current value with the previous one if possible within the error bound, or
 //! rewriting the least mantissa bits of the value to zero within the error bound so that Gorilla
 //! uses fewer bits for encoding. MacaqueV optimizes Gorilla's flag bits by swapping the flag bits
-//! 0 and 10. This modification proved to be effective when Gorilla is used alongside PMC-Mean
-//! and Swing for multi-model compression. As this compression method uses Gorilla that compresses
-//! the values of a time series segment using XOR and a variable length binary encoding, aggregates
+//! 0 and 10. The experiments showed this modification's effectiveness when Gorilla is used alongside
+//! PMC-Mean and Swing for multi-model compression. As MacaqueV uses Gorilla that compresses the
+//! values of a time series segment using XOR and a variable length binary encoding, aggregates
 //! are computed by iterating over all values in the segment.
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
@@ -30,8 +30,8 @@
 use modelardb_types::types::{Timestamp, Value, ValueBuilder};
 
 use crate::models;
-use crate::models::bits::{BitReader, BitVecBuilder};
 use crate::models::ErrorBound;
+use crate::models::bits::{BitReader, BitVecBuilder};
 
 /// The state the MacaqueV model type needs while compressing the values of a
 /// time series segment.
@@ -104,9 +104,9 @@ impl MacaqueV {
             if models::is_value_within_error_bound(self.error_bound, value, self.last_value) {
                 self.last_value
             } else {
-                // If rewriting the value is not possible, the least mantissa bits of the value
-                // are rewritten to zero.
-                self.rewrite_value_with_log_method(value)
+                // When the value rewriting is not possible within the error bound,
+                // the least mantissa bits of the value are rewritten to zero within the error bound.
+                self.rewrite_least_mantissa_bits(value)
             }
         };
 
@@ -127,7 +127,7 @@ impl MacaqueV {
             if leading_zero_bits >= self.last_leading_zero_bits
                 && trailing_zero_bits >= self.last_trailing_zero_bits
             {
-                // Store only the meaningful bits after a flag zero bit.
+                // Store a flag zero bit and the meaningful bits.
                 self.compressed_values.append_a_zero_bit();
                 let meaningful_bits = models::VALUE_SIZE_IN_BITS
                     - self.last_leading_zero_bits
@@ -161,8 +161,9 @@ impl MacaqueV {
         self.update_min_max_and_last_value(value);
     }
 
-    /// Rewrite least mantissa bits of the `value` to zero within the `error_bound`.
-    fn rewrite_value_with_log_method(&self, value: Value) -> Value {
+    /// Rewrite the highest number of mantissa bits possible for `value` within the `error_bound`
+    /// starting from the least significant bits.
+    fn rewrite_least_mantissa_bits(&self, value: Value) -> Value {
         if value.abs() == 0.0 || value.is_infinite() || value.is_nan() {
             return value;
         }
@@ -172,10 +173,13 @@ impl MacaqueV {
             models::maximum_allowed_deviation(self.error_bound, value as f64) as f32;
         let exponent = get_exponent(value);
         let factorized_epsilon = abs_error_bound / 2f32.powi(exponent);
-        // Rewriting value using 23 - ⌈log2 factorized_epsilon⌉ bits never exceeds the error bound.
-        // However, one more bit can be rewritten when the majority of the least mantissa bits
-        // are 0. Thus we use 23 - ⌊log2 factorized_epsilon⌋ and then perform an extra check
-        // to ensure if the error bound is not exceeded.
+        // Rewriting the last 23 - ⌈log2 factorized_epsilon⌉ mantissa bits
+        // never exceeds the error bound. However, in that case, one more bit
+        // can be rewritten if the majority of the least mantissa bits are 0.
+        // Thus, we rewrite bits using 23 - ⌊log2 factorized_epsilon⌋ and
+        // perform an extra check to ensure the error bound is not exceeded.
+        // If the error bound is exceeded, we rewrite 23 - ⌈log2 factorized_epsilon⌉
+        // least mantissa bits.
         let mut rewrite_position = 23 - factorized_epsilon.log2().abs().floor() as i32;
         let mut rewritten_value = f32::from_bits(rewrite_bits_by_n(value_as_u32, rewrite_position));
 
@@ -318,13 +322,13 @@ pub fn grid(
 // Extract the unbiased exponent from single precision float.
 fn get_exponent(value: f32) -> i32 {
     let n_bits: u32 = value.to_bits();
-    let exponent_ = ((n_bits >> 23) & 0xff) as i32;
-    exponent_ - 127
+    let biased_exponent = ((n_bits >> 23) & 0xff) as i32;
+    biased_exponent - 127
 }
 
-// Left shift unsigned 32-bit integer by a given number of places.
-fn rewrite_bits_by_n(bits_to_rewrite: u32, left_shift_by: i32) -> u32 {
-    let mask = u32::MAX << left_shift_by;
+// Left shift `bits_to_rewrite` by `positions_to_shift`.
+fn rewrite_bits_by_n(bits_to_rewrite: u32, positions_to_shift: i32) -> u32 {
+    let mask = u32::MAX << positions_to_shift;
     bits_to_rewrite & mask
 }
 
@@ -584,9 +588,11 @@ mod tests {
         let values_array = value_builder.finish();
 
         assert!(values.len() == timestamps.len() && values.len() == values_array.len());
-        assert!(timestamps
-            .windows(2)
-            .all(|window| window[1] - window[0] == 1));
+        assert!(
+            timestamps
+                .windows(2)
+                .all(|window| window[1] - window[0] == 1)
+        );
         assert!(slice_of_value_equal(values_array.values(), values));
     }
 
