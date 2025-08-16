@@ -24,8 +24,8 @@ use arrow::record_batch::RecordBatch;
 use modelardb_types::types::{ErrorBound, TimestampArray, ValueArray};
 
 use crate::error::{ModelarDbCompressionError, Result};
-use crate::models::gorilla::Gorilla;
-use crate::models::{self, GORILLA_ID, timestamps};
+use crate::models::macaque_v::MacaqueV;
+use crate::models::{self, MACAQUE_V_ID, timestamps};
 use crate::types::{CompressedSegmentBatchBuilder, CompressedSegmentBuilder, ModelBuilder};
 
 /// Maximum number of residuals that can be stored as part of a compressed segment. The number of
@@ -238,13 +238,13 @@ fn compress_and_store_residuals_in_a_separate_segment(
 
     // Compute metadata and compress the values stored in this segment without residuals.
     let uncompressed_values = &uncompressed_values.values()[start_index..=end_index];
-    let mut gorilla = Gorilla::new(error_bound);
-    gorilla.compress_values(uncompressed_values);
+    let mut macaque_v = MacaqueV::new(error_bound);
+    macaque_v.compress_values(uncompressed_values);
 
-    let (values, min_value, max_value) = gorilla.model();
+    let (values, min_value, max_value) = macaque_v.model();
 
     compressed_segment_batch_builder.append_compressed_segment(
-        GORILLA_ID,
+        MACAQUE_V_ID,
         start_time,
         end_time,
         &timestamps,
@@ -470,7 +470,7 @@ mod tests {
             false,
             ValuesStructure::largest_random_without_overflow(),
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &[models::GORILLA_ID],
+            &[models::MACAQUE_V_ID],
         );
     }
 
@@ -480,7 +480,7 @@ mod tests {
             false,
             ValuesStructure::largest_random_without_overflow(),
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            &[models::GORILLA_ID],
+            &[models::MACAQUE_V_ID],
         );
     }
 
@@ -490,7 +490,7 @@ mod tests {
             true,
             ValuesStructure::largest_random_without_overflow(),
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &[models::GORILLA_ID],
+            &[models::MACAQUE_V_ID],
         );
     }
 
@@ -500,7 +500,7 @@ mod tests {
             true,
             ValuesStructure::largest_random_without_overflow(),
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            &[models::GORILLA_ID],
+            &[models::MACAQUE_V_ID],
         );
     }
 
@@ -539,8 +539,8 @@ mod tests {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             false,
-            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
-            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
         );
     }
 
@@ -550,8 +550,8 @@ mod tests {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             false,
-            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
-            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
         );
     }
 
@@ -561,8 +561,8 @@ mod tests {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
-            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
-            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
         );
     }
 
@@ -572,8 +572,8 @@ mod tests {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
-            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
-            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
         );
     }
 
@@ -583,7 +583,7 @@ mod tests {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             false,
-            &[models::PMC_MEAN_ID, models::SWING_ID, models::GORILLA_ID],
+            &[models::PMC_MEAN_ID, models::SWING_ID, models::MACAQUE_V_ID],
             &[models::PMC_MEAN_ID, models::SWING_ID],
         );
     }
@@ -594,7 +594,7 @@ mod tests {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             false,
-            &[models::PMC_MEAN_ID, models::SWING_ID, models::GORILLA_ID],
+            &[models::PMC_MEAN_ID, models::SWING_ID, models::MACAQUE_V_ID],
             &[models::PMC_MEAN_ID, models::SWING_ID],
         );
     }
@@ -605,7 +605,7 @@ mod tests {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
-            &[models::PMC_MEAN_ID, models::SWING_ID, models::GORILLA_ID],
+            &[models::PMC_MEAN_ID, models::SWING_ID, models::MACAQUE_V_ID],
             &[models::PMC_MEAN_ID, models::SWING_ID],
         );
     }
@@ -616,7 +616,7 @@ mod tests {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
-            &[models::PMC_MEAN_ID, models::SWING_ID, models::GORILLA_ID],
+            &[models::PMC_MEAN_ID, models::SWING_ID, models::MACAQUE_V_ID],
             &[models::PMC_MEAN_ID, models::SWING_ID],
         );
     }
@@ -649,7 +649,7 @@ mod tests {
                         [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
                     ValuesStructure::Linear(None),
                 ),
-                models::GORILLA_ID => data_generation::generate_values(
+                models::MACAQUE_V_ID => data_generation::generate_values(
                     &uncompressed_timestamps.values()
                         [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
                     ValuesStructure::largest_random_without_overflow(),
@@ -1002,7 +1002,7 @@ mod tests {
         );
 
         assert_eq!(1, compressed_record_batch.num_rows());
-        assert_eq!(GORILLA_ID, model_type_ids.value(0));
+        assert_eq!(MACAQUE_V_ID, model_type_ids.value(0));
         assert_eq!(100, start_times.value(0));
         assert_eq!(500, end_times.value(0));
         assert_eq!(1, timestamps.value(0).len());

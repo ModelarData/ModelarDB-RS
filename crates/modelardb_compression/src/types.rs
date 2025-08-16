@@ -27,7 +27,7 @@ use modelardb_types::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
-use crate::models::gorilla::Gorilla;
+use crate::models::macaque_v::MacaqueV;
 use crate::models::pmc_mean::PMCMean;
 use crate::models::swing::Swing;
 use crate::models::{PMC_MEAN_ID, SWING_ID};
@@ -215,7 +215,7 @@ impl CompressedSegmentBuilder {
             &uncompressed_timestamps.values()[self.start_index..=residuals_end_index],
         );
 
-        // Compress residual values using Gorilla if any exists.
+        // Compress residual values using MacaqueV if any exists.
         let residuals = if self.end_index < residuals_end_index {
             let residuals_start_index = self.end_index + 1;
 
@@ -265,15 +265,15 @@ impl CompressedSegmentBuilder {
         )
     }
 
-    /// Compress `uncompressed_residuals` within `error_bound` using [`Gorilla`].
+    /// Compress `uncompressed_residuals` within `error_bound` using [`MacaqueV`].
     fn compress_residuals(
         &self,
         error_bound: ErrorBound,
         uncompressed_residuals: &[Value],
     ) -> (Vec<u8>, Value, Value) {
-        let mut gorilla = Gorilla::new(error_bound);
-        gorilla.compress_values_without_first(uncompressed_residuals, self.model_last_value);
-        gorilla.model()
+        let mut macaque_v = MacaqueV::new(error_bound);
+        macaque_v.compress_values_without_first(uncompressed_residuals, self.model_last_value);
+        macaque_v.model()
     }
 
     /// Encode the information required for a [`PMCMean`] model where the `residuals_min_value`
@@ -423,7 +423,7 @@ pub(crate) struct CompressedSegmentBatchBuilder {
     /// the values of each compressed segment in the batch within an error
     /// bound.
     values: BinaryBuilder,
-    /// Values between this and the next segment, compressed using [`Gorilla`],
+    /// Values between this and the next segment, compressed using [`MacaqueV`],
     /// that the models could not represent efficiently within the error bound
     /// and which are too few for a new segment due to the amount of metadata.
     residuals: BinaryBuilder,
@@ -808,7 +808,7 @@ mod tests {
         let model_end_index = model.end_index;
 
         // Create a segment that represents its values using a model of the expected type and its
-        // residuals using Gorilla, and then assert that the expected encoding is used for it.
+        // residuals using MacaqueV, and then assert that the expected encoding is used for it.
         let residuals_end_index = uncompressed_timestamps.len() - 1;
 
         let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
