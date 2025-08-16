@@ -164,7 +164,7 @@ impl MacaqueV {
     /// Rewrite the highest number of mantissa bits possible for `value` within the `error_bound`
     /// starting from the least significant bits.
     fn rewrite_least_mantissa_bits(&self, value: Value) -> Value {
-        if value.abs() == 0.0 || value.is_infinite() || value.is_nan() {
+        if value.abs() == 0.0 || value.is_nan() || value.is_infinite() {
             return value;
         }
 
