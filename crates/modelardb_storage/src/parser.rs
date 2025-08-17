@@ -476,6 +476,52 @@ impl ModelarDbDialect {
 
         Ok(statement)
     }
+
+    /// Return [`true`] if the token stream starts with VACUUM, otherwise [`false`] is returned.
+    /// The method does not consume tokens.
+    fn next_token_is_vacuum(&self, parser: &Parser) -> bool {
+        // VACUUM.
+        if let Token::Word(word) = parser.peek_nth_token(0).token {
+            word.keyword == Keyword::VACUUM
+        } else {
+            false
+        }
+    }
+
+    /// Parse VACUUM \[table_name \[, table_name\]+\] to a [`Statement::ShowVariable`] with the
+    /// table names in the `variable` field. Note that [`Statement::ShowVariable`] is used since
+    /// [`Statement`] does not have a `Vacuum` variant. A [`ParserError`] is returned if VACUUM is
+    /// typed incorrectly or the table names cannot be extracted.
+    fn parse_vacuum(
+        &self,
+        parser: &mut Parser,
+    ) -> StdResult<Statement, ParserError> {
+        // VACUUM.
+        parser.expect_keyword(Keyword::VACUUM)?;
+
+        let mut table_names = vec![];
+
+        if Token::EOF != parser.peek_nth_token(0) {
+            loop {
+                match self.parse_word_value(parser) {
+                    Ok(table_name) => {
+                        table_names.push(Ident::new(table_name));
+                        if Token::Comma == parser.peek_nth_token(0).token {
+                            parser.next_token();
+                        } else {
+                            break;
+                        };
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+
+        // Return Statement::ShowVariable as a substitute for Vacuum.
+        Ok(Statement::ShowVariable {
+            variable: table_names
+        })
+    }
 }
 
 /// Create a [`Setting`] with `key`, `quote_style`, and `value`.
