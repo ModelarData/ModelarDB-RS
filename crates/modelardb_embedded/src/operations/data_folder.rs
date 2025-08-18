@@ -856,13 +856,19 @@ impl Operations for DataFolder {
     /// Vacuum the table with the name in `table_name`. If the table does not exist or the
     /// table could not be vacuumed, [`ModelarDbEmbeddedError`] is returned.
     async fn vacuum(&mut self, table_name: &str) -> Result<()> {
-        let retention_period_in_seconds = env::var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS")
-            .map_or(60 * 60 * 24 * 7, |value| value.parse().unwrap());
+        if self.tables().await?.contains(&table_name.to_owned()) {
+            let retention_period_in_seconds = env::var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS")
+                .map_or(60 * 60 * 24 * 7, |value| value.parse().unwrap());
 
-        self.delta_lake
-            .vacuum_table(table_name, retention_period_in_seconds)
-            .await
-            .map_err(|error| error.into())
+            self.delta_lake
+                .vacuum_table(table_name, retention_period_in_seconds)
+                .await
+                .map_err(|error| error.into())
+        } else {
+            Err(ModelarDbEmbeddedError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
+        }
     }
 }
 
@@ -2544,6 +2550,22 @@ mod tests {
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder.truncate(MISSING_TABLE_NAME).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' does not exist."
+            )
+        );
+    }
+
+
+    #[tokio::test]
+    async fn test_vacuum_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let result = data_folder.vacuum(MISSING_TABLE_NAME).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
