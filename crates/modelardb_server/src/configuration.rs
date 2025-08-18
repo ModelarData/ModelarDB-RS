@@ -246,6 +246,7 @@ impl ConfigurationManager {
             compressed_reserved_memory_in_bytes: self.compressed_reserved_memory_in_bytes as u64,
             transfer_batch_size_in_bytes: self.transfer_batch_size_in_bytes.map(|v| v as u64),
             transfer_time_in_seconds: self.transfer_time_in_seconds.map(|v| v as u64),
+            retention_period_in_seconds: self.retention_period_in_seconds as u64,
             ingestion_threads: self.ingestion_threads as u32,
             compression_threads: self.compression_threads as u32,
             writer_threads: self.writer_threads as u32,
