@@ -345,7 +345,7 @@ impl FlightServiceHandler {
         self.context
             .remote_data_folder
             .delta_lake
-            .vacuum_table(table_name, retention_period_in_seconds as usize)
+            .vacuum_table(table_name, retention_period_in_seconds)
             .await
             .map_err(error_to_status_internal)?;
 

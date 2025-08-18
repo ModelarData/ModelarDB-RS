@@ -17,6 +17,7 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::env;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::path::Path as StdPath;
 use std::pin::Pin;
@@ -850,6 +851,18 @@ impl Operations for DataFolder {
         self.delta_lake.drop_table(table_name).await?;
 
         Ok(())
+    }
+
+    /// Vacuum the table with the name in `table_name`. If the table does not exist or the
+    /// table could not be vacuumed, [`ModelarDbEmbeddedError`] is returned.
+    async fn vacuum(&mut self, table_name: &str) -> Result<()> {
+        let retention_period_in_seconds = env::var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS")
+            .map_or(60 * 60 * 24 * 7, |value| value.parse().unwrap());
+
+        self.delta_lake
+            .vacuum_table(table_name, retention_period_in_seconds)
+            .await
+            .map_err(|error| error.into())
     }
 }
 
