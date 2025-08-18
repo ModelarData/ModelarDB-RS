@@ -479,7 +479,7 @@ mod tests {
             .unwrap();
 
         local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .save_normal_table_metadata(NORMAL_TABLE_NAME)
             .await
             .unwrap();
