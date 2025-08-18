@@ -720,6 +720,43 @@ async fn test_can_vacuum_normal_table() {
 }
 
 #[tokio::test]
+async fn test_can_vacuum_time_series_table() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .update_configuration(
+            protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
+            Some(0),
+        )
+        .await
+        .unwrap();
+
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        slice::from_ref(&time_series),
+        TableType::TimeSeriesTable,
+    )
+    .await;
+
+    test_context.truncate_table(TABLE_NAME).await.unwrap();
+
+    // The files should still exist on disk even though they are no longer active.
+    let column_path = format!(
+        "{}/tables/{}/field_column=1",
+        test_context.temp_dir.path().to_str().unwrap(),
+        TABLE_NAME
+    );
+    let files = std::fs::read_dir(&column_path).unwrap();
+    assert_eq!(files.count(), 1);
+
+    test_context.vacuum_table(TABLE_NAME).await.unwrap();
+
+    // No files should remain in the column folder.
+    let files = std::fs::read_dir(&column_path).unwrap();
+    assert_eq!(files.count(), 0);
+}
+
+#[tokio::test]
 async fn test_cannot_vacuum_missing_table() {
     let mut test_context = TestContext::new().await;
 
