@@ -941,6 +941,8 @@ fn schemas_are_compatible(source_schema: &Schema, target_schema: &Schema) -> boo
 mod tests {
     use super::*;
 
+    use std::sync::{LazyLock, Mutex};
+    
     use arrow::array::{Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array};
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
@@ -960,6 +962,9 @@ mod tests {
     const MISSING_TABLE_NAME: &str = "missing_table";
     const TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME: &str = "time_series_table_with_generated";
     const INVALID_COLUMN_NAME: &str = "invalid_column";
+
+    /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
+    static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[tokio::test]
     async fn test_create_normal_table() {
@@ -2557,6 +2562,39 @@ mod tests {
                 "Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' does not exist."
             )
         );
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_normal_table() {
+        // env::set_var is safe to call in a single-threaded program.
+        unsafe {
+            let _mutex_guard = SET_VAR_LOCK.lock();
+            env::set_var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS", "0");
+        }
+
+        let (temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
+
+        data_folder
+            .write(NORMAL_TABLE_NAME, normal_table_data())
+            .await
+            .unwrap();
+
+        data_folder.truncate(NORMAL_TABLE_NAME).await.unwrap();
+
+        // The files should still exist on disk even though they are no longer active.
+        let table_path = format!(
+            "{}/tables/{}",
+            temp_dir.path().to_str().unwrap(),
+            NORMAL_TABLE_NAME
+        );
+        let files = std::fs::read_dir(&table_path).unwrap();
+        assert_eq!(files.count(), 2);
+
+        data_folder.vacuum(NORMAL_TABLE_NAME).await.unwrap();
+
+        // Only the _delta_log folder should remain.
+        let files = std::fs::read_dir(&table_path).unwrap();
+        assert_eq!(files.count(), 1);
     }
 
 
