@@ -2597,6 +2597,38 @@ mod tests {
         assert_eq!(files.count(), 1);
     }
 
+    #[tokio::test]
+    async fn test_vacuum_time_series_table() {
+        // env::set_var is safe to call in a single-threaded program.
+        unsafe {
+            let _mutex_guard = SET_VAR_LOCK.lock();
+            env::set_var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS", "0");
+        }
+
+        let (temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
+
+        data_folder
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            .await
+            .unwrap();
+
+        data_folder.truncate(TIME_SERIES_TABLE_NAME).await.unwrap();
+
+        // The files should still exist on disk even though they are no longer active.
+        let column_path = format!(
+            "{}/tables/{}/field_column=3",
+            temp_dir.path().to_str().unwrap(),
+            TIME_SERIES_TABLE_NAME
+        );
+        let files = std::fs::read_dir(&column_path).unwrap();
+        assert_eq!(files.count(), 1);
+
+        data_folder.vacuum(TIME_SERIES_TABLE_NAME).await.unwrap();
+
+        // No files should remain in the column folder.
+        let files = std::fs::read_dir(&column_path).unwrap();
+        assert_eq!(files.count(), 0);
+    }
 
     #[tokio::test]
     async fn test_vacuum_missing_table() {
