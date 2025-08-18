@@ -674,6 +674,15 @@ async fn test_cannot_truncate_missing_table() {
 }
 
 #[tokio::test]
+async fn test_cannot_vacuum_missing_table() {
+    let mut test_context = TestContext::new().await;
+
+    let ticket = Ticket::new(format!("VACUUM {TABLE_NAME}"));
+    let result = test_context.client.do_get(ticket).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
 async fn test_can_get_schema() {
     let mut test_context = TestContext::new().await;
 
