@@ -485,6 +485,7 @@ impl DeltaLake {
         delta_table_ops
             .vacuum()
             .with_retention_period(retention_period)
+            .with_enforce_retention_duration(false)
             .await?;
 
         Ok(())

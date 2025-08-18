@@ -798,6 +798,43 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_vacuum_normal_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context_with_normal_table(&temp_dir).await;
+
+        context
+            .configuration_manager
+            .write()
+            .await
+            .set_retention_period_in_seconds(0);
+
+        let local_data_folder = &context.data_folders.local_data_folder;
+        let mut delta_table = local_data_folder
+            .delta_lake
+            .delta_table(NORMAL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        context.truncate_table(NORMAL_TABLE_NAME).await.unwrap();
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 0);
+
+        // The files should still exist on disk even though they are no longer active.
+        let table_path = format!(
+            "{}/tables/{}",
+            temp_dir.path().to_str().unwrap(),
+            NORMAL_TABLE_NAME
+        );
+        let files = std::fs::read_dir(&table_path).unwrap();
+        assert_eq!(files.count(), 2);
+
+        context.vacuum_table(NORMAL_TABLE_NAME).await.unwrap();
+
+        // Only the _delta_log folder should remain.
+        let files = std::fs::read_dir(&table_path).unwrap();
+        assert_eq!(files.count(), 1);
+    }
 
     /// Create a [`Context`] with a normal table named `NORMAL_TABLE_NAME` and write data to it.
     async fn create_context_with_normal_table(temp_dir: &TempDir) -> Arc<Context> {
