@@ -627,12 +627,7 @@ impl FlightService for FlightServiceHandler {
             // unwrap() is safe since the key cannot contain invalid characters.
             let manager_metadata = protocol::ManagerMetadata {
                 key: self.context.key.to_str().unwrap().to_owned(),
-                storage_configuration: Some(
-                    self.context
-                        .remote_data_folder
-                        .storage_configuration
-                        .clone(),
-                ),
+                storage_configuration: Some(self.context.remote_storage_configuration.clone()),
             };
 
             let protobuf_bytes = manager_metadata.encode_to_vec();
@@ -649,8 +644,7 @@ impl FlightService for FlightServiceHandler {
 
             // Remove the node with the given url from the metadata Delta Lake.
             self.context
-                .remote_data_folder
-                .metadata_manager
+                .remote_delta_lake
                 .remove_node(&node_metadata.url)
                 .await
                 .map_err(error_to_status_internal)?;
