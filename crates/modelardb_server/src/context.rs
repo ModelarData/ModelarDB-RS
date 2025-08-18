@@ -838,7 +838,7 @@ mod tests {
 
     /// Create a [`Context`] with a normal table named `NORMAL_TABLE_NAME` and write data to it.
     async fn create_context_with_normal_table(temp_dir: &TempDir) -> Arc<Context> {
-        let context = create_context(&temp_dir).await;
+        let context = create_context(temp_dir).await;
 
         context
             .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
@@ -903,7 +903,7 @@ mod tests {
     /// Create a [`Context`] with a time series table named `TIME_SERIES_TABLE_NAME` and write data
     /// to it.
     async fn create_context_with_time_series_table(temp_dir: &TempDir) -> Arc<Context> {
-        let context = create_context(&temp_dir).await;
+        let context = create_context(temp_dir).await;
 
         context
             .create_time_series_table(&table::time_series_table_metadata())

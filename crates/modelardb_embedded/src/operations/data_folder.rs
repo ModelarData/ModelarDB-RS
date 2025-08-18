@@ -942,7 +942,7 @@ mod tests {
     use super::*;
 
     use std::sync::{LazyLock, Mutex};
-    
+
     use arrow::array::{Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array};
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
