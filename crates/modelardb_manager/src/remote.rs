@@ -21,8 +21,8 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::result::Result as StdResult;
-use std::str;
 use std::sync::Arc;
+use std::{env, str};
 
 use arrow::datatypes::Schema;
 use arrow::ipc::writer::IpcWriteOptions;
@@ -333,6 +333,33 @@ impl FlightServiceHandler {
 
         Ok(())
     }
+
+    /// Vacuum the table in the remote data folder and at each node controlled by the manager. If
+    /// the table does not exist or the table cannot be vacuumed in the remote data folder
+    /// and at each node, return [`Status`].
+    async fn vacuum_cluster_table(&self, table_name: &str) -> StdResult<(), Status> {
+        let retention_period_in_seconds = env::var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS")
+            .map_or(60 * 60 * 24 * 7, |value| value.parse().unwrap());
+
+        // Vacuum the table in the remote data folder Delta lake.
+        self.context
+            .remote_data_folder
+            .delta_lake
+            .vacuum_table(table_name, retention_period_in_seconds as usize)
+            .await
+            .map_err(error_to_status_internal)?;
+
+        // Vacuum the table in the nodes controlled by the manager.
+        self.context
+            .cluster
+            .read()
+            .await
+            .cluster_do_get(&format!("VACUUM {table_name}"), &self.context.key)
+            .await
+            .map_err(error_to_status_internal)?;
+
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
@@ -453,8 +480,8 @@ impl FlightService for FlightServiceHandler {
     }
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
-    /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, TRUNCATE TABLE, and
-    /// DROP TABLE are supported.
+    /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, TRUNCATE TABLE,
+    /// DROP TABLE, and VACUUM are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -495,6 +522,11 @@ impl FlightService for FlightServiceHandler {
             ModelarDbStatement::DropTable(table_names) => {
                 for table_name in table_names {
                     self.drop_cluster_table(&table_name).await?;
+                }
+            }
+            ModelarDbStatement::Vacuum(table_names) => {
+                for table_name in table_names {
+                    self.vacuum_cluster_table(&table_name).await?;
                 }
             }
             // .. is not used so a compile error is raised if a new ModelarDbStatement is added.

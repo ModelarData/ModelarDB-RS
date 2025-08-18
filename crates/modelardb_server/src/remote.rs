@@ -434,7 +434,7 @@ impl FlightService for FlightServiceHandler {
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
     /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, EXPLAIN, INCLUDE,
-    /// SELECT, INSERT, TRUNCATE TABLE, and DROP TABLE are supported.
+    /// SELECT, INSERT, TRUNCATE TABLE, DROP TABLE, and VACUUM are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
