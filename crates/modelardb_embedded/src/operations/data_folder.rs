@@ -39,7 +39,6 @@ use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
 use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
-use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::types::{TimeSeriesTableMetadata, TimestampArray};
 
 use crate::error::{ModelarDbEmbeddedError, Result};

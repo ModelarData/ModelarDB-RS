@@ -25,7 +25,6 @@ use deltalake::DeltaTableError;
 use deltalake::datafusion::logical_expr::{col, lit};
 use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_storage::{register_metadata_table, sql_and_concat};
-use modelardb_types::flight::protocol;
 use modelardb_types::types::{Node, ServerMode};
 use uuid::Uuid;
 
@@ -41,33 +40,7 @@ pub trait ManagerMetadata {
     async fn nodes(&self) -> Result<Vec<Node>>;
 }
 
-impl MetadataManager {
-    /// Create a new [`MetadataManager`] that saves the metadata to a remote object store given by
-    /// `storage_configuration` and initialize the metadata tables. If a connection could not be
-    /// made or the metadata tables could not be created, return
-    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
-    pub async fn try_from_storage_configuration(
-        storage_configuration: protocol::manager_metadata::StorageConfiguration,
-    ) -> Result<MetadataManager> {
-        let metadata_manager = Self {
-            delta_lake: DeltaLake::try_remote_from_storage_configuration(
-                storage_configuration.clone(),
-            )?,
-            table_metadata_manager: TableMetadataManager::try_from_storage_configuration(
-                storage_configuration,
-            )
-            .await?,
-            session_context: Arc::new(SessionContext::new()),
-        };
-
-        // Create the necessary tables in the metadata Delta Lake.
-        metadata_manager
-            .create_and_register_manager_metadata_delta_lake_tables()
-            .await?;
-
-        Ok(metadata_manager)
-    }
-
+impl ManagerMetadata for DeltaLake {
     /// If they do not already exist, create the tables that are specific to the manager metadata
     /// Delta Lake and register them with the Apache DataFusion session context.
     /// * The `manager_metadata` table contains metadata for the manager itself. It is assumed that

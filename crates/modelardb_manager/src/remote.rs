@@ -653,8 +653,7 @@ impl FlightService for FlightServiceHandler {
 
             // Remove the node with the given url from the metadata Delta Lake.
             self.context
-                .remote_data_folder
-                .metadata_manager
+                .remote_delta_lake
                 .remove_node(&node_metadata.url)
                 .await
                 .map_err(error_to_status_internal)?;
