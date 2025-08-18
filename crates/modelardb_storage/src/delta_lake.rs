@@ -1130,10 +1130,9 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
+    use modelardb_test::table as test;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue};
     use tempfile::TempDir;
-
-    use crate::test;
 
     // Tests for DeltaLake.
     #[tokio::test]
@@ -1465,13 +1464,11 @@ mod tests {
         let plus_one_column = Some(GeneratedColumn {
             expr: col("field_1") + Literal(Int64(Some(1))),
             source_columns: vec![1],
-            original_expr: "field_1 + 1".to_owned(),
         });
 
         let addition_column = Some(GeneratedColumn {
             expr: col("field_1") + col("field_2"),
             source_columns: vec![1, 2],
-            original_expr: "field_1 + field_2".to_owned(),
         });
 
         let expected_generated_columns =
