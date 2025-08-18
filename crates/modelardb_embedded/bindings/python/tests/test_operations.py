@@ -437,6 +437,37 @@ class TestOperations(unittest.TestCase):
             )
             self.assertEqual(error_message, str(context.exception))
 
+    def test_data_folder_vacuum(self):
+        with TemporaryDirectory() as temp_dir:
+            os.environ["MODELARDBD_RETENTION_PERIOD_IN_SECONDS"] = "0"
+
+            data_folder = Operations.open_local(temp_dir)
+            create_tables_in_data_folder(data_folder)
+
+            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            data_folder.truncate(TIME_SERIES_TABLE_NAME)
+
+            # The files should still exist on disk even though they are no longer active.
+            folder_path = os.path.join(temp_dir, "tables", TIME_SERIES_TABLE_NAME, "field_column=2")
+            file_count = len(os.listdir(folder_path))
+            self.assertEqual(file_count, 1)
+
+            data_folder.vacuum(TIME_SERIES_TABLE_NAME)
+
+            # No files should remain in the column folder.
+            file_count = len(os.listdir(folder_path))
+            self.assertEqual(file_count, 0)
+
+    def test_data_folder_vacuum_error(self):
+        with TemporaryDirectory() as temp_dir:
+            data_folder = Operations.open_local(temp_dir)
+
+            with self.assertRaises(RuntimeError) as context:
+                data_folder.vacuum(MISSING_TABLE_NAME)
+
+            error_message = f"Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' does not exist."
+            self.assertEqual(error_message, str(context.exception))
+
 
 def create_tables_in_data_folder(data_folder: Operations):
     table_type = NormalTable(normal_table_schema())
