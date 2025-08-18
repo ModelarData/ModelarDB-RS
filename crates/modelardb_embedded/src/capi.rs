@@ -932,6 +932,31 @@ unsafe fn drop(
     TOKIO_RUNTIME.block_on(modelardb.drop(table_name))
 }
 
+/// Vacuums the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
+/// `maybe_operations_ptr`. Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`];
+/// and `table_name_ptr` points to a valid C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn modelardb_embedded_vacuum(
+    maybe_operations_ptr: *mut c_void,
+    is_data_folder: bool,
+    table_name_ptr: *const c_char,
+) -> c_int {
+    let maybe_unit = unsafe { vacuum(maybe_operations_ptr, is_data_folder, table_name_ptr) };
+    set_error_and_return_code(maybe_unit)
+}
+
+/// See documentation for [`modelardb_embedded_vacuum`].
+unsafe fn vacuum(
+    maybe_operations_ptr: *mut c_void,
+    is_data_folder: bool,
+    table_name_ptr: *const c_char,
+) -> Result<()> {
+    let modelardb = unsafe { c_void_to_operations(maybe_operations_ptr, is_data_folder)? };
+    let table_name = unsafe { c_char_ptr_to_str(table_name_ptr)? };
+
+    TOKIO_RUNTIME.block_on(modelardb.vacuum(table_name))
+}
+
 /// Return a read-only [`*const c_char`] with a human-readable representation of the last error the
 /// current thread encountered. The lifetime of the returned [`*const c_char`] ends when
 /// [`modelardb_embedded_error()`] is called again. If no errors have occurred, a zero-initialized
