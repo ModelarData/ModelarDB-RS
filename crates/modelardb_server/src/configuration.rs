@@ -418,6 +418,33 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_set_retention_period_in_seconds() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_, configuration_manager) = create_components(&temp_dir).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .retention_period_in_seconds(),
+            60 * 60 * 24 * 7
+        );
+
+        configuration_manager
+            .write()
+            .await
+            .set_retention_period_in_seconds(60);
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .retention_period_in_seconds(),
+            60
+        );
+    }
+
     /// Create a [`StorageEngine`] and a [`ConfigurationManager`].
     async fn create_components(
         temp_dir: &TempDir,
