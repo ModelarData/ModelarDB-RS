@@ -516,7 +516,16 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(empty_record_batch_stream())
             }
-            ModelarDbStatement::Vacuum(table_names) => {
+            ModelarDbStatement::Vacuum(mut table_names) => {
+                // Vacuum all tables if no table names are provided.
+                if table_names.is_empty() {
+                    table_names = self
+                        .context
+                        .default_database_schema()
+                        .map_err(error_to_status_internal)?
+                        .table_names();
+                };
+
                 for table_name in table_names {
                     self.context
                         .vacuum_table(&table_name)

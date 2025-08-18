@@ -524,7 +524,19 @@ impl FlightService for FlightServiceHandler {
                     self.drop_cluster_table(&table_name).await?;
                 }
             }
-            ModelarDbStatement::Vacuum(table_names) => {
+            ModelarDbStatement::Vacuum(mut table_names) => {
+                // Vacuum all tables if no table names are provided.
+                if table_names.is_empty() {
+                    table_names = self
+                        .context
+                        .remote_data_folder
+                        .metadata_manager
+                        .table_metadata_manager
+                        .table_names()
+                        .await
+                        .map_err(error_to_status_internal)?;
+                }
+
                 for table_name in table_names {
                     self.vacuum_cluster_table(&table_name).await?;
                 }
