@@ -1129,6 +1129,7 @@ async fn test_can_get_configuration() {
         Some(64 * 1024 * 1024)
     );
     assert_eq!(configuration.transfer_time_in_seconds, None);
+    assert_eq!(configuration.retention_period_in_seconds, 60 * 60 * 24 * 7);
     assert_eq!(configuration.ingestion_threads, 1);
     assert_eq!(configuration.compression_threads, 1);
     assert_eq!(configuration.writer_threads, 1);
@@ -1168,6 +1169,16 @@ async fn test_can_update_compressed_reserved_memory_in_bytes() {
     .await;
 
     assert_eq!(updated_configuration.compressed_reserved_memory_in_bytes, 1);
+}
+
+#[tokio::test]
+async fn test_can_update_retention_period_in_seconds() {
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
+    )
+    .await;
+
+    assert_eq!(updated_configuration.retention_period_in_seconds, 1);
 }
 
 async fn update_and_get_configuration(setting: i32) -> protocol::Configuration {
@@ -1221,6 +1232,7 @@ async fn test_cannot_update_non_nullable_setting_with_null_value() {
         protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::CompressedReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
     ] {
         update_configuration_and_assert_error(
             setting,
