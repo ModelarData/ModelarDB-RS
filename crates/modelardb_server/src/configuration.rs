@@ -45,6 +45,8 @@ pub struct ConfigurationManager {
     /// The number of seconds between each transfer of data to the remote object store. If [`None`],
     /// data is not transferred based on time.
     transfer_time_in_seconds: Option<usize>,
+    /// The number of seconds to retain deleted data in storage before it can be removed by vacuum.
+    retention_period_in_seconds: usize,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
     pub(crate) ingestion_threads: usize,
@@ -74,6 +76,9 @@ impl ConfigurationManager {
         let transfer_time_in_seconds = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS")
             .map_or(None, |value| Some(value.parse().unwrap()));
 
+        let retention_period_in_seconds = env::var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS")
+            .map_or(60 * 60 * 24 * 7, |value| value.parse().unwrap());
+
         Self {
             cluster_mode,
             multivariate_reserved_memory_in_bytes,
@@ -81,6 +86,7 @@ impl ConfigurationManager {
             compressed_reserved_memory_in_bytes,
             transfer_batch_size_in_bytes,
             transfer_time_in_seconds,
+            retention_period_in_seconds,
             // TODO: Add support for running multiple threads per component. The individual
             // components in the storage engine have not been validated with multiple threads, e.g.,
             // UncompressedDataManager may have race conditions finishing buffers if multiple
@@ -215,6 +221,18 @@ impl ConfigurationManager {
         self.transfer_time_in_seconds = new_transfer_time_in_seconds;
 
         Ok(())
+    }
+
+    pub(crate) fn retention_period_in_seconds(&self) -> usize {
+        self.retention_period_in_seconds
+    }
+
+    /// Set the new value for the retention period in seconds.
+    pub(crate) fn set_retention_period_in_seconds(
+        &mut self,
+        new_retention_period_in_seconds: usize,
+    ) {
+        self.retention_period_in_seconds = new_retention_period_in_seconds;
     }
 
     /// Encode the current configuration into a [`Configuration`](protocol::Configuration)
