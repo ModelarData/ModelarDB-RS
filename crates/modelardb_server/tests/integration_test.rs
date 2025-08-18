@@ -255,6 +255,15 @@ impl TestContext {
         self.client.do_get(ticket).await
     }
 
+    /// Vacuum a table in the server through the `do_get()` method.
+    async fn vacuum_table(
+        &mut self,
+        table_name: &str,
+    ) -> Result<Response<Streaming<FlightData>>, Status> {
+        let ticket = Ticket::new(format!("VACUUM {table_name}"));
+        self.client.do_get(ticket).await
+    }
+
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
     /// depending on `generate_irregular_timestamps`, generated values with noise depending on
     /// `multiply_noise_range`, and an optional tag.
@@ -674,11 +683,47 @@ async fn test_cannot_truncate_missing_table() {
 }
 
 #[tokio::test]
+async fn test_can_vacuum_normal_table() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .update_configuration(
+            protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
+            Some(0),
+        )
+        .await
+        .unwrap();
+
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        slice::from_ref(&time_series),
+        TableType::NormalTable,
+    )
+    .await;
+
+    test_context.truncate_table(TABLE_NAME).await.unwrap();
+
+    // The files should still exist on disk even though they are no longer active.
+    let table_path = format!(
+        "{}/tables/{}",
+        test_context.temp_dir.path().to_str().unwrap(),
+        TABLE_NAME
+    );
+    let files = std::fs::read_dir(&table_path).unwrap();
+    assert_eq!(files.count(), 2);
+
+    test_context.vacuum_table(TABLE_NAME).await.unwrap();
+
+    // Only the _delta_log folder should remain.
+    let files = std::fs::read_dir(&table_path).unwrap();
+    assert_eq!(files.count(), 1);
+}
+
+#[tokio::test]
 async fn test_cannot_vacuum_missing_table() {
     let mut test_context = TestContext::new().await;
 
-    let ticket = Ticket::new(format!("VACUUM {TABLE_NAME}"));
-    let result = test_context.client.do_get(ticket).await;
+    let result = test_context.vacuum_table(TABLE_NAME).await;
     assert!(result.is_err());
 }
 
