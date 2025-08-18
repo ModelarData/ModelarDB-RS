@@ -21,16 +21,18 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, RecordBatch, StringArray,
+    ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, Float32Array, Int16Array, RecordBatch,
+    StringArray,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, ToDFSchema};
-use datafusion::logical_expr::lit;
+use datafusion::logical_expr::{Expr, lit};
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
 use datafusion::prelude::{SessionContext, col};
+use datafusion_proto::bytes::Serializeable;
 use deltalake::delta_datafusion::DeltaDataChecker;
 use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add, StructField};
@@ -40,8 +42,9 @@ use deltalake::protocol::{DeltaOperation, SaveMode};
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_types::flight::protocol;
+use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::types::{ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -51,11 +54,13 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::time_series_table_metadata::{GeneratedColumn, TimeSeriesTableMetadata};
 use crate::{
     METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties, register_metadata_table,
-    sql_and_concat, try_convert_bytes_to_schema, try_convert_schema_to_bytes,
+    sql_and_concat,
 };
+
+/// Named error bound with the value 0.0 to make lossless compression more clear.
+const ERROR_BOUND_ZERO: f32 = 0.0;
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -98,8 +103,8 @@ impl DeltaLake {
     }
 
     /// Create a new [`DeltaLake`] that manages the Delta tables in memory.
-    pub fn new_in_memory() -> Self {
-        Self {
+    pub async fn new_in_memory() -> Result<Self> {
+        let delta_lake = Self {
             location: "memory:///modelardb".to_owned(),
             storage_options: HashMap::new(),
             maybe_connection_info: None,
@@ -148,7 +153,7 @@ impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages Delta tables in the remote object store given by
     /// `storage_configuration`. Returns [`ModelarDbStorageError`] if a connection to the specified
     /// object store could not be created.
-    pub fn try_remote_from_storage_configuration(
+    pub async fn try_remote_from_storage_configuration(
         storage_configuration: protocol::manager_metadata::StorageConfiguration,
     ) -> Result<Self> {
         match storage_configuration {
@@ -164,14 +169,18 @@ impl DeltaLake {
                     s3_configuration.access_key_id,
                     s3_configuration.secret_access_key,
                 )
+                .await
             }
             protocol::manager_metadata::StorageConfiguration::AzureConfiguration(
                 azure_configuration,
-            ) => Self::try_from_azure_configuration(
-                azure_configuration.account_name,
-                azure_configuration.access_key,
-                azure_configuration.container_name,
-            ),
+            ) => {
+                Self::try_from_azure_configuration(
+                    azure_configuration.account_name,
+                    azure_configuration.access_key,
+                    azure_configuration.container_name,
+                )
+                .await
+            }
         }
     }
 
@@ -697,11 +706,17 @@ impl DeltaLake {
             .iter()
             .enumerate()
         {
-            if time_series_table_metadata.is_field(query_schema_index) {
-                let maybe_generated_column_expr = time_series_table_metadata.generated_columns
-                    [query_schema_index]
-                    .as_ref()
-                    .map(|generated_column| generated_column.original_expr.clone());
+            if field.data_type() == &ArrowValue::DATA_TYPE {
+                // Convert the generated column expression to bytes, if it exists.
+                let maybe_generated_column_expr = match time_series_table_metadata
+                    .generated_columns
+                    .get(query_schema_index)
+                {
+                    Some(Some(generated_column)) => {
+                        Some(generated_column.expr.to_bytes()?.to_vec())
+                    }
+                    _ => None,
+                };
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of time series tables.
@@ -727,7 +742,9 @@ impl DeltaLake {
                         Arc::new(Int16Array::from(vec![query_schema_index as i16])),
                         Arc::new(Float32Array::from(vec![error_bound_value])),
                         Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                        Arc::new(StringArray::from(vec![maybe_generated_column_expr])),
+                        Arc::new(BinaryArray::from_opt_vec(vec![
+                            maybe_generated_column_expr.as_deref(),
+                        ])),
                     ],
                 )
                 .await?;
@@ -930,6 +947,7 @@ impl DeltaLake {
             error_bounds,
             generated_columns,
         )
+        .map_err(|error| error.into())
     }
 
     /// Return the error bounds for the columns in the time series table with `table_name`. If a
@@ -989,16 +1007,16 @@ impl DeltaLake {
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
-        let generated_column_expr_array = modelardb_types::array!(batch, 1, StringArray);
+        let generated_column_expr_array = modelardb_types::array!(batch, 1, BinaryArray);
 
         for row_index in 0..batch.num_rows() {
             let generated_column_index = column_index_array.value(row_index);
-            let generated_column_expr = generated_column_expr_array.value(row_index);
+            let expr_bytes = generated_column_expr_array.value(row_index);
 
-            // If generated_column_expr is null, it is saved as an empty string in the column values.
-            if !generated_column_expr.is_empty() {
-                let generated_column =
-                    GeneratedColumn::try_from_sql_expr(generated_column_expr, df_schema)?;
+            // If generated_column_expr is null, it is saved as empty bytes in the column values.
+            if !expr_bytes.is_empty() {
+                let expr = Expr::from_bytes(expr_bytes)?;
+                let generated_column = GeneratedColumn::try_from_expr(expr, df_schema)?;
 
                 generated_columns[generated_column_index as usize] = Some(generated_column);
             }
