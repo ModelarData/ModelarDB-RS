@@ -320,7 +320,7 @@ impl DeltaLake {
                     Field::new("column_index", DataType::Int16, false),
                     Field::new("error_bound_value", DataType::Float32, false),
                     Field::new("error_bound_is_relative", DataType::Boolean, false),
-                    Field::new("generated_column_expr", DataType::Utf8, true),
+                    Field::new("generated_column_expr", DataType::Binary, true),
                 ]),
             )
             .await?;
@@ -1303,7 +1303,7 @@ mod tests {
         assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
         assert_eq!(
             **batch.column(5),
-            StringArray::from(vec![None, None] as Vec<Option<&str>>)
+            BinaryArray::from_opt_vec(vec![None, None])
         );
     }
 
