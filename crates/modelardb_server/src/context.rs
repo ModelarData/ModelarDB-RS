@@ -455,7 +455,7 @@ mod tests {
             context
                 .data_folders
                 .local_data_folder
-                .table_metadata_manager
+                .delta_lake
                 .is_normal_table(NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -605,19 +605,14 @@ mod tests {
 
         // The normal table should be deleted from the metadata Delta Lake.
         assert!(
-                    !context
-                        .data_folders
-                        .local_data_folder
-        <<<<<<< HEAD
-                        .table_metadata_manager
-                        .is_normal_table(NORMAL_TABLE_NAME)
-        =======
-                        .delta_lake
-                        .is_normal_table(test::NORMAL_TABLE_NAME)
-        >>>>>>> 7e75112 (Remove TableMetadataManager)
-                        .await
-                        .unwrap()
-                );
+            !context
+                .data_folders
+                .local_data_folder
+                .delta_lake
+                .is_normal_table(NORMAL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // The normal table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
@@ -647,19 +642,14 @@ mod tests {
 
         // The time series table should be deleted from the metadata Delta Lake.
         assert!(
-                    !context
-                        .data_folders
-                        .local_data_folder
-        <<<<<<< HEAD
-                        .table_metadata_manager
-                        .is_time_series_table(TIME_SERIES_TABLE_NAME)
-        =======
-                        .delta_lake
-                        .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
-        >>>>>>> 7e75112 (Remove TableMetadataManager)
-                        .await
-                        .unwrap()
-                );
+            !context
+                .data_folders
+                .local_data_folder
+                .delta_lake
+                .is_time_series_table(TIME_SERIES_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // The time series table should be deleted from the Delta Lake.
         assert!(!temp_dir.path().join("tables").exists());
@@ -696,17 +686,12 @@ mod tests {
 
         // The normal table should not be deleted from the metadata Delta Lake.
         assert!(
-                    local_data_folder
-        <<<<<<< HEAD
-                        .table_metadata_manager
-                        .is_normal_table(NORMAL_TABLE_NAME)
-        =======
-                        .delta_lake
-                        .is_normal_table(test::NORMAL_TABLE_NAME)
-        >>>>>>> 7e75112 (Remove TableMetadataManager)
-                        .await
-                        .unwrap()
-                );
+            local_data_folder
+                .delta_lake
+                .is_normal_table(NORMAL_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // The normal table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
@@ -734,17 +719,12 @@ mod tests {
 
         // The time series table should not be deleted from the metadata Delta Lake.
         assert!(
-                    local_data_folder
-        <<<<<<< HEAD
-                        .table_metadata_manager
-                        .is_time_series_table(TIME_SERIES_TABLE_NAME)
-        =======
-                        .delta_lake
-                        .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
-        >>>>>>> 7e75112 (Remove TableMetadataManager)
-                        .await
-                        .unwrap()
-                );
+            local_data_folder
+                .delta_lake
+                .is_time_series_table(TIME_SERIES_TABLE_NAME)
+                .await
+                .unwrap()
+        );
 
         // The time series table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
