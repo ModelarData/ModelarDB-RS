@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use arrow::array::{ArrayRef, RecordBatch};
 use arrow::datatypes::{DataType, Field, Schema};
+use chrono::TimeDelta;
 use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
 use datafusion::parquet::file::properties::WriterProperties;
@@ -461,6 +462,30 @@ impl DeltaLake {
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
         let delta_table_ops = self.delta_ops(table_name).await?;
         delta_table_ops.delete().await?;
+
+        Ok(())
+    }
+
+    /// Vacuum the Delta Lake table with `table_name` by deleting all files that are older than
+    /// `retention_period_in_seconds` seconds. If the retention period is out of bounds or the
+    /// files could not be deleted, a [`ModelarDbStorageError`] is returned.
+    pub async fn vacuum_table(
+        &self,
+        table_name: &str,
+        retention_period_in_seconds: usize,
+    ) -> Result<()> {
+        let delta_table_ops = self.delta_ops(table_name).await?;
+
+        let retention_period = TimeDelta::new(retention_period_in_seconds as i64, 0).ok_or(
+            ModelarDbStorageError::InvalidArgument(format!(
+                "Retention period of {retention_period_in_seconds} seconds is out of bounds."
+            )),
+        )?;
+
+        delta_table_ops
+            .vacuum()
+            .with_retention_period(retention_period)
+            .await?;
 
         Ok(())
     }
