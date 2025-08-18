@@ -859,6 +859,46 @@ mod tests {
         context
     }
 
+    #[tokio::test]
+    async fn test_vacuum_time_series_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context_with_time_series_table(&temp_dir).await;
+
+        context
+            .configuration_manager
+            .write()
+            .await
+            .set_retention_period_in_seconds(0);
+
+        let local_data_folder = &context.data_folders.local_data_folder;
+        let mut delta_table = local_data_folder
+            .delta_lake
+            .delta_table(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+
+        context
+            .truncate_table(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 0);
+
+        // The files should still exist on disk even though they are no longer active.
+        let column_path = format!(
+            "{}/tables/{}/field_column=0",
+            temp_dir.path().to_str().unwrap(),
+            TIME_SERIES_TABLE_NAME
+        );
+        let files = std::fs::read_dir(&column_path).unwrap();
+        assert_eq!(files.count(), 1);
+
+        context.vacuum_table(TIME_SERIES_TABLE_NAME).await.unwrap();
+
+        // No files should remain in the column folder.
+        let files = std::fs::read_dir(&column_path).unwrap();
+        assert_eq!(files.count(), 0);
+    }
 
     /// Create a [`Context`] with a time series table named `TIME_SERIES_TABLE_NAME` and write data
     /// to it.
