@@ -350,6 +350,24 @@ impl Context {
         Ok(())
     }
 
+    /// Vacuum the table with `table_name` if it exists. If the table does not exist or if it could
+    /// not be vacuumed, [`ModelarDbServerError`] is returned.
+    pub async fn vacuum_table(&self, table_name: &str) -> Result<()> {
+        let retention_period_in_seconds = self
+            .configuration_manager
+            .read()
+            .await
+            .retention_period_in_seconds();
+
+        self.data_folders
+            .local_data_folder
+            .delta_lake
+            .vacuum_table(table_name, retention_period_in_seconds)
+            .await?;
+
+        Ok(())
+    }
+
     /// Lookup the [`TimeSeriesTableMetadata`] of the time series table with name `table_name` if it
     /// exists. Specifically, the method returns:
     /// * [`TimeSeriesTableMetadata`] if a time series table with the name `table_name` exists.

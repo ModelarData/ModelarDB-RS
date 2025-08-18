@@ -516,6 +516,16 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(empty_record_batch_stream())
             }
+            ModelarDbStatement::Vacuum(table_names) => {
+                for table_name in table_names {
+                    self.context
+                        .vacuum_table(&table_name)
+                        .await
+                        .map_err(error_to_status_invalid_argument)?;
+                }
+
+                Ok(empty_record_batch_stream())
+            }
         }
         .map_err(error_to_status_internal)?;
 
