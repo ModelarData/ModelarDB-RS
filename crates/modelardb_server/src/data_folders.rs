@@ -18,7 +18,6 @@
 use std::sync::Arc;
 
 use modelardb_storage::delta_lake::DeltaLake;
-use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_types::flight::protocol;
 use modelardb_types::types::ServerMode;
 use tracing::warn;
@@ -59,11 +58,9 @@ impl DataFolder {
     pub async fn try_from_storage_configuration(
         storage_configuration: protocol::manager_metadata::StorageConfiguration,
     ) -> Result<Self> {
-        let remote_delta_lake =
-            DeltaLake::try_remote_from_storage_configuration(storage_configuration.clone())?;
-
-        let remote_table_metadata_manager =
-            TableMetadataManager::try_from_storage_configuration(storage_configuration).await?;
+        let delta_lake = Arc::new(
+            DeltaLake::try_remote_from_storage_configuration(storage_configuration.clone()).await?,
+        );
 
         Ok(Self { delta_lake })
     }

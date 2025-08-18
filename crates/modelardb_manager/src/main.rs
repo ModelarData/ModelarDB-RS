@@ -44,6 +44,9 @@ pub static PORT: LazyLock<u16> =
 pub struct Context {
     /// Delta Lake for storing metadata and data in Apache Parquet files.
     pub remote_delta_lake: DeltaLake,
+    /// Storage configuration encoded as a [`StorageConfiguration`](protocol::manager_metadata::StorageConfiguration)
+    /// protobuf message to make it possible to transfer the configuration using Apache Arrow Flight.
+    pub remote_storage_configuration: protocol::manager_metadata::StorageConfiguration,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
     /// Key used to identify requests coming from the manager.
@@ -70,8 +73,11 @@ fn main() -> Result<()> {
     };
 
     let context = runtime.block_on(async {
-        let connection_info = arguments::argument_to_connection_info(remote_delta_lake_str)?;
-        let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
+        let remote_storage_configuration =
+            modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
+        let remote_delta_lake =
+            DeltaLake::try_remote_from_storage_configuration(remote_storage_configuration.clone())
+                .await?;
 
         let nodes = remote_delta_lake.nodes().await?;
 
@@ -93,6 +99,7 @@ fn main() -> Result<()> {
         // Create the Context.
         Ok::<Arc<Context>, ModelarDbManagerError>(Arc::new(Context {
             remote_delta_lake,
+            remote_storage_configuration,
             cluster: RwLock::new(cluster),
             key,
         }))
