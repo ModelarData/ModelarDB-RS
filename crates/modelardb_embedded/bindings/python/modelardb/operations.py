@@ -188,6 +188,10 @@ class Operations:
             int modelardb_embedded_drop(void* maybe_operations_ptr,
                                         bool is_data_folder,
                                         char* table_name_ptr);
+            
+            int modelardb_embedded_vacuum(void* maybe_operations_ptr,
+                                          bool is_data_folder,
+                                          char* table_name_ptr);
 
             char* modelardb_embedded_error();
             """
@@ -720,6 +724,19 @@ class Operations:
         """
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
         return_code = self.__library.modelardb_embedded_drop(
+            self.__operations_ptr, self.__is_data_folder, table_name_ptr
+        )
+        self.__check_return_code_and_raise_error(return_code)
+
+    def vacuum(self, table_name: str):
+        """Vacuum the table with `table_name`.
+
+        :param table_name: The name of the table to vacuum.
+        :type table_name: str
+        :raises ValueError: If incorrect arguments are provided.
+        """
+        table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
+        return_code = self.__library.modelardb_embedded_vacuum(
             self.__operations_ptr, self.__is_data_folder, table_name_ptr
         )
         self.__check_return_code_and_raise_error(return_code)
