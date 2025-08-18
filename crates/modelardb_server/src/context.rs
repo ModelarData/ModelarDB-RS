@@ -885,6 +885,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_vacuum_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        assert!(context.vacuum_table(TIME_SERIES_TABLE_NAME).await.is_err());
+    }
+
+    #[tokio::test]
     async fn test_time_series_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
