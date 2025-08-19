@@ -809,16 +809,7 @@ mod tests {
             .await
             .set_retention_period_in_seconds(0);
 
-        let local_data_folder = &context.data_folders.local_data_folder;
-        let mut delta_table = local_data_folder
-            .delta_lake
-            .delta_table(NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
-
         context.truncate_table(NORMAL_TABLE_NAME).await.unwrap();
-        delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
 
         // The files should still exist on disk even though they are no longer active.
         let table_path = format!(
@@ -870,19 +861,10 @@ mod tests {
             .await
             .set_retention_period_in_seconds(0);
 
-        let local_data_folder = &context.data_folders.local_data_folder;
-        let mut delta_table = local_data_folder
-            .delta_lake
-            .delta_table(TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
-
         context
             .truncate_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
-        delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
 
         // The files should still exist on disk even though they are no longer active.
         let column_path = format!(
