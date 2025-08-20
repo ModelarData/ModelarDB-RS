@@ -172,7 +172,7 @@ pub fn tokenize_and_parse_sql_expression(
 }
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
-/// SERIES TABLE table_name DDL statements, INCLUDE 'address'[, 'address']+ DQL statements, and
+/// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements, and
 /// VACUUM \[table_name\[, table_name\]+\] statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
@@ -556,7 +556,7 @@ impl Dialect for ModelarDbDialect {
 
     /// Check if the next tokens are CREATE TIME SERIES TABLE, if so, attempt to parse the token stream
     /// as a CREATE TIME SERIES TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
-    /// attempt to parse the token stream as an INCLUDE 'address'[, 'address']+ DQL statement.
+    /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
     /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
     /// VACUUM \[table_name\[, table_name\]+\] statement. If all checks fail, [`None`] is returned
     /// so [`sqlparser`] uses its parsing methods for all other statements. If parsing succeeds, a
@@ -1690,5 +1690,20 @@ mod tests {
             ModelarDbStatement::Vacuum(table_names) => table_names,
             _ => panic!("Expected ModelarDbStatement::Vacuum."),
         }
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_trailing_comma() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM table_name,").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_leading_comma() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM ,table_name").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_quoted_table_name() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM 'table_name'").is_err());
     }
 }
