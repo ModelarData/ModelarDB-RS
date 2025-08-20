@@ -287,10 +287,11 @@ mod tests {
             512 * 1024 * 1024
         );
 
+        let new_value = 1024;
         configuration_manager
             .write()
             .await
-            .set_multivariate_reserved_memory_in_bytes(1024, storage_engine)
+            .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
             .await;
 
         assert_eq!(
@@ -298,7 +299,7 @@ mod tests {
                 .read()
                 .await
                 .multivariate_reserved_memory_in_bytes(),
-            1024
+            new_value
         );
     }
 
@@ -315,10 +316,11 @@ mod tests {
             512 * 1024 * 1024
         );
 
+        let new_value = 1024;
         configuration_manager
             .write()
             .await
-            .set_uncompressed_reserved_memory_in_bytes(1024, storage_engine)
+            .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
             .await
             .unwrap();
 
@@ -327,7 +329,7 @@ mod tests {
                 .read()
                 .await
                 .uncompressed_reserved_memory_in_bytes(),
-            1024
+            new_value
         );
     }
 
@@ -344,10 +346,11 @@ mod tests {
             512 * 1024 * 1024
         );
 
+        let new_value = 1024;
         configuration_manager
             .write()
             .await
-            .set_compressed_reserved_memory_in_bytes(1024, storage_engine)
+            .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
             .await
             .unwrap();
 
@@ -356,7 +359,7 @@ mod tests {
                 .read()
                 .await
                 .compressed_reserved_memory_in_bytes(),
-            1024
+            new_value
         );
     }
 
@@ -373,10 +376,11 @@ mod tests {
             Some(64 * 1024 * 1024)
         );
 
+        let new_value = Some(1024);
         configuration_manager
             .write()
             .await
-            .set_transfer_batch_size_in_bytes(Some(1024), storage_engine)
+            .set_transfer_batch_size_in_bytes(new_value, storage_engine)
             .await
             .unwrap();
 
@@ -385,7 +389,7 @@ mod tests {
                 .read()
                 .await
                 .transfer_batch_size_in_bytes(),
-            Some(1024)
+            new_value
         );
     }
 
@@ -402,10 +406,11 @@ mod tests {
             None
         );
 
+        let new_value = Some(60);
         configuration_manager
             .write()
             .await
-            .set_transfer_time_in_seconds(Some(60), storage_engine)
+            .set_transfer_time_in_seconds(new_value, storage_engine)
             .await
             .unwrap();
 
@@ -414,7 +419,7 @@ mod tests {
                 .read()
                 .await
                 .transfer_time_in_seconds(),
-            Some(60)
+            new_value
         );
     }
 
@@ -431,17 +436,18 @@ mod tests {
             60 * 60 * 24 * 7
         );
 
+        let new_value = 60;
         configuration_manager
             .write()
             .await
-            .set_retention_period_in_seconds(60);
+            .set_retention_period_in_seconds(new_value);
 
         assert_eq!(
             configuration_manager
                 .read()
                 .await
                 .retention_period_in_seconds(),
-            60
+            new_value
         );
     }
 
