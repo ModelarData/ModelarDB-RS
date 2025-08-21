@@ -50,7 +50,7 @@ use sqlparser::tokenizer::{Span, Token};
 
 use crate::error::{ModelarDbStorageError, Result};
 
-/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, VACUUM etc.) that have been
+/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, VACUUM etc.) that has been
 /// tokenized, parsed, and for which semantic checks have verified that it is compatible with
 /// ModelarDB.
 #[derive(Debug)]
@@ -71,8 +71,8 @@ pub enum ModelarDbStatement {
     Vacuum(Vec<String>),
 }
 
-/// Tokenizes and parses the SQL statement in `sql` and return its parsed representation in the form
-/// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contain
+/// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
+/// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contains
 /// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE TIME SERIES
 /// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, DROP TABLE, and VACUUM are supported.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
@@ -500,7 +500,7 @@ impl ModelarDbDialect {
     /// Parse VACUUM \[table_name\[, table_name\]+\] to a [`Statement::ShowVariable`] with the
     /// table names in the `variable` field. Note that [`Statement::ShowVariable`] is used since
     /// [`Statement`] does not have a `Vacuum` variant. A [`ParserError`] is returned if VACUUM is
-    /// typed incorrectly or the table names cannot be extracted.
+    /// not the first word or the table names cannot be extracted.
     fn parse_vacuum(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // VACUUM.
         parser.expect_keyword(Keyword::VACUUM)?;
