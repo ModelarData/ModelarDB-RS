@@ -3150,6 +3150,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "bytes",
+ "chrono",
  "dashmap",
  "datafusion",
  "datafusion-proto",

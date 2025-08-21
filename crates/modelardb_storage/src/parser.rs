@@ -50,8 +50,9 @@ use sqlparser::tokenizer::{Span, Token};
 
 use crate::error::{ModelarDbStorageError, Result};
 
-/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, etc.) that have been tokenized,
-/// parsed, and for which semantic checks have verified that it is compatible with ModelarDB.
+/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, VACUUM etc.) that has been
+/// tokenized, parsed, and for which semantic checks have verified that it is compatible with
+/// ModelarDB.
 #[derive(Debug)]
 pub enum ModelarDbStatement {
     /// CREATE TABLE.
@@ -66,12 +67,14 @@ pub enum ModelarDbStatement {
     DropTable(Vec<String>),
     /// TRUNCATE TABLE.
     TruncateTable(Vec<String>),
+    /// VACUUM.
+    Vacuum(Vec<String>),
 }
 
-/// Tokenizes and parses the SQL statement in `sql` and return its parsed representation in the form
-/// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contain
+/// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
+/// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contains
 /// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE TIME SERIES
-/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, and DROP TABLE are supported.
+/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, DROP TABLE, and VACUUM are supported.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
 
@@ -128,6 +131,11 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 )?;
                 Ok(ModelarDbStatement::TruncateTable(table_names))
             }
+            // ShowVariable is used as a substitute for VACUUM since Statement does not have a
+            // Vacuum enum variant.
+            Statement::ShowVariable { variable } => Ok(ModelarDbStatement::Vacuum(
+                variable.into_iter().map(|ident| ident.value).collect(),
+            )),
             Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
             Statement::Query(ref boxed_query) => {
                 if let Some(addresses) = extract_include_addresses(boxed_query) {
@@ -138,7 +146,7 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
             }
             Statement::Insert(ref _insert) => Ok(ModelarDbStatement::Statement(statement)),
             _ => Err(ModelarDbStorageError::InvalidArgument(
-                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, and INSERT are supported."
+                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, INSERT, and VACUUM are supported."
                     .to_owned(),
             )),
         }
@@ -164,7 +172,8 @@ pub fn tokenize_and_parse_sql_expression(
 }
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
-/// SERIES TABLE table_name DDL statements and INCLUDE 'address'[, 'address']+ DQL statements.
+/// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements, and
+/// VACUUM \[table_name\[, table_name\]+\] statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -476,6 +485,49 @@ impl ModelarDbDialect {
 
         Ok(statement)
     }
+
+    /// Return [`true`] if the token stream starts with VACUUM, otherwise [`false`] is returned.
+    /// The method does not consume tokens.
+    fn next_token_is_vacuum(&self, parser: &Parser) -> bool {
+        // VACUUM.
+        if let Token::Word(word) = parser.peek_nth_token(0).token {
+            word.keyword == Keyword::VACUUM
+        } else {
+            false
+        }
+    }
+
+    /// Parse VACUUM \[table_name\[, table_name\]+\] to a [`Statement::ShowVariable`] with the
+    /// table names in the `variable` field. Note that [`Statement::ShowVariable`] is used since
+    /// [`Statement`] does not have a `Vacuum` variant. A [`ParserError`] is returned if VACUUM is
+    /// not the first word or the table names cannot be extracted.
+    fn parse_vacuum(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
+        // VACUUM.
+        parser.expect_keyword(Keyword::VACUUM)?;
+
+        let mut table_names = vec![];
+
+        if Token::EOF != parser.peek_nth_token(0).token {
+            loop {
+                match self.parse_word_value(parser) {
+                    Ok(table_name) => {
+                        table_names.push(Ident::new(table_name));
+                        if Token::Comma == parser.peek_nth_token(0).token {
+                            parser.next_token();
+                        } else {
+                            break;
+                        };
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+
+        // Return Statement::ShowVariable as a substitute for Vacuum.
+        Ok(Statement::ShowVariable {
+            variable: table_names,
+        })
+    }
 }
 
 /// Create a [`Setting`] with `key`, `quote_style`, and `value`.
@@ -504,15 +556,18 @@ impl Dialect for ModelarDbDialect {
 
     /// Check if the next tokens are CREATE TIME SERIES TABLE, if so, attempt to parse the token stream
     /// as a CREATE TIME SERIES TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
-    /// attempt to parse the token stream as an INCLUDE 'address'[, 'address']+ DQL statement. If
-    /// both checks fail, [`None`] is returned so sqlparser uses its parsing methods for all other
-    /// statements. If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`]
-    /// is returned.
+    /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
+    /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
+    /// VACUUM \[table_name\[, table_name\]+\] statement. If all checks fail, [`None`] is returned
+    /// so [`sqlparser`] uses its parsing methods for all other statements. If parsing succeeds, a
+    /// [`Statement`] is returned, and if not, a [`ParserError`] is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_time_series_table(parser) {
             Some(self.parse_create_time_series_table(parser))
         } else if self.next_token_is_include(parser) {
             Some(self.parse_include_query(parser))
+        } else if self.next_token_is_vacuum(parser) {
+            Some(self.parse_vacuum(parser))
         } else {
             None
         }
@@ -1602,5 +1657,53 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_include_zero_addresses_select() {
         assert!(tokenize_and_parse_sql_statement("INCLUDE SELECT * FROM table_name",).is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_all_tables() {
+        let table_names = parse_vacuum_and_extract_table_names("VACUUM");
+
+        assert!(table_names.is_empty());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_single_table() {
+        let table_names = parse_vacuum_and_extract_table_names("VACUUM table_name");
+
+        assert_eq!(table_names, vec!["table_name".to_owned()]);
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_multiple_tables() {
+        let table_names = parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+    }
+
+    fn parse_vacuum_and_extract_table_names(sql_statement: &str) -> Vec<String> {
+        let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
+
+        match modelardb_statement {
+            ModelarDbStatement::Vacuum(table_names) => table_names,
+            _ => panic!("Expected ModelarDbStatement::Vacuum."),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_trailing_comma() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM table_name,").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_leading_comma() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM ,table_name").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_quoted_table_name() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM 'table_name'").is_err());
     }
 }

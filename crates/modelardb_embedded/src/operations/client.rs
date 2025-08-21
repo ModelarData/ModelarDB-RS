@@ -357,4 +357,13 @@ impl Operations for Client {
 
         Ok(())
     }
+
+    /// Vacuum the table with the name in `table_name`. If the table could not be vacuumed,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    async fn vacuum(&mut self, table_name: &str) -> Result<()> {
+        let ticket = Ticket::new(format!("VACUUM {table_name}"));
+        self.flight_client.do_get(ticket).await?;
+
+        Ok(())
+    }
 }

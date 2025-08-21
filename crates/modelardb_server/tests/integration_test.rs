@@ -48,7 +48,6 @@ use tokio::time;
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status, Streaming};
 
-const TABLE_NAME: &str = "table_name";
 const HOST: &str = "127.0.0.1";
 
 /// The next port to be used for the server in an integration test. Each test uses a unique port and
@@ -252,6 +251,15 @@ impl TestContext {
         table_name: &str,
     ) -> Result<Response<Streaming<FlightData>>, Status> {
         let ticket = Ticket::new(format!("TRUNCATE TABLE {table_name}"));
+        self.client.do_get(ticket).await
+    }
+
+    /// Vacuum a table in the server through the `do_get()` method.
+    async fn vacuum_table(
+        &mut self,
+        table_name: &str,
+    ) -> Result<Response<Streaming<FlightData>>, Status> {
+        let ticket = Ticket::new(format!("VACUUM {table_name}"));
         self.client.do_get(ticket).await
     }
 
@@ -464,13 +472,13 @@ async fn test_can_create_normal_table() {
     let mut test_context = TestContext::new().await;
 
     test_context
-        .create_table(TABLE_NAME, TableType::NormalTable)
+        .create_table(NORMAL_TABLE_NAME, TableType::NormalTable)
         .await;
 
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
-    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+    assert_eq!(retrieved_table_names[0], NORMAL_TABLE_NAME);
 }
 
 #[tokio::test]
@@ -478,7 +486,7 @@ async fn test_can_register_normal_table_after_restart() {
     let mut test_context = TestContext::new().await;
 
     test_context
-        .create_table(TABLE_NAME, TableType::NormalTable)
+        .create_table(NORMAL_TABLE_NAME, TableType::NormalTable)
         .await;
 
     test_context.restart_server().await;
@@ -486,7 +494,7 @@ async fn test_can_register_normal_table_after_restart() {
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
-    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+    assert_eq!(retrieved_table_names[0], NORMAL_TABLE_NAME);
 }
 
 #[tokio::test]
@@ -494,13 +502,13 @@ async fn test_can_create_time_series_table() {
     let mut test_context = TestContext::new().await;
 
     test_context
-        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
+        .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
-    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+    assert_eq!(retrieved_table_names[0], TIME_SERIES_TABLE_NAME);
 }
 
 #[tokio::test]
@@ -508,7 +516,7 @@ async fn test_can_register_time_series_table_after_restart() {
     let mut test_context = TestContext::new().await;
 
     test_context
-        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
+        .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     test_context.restart_server().await;
@@ -516,7 +524,7 @@ async fn test_can_register_time_series_table_after_restart() {
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
-    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+    assert_eq!(retrieved_table_names[0], TIME_SERIES_TABLE_NAME);
 }
 
 #[tokio::test]
@@ -571,13 +579,13 @@ async fn test_can_create_register_and_list_multiple_normal_tables_and_time_serie
 async fn test_can_drop_normal_table() {
     let mut test_context = TestContext::new().await;
     test_context
-        .create_table(TABLE_NAME, TableType::NormalTable)
+        .create_table(NORMAL_TABLE_NAME, TableType::NormalTable)
         .await;
 
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
-    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+    assert_eq!(retrieved_table_names[0], NORMAL_TABLE_NAME);
 
-    test_context.drop_table(TABLE_NAME).await.unwrap();
+    test_context.drop_table(NORMAL_TABLE_NAME).await.unwrap();
 
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names.len(), 0);
@@ -585,7 +593,7 @@ async fn test_can_drop_normal_table() {
     // It should be possible to create a normal table, drop it, and then create a new normal table
     // with the same name.
     test_context
-        .create_table(TABLE_NAME, TableType::NormalTable)
+        .create_table(NORMAL_TABLE_NAME, TableType::NormalTable)
         .await;
 }
 
@@ -593,13 +601,16 @@ async fn test_can_drop_normal_table() {
 async fn test_can_drop_time_series_table() {
     let mut test_context = TestContext::new().await;
     test_context
-        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
+        .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
-    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+    assert_eq!(retrieved_table_names[0], TIME_SERIES_TABLE_NAME);
 
-    test_context.drop_table(TABLE_NAME).await.unwrap();
+    test_context
+        .drop_table(TIME_SERIES_TABLE_NAME)
+        .await
+        .unwrap();
 
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names.len(), 0);
@@ -607,7 +618,7 @@ async fn test_can_drop_time_series_table() {
     // It should be possible to create a time series table, drop it, and then create a new time
     // series table with the same name.
     test_context
-        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
+        .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 }
 
@@ -615,7 +626,7 @@ async fn test_can_drop_time_series_table() {
 async fn test_cannot_drop_missing_table() {
     let mut test_context = TestContext::new().await;
 
-    let result = test_context.drop_table(TABLE_NAME).await;
+    let result = test_context.drop_table(NORMAL_TABLE_NAME).await;
     assert!(result.is_err());
 }
 
@@ -627,14 +638,18 @@ async fn test_can_truncate_normal_table() {
     ingest_time_series_and_flush_data(
         &mut test_context,
         slice::from_ref(&time_series),
+        NORMAL_TABLE_NAME,
         TableType::NormalTable,
     )
     .await;
 
-    test_context.truncate_table(TABLE_NAME).await.unwrap();
+    test_context
+        .truncate_table(NORMAL_TABLE_NAME)
+        .await
+        .unwrap();
 
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT * FROM {NORMAL_TABLE_NAME}"))
         .await
         .unwrap();
 
@@ -650,14 +665,18 @@ async fn test_can_truncate_time_series_table() {
     ingest_time_series_and_flush_data(
         &mut test_context,
         slice::from_ref(&time_series),
+        TIME_SERIES_TABLE_NAME,
         TableType::TimeSeriesTable,
     )
     .await;
 
-    test_context.truncate_table(TABLE_NAME).await.unwrap();
+    test_context
+        .truncate_table(TIME_SERIES_TABLE_NAME)
+        .await
+        .unwrap();
 
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}"))
         .await
         .unwrap();
 
@@ -669,7 +688,100 @@ async fn test_can_truncate_time_series_table() {
 async fn test_cannot_truncate_missing_table() {
     let mut test_context = TestContext::new().await;
 
-    let result = test_context.truncate_table(TABLE_NAME).await;
+    let result = test_context.truncate_table(NORMAL_TABLE_NAME).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_can_vacuum_normal_table() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .update_configuration(
+            protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
+            Some(0),
+        )
+        .await
+        .unwrap();
+
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        slice::from_ref(&time_series),
+        NORMAL_TABLE_NAME,
+        TableType::NormalTable,
+    )
+    .await;
+
+    test_context
+        .truncate_table(NORMAL_TABLE_NAME)
+        .await
+        .unwrap();
+
+    // The files should still exist on disk even though they are no longer active.
+    let table_path = format!(
+        "{}/tables/{}",
+        test_context.temp_dir.path().to_str().unwrap(),
+        NORMAL_TABLE_NAME
+    );
+    let files = std::fs::read_dir(&table_path).unwrap();
+    assert_eq!(files.count(), 2);
+
+    test_context.vacuum_table(NORMAL_TABLE_NAME).await.unwrap();
+
+    // Only the _delta_log folder should remain.
+    let files = std::fs::read_dir(&table_path).unwrap();
+    assert_eq!(files.count(), 1);
+}
+
+#[tokio::test]
+async fn test_can_vacuum_time_series_table() {
+    let mut test_context = TestContext::new().await;
+    test_context
+        .update_configuration(
+            protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
+            Some(0),
+        )
+        .await
+        .unwrap();
+
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        slice::from_ref(&time_series),
+        TIME_SERIES_TABLE_NAME,
+        TableType::TimeSeriesTable,
+    )
+    .await;
+
+    test_context
+        .truncate_table(TIME_SERIES_TABLE_NAME)
+        .await
+        .unwrap();
+
+    // The files should still exist on disk even though they are no longer active.
+    let column_path = format!(
+        "{}/tables/{}/field_column=1",
+        test_context.temp_dir.path().to_str().unwrap(),
+        TIME_SERIES_TABLE_NAME
+    );
+    let files = std::fs::read_dir(&column_path).unwrap();
+    assert_eq!(files.count(), 1);
+
+    test_context
+        .vacuum_table(TIME_SERIES_TABLE_NAME)
+        .await
+        .unwrap();
+
+    // No files should remain in the column folder.
+    let files = std::fs::read_dir(&column_path).unwrap();
+    assert_eq!(files.count(), 0);
+}
+
+#[tokio::test]
+async fn test_cannot_vacuum_missing_table() {
+    let mut test_context = TestContext::new().await;
+
+    let result = test_context.vacuum_table(NORMAL_TABLE_NAME).await;
     assert!(result.is_err());
 }
 
@@ -678,10 +790,10 @@ async fn test_can_get_schema() {
     let mut test_context = TestContext::new().await;
 
     test_context
-        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
+        .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
-    let schema = test_context.retrieve_schema(TABLE_NAME).await;
+    let schema = test_context.retrieve_schema(TIME_SERIES_TABLE_NAME).await;
 
     assert_eq!(
         schema,
@@ -737,12 +849,13 @@ async fn test_do_put_can_ingest_time_series_with_tags() {
     ingest_time_series_and_flush_data(
         &mut test_context,
         slice::from_ref(&time_series),
+        TIME_SERIES_TABLE_NAME,
         TableType::TimeSeriesTable,
     )
     .await;
 
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}"))
         .await
         .unwrap();
 
@@ -753,12 +866,12 @@ async fn test_do_put_can_ingest_time_series_with_tags() {
 async fn test_insert_can_ingest_time_series_with_tags() {
     let mut test_context = TestContext::new().await;
     test_context
-        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
+        .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     let insert_result = test_context
         .execute_query(format!(
-            "INSERT INTO {TABLE_NAME} VALUES\
+            "INSERT INTO {TIME_SERIES_TABLE_NAME} VALUES\
              ('2020-01-01 13:00:00', 1, 2, 3, 4, 5, 'Aalborg'),\
              ('2020-01-01 13:00:01', 1, 2, 3, 4, 5, 'Aalborg'),\
              ('2020-01-01 13:00:02', 1, 2, 3, 4, 5, 'Aalborg'),\
@@ -771,7 +884,7 @@ async fn test_insert_can_ingest_time_series_with_tags() {
 
     test_context.flush_data_to_disk().await;
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}"))
         .await
         .unwrap();
 
@@ -788,12 +901,13 @@ async fn test_do_put_can_ingest_time_series_without_tags() {
     ingest_time_series_and_flush_data(
         &mut test_context,
         slice::from_ref(&time_series),
+        TIME_SERIES_TABLE_NAME,
         TableType::TimeSeriesTableNoTag,
     )
     .await;
 
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}"))
         .await
         .unwrap();
 
@@ -804,12 +918,12 @@ async fn test_do_put_can_ingest_time_series_without_tags() {
 async fn test_insert_can_ingest_time_series_without_tags() {
     let mut test_context = TestContext::new().await;
     test_context
-        .create_table(TABLE_NAME, TableType::TimeSeriesTableNoTag)
+        .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTableNoTag)
         .await;
 
     let insert_result = test_context
         .execute_query(format!(
-            "INSERT INTO {TABLE_NAME} VALUES\
+            "INSERT INTO {TIME_SERIES_TABLE_NAME} VALUES\
              ('2020-01-01 13:00:00', 1, 2, 3, 4, 5),\
              ('2020-01-01 13:00:01', 1, 2, 3, 4, 5),\
              ('2020-01-01 13:00:02', 1, 2, 3, 4, 5),\
@@ -822,7 +936,7 @@ async fn test_insert_can_ingest_time_series_without_tags() {
 
     test_context.flush_data_to_disk().await;
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}"))
         .await
         .unwrap();
 
@@ -839,13 +953,16 @@ async fn test_do_put_can_ingest_time_series_with_generated_field() {
     ingest_time_series_and_flush_data(
         &mut test_context,
         slice::from_ref(&time_series),
+        TIME_SERIES_TABLE_NAME,
         TableType::TimeSeriesTableAsField,
     )
     .await;
 
     // The optimizer is allowed to add SortedJoinExec between SortedJoinExec and GeneratedAsExec.
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"))
+        .execute_query(format!(
+            "SELECT * FROM {TIME_SERIES_TABLE_NAME} ORDER BY timestamp"
+        ))
         .await
         .unwrap();
 
@@ -860,12 +977,12 @@ async fn test_do_put_can_ingest_time_series_with_generated_field() {
 async fn test_insert_can_ingest_time_series_with_generated_field() {
     let mut test_context = TestContext::new().await;
     test_context
-        .create_table(TABLE_NAME, TableType::TimeSeriesTableAsField)
+        .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTableAsField)
         .await;
 
     let insert_result = test_context
         .execute_query(format!(
-            "INSERT INTO {TABLE_NAME} VALUES\
+            "INSERT INTO {TIME_SERIES_TABLE_NAME} VALUES\
              ('2020-01-01 13:00:00', 1, 2, 3, 4),\
              ('2020-01-01 13:00:01', 1, 2, 3, 4),\
              ('2020-01-01 13:00:02', 1, 2, 3, 4),\
@@ -878,7 +995,7 @@ async fn test_insert_can_ingest_time_series_with_generated_field() {
 
     test_context.flush_data_to_disk().await;
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}"))
         .await
         .unwrap();
 
@@ -897,12 +1014,17 @@ async fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
         TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
     let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
-    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::TimeSeriesTable)
-        .await;
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        time_series,
+        TIME_SERIES_TABLE_NAME,
+        TableType::TimeSeriesTable,
+    )
+    .await;
 
     let query_result = test_context
         .execute_query(format!(
-            "SELECT * FROM {TABLE_NAME} ORDER BY tag, timestamp"
+            "SELECT * FROM {TIME_SERIES_TABLE_NAME} ORDER BY tag, timestamp"
         ))
         .await
         .unwrap();
@@ -921,11 +1043,13 @@ async fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
 async fn test_cannot_ingest_invalid_time_series() {
     let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
-    let flight_data =
-        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), &[time_series]);
+    let flight_data = TestContext::create_flight_data_from_time_series(
+        TIME_SERIES_TABLE_NAME.to_owned(),
+        &[time_series],
+    );
 
     test_context
-        .create_table(TABLE_NAME, TableType::TimeSeriesTable)
+        .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
     assert!(
@@ -938,7 +1062,7 @@ async fn test_cannot_ingest_invalid_time_series() {
     test_context.flush_data_to_disk().await;
 
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}"))
         .await
         .unwrap();
     assert_eq!(query_result.num_rows(), 0);
@@ -965,6 +1089,7 @@ async fn execute_and_assert_include_select(address_count: usize) {
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series],
+        TIME_SERIES_TABLE_NAME,
         TableType::TimeSeriesTable,
     )
     .await;
@@ -975,7 +1100,9 @@ async fn execute_and_assert_include_select(address_count: usize) {
     let address = addresses_separate.join(", ");
 
     let query_result = test_context
-        .execute_query(format!("INCLUDE {address} SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!(
+            "INCLUDE {address} SELECT * FROM {TIME_SERIES_TABLE_NAME}"
+        ))
         .await
         .unwrap();
 
@@ -984,32 +1111,47 @@ async fn execute_and_assert_include_select(address_count: usize) {
 
 #[tokio::test]
 async fn test_count_from_segments_equals_count_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0)
-        .await;
+    assert_ne_query_plans_and_eq_result(
+        format!("SELECT COUNT(field_one) FROM {TIME_SERIES_TABLE_NAME}"),
+        0.0,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn test_min_from_segments_equals_min_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"), 0.0)
-        .await;
+    assert_ne_query_plans_and_eq_result(
+        format!("SELECT MIN(field_one) FROM {TIME_SERIES_TABLE_NAME}"),
+        0.0,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn test_max_from_segments_equals_max_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"), 0.0)
-        .await;
+    assert_ne_query_plans_and_eq_result(
+        format!("SELECT MAX(field_one) FROM {TIME_SERIES_TABLE_NAME}"),
+        0.0,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn test_sum_from_segments_equals_sum_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"), 0.001)
-        .await;
+    assert_ne_query_plans_and_eq_result(
+        format!("SELECT SUM(field_one) FROM {TIME_SERIES_TABLE_NAME}"),
+        0.001,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn test_avg_from_segments_equals_avg_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001)
-        .await;
+    assert_ne_query_plans_and_eq_result(
+        format!("SELECT AVG(field_one) FROM {TIME_SERIES_TABLE_NAME}"),
+        0.001,
+    )
+    .await;
 }
 
 /// Asserts that the query executed on segments in `segment_query` returns a result within
@@ -1030,6 +1172,7 @@ async fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound:
     ingest_time_series_and_flush_data(
         &mut test_context,
         &[time_series],
+        TIME_SERIES_TABLE_NAME,
         TableType::TimeSeriesTable,
     )
     .await;
@@ -1090,12 +1233,13 @@ async fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound:
 async fn ingest_time_series_and_flush_data(
     test_context: &mut TestContext,
     time_series: &[RecordBatch],
+    table_name: &str,
     table_type: TableType,
 ) {
     let flight_data =
-        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
+        TestContext::create_flight_data_from_time_series(table_name.to_owned(), time_series);
 
-    test_context.create_table(TABLE_NAME, table_type).await;
+    test_context.create_table(table_name, table_type).await;
 
     test_context
         .send_time_series_to_server(flight_data)
@@ -1129,6 +1273,7 @@ async fn test_can_get_configuration() {
         Some(64 * 1024 * 1024)
     );
     assert_eq!(configuration.transfer_time_in_seconds, None);
+    assert_eq!(configuration.retention_period_in_seconds, 60 * 60 * 24 * 7);
     assert_eq!(configuration.ingestion_threads, 1);
     assert_eq!(configuration.compression_threads, 1);
     assert_eq!(configuration.writer_threads, 1);
@@ -1168,6 +1313,16 @@ async fn test_can_update_compressed_reserved_memory_in_bytes() {
     .await;
 
     assert_eq!(updated_configuration.compressed_reserved_memory_in_bytes, 1);
+}
+
+#[tokio::test]
+async fn test_can_update_retention_period_in_seconds() {
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
+    )
+    .await;
+
+    assert_eq!(updated_configuration.retention_period_in_seconds, 1);
 }
 
 async fn update_and_get_configuration(setting: i32) -> protocol::Configuration {
@@ -1221,6 +1376,7 @@ async fn test_cannot_update_non_nullable_setting_with_null_value() {
         protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::CompressedReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
     ] {
         update_configuration_and_assert_error(
             setting,

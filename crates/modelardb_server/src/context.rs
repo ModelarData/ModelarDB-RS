@@ -350,6 +350,24 @@ impl Context {
         Ok(())
     }
 
+    /// Vacuum the table with `table_name` if it exists. If the table does not exist or if it could
+    /// not be vacuumed, [`ModelarDbServerError`] is returned.
+    pub async fn vacuum_table(&self, table_name: &str) -> Result<()> {
+        let retention_period_in_seconds = self
+            .configuration_manager
+            .read()
+            .await
+            .retention_period_in_seconds();
+
+        self.data_folders
+            .local_data_folder
+            .delta_lake
+            .vacuum_table(table_name, retention_period_in_seconds)
+            .await?;
+
+        Ok(())
+    }
+
     /// Lookup the [`TimeSeriesTableMetadata`] of the time series table with name `table_name` if it
     /// exists. Specifically, the method returns:
     /// * [`TimeSeriesTableMetadata`] if a time series table with the name `table_name` exists.
@@ -426,9 +444,10 @@ impl Context {
 mod tests {
     use super::*;
 
-    use crate::data_folders::DataFolder;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use tempfile::TempDir;
+
+    use crate::data_folders::DataFolder;
 
     // Tests for Context.
     #[tokio::test]
@@ -706,12 +725,7 @@ mod tests {
     #[tokio::test]
     async fn test_truncate_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(&temp_dir).await;
-
-        context
-            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
-            .await
-            .unwrap();
+        let context = create_context_with_normal_table(&temp_dir).await;
 
         let local_data_folder = &context.data_folders.local_data_folder;
         let mut delta_table = local_data_folder
@@ -720,17 +734,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Write data to the normal table that should be deleted when the table is truncated.
-        local_data_folder
-            .delta_lake
-            .write_record_batches_to_normal_table(
-                NORMAL_TABLE_NAME,
-                vec![table::normal_table_record_batch()],
-            )
-            .await
-            .unwrap();
-
-        delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 1);
 
         context.truncate_table(NORMAL_TABLE_NAME).await.unwrap();
@@ -752,12 +755,7 @@ mod tests {
     #[tokio::test]
     async fn test_truncate_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(&temp_dir).await;
-
-        context
-            .create_time_series_table(&table::time_series_table_metadata())
-            .await
-            .unwrap();
+        let context = create_context_with_time_series_table(&temp_dir).await;
 
         let local_data_folder = &context.data_folders.local_data_folder;
         let mut delta_table = local_data_folder
@@ -766,18 +764,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Write data to the time series table that should be deleted when the table is truncated.
-        let record_batch = table::compressed_segments_record_batch();
-        local_data_folder
-            .delta_lake
-            .write_compressed_segments_to_time_series_table(
-                TIME_SERIES_TABLE_NAME,
-                vec![record_batch],
-            )
-            .await
-            .unwrap();
-
-        delta_table.load().await.unwrap();
         assert_eq!(delta_table.get_files_count(), 1);
 
         context
@@ -810,6 +796,122 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_normal_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context_with_normal_table(&temp_dir).await;
+
+        context
+            .configuration_manager
+            .write()
+            .await
+            .set_retention_period_in_seconds(0);
+
+        context.truncate_table(NORMAL_TABLE_NAME).await.unwrap();
+
+        // The files should still exist on disk even though they are no longer active.
+        let table_path = format!(
+            "{}/tables/{}",
+            temp_dir.path().to_str().unwrap(),
+            NORMAL_TABLE_NAME
+        );
+        let files = std::fs::read_dir(&table_path).unwrap();
+        assert_eq!(files.count(), 2);
+
+        context.vacuum_table(NORMAL_TABLE_NAME).await.unwrap();
+
+        // Only the _delta_log folder should remain.
+        let files = std::fs::read_dir(&table_path).unwrap();
+        assert_eq!(files.count(), 1);
+    }
+
+    /// Create a [`Context`] with a normal table named `NORMAL_TABLE_NAME` and write data to it.
+    async fn create_context_with_normal_table(temp_dir: &TempDir) -> Arc<Context> {
+        let context = create_context(temp_dir).await;
+
+        context
+            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
+            .await
+            .unwrap();
+
+        // Write data to the normal table.
+        let local_data_folder = &context.data_folders.local_data_folder;
+        local_data_folder
+            .delta_lake
+            .write_record_batches_to_normal_table(
+                NORMAL_TABLE_NAME,
+                vec![table::normal_table_record_batch()],
+            )
+            .await
+            .unwrap();
+
+        context
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_time_series_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context_with_time_series_table(&temp_dir).await;
+
+        context
+            .configuration_manager
+            .write()
+            .await
+            .set_retention_period_in_seconds(0);
+
+        context
+            .truncate_table(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // The files should still exist on disk even though they are no longer active.
+        let column_path = format!(
+            "{}/tables/{}/field_column=0",
+            temp_dir.path().to_str().unwrap(),
+            TIME_SERIES_TABLE_NAME
+        );
+        let files = std::fs::read_dir(&column_path).unwrap();
+        assert_eq!(files.count(), 1);
+
+        context.vacuum_table(TIME_SERIES_TABLE_NAME).await.unwrap();
+
+        // No files should remain in the column folder.
+        let files = std::fs::read_dir(&column_path).unwrap();
+        assert_eq!(files.count(), 0);
+    }
+
+    /// Create a [`Context`] with a time series table named `TIME_SERIES_TABLE_NAME` and write data
+    /// to it.
+    async fn create_context_with_time_series_table(temp_dir: &TempDir) -> Arc<Context> {
+        let context = create_context(temp_dir).await;
+
+        context
+            .create_time_series_table(&table::time_series_table_metadata())
+            .await
+            .unwrap();
+
+        // Write data to the time series table.
+        let local_data_folder = &context.data_folders.local_data_folder;
+        local_data_folder
+            .delta_lake
+            .write_compressed_segments_to_time_series_table(
+                TIME_SERIES_TABLE_NAME,
+                vec![table::compressed_segments_record_batch()],
+            )
+            .await
+            .unwrap();
+
+        context
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        assert!(context.vacuum_table(TIME_SERIES_TABLE_NAME).await.is_err());
     }
 
     #[tokio::test]

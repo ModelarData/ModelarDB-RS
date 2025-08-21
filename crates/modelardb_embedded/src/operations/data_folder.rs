@@ -17,6 +17,7 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::env;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::path::Path as StdPath;
 use std::pin::Pin;
@@ -851,6 +852,24 @@ impl Operations for DataFolder {
 
         Ok(())
     }
+
+    /// Vacuum the table with the name in `table_name`. If the table does not exist or the
+    /// table could not be vacuumed, [`ModelarDbEmbeddedError`] is returned.
+    async fn vacuum(&mut self, table_name: &str) -> Result<()> {
+        if self.tables().await?.contains(&table_name.to_owned()) {
+            let retention_period_in_seconds = env::var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS")
+                .map_or(60 * 60 * 24 * 7, |value| value.parse().unwrap());
+
+            self.delta_lake
+                .vacuum_table(table_name, retention_period_in_seconds)
+                .await
+                .map_err(|error| error.into())
+        } else {
+            Err(ModelarDbEmbeddedError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
+        }
+    }
 }
 
 /// Sort the `uncompressed_data` from the time series table with `time_series_table_metadata`
@@ -922,6 +941,8 @@ fn schemas_are_compatible(source_schema: &Schema, target_schema: &Schema) -> boo
 mod tests {
     use super::*;
 
+    use std::sync::{LazyLock, Mutex};
+
     use arrow::array::{Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array};
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
@@ -941,6 +962,9 @@ mod tests {
     const MISSING_TABLE_NAME: &str = "missing_table";
     const TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME: &str = "time_series_table_with_generated";
     const INVALID_COLUMN_NAME: &str = "invalid_column";
+
+    /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
+    static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[tokio::test]
     async fn test_create_normal_table() {
@@ -2531,6 +2555,87 @@ mod tests {
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder.truncate(MISSING_TABLE_NAME).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' does not exist."
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_normal_table() {
+        // env::set_var is safe to call in a single-threaded program.
+        unsafe {
+            let _mutex_guard = SET_VAR_LOCK.lock();
+            env::set_var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS", "0");
+        }
+
+        let (temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
+
+        data_folder
+            .write(NORMAL_TABLE_NAME, normal_table_data())
+            .await
+            .unwrap();
+
+        data_folder.truncate(NORMAL_TABLE_NAME).await.unwrap();
+
+        // The files should still exist on disk even though they are no longer active.
+        let table_path = format!(
+            "{}/tables/{}",
+            temp_dir.path().to_str().unwrap(),
+            NORMAL_TABLE_NAME
+        );
+        let files = std::fs::read_dir(&table_path).unwrap();
+        assert_eq!(files.count(), 2);
+
+        data_folder.vacuum(NORMAL_TABLE_NAME).await.unwrap();
+
+        // Only the _delta_log folder should remain.
+        let files = std::fs::read_dir(&table_path).unwrap();
+        assert_eq!(files.count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_time_series_table() {
+        // env::set_var is safe to call in a single-threaded program.
+        unsafe {
+            let _mutex_guard = SET_VAR_LOCK.lock();
+            env::set_var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS", "0");
+        }
+
+        let (temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
+
+        data_folder
+            .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            .await
+            .unwrap();
+
+        data_folder.truncate(TIME_SERIES_TABLE_NAME).await.unwrap();
+
+        // The files should still exist on disk even though they are no longer active.
+        let column_path = format!(
+            "{}/tables/{}/field_column=3",
+            temp_dir.path().to_str().unwrap(),
+            TIME_SERIES_TABLE_NAME
+        );
+        let files = std::fs::read_dir(&column_path).unwrap();
+        assert_eq!(files.count(), 1);
+
+        data_folder.vacuum(TIME_SERIES_TABLE_NAME).await.unwrap();
+
+        // No files should remain in the column folder.
+        let files = std::fs::read_dir(&column_path).unwrap();
+        assert_eq!(files.count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let result = data_folder.vacuum(MISSING_TABLE_NAME).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),

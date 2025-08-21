@@ -107,6 +107,9 @@ pub trait Operations: Sync + Send {
 
     /// Drop the table with the name in `table_name`.
     async fn drop(&mut self, table_name: &str) -> Result<()>;
+
+    /// Vacuum the table with the name in `table_name`.
+    async fn vacuum(&mut self, table_name: &str) -> Result<()>;
 }
 
 /// Use the time series table metadata in `table_name`, `schema`, `error_bounds`, and `generated_columns`

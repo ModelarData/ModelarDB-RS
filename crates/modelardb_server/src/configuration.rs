@@ -45,6 +45,8 @@ pub struct ConfigurationManager {
     /// The number of seconds between each transfer of data to the remote object store. If [`None`],
     /// data is not transferred based on time.
     transfer_time_in_seconds: Option<usize>,
+    /// The number of seconds to retain deleted data in storage before it can be removed by vacuum.
+    retention_period_in_seconds: usize,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
     pub(crate) ingestion_threads: usize,
@@ -74,6 +76,9 @@ impl ConfigurationManager {
         let transfer_time_in_seconds = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS")
             .map_or(None, |value| Some(value.parse().unwrap()));
 
+        let retention_period_in_seconds = env::var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS")
+            .map_or(60 * 60 * 24 * 7, |value| value.parse().unwrap());
+
         Self {
             cluster_mode,
             multivariate_reserved_memory_in_bytes,
@@ -81,6 +86,7 @@ impl ConfigurationManager {
             compressed_reserved_memory_in_bytes,
             transfer_batch_size_in_bytes,
             transfer_time_in_seconds,
+            retention_period_in_seconds,
             // TODO: Add support for running multiple threads per component. The individual
             // components in the storage engine have not been validated with multiple threads, e.g.,
             // UncompressedDataManager may have race conditions finishing buffers if multiple
@@ -217,6 +223,18 @@ impl ConfigurationManager {
         Ok(())
     }
 
+    pub(crate) fn retention_period_in_seconds(&self) -> usize {
+        self.retention_period_in_seconds
+    }
+
+    /// Set the new value for the retention period in seconds.
+    pub(crate) fn set_retention_period_in_seconds(
+        &mut self,
+        new_retention_period_in_seconds: usize,
+    ) {
+        self.retention_period_in_seconds = new_retention_period_in_seconds;
+    }
+
     /// Encode the current configuration into a [`Configuration`](protocol::Configuration)
     /// protobuf message and serialize it.
     pub(crate) fn encode_and_serialize(&self) -> Vec<u8> {
@@ -228,6 +246,7 @@ impl ConfigurationManager {
             compressed_reserved_memory_in_bytes: self.compressed_reserved_memory_in_bytes as u64,
             transfer_batch_size_in_bytes: self.transfer_batch_size_in_bytes.map(|v| v as u64),
             transfer_time_in_seconds: self.transfer_time_in_seconds.map(|v| v as u64),
+            retention_period_in_seconds: self.retention_period_in_seconds as u64,
             ingestion_threads: self.ingestion_threads as u32,
             compression_threads: self.compression_threads as u32,
             writer_threads: self.writer_threads as u32,
@@ -268,10 +287,11 @@ mod tests {
             512 * 1024 * 1024
         );
 
+        let new_value = 1024;
         configuration_manager
             .write()
             .await
-            .set_multivariate_reserved_memory_in_bytes(1024, storage_engine)
+            .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
             .await;
 
         assert_eq!(
@@ -279,7 +299,7 @@ mod tests {
                 .read()
                 .await
                 .multivariate_reserved_memory_in_bytes(),
-            1024
+            new_value
         );
     }
 
@@ -296,10 +316,11 @@ mod tests {
             512 * 1024 * 1024
         );
 
+        let new_value = 1024;
         configuration_manager
             .write()
             .await
-            .set_uncompressed_reserved_memory_in_bytes(1024, storage_engine)
+            .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
             .await
             .unwrap();
 
@@ -308,7 +329,7 @@ mod tests {
                 .read()
                 .await
                 .uncompressed_reserved_memory_in_bytes(),
-            1024
+            new_value
         );
     }
 
@@ -325,10 +346,11 @@ mod tests {
             512 * 1024 * 1024
         );
 
+        let new_value = 1024;
         configuration_manager
             .write()
             .await
-            .set_compressed_reserved_memory_in_bytes(1024, storage_engine)
+            .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
             .await
             .unwrap();
 
@@ -337,7 +359,7 @@ mod tests {
                 .read()
                 .await
                 .compressed_reserved_memory_in_bytes(),
-            1024
+            new_value
         );
     }
 
@@ -354,10 +376,11 @@ mod tests {
             Some(64 * 1024 * 1024)
         );
 
+        let new_value = Some(1024);
         configuration_manager
             .write()
             .await
-            .set_transfer_batch_size_in_bytes(Some(1024), storage_engine)
+            .set_transfer_batch_size_in_bytes(new_value, storage_engine)
             .await
             .unwrap();
 
@@ -366,7 +389,7 @@ mod tests {
                 .read()
                 .await
                 .transfer_batch_size_in_bytes(),
-            Some(1024)
+            new_value
         );
     }
 
@@ -383,10 +406,11 @@ mod tests {
             None
         );
 
+        let new_value = Some(60);
         configuration_manager
             .write()
             .await
-            .set_transfer_time_in_seconds(Some(60), storage_engine)
+            .set_transfer_time_in_seconds(new_value, storage_engine)
             .await
             .unwrap();
 
@@ -395,7 +419,35 @@ mod tests {
                 .read()
                 .await
                 .transfer_time_in_seconds(),
-            Some(60)
+            new_value
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_retention_period_in_seconds() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_, configuration_manager) = create_components(&temp_dir).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .retention_period_in_seconds(),
+            60 * 60 * 24 * 7
+        );
+
+        let new_value = 60;
+        configuration_manager
+            .write()
+            .await
+            .set_retention_period_in_seconds(new_value);
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .retention_period_in_seconds(),
+            new_value
         );
     }
 

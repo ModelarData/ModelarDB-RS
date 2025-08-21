@@ -434,7 +434,7 @@ impl FlightService for FlightServiceHandler {
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
     /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, EXPLAIN, INCLUDE,
-    /// SELECT, INSERT, TRUNCATE TABLE, and DROP TABLE are supported.
+    /// SELECT, INSERT, TRUNCATE TABLE, DROP TABLE, and VACUUM are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -510,6 +510,25 @@ impl FlightService for FlightServiceHandler {
                 for table_name in table_names {
                     self.context
                         .drop_table(&table_name)
+                        .await
+                        .map_err(error_to_status_invalid_argument)?;
+                }
+
+                Ok(empty_record_batch_stream())
+            }
+            ModelarDbStatement::Vacuum(mut table_names) => {
+                // Vacuum all tables if no table names are provided.
+                if table_names.is_empty() {
+                    table_names = self
+                        .context
+                        .default_database_schema()
+                        .map_err(error_to_status_internal)?
+                        .table_names();
+                };
+
+                for table_name in table_names {
+                    self.context
+                        .vacuum_table(&table_name)
                         .await
                         .map_err(error_to_status_invalid_argument)?;
                 }
@@ -736,6 +755,13 @@ impl FlightService for FlightServiceHandler {
                         .set_transfer_time_in_seconds(new_value, storage_engine)
                         .await
                         .map_err(error_to_status_internal)
+                }
+                Ok(protocol::update_configuration::Setting::RetentionPeriodInSeconds) => {
+                    let new_value = new_value.ok_or(invalid_null_error)?;
+
+                    configuration_manager.set_retention_period_in_seconds(new_value);
+
+                    Ok(())
                 }
                 _ => Err(Status::unimplemented(format!(
                     "{setting} is not an updatable setting in the server configuration."
