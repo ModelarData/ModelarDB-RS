@@ -175,11 +175,11 @@ impl MacaqueV {
         let factorized_epsilon = abs_error_bound / 2f32.powi(exponent);
         // Rewriting the last 23 - ⌈log2 factorized_epsilon⌉ mantissa bits
         // never exceeds the error bound. However, in that case, one more bit
-        // can be rewritten if the majority of the least mantissa bits are 0.
-        // Thus, we rewrite bits using 23 - ⌊log2 factorized_epsilon⌋ and
+        // can be rewritten if the majority of the least significant mantissa bits
+        // are 0. Thus, we rewrite bits using 23 - ⌊log2 factorized_epsilon⌋ and
         // perform an extra check to ensure the error bound is not exceeded.
         // If the error bound is exceeded, we rewrite 23 - ⌈log2 factorized_epsilon⌉
-        // least mantissa bits.
+        // least significant mantissa bits.
         let mut rewrite_position = 23 - factorized_epsilon.log2().abs().floor() as i32;
         let mut rewritten_value = f32::from_bits(rewrite_bits_by_n(value_as_u32, rewrite_position));
 
@@ -319,7 +319,7 @@ pub fn grid(
     }
 }
 
-// Extract the unbiased exponent from single precision float.
+// Extract the unbiased exponent from `value`.
 fn get_exponent(value: f32) -> i32 {
     let n_bits: u32 = value.to_bits();
     let biased_exponent = ((n_bits >> 23) & 0xff) as i32;

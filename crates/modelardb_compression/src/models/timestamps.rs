@@ -15,21 +15,20 @@
 
 //! Implementation of MacaqueTS, a lossless compression for timestamps. MacaqueTS uses
 //! optimized compression methods depending on the number of data points in a compressed segment
-//! and if its timestamps have been sampled at a regular sampling interval.
-//!
-//! - (1) If a segment only contains one data point, its timestamp is stored as both the segment's
+//! and if its timestamps have been sampled at a regular sampling interval:
+//! * If a segment only contains one data point, its timestamp is stored as both the segment's
 //!   `start_time` and `end_time`.
-//! - (2) If a segment only contains two data points, the timestamps are stored as the segment's
+//! * If a segment only contains two data points, the timestamps are stored as the segment's
 //!   `start_time` and `end_time`, respectively.
-//! - (3) If a segment contains more than two data points, the first and last timestamps
+//! * If a segment contains more than two data points, the first and last timestamps
 //!   are stored as the segment's `start_time` and `end_time`, respectively, while its
-//!   residual timestamps are compressed using one of two methods.
-//!    - (1) If the data points in the segment have been collected at a regular sampling interval,
-//!      the residual timestamps are compressed as the segment's length with the
-//!      prefix zero bits stripped.
-//!    - (2) If none of the above apply, an extended version of the compression method proposed
-//!      for timestamps for the time series management system Gorilla in the [Gorilla paper]
-//!      is used as a fallback.
+//!   residual timestamps are compressed using one of two methods:
+//!   * If the data points in the segment have been collected at a regular sampling interval,
+//!     the residual timestamps are compressed as the segment's length with the
+//!     prefix zero bits stripped.
+//!   * If none of the above apply, an extended version of the compression method proposed
+//!     for timestamps for the time series management system Gorilla in the [Gorilla paper]
+//!     is used as a fallback.
 //!
 //! MacaqueTS extends Gorilla's timestamp compression method by using zero as the first delta
 //! instead of computing it explicitly. MacaqueTS also extends the flag ranges used by Gorilla
