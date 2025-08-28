@@ -18,7 +18,7 @@
 //! paper] by adding support for error-bounded lossy compression, and optimizing flag bits
 //! for better compression of real-life sensor data. MacaqueV adds support for lossy compression by
 //! rewriting the current value with the previous one if possible within the error bound, or
-//! rewriting the least mantissa bits of the value to zero within the error bound so that Gorilla
+//! rewriting the least significant mantissa bits of the value to zero within the error bound so that Gorilla
 //! uses fewer bits for encoding. MacaqueV optimizes Gorilla's flag bits by swapping the flag bits
 //! 0 and 10. The experiments showed this modification's effectiveness when Gorilla is used alongside
 //! PMC-Mean and Swing for multi-model compression. As MacaqueV uses Gorilla that compresses the
@@ -105,7 +105,8 @@ impl MacaqueV {
                 self.last_value
             } else {
                 // When the value rewriting is not possible within the error bound,
-                // the least mantissa bits of the value are rewritten to zero within the error bound.
+                // the least significant mantissa bits of the value are rewritten to zero 
+                // within the error bound.
                 self.rewrite_least_mantissa_bits(value)
             }
         };
