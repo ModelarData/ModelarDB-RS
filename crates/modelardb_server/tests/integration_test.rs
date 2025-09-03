@@ -37,7 +37,9 @@ use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWri
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{StreamExt, stream};
 use modelardb_test::data_generation;
-use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
+use modelardb_test::table::{
+    NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME, normal_table_schema, time_series_table_metadata,
+};
 use modelardb_types::flight::protocol;
 use modelardb_types::types::ErrorBound;
 use prost::Message;
@@ -1404,14 +1406,18 @@ async fn test_can_get_node_type() {
 }
 
 #[tokio::test]
-async fn test_can_create_tables() {
+async fn test_can_create_normal_table_from_metadata() {
     let mut test_context = TestContext::new().await;
 
-    let protobuf_bytes = table::table_metadata_protobuf_bytes();
+    let protobuf_bytes = modelardb_types::flight::encode_and_serialize_normal_table_metadata(
+        NORMAL_TABLE_NAME,
+        &normal_table_schema(),
+    )
+    .unwrap();
 
     let action = Action {
-        body: protobuf_bytes.into(),
         r#type: "CreateTable".to_owned(),
+        body: protobuf_bytes.into(),
     };
 
     test_context
@@ -1420,13 +1426,30 @@ async fn test_can_create_tables() {
         .await
         .unwrap();
 
-    let mut retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
-    retrieved_table_names.sort();
-    assert_eq!(
-        retrieved_table_names,
-        vec![
-            NORMAL_TABLE_NAME.to_owned(),
-            TIME_SERIES_TABLE_NAME.to_owned(),
-        ]
-    );
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
+    assert_eq!(retrieved_table_names[0], NORMAL_TABLE_NAME);
+}
+
+#[tokio::test]
+async fn test_can_create_time_series_table_from_metadata() {
+    let mut test_context = TestContext::new().await;
+
+    let protobuf_bytes = modelardb_types::flight::encode_and_serialize_time_series_table_metadata(
+        &time_series_table_metadata(),
+    )
+    .unwrap();
+
+    let action = Action {
+        r#type: "CreateTable".to_owned(),
+        body: protobuf_bytes.into(),
+    };
+
+    test_context
+        .client
+        .do_action(Request::new(action))
+        .await
+        .unwrap();
+
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
+    assert_eq!(retrieved_table_names[0], TIME_SERIES_TABLE_NAME);
 }

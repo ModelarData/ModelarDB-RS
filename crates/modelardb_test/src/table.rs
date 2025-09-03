@@ -39,24 +39,6 @@ pub const TIME_SERIES_TABLE_SQL: &str = "CREATE TIME SERIES TABLE time_series_ta
 /// Name of the time series table used in tests.
 pub const TIME_SERIES_TABLE_NAME: &str = "time_series_table";
 
-/// Return protobuf message bytes containing metadata for a normal table and a time series table.
-pub fn table_metadata_protobuf_bytes() -> Vec<u8> {
-    let encoded_normal_table = modelardb_types::flight::encode_normal_table_metadata(
-        NORMAL_TABLE_NAME,
-        &normal_table_schema(),
-    )
-    .unwrap();
-
-    let encoded_time_series_table =
-        modelardb_types::flight::encode_time_series_table_metadata(&time_series_table_metadata())
-            .unwrap();
-
-    modelardb_types::flight::serialize_table_metadata(
-        vec![encoded_normal_table],
-        vec![encoded_time_series_table],
-    )
-}
-
 /// Return a [`Schema`] for a normal table with a timestamp column and two floating point columns.
 pub fn normal_table_schema() -> Schema {
     Schema::new(vec![
