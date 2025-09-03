@@ -21,6 +21,7 @@ use std::{env, str};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
+use datafusion::catalog::TableProvider;
 use modelardb_types::flight::protocol;
 use modelardb_types::types::{Node, ServerMode};
 use prost::Message;
@@ -84,24 +85,64 @@ impl Manager {
     }
 
     /// Initialize the local database schema with the normal tables and time series tables from the
-    /// managers database schema. If the tables to create could not be retrieved from the manager,
-    /// or the tables could not be created, return [`ModelarDbServerError`].
+    /// managers database schema using the remote data folder. If the tables to create could not be
+    /// retrieved from the remote data folder, or the tables could not be created,
+    /// return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
-        // Add the already existing tables to the action request.
-        let existing_tables = context.default_database_schema()?.table_names();
-        let database_metadata = protocol::DatabaseMetadata {
-            table_names: existing_tables,
-        };
+        let local_metadata_manager = &context
+            .data_folders
+            .local_data_folder
+            .table_metadata_manager;
 
-        let action = Action {
-            r#type: "InitializeDatabase".to_owned(),
-            body: database_metadata.encode_to_vec().into(),
-        };
+        let remote_data_folder = &context
+            .data_folders
+            .maybe_remote_data_folder
+            .clone()
+            .ok_or(ModelarDbServerError::InvalidState(
+                "Remote data folder is missing.".to_owned(),
+            ))?;
+        let remote_metadata_manager = &remote_data_folder.table_metadata_manager;
 
-        let message = do_action_and_extract_result(&self.flight_client, action).await?;
-        context
-            .create_tables_from_bytes(message.body.into())
-            .await?;
+        let local_table_names = local_metadata_manager.table_names().await?;
+        let remote_table_names = remote_metadata_manager.table_names().await?;
+
+        // Check that all the local tables exist in the cluster's database schema already.
+        let invalid_node_tables: Vec<String> = local_table_names
+            .iter()
+            .filter(|table| !remote_table_names.contains(table))
+            .cloned()
+            .collect();
+
+        if !invalid_node_tables.is_empty() {
+            return Err(ModelarDbServerError::InvalidState(format!(
+                "The following tables do not exist in the cluster's database schema: {invalid_node_tables:?}.",
+            )));
+        }
+
+        // For each table that does not already exist locally, create the table.
+        let missing_cluster_tables = remote_table_names
+            .iter()
+            .filter(|table| !local_table_names.contains(table));
+
+        for table_name in missing_cluster_tables {
+            if remote_metadata_manager.is_normal_table(table_name).await? {
+                let delta_table = remote_data_folder
+                    .delta_lake
+                    .delta_table(table_name)
+                    .await?;
+
+                let schema = TableProvider::schema(&delta_table);
+                context.create_normal_table(&table_name, &schema).await?;
+            } else {
+                let time_series_table_metadata = remote_metadata_manager
+                    .time_series_table_metadata_for_time_series_table(table_name)
+                    .await?;
+
+                context
+                    .create_time_series_table(&time_series_table_metadata)
+                    .await?;
+            };
+        }
 
         Ok(())
     }
