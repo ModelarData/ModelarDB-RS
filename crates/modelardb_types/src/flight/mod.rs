@@ -133,21 +133,6 @@ pub fn encode_and_serialize_normal_table_metadata(
 pub fn encode_and_serialize_time_series_table_metadata(
     time_series_table_metadata: &TimeSeriesTableMetadata,
 ) -> Result<Vec<u8>> {
-    let time_series_table_metadata = encode_time_series_table_metadata(time_series_table_metadata)?;
-    let table_metadata = protocol::TableMetadata {
-        normal_tables: vec![],
-        time_series_tables: vec![time_series_table_metadata],
-    };
-
-    Ok(table_metadata.encode_to_vec())
-}
-
-/// If `schema` can be converted to bytes, encode `time_series_table_metadata` into a
-/// [`TimeSeriesTableMetadata`](protocol::table_metadata::TimeSeriesTableMetadata) protobuf message,
-/// otherwise return [`ModelarDbTypesError`].
-pub fn encode_time_series_table_metadata(
-    time_series_table_metadata: &TimeSeriesTableMetadata,
-) -> Result<protocol::table_metadata::TimeSeriesTableMetadata> {
     let mut generated_column_expressions =
         Vec::with_capacity(time_series_table_metadata.query_schema.fields.len());
     for generated_column in &time_series_table_metadata.generated_columns {
@@ -160,12 +145,18 @@ pub fn encode_time_series_table_metadata(
         }
     }
 
-    Ok(protocol::table_metadata::TimeSeriesTableMetadata {
-        name: time_series_table_metadata.name.clone(),
-        schema: try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?,
-        error_bounds: encode_error_bounds(time_series_table_metadata),
-        generated_column_expressions,
-    })
+    let table_metadata = protocol::TableMetadata {
+        table_metadata: Some(protocol::table_metadata::TableMetadata::TimeSeriesTable(
+            protocol::table_metadata::TimeSeriesTableMetadata {
+                name: time_series_table_metadata.name.clone(),
+                schema: try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?,
+                error_bounds: encode_error_bounds(time_series_table_metadata),
+                generated_column_expressions,
+            },
+        )),
+    };
+
+    Ok(table_metadata.encode_to_vec())
 }
 
 /// Return a vector of serializable protobuf messages for the error bounds of
