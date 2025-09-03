@@ -469,9 +469,7 @@ mod tests {
             local_data_folder,
         );
 
-        let manager = Manager::new(
-            Uuid::new_v4().to_string(),
-        );
+        let manager = Manager::new(Uuid::new_v4().to_string());
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
             ClusterMode::MultiNode(manager),

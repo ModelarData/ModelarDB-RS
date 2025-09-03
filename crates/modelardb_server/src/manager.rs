@@ -130,7 +130,7 @@ impl Manager {
                     .await?;
 
                 let schema = TableProvider::schema(&delta_table);
-                context.create_normal_table(&table_name, &schema).await?;
+                context.create_normal_table(table_name, &schema).await?;
             } else {
                 let time_series_table_metadata = remote_metadata_manager
                     .time_series_table_metadata_for_time_series_table(table_name)
