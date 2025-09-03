@@ -29,7 +29,7 @@ use prost::bytes::Bytes;
 
 use crate::error::{ModelarDbTypesError, Result};
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, TimeSeriesTableMetadata};
+use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, Table, TimeSeriesTableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
@@ -135,6 +135,7 @@ pub fn encode_and_serialize_time_series_table_metadata(
 ) -> Result<Vec<u8>> {
     let mut generated_column_expressions =
         Vec::with_capacity(time_series_table_metadata.query_schema.fields.len());
+
     for generated_column in &time_series_table_metadata.generated_columns {
         if let Some(generated_column) = generated_column {
             let expr_bytes = generated_column.expr.to_bytes()?;
@@ -201,40 +202,35 @@ fn encode_error_bounds(
     error_bounds_all
 }
 
-/// Deserialize and extract the table metadata from `bytes` and return the table metadata as a tuple
-/// of `(normal_table_metadata, time_series_table_metadata)`. `normal_table_metadata` is a vector of
-/// tuples containing the table name and schema of the normal tables. If `bytes` cannot be
-/// deserialized, return [`ModelarDbTypesError`].
-#[allow(clippy::type_complexity)]
-pub fn deserialize_and_extract_table_metadata(
-    bytes: &[u8],
-) -> Result<(Vec<(String, Schema)>, Vec<TimeSeriesTableMetadata>)> {
+/// Deserialize and extract the table metadata from `bytes` and return the table metadata as
+/// a [`Table`]. If `bytes` cannot be deserialized, return [`ModelarDbTypesError`].
+pub fn deserialize_and_extract_table_metadata(bytes: &[u8]) -> Result<Table> {
     let table_metadata = protocol::TableMetadata::decode(bytes)?;
 
-    let mut normal_table_metadata = Vec::new();
-    let mut time_series_table_metadata = Vec::new();
+    match table_metadata.table_metadata {
+        Some(protocol::table_metadata::TableMetadata::NormalTable(normal_table)) => {
+            let schema = try_convert_bytes_to_schema(normal_table.schema)?;
 
-    for normal_table in table_metadata.normal_tables {
-        let schema = try_convert_bytes_to_schema(normal_table.schema)?;
-        normal_table_metadata.push((normal_table.name, schema));
+            Ok(Table::NormalTable(normal_table.name, schema))
+        }
+        Some(protocol::table_metadata::TableMetadata::TimeSeriesTable(time_series_table)) => {
+            let schema = Arc::new(try_convert_bytes_to_schema(time_series_table.schema)?);
+            let metadata = TimeSeriesTableMetadata::try_new(
+                time_series_table.name,
+                schema.clone(),
+                decode_error_bounds(&time_series_table.error_bounds)?,
+                decode_generated_column_expressions(
+                    &time_series_table.generated_column_expressions,
+                    &schema.to_dfschema()?,
+                )?,
+            )?;
+
+            Ok(Table::TimeSeriesTable(metadata))
+        }
+        None => Err(ModelarDbTypesError::InvalidArgument(
+            "Table metadata is missing.".to_owned(),
+        )),
     }
-
-    for time_series_table in table_metadata.time_series_tables {
-        let schema = Arc::new(try_convert_bytes_to_schema(time_series_table.schema)?);
-        let metadata = TimeSeriesTableMetadata::try_new(
-            time_series_table.name,
-            schema.clone(),
-            decode_error_bounds(&time_series_table.error_bounds)?,
-            decode_generated_column_expressions(
-                &time_series_table.generated_column_expressions,
-                &schema.to_dfschema()?,
-            )?,
-        )?;
-
-        time_series_table_metadata.push(metadata);
-    }
-
-    Ok((normal_table_metadata, time_series_table_metadata))
 }
 
 /// Decode the protobuf encoded error bounds into a vector of [`ErrorBound`]. Return
