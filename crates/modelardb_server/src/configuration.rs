@@ -262,11 +262,9 @@ mod tests {
 
     use std::sync::Arc;
 
-    use arrow_flight::flight_service_client::FlightServiceClient;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
-    use tonic::transport::Channel;
     use uuid::Uuid;
 
     use crate::data_folders::{DataFolder, DataFolders};
@@ -471,11 +469,7 @@ mod tests {
             local_data_folder,
         );
 
-        let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
-        let lazy_flight_client = FlightServiceClient::new(channel);
-
         let manager = Manager::new(
-            Arc::new(RwLock::new(lazy_flight_client)),
             Uuid::new_v4().to_string(),
         );
 

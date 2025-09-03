@@ -37,16 +37,14 @@ use crate::error::{ModelarDbServerError, Result};
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
 #[derive(Clone, Debug)]
 pub struct Manager {
-    /// Flight client that is connected to the Apache Arrow Flight server of the manager.
-    flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
     key: String,
 }
 
 impl Manager {
-    pub fn new(flight_client: Arc<RwLock<FlightServiceClient<Channel>>>, key: String) -> Self {
-        Self { flight_client, key }
+    pub fn new(key: String) -> Self {
+        Self { key }
     }
 
     /// Register the server as a node in the cluster and retrieve the key and connection information
@@ -79,7 +77,7 @@ impl Manager {
 
         // unwrap() is safe since the manager always has a remote storage configuration.
         Ok((
-            Manager::new(flight_client, manager_metadata.key),
+            Manager::new(manager_metadata.key),
             manager_metadata.storage_configuration.unwrap(),
         ))
     }
@@ -234,12 +232,6 @@ mod tests {
     }
 
     fn create_manager() -> Manager {
-        let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
-        let lazy_flight_client = FlightServiceClient::new(channel);
-
-        Manager::new(
-            Arc::new(RwLock::new(lazy_flight_client)),
-            Uuid::new_v4().to_string(),
-        )
+        Manager::new(Uuid::new_v4().to_string())
     }
 }
