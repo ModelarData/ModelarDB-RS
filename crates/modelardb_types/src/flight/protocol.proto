@@ -169,9 +169,3 @@ message UpdateConfiguration {
   // New value for the setting.
   optional uint64 new_value = 2;
 }
-
-// Metadata for a ModelarDB database instance.
-message DatabaseMetadata {
-  // Names of the tables in the database.
-  repeated string table_names = 1;
-}
