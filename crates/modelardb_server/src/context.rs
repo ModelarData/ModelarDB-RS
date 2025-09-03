@@ -69,25 +69,6 @@ impl Context {
         })
     }
 
-    /// Deserialize the bytes to a [`TableMetadata`](modelardb_types::flight::protocol::TableMetadata)
-    /// protobuf message and create tables using the metadata in the message. Returns [`ModelarDbServerError`]
-    /// if the bytes could not be deserialized, the table metadata could not be extracted from the
-    /// protobuf message, or the tables could not be created.
-    pub(crate) async fn create_tables_from_bytes(&self, bytes: Vec<u8>) -> Result<()> {
-        let (normal_table_metadata, time_series_table_metadata) =
-            modelardb_types::flight::deserialize_and_extract_table_metadata(&bytes)?;
-
-        for (table_name, schema) in normal_table_metadata {
-            self.create_normal_table(&table_name, &schema).await?;
-        }
-
-        for metadata in time_series_table_metadata {
-            self.create_time_series_table(&metadata).await?;
-        }
-
-        Ok(())
-    }
-
     /// Create a normal table with `name` and `schema`. Returns [`ModelarDbServerError`] if the
     /// table could not be created.
     pub(crate) async fn create_normal_table(&self, name: &str, schema: &Schema) -> Result<()> {
@@ -450,34 +431,6 @@ mod tests {
     use crate::data_folders::DataFolder;
 
     // Tests for Context.
-    #[tokio::test]
-    async fn test_create_tables_from_bytes() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(&temp_dir).await;
-
-        let protobuf_bytes = table::table_metadata_protobuf_bytes();
-
-        context
-            .create_tables_from_bytes(protobuf_bytes)
-            .await
-            .unwrap();
-
-        // Both a normal table and a time series table should be created.
-        assert!(
-            context
-                .check_if_table_exists(NORMAL_TABLE_NAME)
-                .await
-                .is_err()
-        );
-
-        assert!(
-            context
-                .check_if_table_exists(TIME_SERIES_TABLE_NAME)
-                .await
-                .is_err()
-        );
-    }
-
     #[tokio::test]
     async fn test_create_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
