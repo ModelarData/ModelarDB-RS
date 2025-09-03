@@ -830,7 +830,7 @@ async fn test_can_list_actions() {
     assert_eq!(
         actions,
         vec![
-            "CreateTables",
+            "CreateTable",
             "FlushMemory",
             "FlushNode",
             "GetConfiguration",
@@ -1410,8 +1410,8 @@ async fn test_can_create_tables() {
     let protobuf_bytes = table::table_metadata_protobuf_bytes();
 
     let action = Action {
-        r#type: "CreateTables".to_owned(),
         body: protobuf_bytes.into(),
+        r#type: "CreateTable".to_owned(),
     };
 
     test_context

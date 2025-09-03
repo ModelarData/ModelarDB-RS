@@ -201,7 +201,7 @@ impl FlightServiceHandler {
                 .map_err(error_to_status_internal)?;
 
         let action = Action {
-            r#type: "CreateTables".to_owned(),
+            r#type: "CreateTable".to_owned(),
             body: protobuf_bytes.into(),
         };
 
@@ -250,7 +250,7 @@ impl FlightServiceHandler {
             .map_err(error_to_status_internal)?;
 
         let action = Action {
-            r#type: "CreateTables".to_owned(),
+            r#type: "CreateTable".to_owned(),
             body: protobuf_bytes.into(),
         };
 
