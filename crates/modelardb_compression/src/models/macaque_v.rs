@@ -18,12 +18,13 @@
 //! paper] by adding support for error-bounded lossy compression, and optimizing flag bits
 //! for better compression of real-life sensor data. MacaqueV adds support for lossy compression by
 //! rewriting the current value with the previous one if possible within the error bound, or
-//! rewriting the least significant mantissa bits of the value to zero within the error bound so that Gorilla
-//! uses fewer bits for encoding. MacaqueV optimizes Gorilla's flag bits by swapping the flag bits
-//! 0 and 10. The experiments showed this modification's effectiveness when Gorilla is used alongside
-//! PMC-Mean and Swing for multi-model compression. As MacaqueV uses Gorilla that compresses the
-//! values of a time series segment using XOR and a variable length binary encoding, aggregates
-//! are computed by iterating over all values in the segment.
+//! rewriting the least significant mantissa bits of the value to zero within the error bound so
+//! that Gorilla uses fewer bits for encoding. MacaqueV optimizes Gorilla's flag bits by swapping the
+//! flag bits 0 and 10. Experiments showed that this modification is very effective when Gorilla is used
+//! after PMC-Mean and Swing i.e., for compressing residuals. This is because neighboring residuals
+//! have rarely the same value and they are mostly similar to each other. As MacaqueV uses Gorilla
+//! that compresses the values of a time series segment using XOR and a variable length binary encoding,
+//! aggregates are computed by iterating over all values in the segment.
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
@@ -105,7 +106,7 @@ impl MacaqueV {
                 self.last_value
             } else {
                 // When the value rewriting is not possible within the error bound,
-                // the least significant mantissa bits of the value are rewritten to zero 
+                // the least significant mantissa bits of the value are rewritten to zero
                 // within the error bound.
                 self.rewrite_least_mantissa_bits(value)
             }
