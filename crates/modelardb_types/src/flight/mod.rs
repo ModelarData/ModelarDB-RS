@@ -108,19 +108,6 @@ pub fn decode_node_metadata(node_metadata: &protocol::NodeMetadata) -> Result<No
     Ok(Node::new(node_metadata.url.clone(), server_mode))
 }
 
-/// Serialize the table metadata into a [`TableMetadata`](protocol::TableMetadata) protobuf message.
-pub fn serialize_table_metadata(
-    normal_table_metadata: Vec<protocol::table_metadata::NormalTableMetadata>,
-    time_series_table_metadata: Vec<protocol::table_metadata::TimeSeriesTableMetadata>,
-) -> Vec<u8> {
-    let table_metadata = protocol::TableMetadata {
-        normal_tables: normal_table_metadata,
-        time_series_tables: time_series_table_metadata,
-    };
-
-    table_metadata.encode_to_vec()
-}
-
 /// Encode the metadata for a normal table into a [`TableMetadata`](protocol::TableMetadata)
 /// protobuf message and serialize it. If the schema cannot be converted to bytes, return
 /// [`ModelarDbTypesError`].
