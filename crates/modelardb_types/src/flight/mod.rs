@@ -289,7 +289,10 @@ mod test {
 
     use std::sync::{LazyLock, Mutex};
 
-    use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
+    use modelardb_test::table::{
+        self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME, normal_table_schema,
+        time_series_table_metadata,
+    };
 
     /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
     static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -369,22 +372,39 @@ mod test {
         assert_eq!(node.mode, decoded_node.mode);
     }
 
-    // Test for encoding and decoding table metadata.
+    // Tests for serializing and deserializing table metadata.
     #[test]
-    fn test_encode_and_decode_table_metadata() {
-        let protobuf_bytes = table::table_metadata_protobuf_bytes();
+    fn test_serialize_and_deserialize_normal_table_metadata() {
+        let expected_schema = normal_table_schema();
+        let protobuf_bytes = table::normal_table_metadata_protobuf_bytes();
 
-        // Deserialize and extract the table metadata.
-        let (normal_tables, time_series_tables) =
-            deserialize_and_extract_table_metadata(&protobuf_bytes).unwrap();
+        let table = deserialize_and_extract_table_metadata(&protobuf_bytes).unwrap();
 
-        assert_eq!(normal_tables[0].0, NORMAL_TABLE_NAME);
-        assert_eq!(normal_tables[0].1, table::normal_table_schema());
+        match table {
+            Table::NormalTable(actual_name, actual_schema) => {
+                assert_eq!(actual_name, NORMAL_TABLE_NAME);
+                assert_eq!(&actual_schema, &expected_schema);
+            }
+            _ => panic!("Expected normal table."),
+        }
+    }
 
-        assert_eq!(time_series_tables[0].name, TIME_SERIES_TABLE_NAME);
-        assert_eq!(
-            time_series_tables[0].query_schema,
-            table::time_series_table_metadata().query_schema
-        );
+    #[test]
+    fn test_serialize_and_deserialize_time_series_table_metadata() {
+        let expected_metadata = time_series_table_metadata();
+        let protobuf_bytes = table::time_series_table_metadata_protobuf_bytes();
+
+        let table = deserialize_and_extract_table_metadata(&protobuf_bytes).unwrap();
+
+        match table {
+            Table::TimeSeriesTable(actual_metadata) => {
+                assert_eq!(actual_metadata.name, TIME_SERIES_TABLE_NAME);
+                assert_eq!(
+                    &actual_metadata.query_schema,
+                    &expected_metadata.query_schema
+                );
+            }
+            _ => panic!("Expected time series table."),
+        }
     }
 }
