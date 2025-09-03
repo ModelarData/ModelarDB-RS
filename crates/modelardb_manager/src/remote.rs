@@ -320,8 +320,7 @@ impl FlightServiceHandler {
     ) -> StdResult<(), Status> {
         // Vacuum the table in the remote data folder Delta lake.
         self.context
-            .remote_data_folder
-            .delta_lake
+            .remote_delta_lake
             .vacuum_table(table_name, maybe_retention_period_in_seconds)
             .await
             .map_err(error_to_status_internal)?;
@@ -510,9 +509,7 @@ impl FlightService for FlightServiceHandler {
                 if table_names.is_empty() {
                     table_names = self
                         .context
-                        .remote_data_folder
-                        .metadata_manager
-                        .table_metadata_manager
+                        .remote_delta_lake
                         .table_names()
                         .await
                         .map_err(error_to_status_internal)?;
