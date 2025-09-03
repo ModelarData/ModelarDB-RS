@@ -115,26 +115,16 @@ pub fn encode_and_serialize_normal_table_metadata(
     table_name: &str,
     schema: &Schema,
 ) -> Result<Vec<u8>> {
-    let normal_table_metadata = encode_normal_table_metadata(table_name, schema)?;
     let table_metadata = protocol::TableMetadata {
-        normal_tables: vec![normal_table_metadata],
-        time_series_tables: vec![],
+        table_metadata: Some(protocol::table_metadata::TableMetadata::NormalTable(
+            protocol::table_metadata::NormalTableMetadata {
+                name: table_name.to_string(),
+                schema: try_convert_schema_to_bytes(schema)?,
+            },
+        )),
     };
 
     Ok(table_metadata.encode_to_vec())
-}
-
-/// If `schema` can be converted to bytes, encode the normal table metadata into a
-/// [`NormalTableMetadata`](protocol::table_metadata::NormalTableMetadata) protobuf message,
-/// otherwise return [`ModelarDbTypesError`].
-pub fn encode_normal_table_metadata(
-    table_name: &str,
-    schema: &Schema,
-) -> Result<protocol::table_metadata::NormalTableMetadata> {
-    Ok(protocol::table_metadata::NormalTableMetadata {
-        name: table_name.to_string(),
-        schema: try_convert_schema_to_bytes(schema)?,
-    })
 }
 
 /// Encode the metadata for a time series table into a [`TableMetadata`](protocol::TableMetadata)
