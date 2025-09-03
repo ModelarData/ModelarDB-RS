@@ -42,9 +42,9 @@ use deltalake::arrow::datatypes::Schema;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
 use modelardb_storage::parser::{self, ModelarDbStatement};
-use modelardb_types::flight::protocol;
+use modelardb_types::flight::{deserialize_and_extract_table_metadata, protocol};
 use modelardb_types::functions;
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::types::{Table, TimeSeriesTableMetadata};
 use prost::Message;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
@@ -645,10 +645,23 @@ impl FlightService for FlightServiceHandler {
         if action.r#type == "CreateTable" {
             self.validate_request(request.metadata()).await?;
 
-            self.context
-                .create_tables_from_bytes(action.body.clone().into())
-                .await
+            let table_metadata = deserialize_and_extract_table_metadata(&action.body)
                 .map_err(error_to_status_invalid_argument)?;
+
+            match table_metadata {
+                Table::NormalTable(table_name, schema) => {
+                    self.context
+                        .create_normal_table(&table_name, &schema)
+                        .await
+                        .map_err(error_to_status_invalid_argument)?;
+                }
+                Table::TimeSeriesTable(metadata) => {
+                    self.context
+                        .create_time_series_table(&metadata)
+                        .await
+                        .map_err(error_to_status_invalid_argument)?;
+                }
+            }
 
             // Confirm the tables were created.
             Ok(Response::new(Box::pin(stream::empty())))
