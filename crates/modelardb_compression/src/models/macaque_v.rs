@@ -13,12 +13,18 @@
  * limitations under the License.
  */
 
-//! Implementation of the Gorilla model type which uses the lossless compression method for
+//! Implementation of the MacaqueV model type which extends the lossless compression method for
 //! floating-point values proposed for the time series management system Gorilla in the [Gorilla
-//! paper]. The compression method described in the paper has been extended with support for lossy
-//! compression by replacing values with the previous value if possible within the error bound. As
-//! this compression method compresses the values of a time series segment using XOR and a variable
-//! length binary encoding, aggregates are computed by iterating over all values in the segment.
+//! paper] by adding support for error-bounded lossy compression, and optimizing flag bits
+//! for better compression of real-life sensor data. MacaqueV adds support for lossy compression by
+//! rewriting the current value with the previous one if possible within the error bound, or
+//! rewriting the least significant mantissa bits of the value to zero within the error bound so
+//! that Gorilla uses fewer bits for encoding. MacaqueV optimizes Gorilla's flag bits by swapping the
+//! flag bits 0 and 10. Experiments showed that this modification is very effective when Gorilla is used
+//! after PMC-Mean and Swing i.e., for compressing residuals. This is because neighboring residuals
+//! have rarely the same value and they are mostly similar to each other. As MacaqueV uses Gorilla
+//! that compresses the values of a time series segment using XOR and a variable length binary encoding,
+//! aggregates are computed by iterating over all values in the segment.
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
@@ -28,9 +34,9 @@ use crate::models;
 use crate::models::ErrorBound;
 use crate::models::bits::{BitReader, BitVecBuilder};
 
-/// The state the Gorilla model type needs while compressing the values of a
+/// The state the MacaqueV model type needs while compressing the values of a
 /// time series segment.
-pub struct Gorilla {
+pub struct MacaqueV {
     /// Maximum relative error for the value of each data point.
     error_bound: ErrorBound,
     /// Min value compressed and added to `compressed_values`.
@@ -51,7 +57,7 @@ pub struct Gorilla {
     length: usize,
 }
 
-impl Gorilla {
+impl MacaqueV {
     pub fn new(error_bound: ErrorBound) -> Self {
         Self {
             error_bound,
@@ -65,7 +71,7 @@ impl Gorilla {
         }
     }
 
-    /// Store the first value in full if this instance of [`Gorilla`] is empty and then compress the
+    /// Store the first value in full if this instance of [`MacaqueV`] is empty and then compress the
     /// remaining `values` using XOR and a variable length binary encoding before storing them.
     pub fn compress_values(&mut self, values: &[Value]) {
         for value in values {
@@ -92,12 +98,18 @@ impl Gorilla {
 
     /// Compress `value` using XOR and a variable length binary encoding and then store it.
     fn compress_value_xor_last_value(&mut self, value: Value) {
-        // The best case for Gorilla is storing duplicate values.
-        let value = if models::is_value_within_error_bound(self.error_bound, value, self.last_value)
-        {
-            self.last_value
-        } else {
+        let value = if models::is_lossless_compression(self.error_bound) {
             value
+        } else {
+            // The best case for MacaqueV is rewriting the current value with the previous one.
+            if models::is_value_within_error_bound(self.error_bound, value, self.last_value) {
+                self.last_value
+            } else {
+                // When the value rewriting is not possible within the error bound,
+                // the least significant mantissa bits of the value are rewritten to zero
+                // within the error bound.
+                self.rewrite_least_mantissa_bits(value)
+            }
         };
 
         let value_as_integer = value.to_bits();
@@ -105,19 +117,19 @@ impl Gorilla {
         let value_xor_last_value = value_as_integer ^ last_value_as_integer;
 
         if value_xor_last_value == 0 {
-            // Store each repeated value as a single zero bit.
+            // Store each repeated value as a one and zero bit.
+            self.compressed_values.append_a_one_bit();
             self.compressed_values.append_a_zero_bit();
         } else {
             // Store each new value as its leading zero bits (if necessary) and
             // meaningful bits (all bits from the first to the last one bit).
             let leading_zero_bits = value_xor_last_value.leading_zeros() as u8;
             let trailing_zero_bits = value_xor_last_value.trailing_zeros() as u8;
-            self.compressed_values.append_a_one_bit();
 
             if leading_zero_bits >= self.last_leading_zero_bits
                 && trailing_zero_bits >= self.last_trailing_zero_bits
             {
-                // Store only the meaningful bits.
+                // Store a flag zero bit and the meaningful bits.
                 self.compressed_values.append_a_zero_bit();
                 let meaningful_bits = models::VALUE_SIZE_IN_BITS
                     - self.last_leading_zero_bits
@@ -129,6 +141,7 @@ impl Gorilla {
             } else {
                 // Store the leading zero bits before the meaningful bits using
                 // 5 and 6 bits respectively as described in the Gorilla paper.
+                self.compressed_values.append_a_one_bit();
                 self.compressed_values.append_a_one_bit();
                 self.compressed_values
                     .append_bits(leading_zero_bits as u64, 5);
@@ -148,6 +161,38 @@ impl Gorilla {
         }
 
         self.update_min_max_and_last_value(value);
+    }
+
+    /// Rewrite the highest number of mantissa bits possible for `value` within the `error_bound`
+    /// starting from the least significant bits.
+    fn rewrite_least_mantissa_bits(&self, value: Value) -> Value {
+        if value.abs() == 0.0 || value.is_nan() || value.is_infinite() {
+            return value;
+        }
+
+        let value_as_u32 = value.to_bits();
+        let abs_error_bound =
+            models::maximum_allowed_deviation(self.error_bound, value as f64) as f32;
+        let exponent = get_exponent(value);
+        let factorized_epsilon = abs_error_bound / 2f32.powi(exponent);
+        // Rewriting the last 23 - ⌈log2 factorized_epsilon⌉ mantissa bits
+        // never exceeds the error bound. However, in that case, one more bit
+        // can be rewritten if the majority of the least significant mantissa bits
+        // are 0. Thus, we rewrite bits using 23 - ⌊log2 factorized_epsilon⌋ and
+        // perform an extra check to ensure the error bound is not exceeded.
+        // If the error bound is exceeded, we rewrite 23 - ⌈log2 factorized_epsilon⌉
+        // least significant mantissa bits.
+        let mut rewrite_position = 23 - factorized_epsilon.log2().abs().floor() as i32;
+        let mut rewritten_value = f32::from_bits(rewrite_bits_by_n(value_as_u32, rewrite_position));
+
+        // If the error bound is exceeded, value is rewritten with one less bit i.e.,
+        // using 23 − ⌈log2 factorized_epsilon⌉.
+        if !models::is_value_within_error_bound(self.error_bound, value, rewritten_value) {
+            rewrite_position -= 1;
+            rewritten_value = f32::from_bits(rewrite_bits_by_n(value.to_bits(), rewrite_position));
+        }
+
+        rewritten_value
     }
 
     /// Update the current minimum, maximum, and last value based on `value`.
@@ -170,13 +215,12 @@ impl Gorilla {
 }
 
 /// Compute the sum of the values for a time series segment whose values are compressed using
-/// Gorilla's compression method for floating-point values. If `maybe_model_last_value` is provided,
-/// it is assumed the first value in `values` is compressed against it instead of being stored in
-/// full, i.e., uncompressed.
+/// MacaqueV. If `maybe_model_last_value` is provided, it is assumed the first value in `values`
+/// is compressed against it instead of being stored in full, i.e., uncompressed.
 pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) -> Value {
-    // This function replicates code from gorilla::grid() as it isn't necessary to store the
+    // This function replicates code from macaque_v::grid() as it isn't necessary to store the
     // timestamps and values in arrays for a sum. So any changes to the decompression must be
-    // mirrored in gorilla::grid().
+    // mirrored in macaque_v::grid().
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;
@@ -198,8 +242,15 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
                 leading_zeros = bits.read_bits(5) as u8;
                 let meaningful_bits = bits.read_bits(6) as u8;
                 trailing_zeros = models::VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeros;
+                // Decompress the value by reading its meaningful bits, restoring
+                // its trailing zeroes through shifting, and reversing the XOR.
+                let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeros - trailing_zeros;
+                let mut value = bits.read_bits(meaningful_bits) as u32;
+                value <<= trailing_zeros;
+                value ^= last_value;
+                last_value = value;
             }
-
+        } else {
             // Decompress the value by reading its meaningful bits, restoring
             // its trailing zeroes through shifting, and reversing the XOR.
             let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeros - trailing_zeros;
@@ -214,8 +265,8 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
 }
 
 /// Decompress all the values in `values` for the `timestamps` without matching values in
-/// `value_builder`. The values in `values` are compressed using Gorilla's compression method for
-/// floating-point values. `values` are appended to `value_builder`. If `maybe_model_last_value`
+/// `value_builder`. The values in `values` are compressed using MacaqueV.
+/// `values` are appended to `value_builder`. If `maybe_model_last_value`
 /// is provided, it is assumed the first value in `values` is compressed against it instead of being
 /// stored in full, i.e., uncompressed.
 pub fn grid(
@@ -224,7 +275,7 @@ pub fn grid(
     value_builder: &mut ValueBuilder,
     maybe_model_last_value: Option<Value>,
 ) {
-    // Changes to the decompression must be mirrored in gorilla::sum().
+    // Changes to the decompression must be mirrored in macaque_v::sum().
     // unwrap() is safe as values is from a segment and thus cannot be empty.
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
@@ -249,8 +300,15 @@ pub fn grid(
                 leading_zeros = bits.read_bits(5) as u8;
                 let meaningful_bits = bits.read_bits(6) as u8;
                 trailing_zeros = models::VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeros;
+                // Decompress the value by reading its meaningful bits, restoring
+                // its trailing zeroes through shifting, and reversing the XOR.
+                let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeros - trailing_zeros;
+                let mut value = bits.read_bits(meaningful_bits) as u32;
+                value <<= trailing_zeros;
+                value ^= last_value;
+                last_value = value;
             }
-
+        } else {
             // Decompress the value by reading its meaningful bits, restoring
             // its trailing zeroes through shifting, and reversing the XOR.
             let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeros - trailing_zeros;
@@ -263,6 +321,19 @@ pub fn grid(
     }
 }
 
+// Extract the unbiased exponent from `value`.
+fn get_exponent(value: f32) -> i32 {
+    let n_bits: u32 = value.to_bits();
+    let biased_exponent = ((n_bits >> 23) & 0xff) as i32;
+    biased_exponent - 127
+}
+
+// Left shift `bits_to_rewrite` by `positions_to_shift`.
+fn rewrite_bits_by_n(bits_to_rewrite: u32, positions_to_shift: i32) -> u32 {
+    let mask = u32::MAX << positions_to_shift;
+    bits_to_rewrite & mask
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,24 +344,24 @@ mod tests {
 
     use crate::models;
 
-    // Tests for Gorilla.
+    // Tests for MacaqueV.
     #[test]
     fn test_empty_sequence_with_absolute_error_bound_zero() {
         let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        assert!(Gorilla::new(error_bound).model().0.is_empty());
+        assert!(MacaqueV::new(error_bound).model().0.is_empty());
     }
 
     #[test]
     fn test_empty_sequence_with_relative_error_bound_zero() {
         let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        assert!(Gorilla::new(error_bound).model().0.is_empty());
+        assert!(MacaqueV::new(error_bound).model().0.is_empty());
     }
 
     proptest! {
     #[test]
     fn test_append_single_value_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
         let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
 
         model_type.compress_values(&[value]);
 
@@ -302,7 +373,7 @@ mod tests {
     #[test]
     fn test_append_single_value_with_relative_error_bound_zero(value in ProptestValue::ANY) {
         let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
 
         model_type.compress_values(&[value]);
 
@@ -314,7 +385,7 @@ mod tests {
     #[test]
     fn test_append_repeated_values_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
         let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
 
         model_type.compress_values(&[value, value]);
 
@@ -326,7 +397,7 @@ mod tests {
     #[test]
     fn test_append_repeated_values_with_relative_error_bound_zero(value in ProptestValue::ANY) {
         let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
 
         model_type.compress_values(&[value, value]);
 
@@ -339,7 +410,7 @@ mod tests {
     #[test]
     fn test_append_different_values_with_leading_zero_bits_with_absolute_error_bound_zero() {
         let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
 
         model_type.compress_values(&[37.0, 73.0]);
 
@@ -351,7 +422,7 @@ mod tests {
     #[test]
     fn test_append_different_values_with_leading_zero_bits_with_relative_error_bound_zero() {
         let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
 
         model_type.compress_values(&[37.0, 73.0]);
 
@@ -363,7 +434,7 @@ mod tests {
     #[test]
     fn test_append_different_values_without_leading_zero_bits_with_absolute_error_bound_zero() {
         let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
 
         model_type.compress_values(&[37.0, 71.0, 73.0]);
 
@@ -375,7 +446,7 @@ mod tests {
     #[test]
     fn test_append_different_values_without_leading_zero_bits_with_relative_error_bound_zero() {
         let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
 
         model_type.compress_values(&[37.0, 71.0, 73.0]);
 
@@ -398,7 +469,7 @@ mod tests {
     }
 
     fn test_append_values_within_error_bound(error_bound: ErrorBound) {
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
 
         model_type.compress_values(&[10.0]);
         let before_last_value = model_type.last_value;
@@ -425,7 +496,7 @@ mod tests {
     fn test_sum_with_absolute_error_bound_zero(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let expected_sum = values.iter().sum::<f32>();
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             &values, None);
         let sum = sum(values.len(), &compressed_values, None);
@@ -436,7 +507,7 @@ mod tests {
     fn test_sum_with_relative_error_bound_zero(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let expected_sum = values.iter().sum::<f32>();
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             &values, None);
         let sum = sum(values.len(), &compressed_values, None);
@@ -446,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_sum_model_single_value_with_absolute_error_bound_zero() {
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             &[37.0],
             None,
@@ -457,7 +528,7 @@ mod tests {
 
     #[test]
     fn test_sum_model_single_value_with_relative_error_bound_zero() {
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             &[37.0],
             None,
@@ -469,7 +540,7 @@ mod tests {
     #[test]
     fn test_sum_residuals_single_value_with_absolute_error_bound_zero() {
         let maybe_model_last_value = Some(37.0);
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             &[37.0],
             maybe_model_last_value,
@@ -481,7 +552,7 @@ mod tests {
     #[test]
     fn test_sum_residuals_single_value_with_relative_error_bound_zero() {
         let maybe_model_last_value = Some(37.0);
-        let compressed_values = compress_values_using_gorilla(
+        let compressed_values = compress_values_using_macaque_v(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             &[37.0],
             maybe_model_last_value,
@@ -510,7 +581,7 @@ mod tests {
     }
 
     fn assert_grid_with_error_bound(error_bound: ErrorBound, values: &[Value]) {
-        let compressed_values = compress_values_using_gorilla(error_bound, values, None);
+        let compressed_values = compress_values_using_macaque_v(error_bound, values, None);
 
         let timestamps: Vec<Timestamp> = (1..=values.len() as i64).step_by(1).collect();
         let mut value_builder = ValueBuilder::with_capacity(values.len());
@@ -561,7 +632,7 @@ mod tests {
 
     fn assert_grid_single(error_bound: ErrorBound, maybe_model_last_value: Option<Value>) {
         let compressed_values =
-            compress_values_using_gorilla(error_bound, &[37.0], maybe_model_last_value);
+            compress_values_using_macaque_v(error_bound, &[37.0], maybe_model_last_value);
         let mut value_builder = ValueBuilder::new();
 
         grid(
@@ -577,12 +648,12 @@ mod tests {
         assert_eq!(values.value(0), 37.0);
     }
 
-    fn compress_values_using_gorilla(
+    fn compress_values_using_macaque_v(
         error_bound: ErrorBound,
         values: &[Value],
         maybe_model_last_value: Option<Value>,
     ) -> Vec<u8> {
-        let mut model_type = Gorilla::new(error_bound);
+        let mut model_type = MacaqueV::new(error_bound);
         if let Some(model_last_value) = maybe_model_last_value {
             model_type.compress_values_without_first(values, model_last_value);
         } else {

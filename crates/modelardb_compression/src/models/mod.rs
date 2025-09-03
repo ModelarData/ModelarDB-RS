@@ -18,7 +18,7 @@
 //! contains general functionality used by the model types.
 
 pub mod bits;
-pub mod gorilla;
+pub mod macaque_v;
 pub mod pmc_mean;
 pub mod swing;
 pub mod timestamps;
@@ -35,13 +35,13 @@ use crate::types::CompressedSegmentBuilder;
 /// to the ids must be reflected in all statements matching on them.
 pub const PMC_MEAN_ID: i8 = 0;
 pub const SWING_ID: i8 = 1;
-pub const GORILLA_ID: i8 = 2;
+pub const MACAQUE_V_ID: i8 = 2;
 
 /// Number of implemented model types. It is usize instead of u8 as it is used as an array length.
 pub const MODEL_TYPE_COUNT: usize = 3;
 
 /// Mapping of model type ids to names.
-pub const MODEL_TYPE_NAMES: [&str; MODEL_TYPE_COUNT] = ["pmc_mean", "swing", "gorilla"];
+pub const MODEL_TYPE_NAMES: [&str; MODEL_TYPE_COUNT] = ["pmc_mean", "swing", "macaque_v"];
 
 /// Size of [`Value`] in bytes.
 pub(super) const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
@@ -84,6 +84,14 @@ pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
     match error_bound {
         ErrorBound::Absolute(error_bound) => error_bound as f64 * 0.99,
         ErrorBound::Relative(error_bound) => f64::abs(value * (error_bound as f64 / 100.1)),
+    }
+}
+
+/// Returns true if compression is lossless i.e., `error_bound` value is 0.
+pub fn is_lossless_compression(error_bound: ErrorBound) -> bool {
+    match error_bound {
+        ErrorBound::Absolute(error_bound) => error_bound == 0.0,
+        ErrorBound::Relative(error_bound) => error_bound == 0.0,
     }
 }
 
@@ -160,9 +168,9 @@ pub fn sum(
                 ),
             )
         }
-        GORILLA_ID => (
+        MACAQUE_V_ID => (
             f32::NAN, // A segment with values compressed by Gorilla never has residuals.
-            gorilla::sum(model_length, values, None),
+            macaque_v::sum(model_length, values, None),
         ),
         _ => panic!("Unknown model type."),
     };
@@ -171,7 +179,7 @@ pub fn sum(
     if residuals.is_empty() {
         model_sum
     } else {
-        let residuals_sum = gorilla::sum(
+        let residuals_sum = macaque_v::sum(
             residuals_length,
             &residuals[..residuals.len() - 1],
             Some(model_last_value),
@@ -228,7 +236,7 @@ pub fn grid(
                 value_builder,
             )
         }
-        GORILLA_ID => gorilla::grid(values, model_timestamps, value_builder, None),
+        MACAQUE_V_ID => macaque_v::grid(values, model_timestamps, value_builder, None),
         _ => panic!("Unknown model type."),
     }
 
@@ -236,7 +244,7 @@ pub fn grid(
     if !residuals.is_empty() {
         let model_last_value = value_builder.values_slice()[value_builder.len() - 1];
 
-        gorilla::grid(
+        macaque_v::grid(
             &residuals[..residuals.len() - 1],
             residuals_timestamps,
             value_builder,

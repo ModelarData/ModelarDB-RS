@@ -13,22 +13,28 @@
  * limitations under the License.
  */
 
-//! Implementation of lossless compression for timestamps. Optimized compression
-//! methods are used depending on the number of data points in a compressed
-//! segment and if its timestamps have been sampled at a regular sampling
-//! interval.
+//! Implementation of MacaqueTS, a lossless compression for timestamps. MacaqueTS uses
+//! optimized compression methods depending on the number of data points in a compressed segment
+//! and if its timestamps have been sampled at a regular sampling interval:
+//! * If a segment only contains one data point, its timestamp is stored as both the segment's
+//!   `start_time` and `end_time`.
+//! * If a segment only contains two data points, the timestamps are stored as the segment's
+//!   `start_time` and `end_time`, respectively.
+//! * If a segment contains more than two data points, the first and last timestamps
+//!   are stored as the segment's `start_time` and `end_time`, respectively, while its
+//!   residual timestamps are compressed using one of two methods:
+//!   * If the data points in the segment have been collected at a regular sampling interval,
+//!     the residual timestamps are compressed as the segment's length with the
+//!     prefix zero bits stripped.
+//!   * If none of the above apply, an extended version of the compression method proposed
+//!     for timestamps for the time series management system Gorilla in the [Gorilla paper]
+//!     is used as a fallback.
 //!
-//! If a segment only contains one data point its timestamp is stored as both
-//! the segment's `start_time` and `end_time`, and if a segment only contains
-//! two data points the timestamps are stored as the segment's `start_time` and
-//! `end_time`, respectively. If a segment contains more than two data points,
-//! the first and last timestamps are stored as the segment's `start_time` and
-//! `end_time`, respectively, while its residual timestamps are compressed using
-//! one of two methods. If the data points in the segment have been collected at
-//! a regular sampling interval, the residual timestamps are compressed as the
-//! segment's length with the prefix zero bits stripped. If none of the above
-//! apply, the compression method proposed for timestamps for the time series
-//! management system Gorilla in the [Gorilla paper] is used as a fallback.
+//! MacaqueTS extends Gorilla's timestamp compression method by using zero as the first delta
+//! instead of computing it explicitly. MacaqueTS also extends the flag ranges used by Gorilla
+//! for integer bit-packing to support encoding finer granularity timestamps with a sampling interval
+//! of lower than one second.
+//!
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
@@ -150,8 +156,9 @@ fn compress_irregular_residual_timestamps(uncompressed_timestamps: &[Timestamp])
 /// Decompress all of a segment's timestamps which are compressed as
 /// `start_time` for segments of length one, `start_time` and `end_time` for
 /// segments of length two, the segment's length for regular time series, or
-/// using Gorilla's compression method for timestamps for irregular time series.
-/// The decompressed timestamps are appended to `timestamp_builder`.
+/// using extended version of Gorilla's compression method for timestamps
+/// for irregular time series. The decompressed timestamps are appended
+/// to `timestamp_builder`.
 pub fn decompress_all_timestamps(
     start_time: Timestamp,
     end_time: Timestamp,
@@ -215,9 +222,8 @@ fn decompress_all_regular_timestamps(
 }
 
 /// Decompress all of a segment's timestamps, which for this segment are sampled
-/// at an irregular sampling interval, and thus compressed using Gorilla's
-/// compression method for timestamps. The decompressed timestamps are appended
-/// to `timestamp_builder`.
+/// at an irregular sampling interval, and thus compressed using MacaqueTS.
+/// The decompressed timestamps are appended to `timestamp_builder`.
 fn decompress_all_irregular_timestamps(
     start_time: Timestamp,
     end_time: Timestamp,
@@ -227,7 +233,7 @@ fn decompress_all_irregular_timestamps(
     // Add the first timestamp stored as `start_time` in the segment.
     timestamp_builder.append_value(start_time);
 
-    // Remove the one bit used as a flag to specify that Gorilla is used.
+    // Remove the one bit used as a flag to specify that MacaqueTS is used.
     let mut bits = BitReader::try_new(residual_timestamps).unwrap();
     bits.read_bit();
 
