@@ -90,6 +90,38 @@ message TableMetadata {
   repeated TimeSeriesTableMetadata time_series_tables = 2;
 }
 
+// Metadata for a normal table or a time series tables.
+message TableMetadataTemp {
+  // Metadata for a normal table, including its name and schema.
+  message NormalTableMetadata {
+    string name = 1;
+    bytes schema = 2;
+  }
+
+  // Metadata for a time series table, including its name, schema, error bounds, and generated column expressions.
+  message TimeSeriesTableMetadata {
+    message ErrorBound {
+      enum Type {
+        ABSOLUTE = 0;
+        RELATIVE = 1;
+      }
+      Type type = 1;
+      float value = 2;
+    }
+
+    string name = 1;
+    bytes schema = 2;
+    repeated ErrorBound error_bounds = 3;
+    repeated bytes generated_column_expressions = 4;
+  }
+
+  // Either a normal table or a time series table.
+  oneof table_metadata {
+    NormalTableMetadata normal_table = 1;
+    TimeSeriesTableMetadata time_series_table = 2;
+  }
+}
+
 // Configuration of a ModelarDB node.
 message Configuration {
   // Amount of memory to reserve for storing multivariate time series.
