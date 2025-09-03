@@ -35,8 +35,8 @@ use arrow_flight::{
 use futures::{Stream, stream};
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
-use modelardb_types::flight::protocol;
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::flight::{deserialize_and_extract_table_metadata, protocol};
+use modelardb_types::types::{Table, TimeSeriesTableMetadata};
 use prost::Message;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -597,21 +597,20 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTable" {
-            // Deserialize and extract the table metadata from the protobuf message in the action body.
-            let (normal_table_metadata, time_series_table_metadata) =
-                modelardb_types::flight::deserialize_and_extract_table_metadata(&action.body)
-                    .map_err(error_to_status_invalid_argument)?;
+            let table_metadata = deserialize_and_extract_table_metadata(&action.body)
+                .map_err(error_to_status_invalid_argument)?;
 
-            for (table_name, schema) in normal_table_metadata {
-                self.check_if_table_exists(&table_name).await?;
-                self.save_and_create_cluster_normal_table(&table_name, &schema)
-                    .await?;
-            }
-
-            for metadata in time_series_table_metadata {
-                self.check_if_table_exists(&metadata.name).await?;
-                self.save_and_create_cluster_time_series_table(Arc::new(metadata))
-                    .await?;
+            match table_metadata {
+                Table::NormalTable(table_name, schema) => {
+                    self.check_if_table_exists(&table_name).await?;
+                    self.save_and_create_cluster_normal_table(&table_name, &schema)
+                        .await?;
+                }
+                Table::TimeSeriesTable(metadata) => {
+                    self.check_if_table_exists(&metadata.name).await?;
+                    self.save_and_create_cluster_time_series_table(Arc::new(metadata))
+                        .await?;
+                }
             }
 
             // Confirm the tables were created.
