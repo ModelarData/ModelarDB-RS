@@ -615,7 +615,7 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the [`TableMetadata`](protocol::TableMetadata)
+    /// * `CreateTable`: Create the table given in the [`TableMetadata`](protocol::TableMetadata)
     /// protobuf message in the action body.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
     /// uncompressed data currently in memory and then flushes all compressed data in the storage
@@ -642,7 +642,7 @@ impl FlightService for FlightServiceHandler {
         let action = request.get_ref();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "CreateTables" {
+        if action.r#type == "CreateTable" {
             self.validate_request(request.metadata()).await?;
 
             self.context
@@ -789,8 +789,8 @@ impl FlightService for FlightServiceHandler {
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let create_tables_action = ActionType {
-            r#type: "CreateTables".to_owned(),
-            description: "Create the tables given in the protobuf message in the action body."
+            r#type: "CreateTable".to_owned(),
+            description: "Create the table given in the protobuf message in the action body."
                 .to_owned(),
         };
 

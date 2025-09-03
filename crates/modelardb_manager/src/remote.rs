@@ -576,8 +576,8 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the [`TableMetadata`](protocol::TableMetadata)
-    /// protobuf message in the action body. The tables are created for each node in the cluster of
+    /// * `CreateTable`: Create the table given in the [`TableMetadata`](protocol::TableMetadata)
+    /// protobuf message in the action body. The table is created for each node in the cluster of
     /// nodes controlled by the manager.
     /// * `InitializeDatabase`: Given a list of existing table names in a
     /// [`DatabaseMetadata`](protocol::DatabaseMetadata) protobuf message, respond with the metadata
@@ -600,7 +600,7 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "CreateTables" {
+        if action.r#type == "CreateTable" {
             // Deserialize and extract the table metadata from the protobuf message in the action body.
             let (normal_table_metadata, time_series_table_metadata) =
                 modelardb_types::flight::deserialize_and_extract_table_metadata(&action.body)
@@ -790,8 +790,8 @@ impl FlightService for FlightServiceHandler {
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let create_tables_action = ActionType {
-            r#type: "CreateTables".to_owned(),
-            description: "Create the tables given in the protobuf message in the action body."
+            r#type: "CreateTable".to_owned(),
+            description: "Create the table given in the protobuf message in the action body."
                 .to_owned(),
         };
 
