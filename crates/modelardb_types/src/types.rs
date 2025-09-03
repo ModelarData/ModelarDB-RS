@@ -58,6 +58,12 @@ pub struct QueryCompressedSchema(pub Arc<Schema>);
 #[derive(Clone)]
 pub struct GridSchema(pub Arc<Schema>);
 
+/// Types of tables supported by ModelarDB.
+pub enum Table {
+    NormalTable(String, Schema),
+    TimeSeriesTable(TimeSeriesTableMetadata),
+}
+
 /// Metadata required to ingest data into a time series table and query a time series table.
 #[derive(Debug, Clone)]
 pub struct TimeSeriesTableMetadata {
