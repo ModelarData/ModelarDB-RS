@@ -36,7 +36,7 @@ use futures::{Stream, stream};
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
 use modelardb_types::flight::protocol;
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::types::{Table, TimeSeriesTableMetadata};
 use prost::Message;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -201,7 +201,7 @@ impl FlightServiceHandler {
                 .map_err(error_to_status_internal)?;
 
         let action = Action {
-            r#type: "CreateTables".to_owned(),
+            r#type: "CreateTable".to_owned(),
             body: protobuf_bytes.into(),
         };
 
@@ -250,7 +250,7 @@ impl FlightServiceHandler {
             .map_err(error_to_status_internal)?;
 
         let action = Action {
-            r#type: "CreateTables".to_owned(),
+            r#type: "CreateTable".to_owned(),
             body: protobuf_bytes.into(),
         };
 
@@ -576,13 +576,9 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
-    /// * `CreateTables`: Create the tables given in the [`TableMetadata`](protocol::TableMetadata)
-    /// protobuf message in the action body. The tables are created for each node in the cluster of
+    /// * `CreateTable`: Create the table given in the [`TableMetadata`](protocol::TableMetadata)
+    /// protobuf message in the action body. The table is created for each node in the cluster of
     /// nodes controlled by the manager.
-    /// * `InitializeDatabase`: Given a list of existing table names in a
-    /// [`DatabaseMetadata`](protocol::DatabaseMetadata) protobuf message, respond with the metadata
-    /// required to create the normal tables and time series tables that are missing in the list.
-    /// The list of table names is also checked to make sure all given tables actually exist.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The url and mode
     /// of the node must be provided in the action body as a [`NodeMetadata`](protocol::NodeMetadata)
     /// protobuf message. The node is added to the cluster of nodes controlled by the manager and
@@ -600,108 +596,27 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "CreateTables" {
+        if action.r#type == "CreateTable" {
             // Deserialize and extract the table metadata from the protobuf message in the action body.
-            let (normal_table_metadata, time_series_table_metadata) =
+            let table_metadata =
                 modelardb_types::flight::deserialize_and_extract_table_metadata(&action.body)
                     .map_err(error_to_status_invalid_argument)?;
 
-            for (table_name, schema) in normal_table_metadata {
-                self.check_if_table_exists(&table_name).await?;
-                self.save_and_create_cluster_normal_table(&table_name, &schema)
-                    .await?;
-            }
-
-            for metadata in time_series_table_metadata {
-                self.check_if_table_exists(&metadata.name).await?;
-                self.save_and_create_cluster_time_series_table(Arc::new(metadata))
-                    .await?;
+            match table_metadata {
+                Table::NormalTable(table_name, schema) => {
+                    self.check_if_table_exists(&table_name).await?;
+                    self.save_and_create_cluster_normal_table(&table_name, &schema)
+                        .await?;
+                }
+                Table::TimeSeriesTable(metadata) => {
+                    self.check_if_table_exists(&metadata.name).await?;
+                    self.save_and_create_cluster_time_series_table(Arc::new(metadata))
+                        .await?;
+                }
             }
 
             // Confirm the tables were created.
             Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "InitializeDatabase" {
-            // Extract the list of tables that already exist in the node.
-            let database_metadata = protocol::DatabaseMetadata::decode(action.body)
-                .map_err(error_to_status_invalid_argument)?;
-
-            let node_tables = database_metadata.table_names;
-
-            // Get the table names in the clusters current database schema.
-            let cluster_tables = self
-                .context
-                .remote_data_folder
-                .metadata_manager
-                .table_metadata_manager
-                .table_names()
-                .await
-                .map_err(error_to_status_internal)?;
-
-            // Check that all the node's tables exist in the cluster's database schema already.
-            let invalid_node_tables: Vec<String> = node_tables
-                .iter()
-                .filter(|table| !cluster_tables.contains(table))
-                .cloned()
-                .collect();
-
-            if invalid_node_tables.is_empty() {
-                // For each table that does not already exist in the node, serialize the table metadata.
-                let missing_cluster_tables = cluster_tables
-                    .iter()
-                    .filter(|table| !node_tables.contains(table));
-
-                let table_metadata_manager = &self
-                    .context
-                    .remote_data_folder
-                    .metadata_manager
-                    .table_metadata_manager;
-
-                let mut encoded_normal_tables = vec![];
-                let mut encoded_time_series_tables = vec![];
-                for table in missing_cluster_tables {
-                    if table_metadata_manager
-                        .is_normal_table(table)
-                        .await
-                        .map_err(error_to_status_internal)?
-                    {
-                        let schema = self.table_schema(table).await?;
-
-                        encoded_normal_tables.push(
-                            modelardb_types::flight::encode_normal_table_metadata(table, &schema)
-                                .map_err(error_to_status_internal)?,
-                        )
-                    } else {
-                        let time_series_table_metadata = table_metadata_manager
-                            .time_series_table_metadata_for_time_series_table(table)
-                            .await
-                            .map_err(error_to_status_internal)?;
-
-                        encoded_time_series_tables.push(
-                            modelardb_types::flight::encode_time_series_table_metadata(
-                                &time_series_table_metadata,
-                            )
-                            .map_err(error_to_status_internal)?,
-                        )
-                    };
-                }
-
-                let protobuf_bytes = modelardb_types::flight::serialize_table_metadata(
-                    encoded_normal_tables,
-                    encoded_time_series_tables,
-                );
-
-                // Return the metadata for the tables that need to be created in the requesting node.
-                Ok(Response::new(Box::pin(stream::once(async {
-                    Ok(FlightResult {
-                        body: protobuf_bytes.into(),
-                    })
-                }))))
-            } else {
-                Err(Status::invalid_argument(format!(
-                    "The table(s) '{}' do not exist in the cluster database schema.",
-                    invalid_node_tables.join(", ")
-                )))
-            }
         } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let node_metadata = protocol::NodeMetadata::decode(action.body)
@@ -790,17 +705,9 @@ impl FlightService for FlightServiceHandler {
         _request: Request<Empty>,
     ) -> StdResult<Response<Self::ListActionsStream>, Status> {
         let create_tables_action = ActionType {
-            r#type: "CreateTables".to_owned(),
-            description: "Create the tables given in the protobuf message in the action body."
+            r#type: "CreateTable".to_owned(),
+            description: "Create the table given in the protobuf message in the action body."
                 .to_owned(),
-        };
-
-        let initialize_database_action = ActionType {
-            r#type: "InitializeDatabase".to_owned(),
-            description:
-                "Return the metadata required to create all normal tables and time series tables \
-                 currently in the manager's database schema."
-                    .to_owned(),
         };
 
         let register_node_action = ActionType {
@@ -821,7 +728,6 @@ impl FlightService for FlightServiceHandler {
 
         let output = stream::iter(vec![
             Ok(create_tables_action),
-            Ok(initialize_database_action),
             Ok(register_node_action),
             Ok(remove_node_action),
             Ok(node_type_action),

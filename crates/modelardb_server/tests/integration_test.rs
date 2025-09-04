@@ -830,7 +830,7 @@ async fn test_can_list_actions() {
     assert_eq!(
         actions,
         vec![
-            "CreateTables",
+            "CreateTable",
             "FlushMemory",
             "FlushNode",
             "GetConfiguration",
@@ -1404,13 +1404,12 @@ async fn test_can_get_node_type() {
 }
 
 #[tokio::test]
-async fn test_can_create_tables() {
+async fn test_can_create_normal_table_from_metadata() {
     let mut test_context = TestContext::new().await;
-
-    let protobuf_bytes = table::table_metadata_protobuf_bytes();
+    let protobuf_bytes = table::normal_table_metadata_protobuf_bytes();
 
     let action = Action {
-        r#type: "CreateTables".to_owned(),
+        r#type: "CreateTable".to_owned(),
         body: protobuf_bytes.into(),
     };
 
@@ -1420,13 +1419,26 @@ async fn test_can_create_tables() {
         .await
         .unwrap();
 
-    let mut retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
-    retrieved_table_names.sort();
-    assert_eq!(
-        retrieved_table_names,
-        vec![
-            NORMAL_TABLE_NAME.to_owned(),
-            TIME_SERIES_TABLE_NAME.to_owned(),
-        ]
-    );
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
+    assert_eq!(retrieved_table_names[0], NORMAL_TABLE_NAME);
+}
+
+#[tokio::test]
+async fn test_can_create_time_series_table_from_metadata() {
+    let mut test_context = TestContext::new().await;
+    let protobuf_bytes = table::time_series_table_metadata_protobuf_bytes();
+
+    let action = Action {
+        r#type: "CreateTable".to_owned(),
+        body: protobuf_bytes.into(),
+    };
+
+    test_context
+        .client
+        .do_action(Request::new(action))
+        .await
+        .unwrap();
+
+    let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
+    assert_eq!(retrieved_table_names[0], TIME_SERIES_TABLE_NAME);
 }

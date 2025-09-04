@@ -178,7 +178,7 @@ impl Operations for Client {
         };
 
         let action = Action {
-            r#type: "CreateTables".to_owned(),
+            r#type: "CreateTable".to_owned(),
             body: protobuf_bytes.into(),
         };
 

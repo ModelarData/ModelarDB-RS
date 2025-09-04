@@ -21,6 +21,7 @@ use std::{env, str};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
+use datafusion::catalog::TableProvider;
 use modelardb_types::flight::protocol;
 use modelardb_types::types::{Node, ServerMode};
 use prost::Message;
@@ -36,16 +37,14 @@ use crate::error::{ModelarDbServerError, Result};
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
 #[derive(Clone, Debug)]
 pub struct Manager {
-    /// Flight client that is connected to the Apache Arrow Flight server of the manager.
-    flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
     key: String,
 }
 
 impl Manager {
-    pub fn new(flight_client: Arc<RwLock<FlightServiceClient<Channel>>>, key: String) -> Self {
-        Self { flight_client, key }
+    pub fn new(key: String) -> Self {
+        Self { key }
     }
 
     /// Register the server as a node in the cluster and retrieve the key and connection information
@@ -78,30 +77,70 @@ impl Manager {
 
         // unwrap() is safe since the manager always has a remote storage configuration.
         Ok((
-            Manager::new(flight_client, manager_metadata.key),
+            Manager::new(manager_metadata.key),
             manager_metadata.storage_configuration.unwrap(),
         ))
     }
 
     /// Initialize the local database schema with the normal tables and time series tables from the
-    /// managers database schema. If the tables to create could not be retrieved from the manager,
-    /// or the tables could not be created, return [`ModelarDbServerError`].
+    /// manager's database schema using the remote data folder. If the tables to create could not be
+    /// retrieved from the remote data folder, or the tables could not be created,
+    /// return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
-        // Add the already existing tables to the action request.
-        let existing_tables = context.default_database_schema()?.table_names();
-        let database_metadata = protocol::DatabaseMetadata {
-            table_names: existing_tables,
-        };
+        let local_metadata_manager = &context
+            .data_folders
+            .local_data_folder
+            .table_metadata_manager;
 
-        let action = Action {
-            r#type: "InitializeDatabase".to_owned(),
-            body: database_metadata.encode_to_vec().into(),
-        };
+        let remote_data_folder = &context
+            .data_folders
+            .maybe_remote_data_folder
+            .clone()
+            .ok_or(ModelarDbServerError::InvalidState(
+                "Remote data folder is missing.".to_owned(),
+            ))?;
+        let remote_metadata_manager = &remote_data_folder.table_metadata_manager;
 
-        let message = do_action_and_extract_result(&self.flight_client, action).await?;
-        context
-            .create_tables_from_bytes(message.body.into())
-            .await?;
+        let local_table_names = local_metadata_manager.table_names().await?;
+        let remote_table_names = remote_metadata_manager.table_names().await?;
+
+        // Check that all the local tables exist in the cluster's database schema already.
+        let invalid_node_tables: Vec<String> = local_table_names
+            .iter()
+            .filter(|table| !remote_table_names.contains(table))
+            .cloned()
+            .collect();
+
+        if !invalid_node_tables.is_empty() {
+            return Err(ModelarDbServerError::InvalidState(format!(
+                "The following tables do not exist in the cluster's database schema: {invalid_node_tables:?}.",
+            )));
+        }
+
+        // For each table that does not already exist locally, create the table.
+        let missing_cluster_tables = remote_table_names
+            .iter()
+            .filter(|table| !local_table_names.contains(table));
+
+        for table_name in missing_cluster_tables {
+            if remote_metadata_manager.is_normal_table(table_name).await? {
+                let delta_table = remote_data_folder
+                    .delta_lake
+                    .delta_table(table_name)
+                    .await?;
+
+                let schema = TableProvider::schema(&delta_table);
+                context.create_normal_table(table_name, &schema).await?;
+            } else {
+                let time_series_table_metadata = remote_metadata_manager
+                    .time_series_table_metadata_for_time_series_table(table_name)
+                    .await?;
+
+                context
+                    .create_time_series_table(&time_series_table_metadata)
+                    .await?;
+            }
+        }
 
         Ok(())
     }
@@ -193,12 +232,6 @@ mod tests {
     }
 
     fn create_manager() -> Manager {
-        let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
-        let lazy_flight_client = FlightServiceClient::new(channel);
-
-        Manager::new(
-            Arc::new(RwLock::new(lazy_flight_client)),
-            Uuid::new_v4().to_string(),
-        )
+        Manager::new(Uuid::new_v4().to_string())
     }
 }
