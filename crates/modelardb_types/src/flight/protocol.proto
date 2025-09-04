@@ -58,7 +58,7 @@ message NodeMetadata {
   ServerMode server_mode = 2;
 }
 
-// Metadata for a normal table or a time series tables.
+// Metadata for a normal table or a time series table.
 message TableMetadata {
   // Metadata for a normal table, including its name and schema.
   message NormalTableMetadata {

@@ -139,7 +139,7 @@ impl Manager {
                 context
                     .create_time_series_table(&time_series_table_metadata)
                     .await?;
-            };
+            }
         }
 
         Ok(())
