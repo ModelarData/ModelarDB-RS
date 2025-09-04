@@ -118,7 +118,7 @@ pub fn encode_and_serialize_normal_table_metadata(
     let table_metadata = protocol::TableMetadata {
         table_metadata: Some(protocol::table_metadata::TableMetadata::NormalTable(
             protocol::table_metadata::NormalTableMetadata {
-                name: table_name.to_string(),
+                name: table_name.to_owned(),
                 schema: try_convert_schema_to_bytes(schema)?,
             },
         )),

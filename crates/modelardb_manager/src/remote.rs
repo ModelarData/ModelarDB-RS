@@ -35,7 +35,7 @@ use arrow_flight::{
 use futures::{Stream, stream};
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
-use modelardb_types::flight::{deserialize_and_extract_table_metadata, protocol};
+use modelardb_types::flight::protocol;
 use modelardb_types::types::{Table, TimeSeriesTableMetadata};
 use prost::Message;
 use tokio::runtime::Runtime;
@@ -597,8 +597,10 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTable" {
-            let table_metadata = deserialize_and_extract_table_metadata(&action.body)
-                .map_err(error_to_status_invalid_argument)?;
+            // Deserialize and extract the table metadata from the protobuf message in the action body.
+            let table_metadata =
+                modelardb_types::flight::deserialize_and_extract_table_metadata(&action.body)
+                    .map_err(error_to_status_invalid_argument)?;
 
             match table_metadata {
                 Table::NormalTable(table_name, schema) => {

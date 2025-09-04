@@ -42,7 +42,7 @@ use deltalake::arrow::datatypes::Schema;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
 use modelardb_storage::parser::{self, ModelarDbStatement};
-use modelardb_types::flight::{deserialize_and_extract_table_metadata, protocol};
+use modelardb_types::flight::protocol;
 use modelardb_types::functions;
 use modelardb_types::types::{Table, TimeSeriesTableMetadata};
 use prost::Message;
@@ -645,8 +645,9 @@ impl FlightService for FlightServiceHandler {
         if action.r#type == "CreateTable" {
             self.validate_request(request.metadata()).await?;
 
-            let table_metadata = deserialize_and_extract_table_metadata(&action.body)
-                .map_err(error_to_status_invalid_argument)?;
+            let table_metadata =
+                modelardb_types::flight::deserialize_and_extract_table_metadata(&action.body)
+                    .map_err(error_to_status_invalid_argument)?;
 
             match table_metadata {
                 Table::NormalTable(table_name, schema) => {
