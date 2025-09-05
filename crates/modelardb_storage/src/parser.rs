@@ -508,9 +508,8 @@ impl ModelarDbDialect {
         let mut table_names = vec![];
 
 
-        // If the next token is not EOF or RETAIN, attempt to parse table names.
-        if Token::EOF != parser.peek_nth_token(0).token
-            && let Token::Word(word) = parser.peek_nth_token(0).token
+        // If the next token is a word that is not RETAIN, attempt to parse table names.
+        if let Token::Word(word) = parser.peek_nth_token(0).token
             && word.keyword != Keyword::RETAIN
         {
             loop {
@@ -528,10 +527,36 @@ impl ModelarDbDialect {
             }
         }
 
+        // If the next token is RETAIN, attempt to parse the retention period in seconds.
+        let maybe_retention_period = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::RETAIN
+        {
+            parser.expect_keyword(Keyword::RETAIN)?;
+            Some(self.parse_unsigned_literal_u64(parser)?)
+        } else {
+            None
+        };
+
+        println!("Retention period: {:?}", maybe_retention_period);
+
         // Return Statement::ShowVariable as a substitute for Vacuum.
         Ok(Statement::ShowVariable {
             variable: table_names,
         })
+    }
+
+    /// Return its value as a [`u64`] if the next [`Token`] is a [`Token::Number`], otherwise a
+    /// [`ParserError`] is returned.
+    fn parse_unsigned_literal_u64(&self, parser: &mut Parser) -> StdResult<u64, ParserError> {
+        let token_with_location = parser.next_token();
+        match token_with_location.token {
+            Token::Number(maybe_u64, _) => maybe_u64.parse::<u64>().map_err(|error| {
+                ParserError::ParserError(format!(
+                    "Failed to parse '{maybe_u64}' into a u64 due to: {error}"
+                ))
+            }),
+            _ => parser.expected("literal integer", token_with_location),
+        }
     }
 }
 
