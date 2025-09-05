@@ -507,7 +507,12 @@ impl ModelarDbDialect {
 
         let mut table_names = vec![];
 
-        if Token::EOF != parser.peek_nth_token(0).token {
+
+        // If the next token is not EOF or RETAIN, attempt to parse table names.
+        if Token::EOF != parser.peek_nth_token(0).token
+            && let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword != Keyword::RETAIN
+        {
             loop {
                 match self.parse_word_value(parser) {
                     Ok(table_name) => {
