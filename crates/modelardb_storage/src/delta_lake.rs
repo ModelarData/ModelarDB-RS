@@ -473,13 +473,13 @@ impl DeltaLake {
     pub async fn vacuum_table(
         &self,
         table_name: &str,
-        maybe_retention_period_in_seconds: Option<i64>,
+        maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()> {
         let delta_table_ops = self.delta_ops(table_name).await?;
 
         let retention_period_in_seconds =
             maybe_retention_period_in_seconds.unwrap_or(60 * 60 * 24 * 7);
-        let retention_period = TimeDelta::new(retention_period_in_seconds, 0).ok_or(
+        let retention_period = TimeDelta::new(retention_period_in_seconds as i64, 0).ok_or(
             ModelarDbStorageError::InvalidArgument(format!(
                 "Retention period of {retention_period_in_seconds} seconds is larger than i64::MAX milliseconds."
             )),
