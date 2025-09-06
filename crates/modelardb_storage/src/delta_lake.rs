@@ -467,18 +467,21 @@ impl DeltaLake {
     }
 
     /// Vacuum the Delta Lake table with `table_name` by deleting all files that are older than
-    /// `retention_period_in_seconds` seconds. If the retention period is out of bounds or the
-    /// files could not be deleted, a [`ModelarDbStorageError`] is returned.
+    /// `maybe_retention_period_in_seconds` seconds. If a retention period is not given, the
+    /// default retention period of 7 days is used. If the retention period is larger than i64::MAX
+    /// milliseconds or the files could not be deleted, a [`ModelarDbStorageError`] is returned.
     pub async fn vacuum_table(
         &self,
         table_name: &str,
-        retention_period_in_seconds: usize,
+        maybe_retention_period_in_seconds: Option<i64>,
     ) -> Result<()> {
         let delta_table_ops = self.delta_ops(table_name).await?;
 
-        let retention_period = TimeDelta::new(retention_period_in_seconds as i64, 0).ok_or(
+        let retention_period_in_seconds =
+            maybe_retention_period_in_seconds.unwrap_or(60 * 60 * 24 * 7);
+        let retention_period = TimeDelta::new(retention_period_in_seconds, 0).ok_or(
             ModelarDbStorageError::InvalidArgument(format!(
-                "Retention period of {retention_period_in_seconds} seconds is out of bounds."
+                "Retention period of {retention_period_in_seconds} seconds is larger than i64::MAX milliseconds."
             )),
         )?;
 
