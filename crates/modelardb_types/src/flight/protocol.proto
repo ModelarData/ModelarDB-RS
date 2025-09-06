@@ -107,17 +107,14 @@ message Configuration {
   // The number of seconds between each transfer of data to the remote object store.
   optional uint64 transfer_time_in_seconds = 5;
 
-  // The number of seconds to retain deleted data in storage before it can be removed by vacuum.
-  uint64 retention_period_in_seconds = 6;
-
   // Number of threads to allocate for converting multivariate time series to univariate time series.
-  uint32 ingestion_threads = 7;
+  uint32 ingestion_threads = 6;
 
   // Number of threads to allocate for compressing univariate time series to segments.
-  uint32 compression_threads = 8;
+  uint32 compression_threads = 7;
 
   // Number of threads to allocate for writing segments to a local and/or remote data folder.
-  uint32 writer_threads = 9;
+  uint32 writer_threads = 8;
 }
 
 // Request to update the configuration of a ModelarDB node.
@@ -128,7 +125,6 @@ message UpdateConfiguration {
     COMPRESSED_RESERVED_MEMORY_IN_BYTES = 2;
     TRANSFER_BATCH_SIZE_IN_BYTES = 3;
     TRANSFER_TIME_IN_SECONDS = 4;
-    RETENTION_PERIOD_IN_SECONDS = 5;
   }
 
   // Setting to update in the configuration.
