@@ -258,8 +258,15 @@ impl TestContext {
     async fn vacuum_table(
         &mut self,
         table_name: &str,
+        maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<Response<Streaming<FlightData>>, Status> {
-        let ticket = Ticket::new(format!("VACUUM {table_name}"));
+        let sql = if let Some(retention_period_in_seconds) = maybe_retention_period_in_seconds {
+            format!("VACUUM {table_name} RETAIN {retention_period_in_seconds}")
+        } else {
+            format!("VACUUM {table_name}")
+        };
+
+        let ticket = Ticket::new(sql);
         self.client.do_get(ticket).await
     }
 
@@ -695,13 +702,6 @@ async fn test_cannot_truncate_missing_table() {
 #[tokio::test]
 async fn test_can_vacuum_normal_table() {
     let mut test_context = TestContext::new().await;
-    test_context
-        .update_configuration(
-            protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
-            Some(0),
-        )
-        .await
-        .unwrap();
 
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
     ingest_time_series_and_flush_data(
@@ -726,7 +726,10 @@ async fn test_can_vacuum_normal_table() {
     let files = std::fs::read_dir(&table_path).unwrap();
     assert_eq!(files.count(), 2);
 
-    test_context.vacuum_table(NORMAL_TABLE_NAME).await.unwrap();
+    test_context
+        .vacuum_table(NORMAL_TABLE_NAME, Some(0))
+        .await
+        .unwrap();
 
     // Only the _delta_log folder should remain.
     let files = std::fs::read_dir(&table_path).unwrap();
@@ -736,13 +739,6 @@ async fn test_can_vacuum_normal_table() {
 #[tokio::test]
 async fn test_can_vacuum_time_series_table() {
     let mut test_context = TestContext::new().await;
-    test_context
-        .update_configuration(
-            protocol::update_configuration::Setting::RetentionPeriodInSeconds as i32,
-            Some(0),
-        )
-        .await
-        .unwrap();
 
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
     ingest_time_series_and_flush_data(
@@ -768,7 +764,7 @@ async fn test_can_vacuum_time_series_table() {
     assert_eq!(files.count(), 1);
 
     test_context
-        .vacuum_table(TIME_SERIES_TABLE_NAME)
+        .vacuum_table(TIME_SERIES_TABLE_NAME, Some(0))
         .await
         .unwrap();
 
@@ -781,7 +777,7 @@ async fn test_can_vacuum_time_series_table() {
 async fn test_cannot_vacuum_missing_table() {
     let mut test_context = TestContext::new().await;
 
-    let result = test_context.vacuum_table(NORMAL_TABLE_NAME).await;
+    let result = test_context.vacuum_table(NORMAL_TABLE_NAME, None).await;
     assert!(result.is_err());
 }
 
