@@ -358,10 +358,22 @@ impl Operations for Client {
         Ok(())
     }
 
-    /// Vacuum the table with the name in `table_name`. If the table could not be vacuumed,
+    /// Vacuum the table with the name in `table_name` by deleting all files that are older than
+    /// `maybe_retention_period_in_seconds` seconds. If a retention period is not given, the
+    /// default retention period of 7 days is used. If the table could not be vacuumed,
     /// [`ModelarDbEmbeddedError`] is returned.
-    async fn vacuum(&mut self, table_name: &str) -> Result<()> {
-        let ticket = Ticket::new(format!("VACUUM {table_name}"));
+    async fn vacuum(
+        &mut self,
+        table_name: &str,
+        maybe_retention_period_in_seconds: Option<u64>,
+    ) -> Result<()> {
+        let sql = if let Some(retention_period_in_seconds) = maybe_retention_period_in_seconds {
+            format!("VACUUM {table_name} RETAIN {retention_period_in_seconds}")
+        } else {
+            format!("VACUUM {table_name}")
+        };
+
+        let ticket = Ticket::new(sql);
         self.flight_client.do_get(ticket).await?;
 
         Ok(())
