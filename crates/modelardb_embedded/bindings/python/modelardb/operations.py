@@ -191,7 +191,7 @@ class Operations:
             
             int modelardb_embedded_vacuum(void* maybe_operations_ptr,
                                           bool is_data_folder,
-                                          char* table_name_ptr
+                                          char* table_name_ptr,
                                           char* retention_period_in_seconds_ptr);
 
             char* modelardb_embedded_error();
@@ -741,7 +741,7 @@ class Operations:
         """
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
 
-        if retention_period_in_seconds:
+        if retention_period_in_seconds is not None:
             # Convert the retention period to a string to simplify the type conversion.
             retention_period_in_seconds_ptr = ffi.new("char[]", bytes(str(retention_period_in_seconds), "UTF-8"))
         else:
