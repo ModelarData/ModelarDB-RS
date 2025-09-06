@@ -529,7 +529,8 @@ impl ModelarDbDialect {
         }
 
         // If the next token is RETAIN, attempt to parse the retention period in seconds.
-        let maybe_retention_period = if let Token::Word(word) = parser.peek_nth_token(0).token
+        let maybe_retention_period_in_seconds = if let Token::Word(word) =
+            parser.peek_nth_token(0).token
             && word.keyword == Keyword::RETAIN
         {
             parser.expect_keyword(Keyword::RETAIN)?;
@@ -541,7 +542,7 @@ impl ModelarDbDialect {
         // Return Statement::NOTIFY as a substitute for Vacuum.
         Ok(Statement::NOTIFY {
             channel: Ident::new(table_names.join(";")),
-            payload: maybe_retention_period.map(|period| period.to_string()),
+            payload: maybe_retention_period_in_seconds.map(|period| period.to_string()),
         })
     }
 
@@ -1691,60 +1692,61 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_vacuum_all_tables() {
-        let (table_names, maybe_retention_period) = parse_vacuum_and_extract_table_names("VACUUM");
+        let (table_names, maybe_retention_period_in_seconds) =
+            parse_vacuum_and_extract_table_names("VACUUM");
 
         assert!(table_names.is_empty());
-        assert!(maybe_retention_period.is_none());
+        assert!(maybe_retention_period_in_seconds.is_none());
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_single_table() {
-        let (table_names, maybe_retention_period) =
+        let (table_names, maybe_retention_period_in_seconds) =
             parse_vacuum_and_extract_table_names("VACUUM table_name");
 
         assert_eq!(table_names, vec!["table_name".to_owned()]);
-        assert!(maybe_retention_period.is_none());
+        assert!(maybe_retention_period_in_seconds.is_none());
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables() {
-        let (table_names, maybe_retention_period) =
+        let (table_names, maybe_retention_period_in_seconds) =
             parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2");
 
         assert_eq!(
             table_names,
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
-        assert!(maybe_retention_period.is_none());
+        assert!(maybe_retention_period_in_seconds.is_none());
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_with_retention_period() {
-        let (table_names, maybe_retention_period) =
+        let (table_names, maybe_retention_period_in_seconds) =
             parse_vacuum_and_extract_table_names("VACUUM RETAIN 30");
 
         assert!(table_names.is_empty());
-        assert_eq!(maybe_retention_period, Some(30));
+        assert_eq!(maybe_retention_period_in_seconds, Some(30));
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables_with_retention_period() {
-        let (table_names, maybe_retention_period) =
+        let (table_names, maybe_retention_period_in_seconds) =
             parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2 RETAIN 30");
 
         assert_eq!(
             table_names,
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
-        assert_eq!(maybe_retention_period, Some(30));
+        assert_eq!(maybe_retention_period_in_seconds, Some(30));
     }
 
     fn parse_vacuum_and_extract_table_names(sql_statement: &str) -> (Vec<String>, Option<u64>) {
         let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
 
         match modelardb_statement {
-            ModelarDbStatement::Vacuum(table_names, maybe_retention_period) => {
-                (table_names, maybe_retention_period)
+            ModelarDbStatement::Vacuum(table_names, maybe_retention_period_in_seconds) => {
+                (table_names, maybe_retention_period_in_seconds)
             }
             _ => panic!("Expected ModelarDbStatement::Vacuum."),
         }
