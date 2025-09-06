@@ -68,7 +68,7 @@ pub enum ModelarDbStatement {
     /// TRUNCATE TABLE.
     TruncateTable(Vec<String>),
     /// VACUUM.
-    Vacuum(Vec<String>),
+    Vacuum(Vec<String>, Option<u64>),
 }
 
 /// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
@@ -131,10 +131,11 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 )?;
                 Ok(ModelarDbStatement::TruncateTable(table_names))
             }
-            // ShowVariable is used as a substitute for VACUUM since Statement does not have a
+            // NOTIFY is used as a substitute for VACUUM since Statement does not have a
             // Vacuum enum variant.
-            Statement::ShowVariable { variable } => Ok(ModelarDbStatement::Vacuum(
-                variable.into_iter().map(|ident| ident.value).collect(),
+            Statement::NOTIFY { channel, payload } => Ok(ModelarDbStatement::Vacuum(
+                channel.value.split_terminator(';').map(|s| s.to_owned()).collect(),
+                payload.and_then(|p| p.parse::<u64>().ok()),
             )),
             Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
             Statement::Query(ref boxed_query) => {
@@ -1690,21 +1691,22 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_vacuum_all_tables() {
-        let table_names = parse_vacuum_and_extract_table_names("VACUUM");
+        let (table_names, _) = parse_vacuum_and_extract_table_names("VACUUM");
 
         assert!(table_names.is_empty());
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_single_table() {
-        let table_names = parse_vacuum_and_extract_table_names("VACUUM table_name");
+        let (table_names, _) = parse_vacuum_and_extract_table_names("VACUUM table_name");
 
         assert_eq!(table_names, vec!["table_name".to_owned()]);
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables() {
-        let table_names = parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2");
+        let (table_names, _) =
+            parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2");
 
         assert_eq!(
             table_names,
@@ -1712,11 +1714,13 @@ mod tests {
         );
     }
 
-    fn parse_vacuum_and_extract_table_names(sql_statement: &str) -> Vec<String> {
+    fn parse_vacuum_and_extract_table_names(sql_statement: &str) -> (Vec<String>, Option<u64>) {
         let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
 
         match modelardb_statement {
-            ModelarDbStatement::Vacuum(table_names) => table_names,
+            ModelarDbStatement::Vacuum(table_names, maybe_retention_period) => {
+                (table_names, maybe_retention_period)
+            }
             _ => panic!("Expected ModelarDbStatement::Vacuum."),
         }
     }
