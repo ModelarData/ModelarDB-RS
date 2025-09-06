@@ -191,7 +191,8 @@ class Operations:
             
             int modelardb_embedded_vacuum(void* maybe_operations_ptr,
                                           bool is_data_folder,
-                                          char* table_name_ptr);
+                                          char* table_name_ptr
+                                          char* retention_period_in_seconds_ptr);
 
             char* modelardb_embedded_error();
             """
@@ -728,16 +729,26 @@ class Operations:
         )
         self.__check_return_code_and_raise_error(return_code)
 
-    def vacuum(self, table_name: str):
+    def vacuum(self, table_name: str, retention_period_in_seconds: None | int = None):
         """Vacuum the table with `table_name`.
 
         :param table_name: The name of the table to vacuum.
         :type table_name: str
+        :param retention_period_in_seconds: The retention period in seconds. Data older than the retention
+        period is deleted. If `None`, the default retention period of 7 days is used.
+        :type retention_period_in_seconds: int, optional
         :raises ValueError: If incorrect arguments are provided.
         """
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
+
+        if retention_period_in_seconds:
+            # Convert the retention period to a string to simplify the type conversion.
+            retention_period_in_seconds_ptr = ffi.new("char[]", bytes(str(retention_period_in_seconds), "UTF-8"))
+        else:
+            retention_period_in_seconds_ptr = ffi.NULL
+
         return_code = self.__library.modelardb_embedded_vacuum(
-            self.__operations_ptr, self.__is_data_folder, table_name_ptr
+            self.__operations_ptr, self.__is_data_folder, table_name_ptr, retention_period_in_seconds_ptr
         )
         self.__check_return_code_and_raise_error(return_code)
 
