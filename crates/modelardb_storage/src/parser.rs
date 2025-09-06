@@ -502,7 +502,8 @@ impl ModelarDbDialect {
     /// with the table names in the `channel` field and the optional retention period in the `payload`
     /// field. Note that [`Statement::NOTIFY`] is used since [`Statement`] does not have a `Vacuum`
     /// variant. A [`ParserError`] is returned if VACUUM is not the first word, the table names
-    /// cannot be extracted, or the retention period is not a valid positive integer.
+    /// cannot be extracted, or the retention period is not a valid positive integer that is at
+    /// most i64::MAX milliseconds.
     fn parse_vacuum(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // VACUUM.
         parser.expect_keyword(Keyword::VACUUM)?;
@@ -534,7 +535,16 @@ impl ModelarDbDialect {
             && word.keyword == Keyword::RETAIN
         {
             parser.expect_keyword(Keyword::RETAIN)?;
-            Some(self.parse_unsigned_literal_u64(parser)?)
+            let retention_period_in_seconds = self.parse_unsigned_literal_u64(parser)?;
+
+            let max_retention_period_in_seconds = (i64::MAX / 1000) as u64;
+            if retention_period_in_seconds > max_retention_period_in_seconds {
+                return Err(ParserError::ParserError(format!(
+                    "Retention period in seconds cannot be more than {max_retention_period_in_seconds} seconds."
+                )));
+            }
+
+            Some(retention_period_in_seconds)
         } else {
             None
         };
@@ -1798,8 +1808,8 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_vacuum_retain_with_u64_max_plus_one() {
-        let max_plus_one = u64::MAX as u128 + 1;
+    fn test_tokenize_and_parse_vacuum_retain_with_max_plus_one() {
+        let max_plus_one = (i64::MAX / 1000) + 1;
         assert!(
             tokenize_and_parse_sql_statement(&format!("VACUUM RETAIN {}", max_plus_one)).is_err()
         );
