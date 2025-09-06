@@ -17,7 +17,6 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::env;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::path::Path as StdPath;
 use std::pin::Pin;
@@ -944,8 +943,6 @@ fn schemas_are_compatible(source_schema: &Schema, target_schema: &Schema) -> boo
 mod tests {
     use super::*;
 
-    use std::sync::{LazyLock, Mutex};
-
     use arrow::array::{Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array};
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
@@ -965,9 +962,6 @@ mod tests {
     const MISSING_TABLE_NAME: &str = "missing_table";
     const TIME_SERIES_TABLE_WITH_GENERATED_COLUMN_NAME: &str = "time_series_table_with_generated";
     const INVALID_COLUMN_NAME: &str = "invalid_column";
-
-    /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
-    static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[tokio::test]
     async fn test_create_normal_table() {
@@ -2569,12 +2563,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_vacuum_normal_table() {
-        // env::set_var is safe to call in a single-threaded program.
-        unsafe {
-            let _mutex_guard = SET_VAR_LOCK.lock();
-            env::set_var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS", "0");
-        }
-
         let (temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
 
         data_folder
@@ -2593,7 +2581,10 @@ mod tests {
         let files = std::fs::read_dir(&table_path).unwrap();
         assert_eq!(files.count(), 2);
 
-        data_folder.vacuum(NORMAL_TABLE_NAME).await.unwrap();
+        data_folder
+            .vacuum(NORMAL_TABLE_NAME, Some(0))
+            .await
+            .unwrap();
 
         // Only the _delta_log folder should remain.
         let files = std::fs::read_dir(&table_path).unwrap();
@@ -2602,12 +2593,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_vacuum_time_series_table() {
-        // env::set_var is safe to call in a single-threaded program.
-        unsafe {
-            let _mutex_guard = SET_VAR_LOCK.lock();
-            env::set_var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS", "0");
-        }
-
         let (temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
         data_folder
@@ -2626,7 +2611,10 @@ mod tests {
         let files = std::fs::read_dir(&column_path).unwrap();
         assert_eq!(files.count(), 1);
 
-        data_folder.vacuum(TIME_SERIES_TABLE_NAME).await.unwrap();
+        data_folder
+            .vacuum(TIME_SERIES_TABLE_NAME, Some(0))
+            .await
+            .unwrap();
 
         // No files should remain in the column folder.
         let files = std::fs::read_dir(&column_path).unwrap();
@@ -2638,7 +2626,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let result = data_folder.vacuum(MISSING_TABLE_NAME).await;
+        let result = data_folder.vacuum(MISSING_TABLE_NAME, None).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
