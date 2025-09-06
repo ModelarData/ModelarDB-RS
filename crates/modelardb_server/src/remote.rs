@@ -516,7 +516,7 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(empty_record_batch_stream())
             }
-            ModelarDbStatement::Vacuum(mut table_names) => {
+            ModelarDbStatement::Vacuum(mut table_names, maybe_retention_period) => {
                 // Vacuum all tables if no table names are provided.
                 if table_names.is_empty() {
                     table_names = self
