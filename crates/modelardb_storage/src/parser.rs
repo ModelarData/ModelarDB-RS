@@ -1691,27 +1691,52 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_vacuum_all_tables() {
-        let (table_names, _) = parse_vacuum_and_extract_table_names("VACUUM");
+        let (table_names, maybe_retention_period) = parse_vacuum_and_extract_table_names("VACUUM");
 
         assert!(table_names.is_empty());
+        assert!(maybe_retention_period.is_none());
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_single_table() {
-        let (table_names, _) = parse_vacuum_and_extract_table_names("VACUUM table_name");
+        let (table_names, maybe_retention_period) =
+            parse_vacuum_and_extract_table_names("VACUUM table_name");
 
         assert_eq!(table_names, vec!["table_name".to_owned()]);
+        assert!(maybe_retention_period.is_none());
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables() {
-        let (table_names, _) =
+        let (table_names, maybe_retention_period) =
             parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2");
 
         assert_eq!(
             table_names,
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
+        assert!(maybe_retention_period.is_none());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_with_retention_period() {
+        let (table_names, maybe_retention_period) =
+            parse_vacuum_and_extract_table_names("VACUUM RETAIN 30");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_retention_period, Some(30));
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_multiple_tables_with_retention_period() {
+        let (table_names, maybe_retention_period) =
+            parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2 RETAIN 30");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert_eq!(maybe_retention_period, Some(30));
     }
 
     fn parse_vacuum_and_extract_table_names(sql_statement: &str) -> (Vec<String>, Option<u64>) {
@@ -1736,7 +1761,65 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_vacuum_only_comma() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM,").is_err());
+    }
+
+    #[test]
     fn test_tokenize_and_parse_vacuum_quoted_table_name() {
         assert!(tokenize_and_parse_sql_statement("VACUUM 'table_name'").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_without_number() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_number_without_retain() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM 30").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_with_float() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN 30.5").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_with_non_numeric() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN thirty").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_with_negative() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN -5").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_with_u64_max_plus_one() {
+        let max_plus_one = u64::MAX as u128 + 1;
+        assert!(
+            tokenize_and_parse_sql_statement(&format!("VACUUM RETAIN {}", max_plus_one)).is_err()
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_twice() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN 30 RETAIN 30").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_multiple_tables_retain_without_number() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM table_1, table_2 RETAIN").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_tables_and_retain_mixed() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM table_1, RETAIN 30, table_2").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_first() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN 30 table_1, table_2").is_err());
     }
 }
