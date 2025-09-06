@@ -173,7 +173,7 @@ pub fn tokenize_and_parse_sql_expression(
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
 /// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements, and
-/// VACUUM \[table_name\[, table_name\]+\] statements.
+/// VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -497,16 +497,16 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Parse VACUUM \[table_name\[, table_name\]+\] to a [`Statement::ShowVariable`] with the
-    /// table names in the `variable` field. Note that [`Statement::ShowVariable`] is used since
-    /// [`Statement`] does not have a `Vacuum` variant. A [`ParserError`] is returned if VACUUM is
-    /// not the first word or the table names cannot be extracted.
+    /// Parse VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a [`Statement::NOTIFY`]
+    /// with the table names in the `channel` field and the optional retention period in the `payload`
+    /// field. Note that [`Statement::NOTIFY`] is used since [`Statement`] does not have a `Vacuum`
+    /// variant. A [`ParserError`] is returned if VACUUM is not the first word, the table names
+    /// cannot be extracted, or the retention period is not a valid positive integer.
     fn parse_vacuum(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // VACUUM.
         parser.expect_keyword(Keyword::VACUUM)?;
 
         let mut table_names = vec![];
-
 
         // If the next token is a word that is not RETAIN, attempt to parse table names.
         if let Token::Word(word) = parser.peek_nth_token(0).token
@@ -515,7 +515,7 @@ impl ModelarDbDialect {
             loop {
                 match self.parse_word_value(parser) {
                     Ok(table_name) => {
-                        table_names.push(Ident::new(table_name));
+                        table_names.push(table_name);
                         if Token::Comma == parser.peek_nth_token(0).token {
                             parser.next_token();
                         } else {
@@ -537,11 +537,10 @@ impl ModelarDbDialect {
             None
         };
 
-        println!("Retention period: {:?}", maybe_retention_period);
-
-        // Return Statement::ShowVariable as a substitute for Vacuum.
-        Ok(Statement::ShowVariable {
-            variable: table_names,
+        // Return Statement::NOTIFY as a substitute for Vacuum.
+        Ok(Statement::NOTIFY {
+            channel: Ident::new(table_names.join(";")),
+            payload: maybe_retention_period.map(|period| period.to_string()),
         })
     }
 
@@ -588,9 +587,9 @@ impl Dialect for ModelarDbDialect {
     /// as a CREATE TIME SERIES TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
     /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
     /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
-    /// VACUUM \[table_name\[, table_name\]+\] statement. If all checks fail, [`None`] is returned
-    /// so [`sqlparser`] uses its parsing methods for all other statements. If parsing succeeds, a
-    /// [`Statement`] is returned, and if not, a [`ParserError`] is returned.
+    /// VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If all checks fail,
+    /// [`None`] is returned so [`sqlparser`] uses its parsing methods for all other statements.
+    /// If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_time_series_table(parser) {
             Some(self.parse_create_time_series_table(parser))
