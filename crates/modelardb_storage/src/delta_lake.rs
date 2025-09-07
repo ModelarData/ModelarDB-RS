@@ -479,9 +479,11 @@ impl DeltaLake {
 
         let retention_period_in_seconds =
             maybe_retention_period_in_seconds.unwrap_or(60 * 60 * 24 * 7);
+
+        let max_retention_period_in_seconds = i64::MAX / 1000;
         let retention_period = TimeDelta::new(retention_period_in_seconds as i64, 0).ok_or(
             ModelarDbStorageError::InvalidArgument(format!(
-                "Retention period of {retention_period_in_seconds} seconds is larger than i64::MAX milliseconds."
+                "Retention period in seconds cannot be more than {max_retention_period_in_seconds} seconds."
             )),
         )?;
 

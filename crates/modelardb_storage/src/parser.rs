@@ -1804,12 +1804,12 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_vacuum_retain_with_negative() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN -5").is_err());
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN -30").is_err());
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_retain_with_max_plus_one() {
-        let max_plus_one = (i64::MAX / 1000) + 1;
+        let max_plus_one = i64::MAX / 1000 + 1;
         assert!(
             tokenize_and_parse_sql_statement(&format!("VACUUM RETAIN {}", max_plus_one)).is_err()
         );
