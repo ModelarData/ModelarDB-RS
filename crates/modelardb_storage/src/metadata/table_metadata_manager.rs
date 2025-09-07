@@ -355,6 +355,7 @@ impl TableMetadataManager {
                     match time_series_table_metadata.error_bounds[schema_index] {
                         ErrorBound::Absolute(value) => (value, false),
                         ErrorBound::Relative(value) => (value, true),
+                        ErrorBound::Lossless => (0.0, false),
                     }
                 } else {
                     (0.0, false)
@@ -540,8 +541,7 @@ impl TableMetadataManager {
         );
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
-        let mut column_to_error_bound =
-            vec![ErrorBound::try_new_absolute(0.0)?; query_schema_columns];
+        let mut column_to_error_bound = vec![ErrorBound::Lossless; query_schema_columns];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
         let error_bound_value_array = modelardb_types::array!(batch, 1, Float32Array);
@@ -552,13 +552,15 @@ impl TableMetadataManager {
             let error_bound_value = error_bound_value_array.value(row_index);
             let error_bound_is_relative = error_bound_is_relative_array.value(row_index);
 
-            let error_bound = if error_bound_is_relative {
-                ErrorBound::try_new_relative(error_bound_value)
-            } else {
-                ErrorBound::try_new_absolute(error_bound_value)
-            }?;
+            if error_bound_value != 0.0 {
+                let error_bound = if error_bound_is_relative {
+                    ErrorBound::try_new_relative(error_bound_value)
+                } else {
+                    ErrorBound::try_new_absolute(error_bound_value)
+                }?;
 
-            column_to_error_bound[error_bound_index as usize] = error_bound;
+                column_to_error_bound[error_bound_index as usize] = error_bound;
+            }
         }
 
         Ok(column_to_error_bound)
@@ -923,6 +925,7 @@ mod tests {
             .map(|error_bound| match error_bound {
                 ErrorBound::Absolute(value) => *value,
                 ErrorBound::Relative(value) => *value,
+                ErrorBound::Lossless => 0.0,
             })
             .collect();
 

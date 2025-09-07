@@ -268,13 +268,15 @@ fn compute_indices_of_columns_with_data_type(schema: &Schema, data_type: DataTyp
         .collect()
 }
 
-/// Absolute or relative per-value error bound.
+/// Absolute, relative, or lossless per-value error bound.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ErrorBound {
     /// An error bound that guarantees each value cannot deviate more than the [`Value`].
     Absolute(Value),
     /// An error bound that guarantees each value cannot deviate more than 0.0% to 100.0%.
     Relative(f32),
+    /// An error bound that guarantees each value is stored losslessly.
+    Lossless,
 }
 
 impl ErrorBound {

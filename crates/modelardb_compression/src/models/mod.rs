@@ -75,6 +75,7 @@ pub fn is_value_within_error_bound(
                 (result * 100.0) <= error_bound
             }
         }
+        ErrorBound::Lossless => equal_or_nan(real_value as f64, approximate_value as f64),
     }
 }
 
@@ -84,6 +85,7 @@ pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
     match error_bound {
         ErrorBound::Absolute(error_bound) => error_bound as f64 * 0.99,
         ErrorBound::Relative(error_bound) => f64::abs(value * (error_bound as f64 / 100.1)),
+        ErrorBound::Lossless => 0.0,
     }
 }
 
@@ -92,6 +94,7 @@ pub fn is_lossless_compression(error_bound: ErrorBound) -> bool {
     match error_bound {
         ErrorBound::Absolute(error_bound) => error_bound == 0.0,
         ErrorBound::Relative(error_bound) => error_bound == 0.0,
+        ErrorBound::Lossless => true,
     }
 }
 
