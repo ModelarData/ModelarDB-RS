@@ -21,6 +21,7 @@ use std::{env, str};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
+use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::TableProvider;
 use modelardb_types::flight::protocol;
 use modelardb_types::types::{Node, ServerMode};
@@ -32,6 +33,7 @@ use tonic::transport::Channel;
 
 use crate::PORT;
 use crate::context::Context;
+use crate::data_folders::DataFolder;
 use crate::error::{ModelarDbServerError, Result};
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
@@ -187,6 +189,45 @@ async fn do_action_and_extract_result(
             action.r#type
         ))
     })
+}
+
+/// Validate that all normal tables in the local data folder exist in the remote data folder and have
+/// the same schema. If all normal tables are valid, return a vector of tuples containing the
+/// table name and schema of each normal table that is in the remote data folder but not in the local
+/// data folder. If any normal table is invalid, return [`ModelarDbServerError`].
+async fn validate_normal_tables(
+    local_data_folder: &DataFolder,
+    remote_data_folder: &DataFolder,
+) -> Result<Vec<(String, Arc<Schema>)>> {
+    let mut missing_normal_tables = vec![];
+
+    let remote_normal_tables = remote_data_folder
+        .table_metadata_manager
+        .normal_table_names()
+        .await?;
+
+    for table_name in remote_normal_tables {
+        let remote_schema = normal_table_schema(remote_data_folder, &table_name).await?;
+
+        if let Ok(local_schema) = normal_table_schema(local_data_folder, &table_name).await {
+            if remote_schema != local_schema {
+                return Err(ModelarDbServerError::InvalidState(format!(
+                    "The normal table '{table_name}' has a different schema in the local data folder than in the remote data folder.",
+                )));
+            }
+        } else {
+            missing_normal_tables.push((table_name, remote_schema));
+        }
+    }
+
+    Ok(missing_normal_tables)
+}
+
+/// Retrieve the schema of a normal table from the Delta Lake in the data folder. If the table does
+/// not exist, or the schema could not be retrieved, return [`ModelarDbServerError`].
+async fn normal_table_schema(data_folder: &DataFolder, table_name: &str) -> Result<Arc<Schema>> {
+    let delta_table = data_folder.delta_lake.delta_table(table_name).await?;
+    Ok(TableProvider::schema(&delta_table))
 }
 
 #[cfg(test)]
