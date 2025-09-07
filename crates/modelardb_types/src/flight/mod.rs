@@ -170,13 +170,15 @@ fn encode_error_bounds(
     let mut error_bounds_all =
         Vec::with_capacity(time_series_table_metadata.query_schema.fields().len());
 
-    let absolute_error_bound =
+    let absolute_error_bound_type =
         protocol::table_metadata::time_series_table_metadata::error_bound::Type::Absolute as i32;
-    let relative_error_bound =
+    let relative_error_bound_type =
         protocol::table_metadata::time_series_table_metadata::error_bound::Type::Relative as i32;
+    let lossless_error_bound_type =
+        protocol::table_metadata::time_series_table_metadata::error_bound::Type::Lossless as i32;
 
     let lossless = protocol::table_metadata::time_series_table_metadata::ErrorBound {
-        r#type: absolute_error_bound,
+        r#type: lossless_error_bound_type,
         value: 0.0,
     };
 
@@ -184,8 +186,9 @@ fn encode_error_bounds(
         if let Ok(field_index) = time_series_table_metadata.schema.index_of(field.name()) {
             let (error_bound_type, value) =
                 match time_series_table_metadata.error_bounds[field_index] {
-                    ErrorBound::Absolute(value) => (absolute_error_bound, value),
-                    ErrorBound::Relative(value) => (relative_error_bound, value),
+                    ErrorBound::Absolute(value) => (absolute_error_bound_type, value),
+                    ErrorBound::Relative(value) => (relative_error_bound_type, value),
+                    ErrorBound::Lossless => (lossless_error_bound_type, 0.0),
                 };
 
             error_bounds_all.push(
@@ -250,6 +253,9 @@ fn decode_error_bounds(
             Ok(
                 protocol::table_metadata::time_series_table_metadata::error_bound::Type::Relative,
             ) => error_bounds.push(ErrorBound::Relative(error_bound.value)),
+            Ok(
+                protocol::table_metadata::time_series_table_metadata::error_bound::Type::Lossless,
+            ) => error_bounds.push(ErrorBound::Lossless),
             _ => {
                 return Err(ModelarDbTypesError::InvalidArgument(format!(
                     "Unknown error bound type: {}.",

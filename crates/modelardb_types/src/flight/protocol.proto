@@ -72,6 +72,7 @@ message TableMetadata {
       enum Type {
         ABSOLUTE = 0;
         RELATIVE = 1;
+        LOSSLESS = 2;
       }
       Type type = 1;
       float value = 2;
