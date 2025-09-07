@@ -24,7 +24,7 @@ use modelardb_types::types::{
     Value, ValueArray,
 };
 
-use crate::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
+use crate::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE};
 
 /// SQL to create a normal table with a timestamp column and two floating point columns.
 pub const NORMAL_TABLE_SQL: &str =
@@ -90,10 +90,10 @@ pub fn time_series_table_metadata() -> TimeSeriesTableMetadata {
     ]));
 
     let error_bounds = vec![
-        ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+        ErrorBound::Lossless,
         ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap(),
         ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
-        ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+        ErrorBound::Lossless,
     ];
 
     let generated_columns = vec![None, None, None, None];

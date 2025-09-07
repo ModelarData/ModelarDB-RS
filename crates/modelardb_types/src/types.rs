@@ -385,8 +385,8 @@ mod tests {
     use proptest::num;
     use proptest::proptest;
 
-    use modelardb_test::ERROR_BOUND_ZERO;
     use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
+    use modelardb_test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
 
     // Tests for TimeSeriesTableMetadata.
     #[test]
@@ -454,11 +454,14 @@ mod tests {
     fn create_simple_time_series_table_metadata(
         query_schema: Schema,
     ) -> Result<TimeSeriesTableMetadata> {
+        let error_bounds = vec![ErrorBound::Lossless; query_schema.fields.len()];
+        let generated_columns = vec![None; query_schema.fields.len()];
+
         TimeSeriesTableMetadata::try_new(
             TIME_SERIES_TABLE_NAME.to_owned(),
             Arc::new(query_schema),
-            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap()],
-            vec![None],
+            error_bounds,
+            generated_columns,
         )
     }
 
@@ -529,13 +532,13 @@ mod tests {
                 Field::new("temperature", ArrowValue::DATA_TYPE, false),
             ])),
             vec![
-                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+                ErrorBound::Lossless,
+                ErrorBound::Lossless,
+                ErrorBound::Lossless,
+                ErrorBound::Lossless,
+                ErrorBound::try_new_absolute(ERROR_BOUND_FIVE).unwrap(),
+                ErrorBound::Lossless,
+                ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             ],
             vec![None, None, None, None, None, None, None],
         )

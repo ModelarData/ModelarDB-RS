@@ -512,7 +512,7 @@ mod tests {
     use arrow::array::BinaryArray;
     use arrow::datatypes::{DataType, Field};
     use modelardb_test::data_generation::{self, ValuesStructure};
-    use modelardb_test::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
+    use modelardb_test::ERROR_BOUND_TEN;
     use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampArray, ValueArray};
 
@@ -792,7 +792,7 @@ mod tests {
 
         let model = compression::fit_next_model(
             0,
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &uncompressed_timestamps,
             uncompressed_values,
         );
@@ -819,7 +819,7 @@ mod tests {
             CompressedSegmentBatchBuilder::new(compressed_schema, vec!["tag".to_owned()], 0, 1);
 
         model.finish(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             residuals_end_index,
             &uncompressed_timestamps,
             uncompressed_values,
