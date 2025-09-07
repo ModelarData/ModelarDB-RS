@@ -97,6 +97,7 @@ impl TimeSeriesTableMetadata {
     /// * The number of potentially generated columns does not match the number of columns.
     /// * A generated column includes another generated column in its expression.
     /// * There are more than 32767 columns.
+    /// * The `query_schema` includes columns with unsupported data types.
     /// * The `query_schema` does not include a single timestamp column.
     /// * The `query_schema` does not include at least one stored field column.
     pub fn try_new(
@@ -137,6 +138,21 @@ impl TimeSeriesTableMetadata {
             return Err(ModelarDbTypesError::InvalidArgument(
                 "There cannot be more than 32767 columns in the time series table.".to_owned(),
             ));
+        }
+
+        // If the schema contains an unsupported data type that does not correspond to a timestamp,
+        // field, or tag column, return an error.
+        for field in query_schema.fields() {
+            let data_type = field.data_type();
+            if data_type != &ArrowTimestamp::DATA_TYPE
+                && data_type != &ArrowValue::DATA_TYPE
+                && data_type != &DataType::Utf8
+            {
+                return Err(ModelarDbTypesError::InvalidArgument(format!(
+                    "The data type '{data_type}' of column '{}' is not supported in a time series table.",
+                    field.name()
+                )));
+            }
         }
 
         // Remove the generated field columns from the query schema and the error bounds as these
