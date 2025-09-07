@@ -504,7 +504,7 @@ impl ModelarDbDialect {
     /// field. Note that [`Statement::NOTIFY`] is used since [`Statement`] does not have a `Vacuum`
     /// variant. A [`ParserError`] is returned if VACUUM is not the first word, the table names
     /// cannot be extracted, or the retention period is not a valid positive integer that is at
-    /// most i64::MAX milliseconds.
+    /// most [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds.
     fn parse_vacuum(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // VACUUM.
         parser.expect_keyword(Keyword::VACUUM)?;

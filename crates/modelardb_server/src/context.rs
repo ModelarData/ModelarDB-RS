@@ -332,8 +332,9 @@ impl Context {
     }
 
     /// Vacuum the table with `table_name` if it exists. If a retention period is not given, the
-    /// default retention period of 7 days is used. If the retention period is larger than i64::MAX
-    /// milliseconds, the table does not exist, or if it could not be vacuumed,
+    /// default retention period of 7 days is used. If the retention period is larger than
+    /// [`MAX_RETENTION_PERIOD_IN_SECONDS`](modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS)
+    /// seconds, the table does not exist, or if it could not be vacuumed,
     /// [`ModelarDbServerError`] is returned.
     pub async fn vacuum_table(
         &self,

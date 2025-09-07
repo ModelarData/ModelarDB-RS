@@ -468,8 +468,9 @@ impl DeltaLake {
 
     /// Vacuum the Delta Lake table with `table_name` by deleting all files that are older than
     /// `maybe_retention_period_in_seconds` seconds. If a retention period is not given, the
-    /// default retention period of 7 days is used. If the retention period is larger than i64::MAX
-    /// milliseconds or the files could not be deleted, a [`ModelarDbStorageError`] is returned.
+    /// default retention period of 7 days is used. If the retention period is larger than
+    /// [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds or the files could not be deleted, a
+    /// [`ModelarDbStorageError`] is returned.
     pub async fn vacuum_table(
         &self,
         table_name: &str,
