@@ -213,7 +213,8 @@ async fn validate_normal_tables(
         if let Ok(local_schema) = normal_table_schema(local_data_folder, &table_name).await {
             if remote_schema != local_schema {
                 return Err(ModelarDbServerError::InvalidState(format!(
-                    "The normal table '{table_name}' has a different schema in the local data folder than in the remote data folder.",
+                    "The normal table '{table_name}' has a different schema in the local data \
+                    folder than in the remote data folder.",
                 )));
             }
         } else {
@@ -231,20 +232,44 @@ async fn normal_table_schema(data_folder: &DataFolder, table_name: &str) -> Resu
     Ok(TableProvider::schema(&delta_table))
 }
 
-/// Given the names of the tables in the local and remote data folders, return the unique tables in
-/// the local data folder, the unique tables in the remote data folder, and the shared tables.
-async fn unique_and_shared_tables(
-    local_table_names: Vec<String>,
-    remote_table_names: Vec<String>,
-) -> (HashSet<String>, HashSet<String>, HashSet<String>) {
-    let local_set: HashSet<String> = local_table_names.into_iter().collect();
-    let remote_set: HashSet<String> = remote_table_names.into_iter().collect();
+/// Validate that all time series tables in the local data folder exist in the remote data folder
+/// and have the same metadata. If all time series tables are valid, return a vector containing
+/// the metadata of each time series table that is in the remote data folder but not in the local
+/// data folder. If any time series table is invalid, return [`ModelarDbServerError`].
+async fn validate_time_series_tables(
+    local_data_folder: &DataFolder,
+    remote_data_folder: &DataFolder,
+) -> Result<Vec<TimeSeriesTableMetadata>> {
+    let mut missing_time_series_tables = vec![];
 
-    let unique_local_tables = local_set.difference(&remote_set).cloned().collect();
-    let unique_remote_tables = remote_set.difference(&local_set).cloned().collect();
-    let shared_tables = local_set.intersection(&remote_set).cloned().collect();
+    let remote_time_series_tables = remote_data_folder
+        .table_metadata_manager
+        .time_series_table_names()
+        .await?;
 
-    (unique_local_tables, unique_remote_tables, shared_tables)
+    for table_name in remote_time_series_tables {
+        let remote_metadata = remote_data_folder
+            .table_metadata_manager
+            .time_series_table_metadata_for_time_series_table(&table_name)
+            .await?;
+
+        if let Ok(local_metadata) = local_data_folder
+            .table_metadata_manager
+            .time_series_table_metadata_for_time_series_table(&table_name)
+            .await
+        {
+            if remote_metadata != local_metadata {
+                return Err(ModelarDbServerError::InvalidState(format!(
+                    "The time series table '{table_name}' has different metadata in the local data \
+                    folder than in the remote data folder.",
+                )));
+            }
+        } else {
+            missing_time_series_tables.push(remote_metadata);
+        }
+    }
+
+    Ok(missing_time_series_tables)
 }
 
 #[cfg(test)]
