@@ -37,7 +37,7 @@ use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_types::flight::protocol;
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::types::{MAX_RETENTION_PERIOD_IN_SECONDS, TimeSeriesTableMetadata};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -480,10 +480,9 @@ impl DeltaLake {
         let retention_period_in_seconds =
             maybe_retention_period_in_seconds.unwrap_or(60 * 60 * 24 * 7);
 
-        let max_retention_period_in_seconds = i64::MAX / 1000;
         let retention_period = TimeDelta::new(retention_period_in_seconds as i64, 0).ok_or(
             ModelarDbStorageError::InvalidArgument(format!(
-                "Retention period in seconds cannot be more than {max_retention_period_in_seconds} seconds."
+                "Retention period in seconds cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
             )),
         )?;
 

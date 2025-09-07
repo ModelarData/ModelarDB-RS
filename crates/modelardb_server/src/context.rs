@@ -426,6 +426,7 @@ mod tests {
     use super::*;
 
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
+    use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
@@ -834,10 +835,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context_with_time_series_table(&temp_dir).await;
 
-        let retention_period_in_seconds = (i64::MAX / 1000 + 1) as u64;
         assert!(
             context
-                .vacuum_table(TIME_SERIES_TABLE_NAME, Some(retention_period_in_seconds))
+                .vacuum_table(
+                    TIME_SERIES_TABLE_NAME,
+                    Some(MAX_RETENTION_PERIOD_IN_SECONDS + 1)
+                )
                 .await
                 .is_err()
         );
