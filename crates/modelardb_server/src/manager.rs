@@ -197,10 +197,10 @@ async fn validate_local_tables_exist_remotely(
     Ok(())
 }
 
-/// Validate that all normal tables in the local data folder exist in the remote data folder and have
-/// the same schema. If all normal tables are valid, return a vector of tuples containing the
-/// table name and schema of each normal table that is in the remote data folder but not in the local
-/// data folder. If any normal table is invalid, return [`ModelarDbServerError`].
+/// For each normal table in the remote data folder, if the table also exists in the local data
+/// folder, validate that the schemas are identical. If the schemas are not identical, return
+/// [`ModelarDbServerError`]. Return a vector containing the name and schema of each normal table
+/// that is in the remote data folder but not in the local data folder.
 async fn validate_normal_tables(
     local_data_folder: &DataFolder,
     remote_data_folder: &DataFolder,
@@ -237,10 +237,10 @@ async fn normal_table_schema(data_folder: &DataFolder, table_name: &str) -> Resu
     Ok(TableProvider::schema(&delta_table))
 }
 
-/// Validate that all time series tables in the local data folder exist in the remote data folder
-/// and have the same metadata. If all time series tables are valid, return a vector containing
-/// the metadata of each time series table that is in the remote data folder but not in the local
-/// data folder. If any time series table is invalid, return [`ModelarDbServerError`].
+/// For each time series table in the remote data folder, if the table also exists in the local
+/// data folder, validate that the metadata is identical. If the metadata is not identical, return
+/// [`ModelarDbServerError`]. Return a vector containing the metadata of each time series table
+/// that is in the remote data folder but not in the local data folder.
 async fn validate_time_series_tables(
     local_data_folder: &DataFolder,
     remote_data_folder: &DataFolder,
