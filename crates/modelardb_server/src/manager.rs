@@ -189,7 +189,8 @@ async fn validate_local_tables_exist_remotely(
 
     if !invalid_tables.is_empty() {
         return Err(ModelarDbServerError::InvalidState(format!(
-            "The following tables do not exist in the remote data folder: {invalid_tables:?}.",
+            "The following tables do not exist in the remote data folder: {}.",
+            invalid_tables.join(", ")
         )));
     }
 
@@ -218,7 +219,7 @@ async fn validate_normal_tables(
             if remote_schema != local_schema {
                 return Err(ModelarDbServerError::InvalidState(format!(
                     "The normal table '{table_name}' has a different schema in the local data \
-                    folder than in the remote data folder.",
+                    folder compared to the remote data folder.",
                 )));
             }
         } else {
@@ -265,7 +266,7 @@ async fn validate_time_series_tables(
             if remote_metadata != local_metadata {
                 return Err(ModelarDbServerError::InvalidState(format!(
                     "The time series table '{table_name}' has different metadata in the local data \
-                    folder than in the remote data folder.",
+                    folder compared to the remote data folder.",
                 )));
             }
         } else {
