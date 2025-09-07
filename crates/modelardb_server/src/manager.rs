@@ -35,7 +35,7 @@ use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Manager {
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
@@ -187,15 +187,6 @@ async fn do_action_and_extract_result(
             action.r#type
         ))
     })
-}
-
-/// Partial equality is implemented so PartialEq can be derived for [`ClusterMode`](crate::ClusterMode).
-/// It cannot be derived for [`Manager`] since both `flight_client` and `table_metadata_manager`
-/// does not support equality comparisons.
-impl PartialEq for Manager {
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
-    }
 }
 
 #[cfg(test)]
