@@ -16,6 +16,7 @@
 //! Interface to connect to and interact with the manager, used if the server is started with a
 //! manager and needs to interact with it to initialize the metadata Delta Lake.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::{env, str};
 
@@ -228,6 +229,22 @@ async fn validate_normal_tables(
 async fn normal_table_schema(data_folder: &DataFolder, table_name: &str) -> Result<Arc<Schema>> {
     let delta_table = data_folder.delta_lake.delta_table(table_name).await?;
     Ok(TableProvider::schema(&delta_table))
+}
+
+/// Given the names of the tables in the local and remote data folders, return the unique tables in
+/// the local data folder, the unique tables in the remote data folder, and the shared tables.
+async fn unique_and_shared_tables(
+    local_table_names: Vec<String>,
+    remote_table_names: Vec<String>,
+) -> (HashSet<String>, HashSet<String>, HashSet<String>) {
+    let local_set: HashSet<String> = local_table_names.into_iter().collect();
+    let remote_set: HashSet<String> = remote_table_names.into_iter().collect();
+
+    let unique_local_tables = local_set.difference(&remote_set).cloned().collect();
+    let unique_remote_tables = remote_set.difference(&local_set).cloned().collect();
+    let shared_tables = local_set.intersection(&remote_set).cloned().collect();
+
+    (unique_local_tables, unique_remote_tables, shared_tables)
 }
 
 #[cfg(test)]
