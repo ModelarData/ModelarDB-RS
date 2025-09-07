@@ -16,7 +16,6 @@
 //! Interface to connect to and interact with the manager, used if the server is started with a
 //! manager and needs to interact with it to initialize the metadata Delta Lake.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::{env, str};
 
@@ -25,7 +24,7 @@ use arrow_flight::{Action, Result as FlightResult};
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::TableProvider;
 use modelardb_types::flight::protocol;
-use modelardb_types::types::{Node, ServerMode};
+use modelardb_types::types::{Node, ServerMode, TimeSeriesTableMetadata};
 use prost::Message;
 use tokio::sync::RwLock;
 use tonic::Request;
@@ -90,10 +89,8 @@ impl Manager {
     /// retrieved from the remote data folder, or the tables could not be created,
     /// return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
-        let local_metadata_manager = &context
-            .data_folders
-            .local_data_folder
-            .table_metadata_manager;
+        let local_data_folder = &context.data_folders.local_data_folder;
+        let local_metadata_manager = &local_data_folder.table_metadata_manager;
 
         let remote_data_folder = &context
             .data_folders
@@ -120,29 +117,22 @@ impl Manager {
             )));
         }
 
+        // Validate that all tables that are in both the local and remote data folder are identical.
+        let missing_normal_tables =
+            validate_normal_tables(local_data_folder, remote_data_folder).await?;
+
+        let missing_time_series_tables =
+            validate_time_series_tables(local_data_folder, remote_data_folder).await?;
+
         // For each table that does not already exist locally, create the table.
-        let missing_cluster_tables = remote_table_names
-            .iter()
-            .filter(|table| !local_table_names.contains(table));
+        for (table_name, schema) in missing_normal_tables {
+            context.create_normal_table(&table_name, &schema).await?;
+        }
 
-        for table_name in missing_cluster_tables {
-            if remote_metadata_manager.is_normal_table(table_name).await? {
-                let delta_table = remote_data_folder
-                    .delta_lake
-                    .delta_table(table_name)
-                    .await?;
-
-                let schema = TableProvider::schema(&delta_table);
-                context.create_normal_table(table_name, &schema).await?;
-            } else {
-                let time_series_table_metadata = remote_metadata_manager
-                    .time_series_table_metadata_for_time_series_table(table_name)
-                    .await?;
-
-                context
-                    .create_time_series_table(&time_series_table_metadata)
-                    .await?;
-            }
+        for time_series_table_metadata in missing_time_series_tables {
+            context
+                .create_time_series_table(&time_series_table_metadata)
+                .await?;
         }
 
         Ok(())
