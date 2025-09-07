@@ -90,7 +90,6 @@ impl Manager {
     /// return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
         let local_data_folder = &context.data_folders.local_data_folder;
-        let local_metadata_manager = &local_data_folder.table_metadata_manager;
 
         let remote_data_folder = &context
             .data_folders
@@ -99,23 +98,8 @@ impl Manager {
             .ok_or(ModelarDbServerError::InvalidState(
                 "Remote data folder is missing.".to_owned(),
             ))?;
-        let remote_metadata_manager = &remote_data_folder.table_metadata_manager;
 
-        let local_table_names = local_metadata_manager.table_names().await?;
-        let remote_table_names = remote_metadata_manager.table_names().await?;
-
-        // Check that all the local tables exist in the cluster's database schema already.
-        let invalid_node_tables: Vec<String> = local_table_names
-            .iter()
-            .filter(|table| !remote_table_names.contains(table))
-            .cloned()
-            .collect();
-
-        if !invalid_node_tables.is_empty() {
-            return Err(ModelarDbServerError::InvalidState(format!(
-                "The following tables do not exist in the cluster's database schema: {invalid_node_tables:?}.",
-            )));
-        }
+        validate_local_tables_exist_remotely(local_data_folder, remote_data_folder).await?;
 
         // Validate that all tables that are in both the local and remote data folder are identical.
         let missing_normal_tables =
@@ -180,6 +164,36 @@ async fn do_action_and_extract_result(
             action.r#type
         ))
     })
+}
+
+/// Validate that all tables in the local data folder exist in the remote data folder. If any table
+/// does not exist in the remote data folder, return [`ModelarDbServerError`].
+async fn validate_local_tables_exist_remotely(
+    local_data_folder: &DataFolder,
+    remote_data_folder: &DataFolder,
+) -> Result<()> {
+    let local_table_names = local_data_folder
+        .table_metadata_manager
+        .table_names()
+        .await?;
+    let remote_table_names = remote_data_folder
+        .table_metadata_manager
+        .table_names()
+        .await?;
+
+    let invalid_tables: Vec<String> = local_table_names
+        .iter()
+        .filter(|table| !remote_table_names.contains(table))
+        .cloned()
+        .collect();
+
+    if !invalid_tables.is_empty() {
+        return Err(ModelarDbServerError::InvalidState(format!(
+            "The following tables do not exist in the remote data folder: {invalid_tables:?}.",
+        )));
+    }
+
+    Ok(())
 }
 
 /// Validate that all normal tables in the local data folder exist in the remote data folder and have
