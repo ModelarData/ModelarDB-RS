@@ -360,7 +360,9 @@ impl Operations for Client {
 
     /// Vacuum the table with the name in `table_name` by deleting stale files that are older than
     /// `maybe_retention_period_in_seconds` seconds. If a retention period is not given, the
-    /// default retention period of 7 days is used. If the table could not be vacuumed,
+    /// default retention period of 7 days is used. If the table does not exist, the table could
+    /// not be vacuumed, or the retention period is larger than
+    /// [`MAX_RETENTION_PERIOD_IN_SECONDS`](modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS),
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn vacuum(
         &mut self,
