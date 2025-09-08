@@ -358,7 +358,7 @@ impl Operations for Client {
         Ok(())
     }
 
-    /// Vacuum the table with the name in `table_name` by deleting all files that are older than
+    /// Vacuum the table with the name in `table_name` by deleting stale files that are older than
     /// `maybe_retention_period_in_seconds` seconds. If a retention period is not given, the
     /// default retention period of 7 days is used. If the table could not be vacuumed,
     /// [`ModelarDbEmbeddedError`] is returned.

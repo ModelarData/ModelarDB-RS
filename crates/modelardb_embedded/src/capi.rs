@@ -933,10 +933,12 @@ unsafe fn drop(
 }
 
 /// Vacuums the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
-/// `maybe_operations_ptr` by deleting all files that are older than `retention_period_in_seconds_ptr`
+/// `maybe_operations_ptr` by deleting stale files that are older than `retention_period_in_seconds_ptr`
 /// seconds. Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`];
 /// `table_name_ptr` points to a valid C string; and `retention_period_in_seconds_ptr` points to a
-/// valid C string.
+/// valid C string. A C string is used for the retention period to avoid issues with different
+/// platforms using an inconsistent amount of bits for integer types. The string is converted
+/// directly to an unsigned 64-bit integer in Rust.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_vacuum(
     maybe_operations_ptr: *mut c_void,
