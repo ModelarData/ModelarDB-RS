@@ -338,7 +338,7 @@ fn rewrite_bits_by_n(bits_to_rewrite: u32, positions_to_shift: i32) -> u32 {
 mod tests {
     use super::*;
 
-    use modelardb_test::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
+    use modelardb_test::ERROR_BOUND_TEN;
     use proptest::num::f32 as ProptestValue;
     use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
 
@@ -346,22 +346,14 @@ mod tests {
 
     // Tests for MacaqueV.
     #[test]
-    fn test_empty_sequence_with_absolute_error_bound_zero() {
-        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        assert!(MacaqueV::new(error_bound).model().0.is_empty());
-    }
-
-    #[test]
-    fn test_empty_sequence_with_relative_error_bound_zero() {
-        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        assert!(MacaqueV::new(error_bound).model().0.is_empty());
+    fn test_empty_sequence_with_lossless_error_bound() {
+        assert!(MacaqueV::new(ErrorBound::Lossless).model().0.is_empty());
     }
 
     proptest! {
     #[test]
-    fn test_append_single_value_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
-        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = MacaqueV::new(error_bound);
+    fn test_append_single_value_with_lossless_error_bound(value in ProptestValue::ANY) {
+        let mut model_type = MacaqueV::new(ErrorBound::Lossless);
 
         model_type.compress_values(&[value]);
 
@@ -371,33 +363,8 @@ mod tests {
     }
 
     #[test]
-    fn test_append_single_value_with_relative_error_bound_zero(value in ProptestValue::ANY) {
-        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = MacaqueV::new(error_bound);
-
-        model_type.compress_values(&[value]);
-
-        prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
-        prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
-        prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
-    }
-
-    #[test]
-    fn test_append_repeated_values_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
-        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = MacaqueV::new(error_bound);
-
-        model_type.compress_values(&[value, value]);
-
-        prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
-        prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
-        prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
-    }
-
-    #[test]
-    fn test_append_repeated_values_with_relative_error_bound_zero(value in ProptestValue::ANY) {
-        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = MacaqueV::new(error_bound);
+    fn test_append_repeated_values_with_lossless_error_bound(value in ProptestValue::ANY) {
+        let mut model_type = MacaqueV::new(ErrorBound::Lossless);
 
         model_type.compress_values(&[value, value]);
 
@@ -408,9 +375,8 @@ mod tests {
     }
 
     #[test]
-    fn test_append_different_values_with_leading_zero_bits_with_absolute_error_bound_zero() {
-        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = MacaqueV::new(error_bound);
+    fn test_append_different_values_with_leading_zero_bits_with_lossless_error_bound() {
+        let mut model_type = MacaqueV::new(ErrorBound::Lossless);
 
         model_type.compress_values(&[37.0, 73.0]);
 
@@ -420,33 +386,8 @@ mod tests {
     }
 
     #[test]
-    fn test_append_different_values_with_leading_zero_bits_with_relative_error_bound_zero() {
-        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = MacaqueV::new(error_bound);
-
-        model_type.compress_values(&[37.0, 73.0]);
-
-        assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
-        assert_eq!(model_type.last_leading_zero_bits, 8);
-        assert_eq!(model_type.last_trailing_zero_bits, 17);
-    }
-
-    #[test]
-    fn test_append_different_values_without_leading_zero_bits_with_absolute_error_bound_zero() {
-        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = MacaqueV::new(error_bound);
-
-        model_type.compress_values(&[37.0, 71.0, 73.0]);
-
-        assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
-        assert_eq!(model_type.last_leading_zero_bits, 8);
-        assert_eq!(model_type.last_trailing_zero_bits, 17);
-    }
-
-    #[test]
-    fn test_append_different_values_without_leading_zero_bits_with_relative_error_bound_zero() {
-        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = MacaqueV::new(error_bound);
+    fn test_append_different_values_without_leading_zero_bits_with_lossless_error_bound() {
+        let mut model_type = MacaqueV::new(ErrorBound::Lossless);
 
         model_type.compress_values(&[37.0, 71.0, 73.0]);
 
@@ -493,22 +434,11 @@ mod tests {
     // Tests for sum().
     proptest! {
     #[test]
-    fn test_sum_with_absolute_error_bound_zero(values in collection::vec(ProptestValue::ANY, 0..50)) {
+    fn test_sum_with_lossless_error_bound(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let expected_sum = values.iter().sum::<f32>();
         let compressed_values = compress_values_using_macaque_v(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &values, None);
-        let sum = sum(values.len(), &compressed_values, None);
-        prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
-    }
-
-    #[test]
-    fn test_sum_with_relative_error_bound_zero(values in collection::vec(ProptestValue::ANY, 0..50)) {
-        prop_assume!(!values.is_empty());
-        let expected_sum = values.iter().sum::<f32>();
-        let compressed_values = compress_values_using_macaque_v(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &values, None);
         let sum = sum(values.len(), &compressed_values, None);
         prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
@@ -516,47 +446,18 @@ mod tests {
     }
 
     #[test]
-    fn test_sum_model_single_value_with_absolute_error_bound_zero() {
-        let compressed_values = compress_values_using_macaque_v(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &[37.0],
-            None,
-        );
+    fn test_sum_model_single_value_with_lossless_error_bound() {
+        let compressed_values =
+            compress_values_using_macaque_v(ErrorBound::Lossless, &[37.0], None);
         let sum = sum(1, &compressed_values, None);
         assert_eq!(sum, 37.0);
     }
 
     #[test]
-    fn test_sum_model_single_value_with_relative_error_bound_zero() {
-        let compressed_values = compress_values_using_macaque_v(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            &[37.0],
-            None,
-        );
-        let sum = sum(1, &compressed_values, None);
-        assert_eq!(sum, 37.0);
-    }
-
-    #[test]
-    fn test_sum_residuals_single_value_with_absolute_error_bound_zero() {
+    fn test_sum_residuals_single_value_with_lossless_error_bound() {
         let maybe_model_last_value = Some(37.0);
-        let compressed_values = compress_values_using_macaque_v(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &[37.0],
-            maybe_model_last_value,
-        );
-        let sum = sum(1, &compressed_values, maybe_model_last_value);
-        assert_eq!(sum, 37.0);
-    }
-
-    #[test]
-    fn test_sum_residuals_single_value_with_relative_error_bound_zero() {
-        let maybe_model_last_value = Some(37.0);
-        let compressed_values = compress_values_using_macaque_v(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            &[37.0],
-            maybe_model_last_value,
-        );
+        let compressed_values =
+            compress_values_using_macaque_v(ErrorBound::Lossless, &[37.0], maybe_model_last_value);
         let sum = sum(1, &compressed_values, maybe_model_last_value);
         assert_eq!(sum, 37.0);
     }
@@ -564,18 +465,10 @@ mod tests {
     // Tests for grid().
     proptest! {
     #[test]
-    fn test_grid_with_absolute_error_bound_zero(values in collection::vec(ProptestValue::ANY, 0..50)) {
+    fn test_grid_with_lossless_error_bound(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         assert_grid_with_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &values);
-    }
-
-    #[test]
-    fn test_grid_with_relative_error_bound_zero(values in collection::vec(ProptestValue::ANY, 0..50)) {
-        prop_assume!(!values.is_empty());
-        assert_grid_with_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &values);
     }
     }
@@ -599,35 +492,13 @@ mod tests {
     }
 
     #[test]
-    fn test_grid_model_single_value_with_absolute_error_bound_zero() {
-        assert_grid_single(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            None,
-        );
+    fn test_grid_model_single_value_with_lossless_error_bound() {
+        assert_grid_single(ErrorBound::Lossless, None);
     }
 
     #[test]
-    fn test_grid_model_single_value_with_relative_error_bound_zero() {
-        assert_grid_single(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            None,
-        );
-    }
-
-    #[test]
-    fn test_grid_residuals_single_value_with_absolute_error_bound_zero() {
-        assert_grid_single(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            Some(37.0),
-        );
-    }
-
-    #[test]
-    fn test_grid_residuals_single_value_with_relative_error_bound_zero() {
-        assert_grid_single(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            Some(37.0),
-        );
+    fn test_grid_residuals_single_value_with_lossless_error_bound() {
+        assert_grid_single(ErrorBound::Lossless, Some(37.0));
     }
 
     fn assert_grid_single(error_bound: ErrorBound, maybe_model_last_value: Option<Value>) {

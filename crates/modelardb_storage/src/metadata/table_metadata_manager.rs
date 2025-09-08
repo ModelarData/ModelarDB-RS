@@ -611,7 +611,6 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
-    use modelardb_test::ERROR_BOUND_ZERO;
     use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::{ArrowTimestamp, ArrowValue};
     use tempfile::TempDir;
@@ -948,10 +947,7 @@ mod tests {
             Field::new("tag", DataType::Utf8, false),
         ]));
 
-        let error_bounds = vec![
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-            query_schema.fields.len()
-        ];
+        let error_bounds = vec![ErrorBound::Lossless; query_schema.fields.len()];
 
         let plus_one_column = Some(GeneratedColumn {
             expr: col("field_1") + Literal(Int64(Some(1))),
