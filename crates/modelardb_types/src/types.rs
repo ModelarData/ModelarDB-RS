@@ -297,9 +297,9 @@ pub enum ErrorBound {
 
 impl ErrorBound {
     /// Return an [`ErrorBound::Absolute`] with `value` as its absolute per-value bound. A
-    /// [`ModelarDbTypesError`] is returned if a negative or non-normal value is passed.
+    /// [`ModelarDbTypesError`] is returned if a non-positive or non-normal value is passed.
     pub fn try_new_absolute(value: f32) -> Result<Self> {
-        if !value.is_finite() || value < 0.0 {
+        if !value.is_finite() || value <= 0.0 {
             Err(ModelarDbTypesError::InvalidArgument(
                 "An absolute error bound must be a positive finite value.".to_owned(),
             ))
@@ -309,11 +309,13 @@ impl ErrorBound {
     }
 
     /// Return an [`ErrorBound::Relative`] with `percentage` as its relative per-value bound. A
-    /// [`ModelarDbTypesError`] is returned if a value below 0% or a value above 100% is passed.
+    /// [`ModelarDbTypesError`] is returned if a value that is 0% or below is passed or a value
+    /// above 100% is passed.
     pub fn try_new_relative(percentage: f32) -> Result<Self> {
-        if !(0.0..=100.0).contains(&percentage) {
+        if !(0.0 < percentage && percentage <= 100.0) {
             Err(ModelarDbTypesError::InvalidArgument(
-                "A relative error bound must be a value from 0.0% to 100.0%.".to_owned(),
+                "A relative error bound must be a positive value that is at most 100.0%."
+                    .to_owned(),
             ))
         } else {
             Ok(Self::Relative(percentage))
@@ -623,8 +625,8 @@ mod tests {
 
     // Tests for ErrorBound.
     #[test]
-    fn test_absolute_error_bound_can_be_zero() {
-        assert!(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).is_ok())
+    fn test_absolute_error_bound_cannot_be_zero() {
+        assert!(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).is_err())
     }
 
     proptest! {
@@ -655,8 +657,8 @@ mod tests {
     }
 
     #[test]
-    fn test_relative_error_bound_can_be_zero() {
-        assert!(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).is_ok())
+    fn test_relative_error_bound_cannot_be_zero() {
+        assert!(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).is_err())
     }
 
     proptest! {
