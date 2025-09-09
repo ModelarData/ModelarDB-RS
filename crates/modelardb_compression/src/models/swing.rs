@@ -348,9 +348,7 @@ mod tests {
 
     use arrow::array::{BinaryArray, Float32Array, Int8Array};
     use arrow::datatypes::{DataType, Field, Schema};
-    use modelardb_test::{
-        ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
-    };
+    use modelardb_test::{ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX};
     use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
     use proptest::num::f32 as ProptestValue;
@@ -368,66 +366,26 @@ mod tests {
     // Tests for Swing.
     proptest! {
     #[test]
-    fn test_can_fit_sequence_of_finite_value_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
+    fn test_can_fit_sequence_of_finite_value_with_lossless_error_bound(value in ProptestValue::ANY) {
         can_fit_sequence_of_value_with_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            value)
-    }
-
-    #[test]
-    fn test_can_fit_sequence_of_finite_value_with_relative_error_bound_zero(value in ProptestValue::ANY) {
-        can_fit_sequence_of_value_with_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             value)
     }
     }
 
     #[test]
-    fn test_can_fit_sequence_of_positive_infinity_with_absolute_error_bound_zero() {
-        can_fit_sequence_of_value_with_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            Value::INFINITY,
-        )
+    fn test_can_fit_sequence_of_positive_infinity_with_lossless_error_bound() {
+        can_fit_sequence_of_value_with_error_bound(ErrorBound::Lossless, Value::INFINITY)
     }
 
     #[test]
-    fn test_can_fit_sequence_of_positive_infinity_with_relative_error_bound_zero() {
-        can_fit_sequence_of_value_with_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            Value::INFINITY,
-        )
+    fn test_can_fit_sequence_of_negative_infinity_with_lossless_error_bound() {
+        can_fit_sequence_of_value_with_error_bound(ErrorBound::Lossless, Value::NEG_INFINITY)
     }
 
     #[test]
-    fn test_can_fit_sequence_of_negative_infinity_with_absolute_error_bound_zero() {
-        can_fit_sequence_of_value_with_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            Value::NEG_INFINITY,
-        )
-    }
-
-    #[test]
-    fn test_can_fit_sequence_of_negative_infinity_with_relative_error_bound_zero() {
-        can_fit_sequence_of_value_with_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            Value::NEG_INFINITY,
-        )
-    }
-
-    #[test]
-    fn test_can_fit_sequence_of_nans_with_absolute_error_bound_zero() {
-        can_fit_sequence_of_value_with_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            Value::NAN,
-        )
-    }
-
-    #[test]
-    fn test_can_fit_sequence_of_nans_with_relative_error_bound_zero() {
-        can_fit_sequence_of_value_with_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            Value::NAN,
-        )
+    fn test_can_fit_sequence_of_nans_with_lossless_error_bound() {
+        can_fit_sequence_of_value_with_error_bound(ErrorBound::Lossless, Value::NAN)
     }
 
     fn can_fit_sequence_of_value_with_error_bound(error_bound: ErrorBound, value: Value) {
@@ -456,35 +414,16 @@ mod tests {
 
     proptest! {
     #[test]
-    fn test_can_fit_one_value_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
-        let error_bound_zero = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        prop_assert!(Swing::new(error_bound_zero).fit_data_point(START_TIME, value));
+    fn test_can_fit_one_value_with_lossless_error_bound(value in ProptestValue::ANY) {
+        prop_assert!(Swing::new(ErrorBound::Lossless).fit_data_point(START_TIME, value));
     }
 
     #[test]
-    fn test_can_fit_one_value_with_relative_error_bound_zero(value in ProptestValue::ANY) {
-        let error_bound_zero = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        prop_assert!(Swing::new(error_bound_zero).fit_data_point(START_TIME, value));
-    }
-
-    #[test]
-    fn test_can_fit_two_finite_value_with_absolute_error_bound_zero(
+    fn test_can_fit_two_finite_value_with_lossless_error_bound(
         first_value in ProptestValue::NORMAL,
         second_value in ProptestValue::NORMAL
     ) {
-        let error_bound_zero = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Swing::new(error_bound_zero);
-        prop_assert!(model_type.fit_data_point(START_TIME, first_value));
-        prop_assert!(model_type.fit_data_point(END_TIME, second_value));
-    }
-
-    #[test]
-    fn test_can_fit_two_finite_value_with_relative_error_bound_zero(
-        first_value in ProptestValue::NORMAL,
-        second_value in ProptestValue::NORMAL
-    ) {
-        let error_bound_zero = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        let mut model_type = Swing::new(error_bound_zero);
+        let mut model_type = Swing::new(ErrorBound::Lossless);
         prop_assert!(model_type.fit_data_point(START_TIME, first_value));
         prop_assert!(model_type.fit_data_point(END_TIME, second_value));
     }
@@ -599,33 +538,17 @@ mod tests {
     }
 
     #[test]
-    fn test_can_fit_sequence_of_linear_values_with_absolute_error_bound_zero() {
+    fn test_can_fit_sequence_of_linear_values_with_lossless_error_bound() {
         assert!(fit_sequence_of_values_with_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &[42.0, 84.0, 126.0, 168.0, 210.0],
         ))
     }
 
     #[test]
-    fn test_can_fit_sequence_of_linear_values_with_relative_error_bound_zero() {
-        assert!(fit_sequence_of_values_with_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            &[42.0, 84.0, 126.0, 168.0, 210.0],
-        ))
-    }
-
-    #[test]
-    fn test_cannot_fit_sequence_of_different_values_with_absolute_error_bound_zero() {
+    fn test_cannot_fit_sequence_of_different_values_with_lossless_error_bound() {
         assert!(!fit_sequence_of_values_with_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &[42.0, 42.0, 42.8, 42.0, 42.0],
-        ))
-    }
-
-    #[test]
-    fn test_cannot_fit_sequence_of_different_values_with_relative_error_bound_zero() {
-        assert!(!fit_sequence_of_values_with_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &[42.0, 42.0, 42.8, 42.0, 42.0],
         ))
     }
@@ -793,43 +716,20 @@ mod tests {
     }
 
     #[test]
-    fn test_can_reconstruct_sequence_of_linear_increasing_values_within_absolute_error_bound_zero()
-    {
+    fn test_can_reconstruct_sequence_of_linear_increasing_values_within_lossless_error_bound() {
         assert_can_reconstruct_sequence_of_linear_values_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             (42..=4200).step_by(42).map(|value| value as f32).collect(),
         )
     }
 
     #[test]
-    fn test_can_reconstruct_sequence_of_linear_increasing_values_within_relative_error_bound_zero()
-    {
-        assert_can_reconstruct_sequence_of_linear_values_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            (42..=4200).step_by(42).map(|value| value as f32).collect(),
-        )
-    }
-
-    #[test]
-    fn test_can_reconstruct_sequence_of_linear_decreasing_values_within_absolute_error_bound_zero()
-    {
+    fn test_can_reconstruct_sequence_of_linear_decreasing_values_within_lossless_error_bound() {
         let mut values: Vec<Value> = (42..=4200).step_by(42).map(|value| value as f32).collect();
         values.reverse();
 
         assert_can_reconstruct_sequence_of_linear_values_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            values,
-        );
-    }
-
-    #[test]
-    fn test_can_reconstruct_sequence_of_linear_decreasing_values_within_relative_error_bound_zero()
-    {
-        let mut values: Vec<Value> = (42..=4200).step_by(42).map(|value| value as f32).collect();
-        values.reverse();
-
-        assert_can_reconstruct_sequence_of_linear_values_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             values,
         );
     }
