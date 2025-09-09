@@ -336,10 +336,10 @@ unsafe fn create(
     TOKIO_RUNTIME.block_on(modelardb.create(table_name, table_type))
 }
 
-/// Converts the [`MapArray`] in `error_bounds_array` to a [`HashMap`]. If a value is zero the column
-/// with that name is stored losslessly, if the value is positive it is interpreted as an absolute
-/// error bound, and if the value is negative it is interpreted as a relative error bound. Assumes
-/// the error bound values are finite [`f32`]s.
+/// Converts the [`MapArray`] in `error_bounds_array` to a [`HashMap`]. If the value is positive, it
+/// is interpreted as an absolute error bound, and if the value is negative, it is interpreted as a
+/// relative error bound. If no error bound is given for a column, it is stored losslessly.
+/// Assumes the error bound values are finite [`f32`]s.
 fn error_bounds_array_to_error_bounds(
     error_bounds_array: &MapArray,
 ) -> HashMap<String, ErrorBound> {
