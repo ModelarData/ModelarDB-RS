@@ -124,12 +124,14 @@ fn try_new_time_series_table_metadata(
     let schema = Arc::new(schema);
     let df_schema: DFSchema = schema.clone().try_into()?;
 
-    let lossless = ErrorBound::try_new_absolute(0.0)?;
-
     let mut error_bounds_all = Vec::with_capacity(schema.fields().len());
     let mut generated_columns_all = Vec::with_capacity(schema.fields().len());
     for field in schema.fields() {
-        error_bounds_all.push(error_bounds.remove(field.name()).unwrap_or(lossless));
+        error_bounds_all.push(
+            error_bounds
+                .remove(field.name())
+                .unwrap_or(ErrorBound::Lossless),
+        );
 
         if let Some(sql_expr) = generated_columns.get(field.name()) {
             let expr = tokenize_and_parse_sql_expression(sql_expr, &df_schema)?;

@@ -511,8 +511,8 @@ mod tests {
 
     use arrow::array::BinaryArray;
     use arrow::datatypes::{DataType, Field};
-    use modelardb_test::data_generation::{self, ValuesStructure};
     use modelardb_test::ERROR_BOUND_TEN;
+    use modelardb_test::data_generation::{self, ValuesStructure};
     use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampArray, ValueArray};
 

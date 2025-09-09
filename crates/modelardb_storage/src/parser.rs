@@ -980,30 +980,30 @@ fn column_defs_to_time_series_table_query_schema(
 }
 
 /// Extract the error bounds from the columns in `column_defs`. The error bound for the timestamp
-/// and tag columns will be zero so the error bound of each column can be accessed using its index.
+/// and tag columns will be lossless so the error bound of each column can be accessed using its index.
 fn extract_error_bounds_for_all_columns(
     column_defs: &[ColumnDef],
 ) -> StdResult<Vec<ErrorBound>, ParserError> {
     let mut error_bounds = Vec::with_capacity(column_defs.len());
 
     for column_def in column_defs {
-        let mut error_bound_value = 0.0;
-        let mut is_relative = false;
+        let mut error_bound = ErrorBound::Lossless;
 
         for column_def_option in &column_def.options {
             if let ColumnOption::DialectSpecific(dialect_specific_tokens) =
                 &column_def_option.option
             {
-                (error_bound_value, is_relative) = tokens_to_error_bound(dialect_specific_tokens)?;
+                let (error_bound_value, is_relative) =
+                    tokens_to_error_bound(dialect_specific_tokens)?;
+
+                error_bound = if !is_relative {
+                    ErrorBound::try_new_absolute(error_bound_value)
+                } else {
+                    ErrorBound::try_new_relative(error_bound_value)
+                }
+                .map_err(|error| ParserError::ParserError(error.to_string()))?;
             }
         }
-
-        let error_bound = if !is_relative {
-            ErrorBound::try_new_absolute(error_bound_value)
-        } else {
-            ErrorBound::try_new_relative(error_bound_value)
-        }
-        .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
         error_bounds.push(error_bound);
     }

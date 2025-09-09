@@ -264,8 +264,8 @@ mod tests {
 
     use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, Int8Array};
     use arrow::datatypes::{DataType, Field};
-    use modelardb_test::data_generation::{self, ValuesStructure};
     use modelardb_test::ERROR_BOUND_FIVE;
+    use modelardb_test::data_generation::{self, ValuesStructure};
     use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
 
@@ -460,8 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_random_linear_constant_time_series_within_lossless_error_bound()
-     {
+    fn test_try_compress_regular_random_linear_constant_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_time_series(
             ErrorBound::Lossless,
             false,
@@ -472,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_random_linear_constant_time_series_within_lossless_error_bound()
-     {
+    {
         generate_compress_and_assert_known_time_series(
             ErrorBound::Lossless,
             true,
@@ -482,8 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_constant_linear_random_time_series_within_lossless_error_bound()
-     {
+    fn test_try_compress_regular_constant_linear_random_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_time_series(
             ErrorBound::Lossless,
             false,
@@ -494,7 +492,7 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_constant_linear_random_time_series_within_lossless_error_bound()
-     {
+    {
         generate_compress_and_assert_known_time_series(
             ErrorBound::Lossless,
             true,
@@ -589,13 +587,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_synthetic_time_series_without_noise_within_lossless_error_bound()
-     {
-        generate_compress_and_assert_time_series(
-            ErrorBound::Lossless,
-            false,
-            None,
-        )
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_lossless_error_bound() {
+        generate_compress_and_assert_time_series(ErrorBound::Lossless, false, None)
     }
 
     #[test]
@@ -619,13 +612,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_synthetic_time_series_with_noise_within_lossless_error_bound()
-    {
-        generate_compress_and_assert_time_series(
-            ErrorBound::Lossless,
-            false,
-            ADD_NOISE_RANGE,
-        )
+    fn test_try_compress_regular_synthetic_time_series_with_noise_within_lossless_error_bound() {
+        generate_compress_and_assert_time_series(ErrorBound::Lossless, false, ADD_NOISE_RANGE)
     }
 
     #[test]
@@ -650,12 +638,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_synthetic_time_series_without_noise_within_lossless_error_bound()
-     {
-        generate_compress_and_assert_time_series(
-            ErrorBound::Lossless,
-            true,
-            None,
-        )
+    {
+        generate_compress_and_assert_time_series(ErrorBound::Lossless, true, None)
     }
 
     #[test]
@@ -679,13 +663,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_lossless_error_bound()
-     {
-        generate_compress_and_assert_time_series(
-            ErrorBound::Lossless,
-            true,
-            ADD_NOISE_RANGE,
-        )
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_lossless_error_bound() {
+        generate_compress_and_assert_time_series(ErrorBound::Lossless, true, ADD_NOISE_RANGE)
     }
 
     #[test]
