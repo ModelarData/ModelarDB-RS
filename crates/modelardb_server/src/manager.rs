@@ -21,9 +21,10 @@ use std::{env, str};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
+use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::TableProvider;
 use modelardb_types::flight::protocol;
-use modelardb_types::types::{Node, ServerMode};
+use modelardb_types::types::{Node, ServerMode, TimeSeriesTableMetadata};
 use prost::Message;
 use tokio::sync::RwLock;
 use tonic::Request;
@@ -32,10 +33,11 @@ use tonic::transport::Channel;
 
 use crate::PORT;
 use crate::context::Context;
+use crate::data_folders::DataFolder;
 use crate::error::{ModelarDbServerError, Result};
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Manager {
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
@@ -87,10 +89,7 @@ impl Manager {
     /// retrieved from the remote data folder, or the tables could not be created,
     /// return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
-        let local_metadata_manager = &context
-            .data_folders
-            .local_data_folder
-            .table_metadata_manager;
+        let local_data_folder = &context.data_folders.local_data_folder;
 
         let remote_data_folder = &context
             .data_folders
@@ -99,47 +98,25 @@ impl Manager {
             .ok_or(ModelarDbServerError::InvalidState(
                 "Remote data folder is missing.".to_owned(),
             ))?;
-        let remote_metadata_manager = &remote_data_folder.table_metadata_manager;
 
-        let local_table_names = local_metadata_manager.table_names().await?;
-        let remote_table_names = remote_metadata_manager.table_names().await?;
+        validate_local_tables_exist_remotely(local_data_folder, remote_data_folder).await?;
 
-        // Check that all the local tables exist in the cluster's database schema already.
-        let invalid_node_tables: Vec<String> = local_table_names
-            .iter()
-            .filter(|table| !remote_table_names.contains(table))
-            .cloned()
-            .collect();
+        // Validate that all tables that are in both the local and remote data folder are identical.
+        let missing_normal_tables =
+            validate_normal_tables(local_data_folder, remote_data_folder).await?;
 
-        if !invalid_node_tables.is_empty() {
-            return Err(ModelarDbServerError::InvalidState(format!(
-                "The following tables do not exist in the cluster's database schema: {invalid_node_tables:?}.",
-            )));
-        }
+        let missing_time_series_tables =
+            validate_time_series_tables(local_data_folder, remote_data_folder).await?;
 
         // For each table that does not already exist locally, create the table.
-        let missing_cluster_tables = remote_table_names
-            .iter()
-            .filter(|table| !local_table_names.contains(table));
+        for (table_name, schema) in missing_normal_tables {
+            context.create_normal_table(&table_name, &schema).await?;
+        }
 
-        for table_name in missing_cluster_tables {
-            if remote_metadata_manager.is_normal_table(table_name).await? {
-                let delta_table = remote_data_folder
-                    .delta_lake
-                    .delta_table(table_name)
-                    .await?;
-
-                let schema = TableProvider::schema(&delta_table);
-                context.create_normal_table(table_name, &schema).await?;
-            } else {
-                let time_series_table_metadata = remote_metadata_manager
-                    .time_series_table_metadata_for_time_series_table(table_name)
-                    .await?;
-
-                context
-                    .create_time_series_table(&time_series_table_metadata)
-                    .await?;
-            }
+        for time_series_table_metadata in missing_time_series_tables {
+            context
+                .create_time_series_table(&time_series_table_metadata)
+                .await?;
         }
 
         Ok(())
@@ -189,13 +166,115 @@ async fn do_action_and_extract_result(
     })
 }
 
-/// Partial equality is implemented so PartialEq can be derived for [`ClusterMode`](crate::ClusterMode).
-/// It cannot be derived for [`Manager`] since both `flight_client` and `table_metadata_manager`
-/// does not support equality comparisons.
-impl PartialEq for Manager {
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
+/// Validate that all tables in the local data folder exist in the remote data folder. If any table
+/// does not exist in the remote data folder, return [`ModelarDbServerError`].
+async fn validate_local_tables_exist_remotely(
+    local_data_folder: &DataFolder,
+    remote_data_folder: &DataFolder,
+) -> Result<()> {
+    let local_table_names = local_data_folder
+        .table_metadata_manager
+        .table_names()
+        .await?;
+    let remote_table_names = remote_data_folder
+        .table_metadata_manager
+        .table_names()
+        .await?;
+
+    let invalid_tables: Vec<String> = local_table_names
+        .iter()
+        .filter(|table| !remote_table_names.contains(table))
+        .cloned()
+        .collect();
+
+    if !invalid_tables.is_empty() {
+        return Err(ModelarDbServerError::InvalidState(format!(
+            "The following tables do not exist in the remote data folder: {}.",
+            invalid_tables.join(", ")
+        )));
     }
+
+    Ok(())
+}
+
+/// For each normal table in the remote data folder, if the table also exists in the local data
+/// folder, validate that the schemas are identical. If the schemas are not identical, return
+/// [`ModelarDbServerError`]. Return a vector containing the name and schema of each normal table
+/// that is in the remote data folder but not in the local data folder.
+async fn validate_normal_tables(
+    local_data_folder: &DataFolder,
+    remote_data_folder: &DataFolder,
+) -> Result<Vec<(String, Arc<Schema>)>> {
+    let mut missing_normal_tables = vec![];
+
+    let remote_normal_tables = remote_data_folder
+        .table_metadata_manager
+        .normal_table_names()
+        .await?;
+
+    for table_name in remote_normal_tables {
+        let remote_schema = normal_table_schema(remote_data_folder, &table_name).await?;
+
+        if let Ok(local_schema) = normal_table_schema(local_data_folder, &table_name).await {
+            if remote_schema != local_schema {
+                return Err(ModelarDbServerError::InvalidState(format!(
+                    "The normal table '{table_name}' has a different schema in the local data \
+                    folder compared to the remote data folder.",
+                )));
+            }
+        } else {
+            missing_normal_tables.push((table_name, remote_schema));
+        }
+    }
+
+    Ok(missing_normal_tables)
+}
+
+/// Retrieve the schema of a normal table from the Delta Lake in the data folder. If the table does
+/// not exist, or the schema could not be retrieved, return [`ModelarDbServerError`].
+async fn normal_table_schema(data_folder: &DataFolder, table_name: &str) -> Result<Arc<Schema>> {
+    let delta_table = data_folder.delta_lake.delta_table(table_name).await?;
+    Ok(TableProvider::schema(&delta_table))
+}
+
+/// For each time series table in the remote data folder, if the table also exists in the local
+/// data folder, validate that the metadata is identical. If the metadata is not identical, return
+/// [`ModelarDbServerError`]. Return a vector containing the metadata of each time series table
+/// that is in the remote data folder but not in the local data folder.
+async fn validate_time_series_tables(
+    local_data_folder: &DataFolder,
+    remote_data_folder: &DataFolder,
+) -> Result<Vec<TimeSeriesTableMetadata>> {
+    let mut missing_time_series_tables = vec![];
+
+    let remote_time_series_tables = remote_data_folder
+        .table_metadata_manager
+        .time_series_table_names()
+        .await?;
+
+    for table_name in remote_time_series_tables {
+        let remote_metadata = remote_data_folder
+            .table_metadata_manager
+            .time_series_table_metadata_for_time_series_table(&table_name)
+            .await?;
+
+        if let Ok(local_metadata) = local_data_folder
+            .table_metadata_manager
+            .time_series_table_metadata_for_time_series_table(&table_name)
+            .await
+        {
+            if remote_metadata != local_metadata {
+                return Err(ModelarDbServerError::InvalidState(format!(
+                    "The time series table '{table_name}' has different metadata in the local data \
+                    folder compared to the remote data folder.",
+                )));
+            }
+        } else {
+            missing_time_series_tables.push(remote_metadata);
+        }
+    }
+
+    Ok(missing_time_series_tables)
 }
 
 #[cfg(test)]
