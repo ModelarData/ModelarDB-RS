@@ -19,8 +19,8 @@ from modelardb import AbsoluteErrorBound, RelativeErrorBound
 
 class TestErrorBound(unittest.TestCase):
     # Tests for AbsoluteErrorBound.
-    def test_can_create_absolute_error_bound_with_float_zero(self):
-        _ = AbsoluteErrorBound(0)
+    def test_cannot_create_absolute_error_bound_with_float_zero(self):
+        self.assertRaises(ValueError, lambda: AbsoluteErrorBound(0))
 
     def test_can_create_absolute_error_bound_with_normal_positive_float(self):
         _ = AbsoluteErrorBound(1)
@@ -38,8 +38,8 @@ class TestErrorBound(unittest.TestCase):
         self.assertRaises(ValueError, lambda: AbsoluteErrorBound(float("nan")))
 
     # Tests for RelativeErrorBound.
-    def test_can_create_relative_error_bound_with_float_zero(self):
-        _ = RelativeErrorBound(0)
+    def test_cannot_create_relative_error_bound_with_float_zero(self):
+        self.assertRaises(ValueError, lambda: RelativeErrorBound(0))
 
     def test_can_create_relative_error_bound_with_normal_positive_float(self):
         _ = RelativeErrorBound(1)

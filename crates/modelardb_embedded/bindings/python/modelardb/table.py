@@ -43,8 +43,7 @@ class TimeSeriesTable:
     :type schema: Schema
     :param error_bounds: Absolute or relative error bounds for the field columns
     with type :class:`pyarrow.float32()` in `schema`. If no error bound is
-    specified for a column, it will be zero so the values will be stored
-    losslessly.
+    specified for a column, the values will be stored losslessly.
     :type error_bounds: dict[str, AbsoluteErrorBound | RelativeErrorBound],
     optional
     :param generated_columns: SQL expressions for generating field columns of
