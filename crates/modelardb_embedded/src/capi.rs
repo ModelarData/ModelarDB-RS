@@ -933,15 +933,27 @@ unsafe fn drop(
 }
 
 /// Vacuums the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
-/// `maybe_operations_ptr`. Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`];
-/// and `table_name_ptr` points to a valid C string.
+/// `maybe_operations_ptr` by deleting stale files that are older than `retention_period_in_seconds_ptr`
+/// seconds. Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`];
+/// `table_name_ptr` points to a valid C string; and `retention_period_in_seconds_ptr` points to a
+/// valid C string. A C string is used for the retention period to avoid issues with different
+/// platforms using an inconsistent amount of bits for integer types. The string is converted
+/// directly to an unsigned 64-bit integer in Rust.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_vacuum(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
+    retention_period_in_seconds_ptr: *const c_char,
 ) -> c_int {
-    let maybe_unit = unsafe { vacuum(maybe_operations_ptr, is_data_folder, table_name_ptr) };
+    let maybe_unit = unsafe {
+        vacuum(
+            maybe_operations_ptr,
+            is_data_folder,
+            table_name_ptr,
+            retention_period_in_seconds_ptr,
+        )
+    };
     set_error_and_return_code(maybe_unit)
 }
 
@@ -950,11 +962,26 @@ unsafe fn vacuum(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
+    retention_period_in_seconds_ptr: *const c_char,
 ) -> Result<()> {
     let modelardb = unsafe { c_void_to_operations(maybe_operations_ptr, is_data_folder)? };
     let table_name = unsafe { c_char_ptr_to_str(table_name_ptr)? };
+    let maybe_retention_period_in_seconds_str =
+        unsafe { c_char_ptr_to_maybe_str(retention_period_in_seconds_ptr)? };
 
-    TOKIO_RUNTIME.block_on(modelardb.vacuum(table_name))
+    let maybe_retention_period_in_seconds = maybe_retention_period_in_seconds_str
+        .map(|retention_period_in_seconds_str| {
+            retention_period_in_seconds_str
+                .parse::<u64>()
+                .map_err(|error| {
+                    ModelarDbEmbeddedError::InvalidArgument(format!(
+                        "Retention period is not a valid u64: {error}"
+                    ))
+                })
+        })
+        .transpose()?;
+
+    TOKIO_RUNTIME.block_on(modelardb.vacuum(table_name, maybe_retention_period_in_seconds))
 }
 
 /// Return a read-only [`*const c_char`] with a human-readable representation of the last error the

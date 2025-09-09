@@ -21,8 +21,8 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::result::Result as StdResult;
+use std::str;
 use std::sync::Arc;
-use std::{env, str};
 
 use arrow::datatypes::Schema;
 use arrow::ipc::writer::IpcWriteOptions;
@@ -337,24 +337,31 @@ impl FlightServiceHandler {
     /// Vacuum the table in the remote data folder and at each node controlled by the manager. If
     /// the table does not exist or the table cannot be vacuumed in the remote data folder
     /// and at each node, return [`Status`].
-    async fn vacuum_cluster_table(&self, table_name: &str) -> StdResult<(), Status> {
-        let retention_period_in_seconds = env::var("MODELARDBD_RETENTION_PERIOD_IN_SECONDS")
-            .map_or(60 * 60 * 24 * 7, |value| value.parse().unwrap());
-
+    async fn vacuum_cluster_table(
+        &self,
+        table_name: &str,
+        maybe_retention_period_in_seconds: Option<u64>,
+    ) -> StdResult<(), Status> {
         // Vacuum the table in the remote data folder Delta lake.
         self.context
             .remote_data_folder
             .delta_lake
-            .vacuum_table(table_name, retention_period_in_seconds)
+            .vacuum_table(table_name, maybe_retention_period_in_seconds)
             .await
             .map_err(error_to_status_internal)?;
 
         // Vacuum the table in the nodes controlled by the manager.
+        let vacuum_sql = if let Some(retention_period) = maybe_retention_period_in_seconds {
+            format!("VACUUM {table_name} RETAIN {retention_period}")
+        } else {
+            format!("VACUUM {table_name}")
+        };
+
         self.context
             .cluster
             .read()
             .await
-            .cluster_do_get(&format!("VACUUM {table_name}"), &self.context.key)
+            .cluster_do_get(&vacuum_sql, &self.context.key)
             .await
             .map_err(error_to_status_internal)?;
 
@@ -524,7 +531,7 @@ impl FlightService for FlightServiceHandler {
                     self.drop_cluster_table(&table_name).await?;
                 }
             }
-            ModelarDbStatement::Vacuum(mut table_names) => {
+            ModelarDbStatement::Vacuum(mut table_names, maybe_retention_period_in_seconds) => {
                 // Vacuum all tables if no table names are provided.
                 if table_names.is_empty() {
                     table_names = self
@@ -538,7 +545,8 @@ impl FlightService for FlightServiceHandler {
                 }
 
                 for table_name in table_names {
-                    self.vacuum_cluster_table(&table_name).await?;
+                    self.vacuum_cluster_table(&table_name, maybe_retention_period_in_seconds)
+                        .await?;
                 }
             }
             // .. is not used so a compile error is raised if a new ModelarDbStatement is added.

@@ -58,6 +58,12 @@ pub struct QueryCompressedSchema(pub Arc<Schema>);
 #[derive(Clone)]
 pub struct GridSchema(pub Arc<Schema>);
 
+/// Maximum period in seconds that data can be retained in ModelarDB before it is deleted by a
+/// VACUUM operation. The period is equal to the maximum value of an i64 in milliseconds.
+/// The limitation is imposed by the use of `chrono::TimeDelta` when vacuuming data, which uses
+/// an i64 internally to represent time in milliseconds.
+pub const MAX_RETENTION_PERIOD_IN_SECONDS: u64 = (i64::MAX / 1000) as u64;
+
 /// Types of tables supported by ModelarDB.
 pub enum Table {
     NormalTable(String, Schema),

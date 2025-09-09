@@ -37,7 +37,7 @@ use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_types::flight::protocol;
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::types::{MAX_RETENTION_PERIOD_IN_SECONDS, TimeSeriesTableMetadata};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -466,19 +466,24 @@ impl DeltaLake {
         Ok(())
     }
 
-    /// Vacuum the Delta Lake table with `table_name` by deleting all files that are older than
-    /// `retention_period_in_seconds` seconds. If the retention period is out of bounds or the
-    /// files could not be deleted, a [`ModelarDbStorageError`] is returned.
+    /// Vacuum the Delta Lake table with `table_name` by deleting stale files that are older than
+    /// `maybe_retention_period_in_seconds` seconds. If a retention period is not given, the
+    /// default retention period of 7 days is used. If the retention period is larger than
+    /// [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds or the files could not be deleted, a
+    /// [`ModelarDbStorageError`] is returned.
     pub async fn vacuum_table(
         &self,
         table_name: &str,
-        retention_period_in_seconds: usize,
+        maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()> {
         let delta_table_ops = self.delta_ops(table_name).await?;
 
+        let retention_period_in_seconds =
+            maybe_retention_period_in_seconds.unwrap_or(60 * 60 * 24 * 7);
+
         let retention_period = TimeDelta::new(retention_period_in_seconds as i64, 0).ok_or(
             ModelarDbStorageError::InvalidArgument(format!(
-                "Retention period of {retention_period_in_seconds} seconds is out of bounds."
+                "Retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
             )),
         )?;
 
