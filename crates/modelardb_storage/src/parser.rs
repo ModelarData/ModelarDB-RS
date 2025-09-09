@@ -540,7 +540,7 @@ impl ModelarDbDialect {
 
             if retention_period_in_seconds > MAX_RETENTION_PERIOD_IN_SECONDS {
                 return Err(ParserError::ParserError(format!(
-                    "Retention period in seconds cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+                    "Retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
                 )));
             }
 
