@@ -295,7 +295,6 @@ mod tests {
 
     use modelardb_test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_ONE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_TEN,
-        ERROR_BOUND_ZERO,
     };
     use proptest::num;
     use proptest::num::f32 as ProptestValue;
@@ -304,13 +303,8 @@ mod tests {
     // Tests for is_value_within_error_bound().
     proptest! {
     #[test]
-    fn test_same_value_is_always_within_absolute_error_bound(value in ProptestValue::ANY) {
-        prop_assert!(is_value_within_error_bound(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(), value, value));
-    }
-
-    #[test]
-    fn test_same_value_is_always_within_relative_error_bound(value in ProptestValue::ANY) {
-        prop_assert!(is_value_within_error_bound(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(), value, value));
+    fn test_same_value_is_always_within_lossless_error_bound(value in ProptestValue::ANY) {
+        prop_assert!(is_value_within_error_bound(ErrorBound::Lossless, value, value));
     }
 
     #[test]
