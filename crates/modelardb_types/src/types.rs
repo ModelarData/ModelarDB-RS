@@ -71,7 +71,7 @@ pub enum Table {
 }
 
 /// Metadata required to ingest data into a time series table and query a time series table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TimeSeriesTableMetadata {
     /// Name of the time series table.
     pub name: String,
