@@ -89,15 +89,6 @@ pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
     }
 }
 
-/// Returns true if compression is lossless i.e., `error_bound` value is 0.
-pub fn is_lossless_compression(error_bound: ErrorBound) -> bool {
-    match error_bound {
-        ErrorBound::Absolute(error_bound) => error_bound == 0.0,
-        ErrorBound::Relative(error_bound) => error_bound == 0.0,
-        ErrorBound::Lossless => true,
-    }
-}
-
 /// Returns true if `v1` and `v2` are equivalent or both values are NAN.
 fn equal_or_nan(v1: f64, v2: f64) -> bool {
     v1 == v2 || (v1.is_nan() && v2.is_nan())

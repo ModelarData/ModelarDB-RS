@@ -98,7 +98,7 @@ impl MacaqueV {
 
     /// Compress `value` using XOR and a variable length binary encoding and then store it.
     fn compress_value_xor_last_value(&mut self, value: Value) {
-        let value = if models::is_lossless_compression(self.error_bound) {
+        let value = if self.error_bound == ErrorBound::Lossless {
             value
         } else {
             // The best case for MacaqueV is rewriting the current value with the previous one.
