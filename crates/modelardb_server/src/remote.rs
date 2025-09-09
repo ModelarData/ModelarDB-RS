@@ -516,7 +516,7 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(empty_record_batch_stream())
             }
-            ModelarDbStatement::Vacuum(mut table_names) => {
+            ModelarDbStatement::Vacuum(mut table_names, maybe_retention_period_in_seconds) => {
                 // Vacuum all tables if no table names are provided.
                 if table_names.is_empty() {
                     table_names = self
@@ -528,7 +528,7 @@ impl FlightService for FlightServiceHandler {
 
                 for table_name in table_names {
                     self.context
-                        .vacuum_table(&table_name)
+                        .vacuum_table(&table_name, maybe_retention_period_in_seconds)
                         .await
                         .map_err(error_to_status_invalid_argument)?;
                 }
@@ -769,13 +769,6 @@ impl FlightService for FlightServiceHandler {
                         .set_transfer_time_in_seconds(new_value, storage_engine)
                         .await
                         .map_err(error_to_status_internal)
-                }
-                Ok(protocol::update_configuration::Setting::RetentionPeriodInSeconds) => {
-                    let new_value = new_value.ok_or(invalid_null_error)?;
-
-                    configuration_manager.set_retention_period_in_seconds(new_value);
-
-                    Ok(())
                 }
                 _ => Err(Status::unimplemented(format!(
                     "{setting} is not an updatable setting in the server configuration."

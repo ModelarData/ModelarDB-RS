@@ -108,8 +108,14 @@ pub trait Operations: Sync + Send {
     /// Drop the table with the name in `table_name`.
     async fn drop(&mut self, table_name: &str) -> Result<()>;
 
-    /// Vacuum the table with the name in `table_name`.
-    async fn vacuum(&mut self, table_name: &str) -> Result<()>;
+    /// Vacuum the table with the name in `table_name` by deleting stale files that are older than
+    /// `maybe_retention_period_in_seconds` seconds. If a retention period is not given, the
+    /// default retention period of 7 days is used.
+    async fn vacuum(
+        &mut self,
+        table_name: &str,
+        maybe_retention_period_in_seconds: Option<u64>,
+    ) -> Result<()>;
 }
 
 /// Use the time series table metadata in `table_name`, `schema`, `error_bounds`, and `generated_columns`

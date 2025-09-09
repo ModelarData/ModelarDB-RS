@@ -331,19 +331,20 @@ impl Context {
         Ok(())
     }
 
-    /// Vacuum the table with `table_name` if it exists. If the table does not exist or if it could
-    /// not be vacuumed, [`ModelarDbServerError`] is returned.
-    pub async fn vacuum_table(&self, table_name: &str) -> Result<()> {
-        let retention_period_in_seconds = self
-            .configuration_manager
-            .read()
-            .await
-            .retention_period_in_seconds();
-
+    /// Vacuum the table with `table_name` if it exists. If a retention period is not given, the
+    /// default retention period of 7 days is used. If the retention period is larger than
+    /// [`MAX_RETENTION_PERIOD_IN_SECONDS`](modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS)
+    /// seconds, the table does not exist, or if it could not be vacuumed,
+    /// [`ModelarDbServerError`] is returned.
+    pub async fn vacuum_table(
+        &self,
+        table_name: &str,
+        maybe_retention_period_in_seconds: Option<u64>,
+    ) -> Result<()> {
         self.data_folders
             .local_data_folder
             .delta_lake
-            .vacuum_table(table_name, retention_period_in_seconds)
+            .vacuum_table(table_name, maybe_retention_period_in_seconds)
             .await?;
 
         Ok(())
@@ -426,6 +427,7 @@ mod tests {
     use super::*;
 
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
+    use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
     use tempfile::TempDir;
 
     use crate::data_folders::DataFolder;
@@ -756,12 +758,6 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context_with_normal_table(&temp_dir).await;
 
-        context
-            .configuration_manager
-            .write()
-            .await
-            .set_retention_period_in_seconds(0);
-
         context.truncate_table(NORMAL_TABLE_NAME).await.unwrap();
 
         // The files should still exist on disk even though they are no longer active.
@@ -773,7 +769,10 @@ mod tests {
         let files = std::fs::read_dir(&table_path).unwrap();
         assert_eq!(files.count(), 2);
 
-        context.vacuum_table(NORMAL_TABLE_NAME).await.unwrap();
+        context
+            .vacuum_table(NORMAL_TABLE_NAME, Some(0))
+            .await
+            .unwrap();
 
         // Only the _delta_log folder should remain.
         let files = std::fs::read_dir(&table_path).unwrap();
@@ -809,12 +808,6 @@ mod tests {
         let context = create_context_with_time_series_table(&temp_dir).await;
 
         context
-            .configuration_manager
-            .write()
-            .await
-            .set_retention_period_in_seconds(0);
-
-        context
             .truncate_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
@@ -828,11 +821,30 @@ mod tests {
         let files = std::fs::read_dir(&column_path).unwrap();
         assert_eq!(files.count(), 1);
 
-        context.vacuum_table(TIME_SERIES_TABLE_NAME).await.unwrap();
+        context
+            .vacuum_table(TIME_SERIES_TABLE_NAME, Some(0))
+            .await
+            .unwrap();
 
         // No files should remain in the column folder.
         let files = std::fs::read_dir(&column_path).unwrap();
         assert_eq!(files.count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_table_with_out_of_bounds_retention_period() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context_with_time_series_table(&temp_dir).await;
+
+        assert!(
+            context
+                .vacuum_table(
+                    TIME_SERIES_TABLE_NAME,
+                    Some(MAX_RETENTION_PERIOD_IN_SECONDS + 1)
+                )
+                .await
+                .is_err()
+        );
     }
 
     /// Create a [`Context`] with a time series table named `TIME_SERIES_TABLE_NAME` and write data
@@ -864,7 +876,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context.vacuum_table(TIME_SERIES_TABLE_NAME).await.is_err());
+        assert!(
+            context
+                .vacuum_table(TIME_SERIES_TABLE_NAME, None)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

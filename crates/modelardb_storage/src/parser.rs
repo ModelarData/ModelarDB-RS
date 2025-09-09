@@ -35,7 +35,8 @@ use datafusion::sql::TableReference;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use modelardb_types::functions::normalize_name; // Fully imported to not conflict.
 use modelardb_types::types::{
-    ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata,
+    ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
+    TimeSeriesTableMetadata,
 };
 use sqlparser::ast::{
     CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType,
@@ -68,7 +69,7 @@ pub enum ModelarDbStatement {
     /// TRUNCATE TABLE.
     TruncateTable(Vec<String>),
     /// VACUUM.
-    Vacuum(Vec<String>),
+    Vacuum(Vec<String>, Option<u64>),
 }
 
 /// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
@@ -131,10 +132,11 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 )?;
                 Ok(ModelarDbStatement::TruncateTable(table_names))
             }
-            // ShowVariable is used as a substitute for VACUUM since Statement does not have a
+            // NOTIFY is used as a substitute for VACUUM since Statement does not have a
             // Vacuum enum variant.
-            Statement::ShowVariable { variable } => Ok(ModelarDbStatement::Vacuum(
-                variable.into_iter().map(|ident| ident.value).collect(),
+            Statement::NOTIFY { channel, payload } => Ok(ModelarDbStatement::Vacuum(
+                channel.value.split_terminator(';').map(|s| s.to_owned()).collect(),
+                payload.and_then(|p| p.parse::<u64>().ok()),
             )),
             Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
             Statement::Query(ref boxed_query) => {
@@ -173,7 +175,7 @@ pub fn tokenize_and_parse_sql_expression(
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
 /// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements, and
-/// VACUUM \[table_name\[, table_name\]+\] statements.
+/// VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -497,21 +499,26 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Parse VACUUM \[table_name\[, table_name\]+\] to a [`Statement::ShowVariable`] with the
-    /// table names in the `variable` field. Note that [`Statement::ShowVariable`] is used since
-    /// [`Statement`] does not have a `Vacuum` variant. A [`ParserError`] is returned if VACUUM is
-    /// not the first word or the table names cannot be extracted.
+    /// Parse VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a [`Statement::NOTIFY`]
+    /// with the table names in the `channel` field and the optional retention period in the `payload`
+    /// field. Note that [`Statement::NOTIFY`] is used since [`Statement`] does not have a `Vacuum`
+    /// variant. A [`ParserError`] is returned if VACUUM is not the first word, the table names
+    /// cannot be extracted, or the retention period is not a valid positive integer that is at
+    /// most [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds.
     fn parse_vacuum(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // VACUUM.
         parser.expect_keyword(Keyword::VACUUM)?;
 
         let mut table_names = vec![];
 
-        if Token::EOF != parser.peek_nth_token(0).token {
+        // If the next token is a word that is not RETAIN, attempt to parse table names.
+        if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword != Keyword::RETAIN
+        {
             loop {
                 match self.parse_word_value(parser) {
                     Ok(table_name) => {
-                        table_names.push(Ident::new(table_name));
+                        table_names.push(table_name);
                         if Token::Comma == parser.peek_nth_token(0).token {
                             parser.next_token();
                         } else {
@@ -523,10 +530,44 @@ impl ModelarDbDialect {
             }
         }
 
-        // Return Statement::ShowVariable as a substitute for Vacuum.
-        Ok(Statement::ShowVariable {
-            variable: table_names,
+        // If the next token is RETAIN, attempt to parse the retention period in seconds.
+        let maybe_retention_period_in_seconds = if let Token::Word(word) =
+            parser.peek_nth_token(0).token
+            && word.keyword == Keyword::RETAIN
+        {
+            parser.expect_keyword(Keyword::RETAIN)?;
+            let retention_period_in_seconds = self.parse_unsigned_literal_u64(parser)?;
+
+            if retention_period_in_seconds > MAX_RETENTION_PERIOD_IN_SECONDS {
+                return Err(ParserError::ParserError(format!(
+                    "Retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+                )));
+            }
+
+            Some(retention_period_in_seconds)
+        } else {
+            None
+        };
+
+        // Return Statement::NOTIFY as a substitute for Vacuum.
+        Ok(Statement::NOTIFY {
+            channel: Ident::new(table_names.join(";")),
+            payload: maybe_retention_period_in_seconds.map(|period| period.to_string()),
         })
+    }
+
+    /// Return its value as a [`u64`] if the next [`Token`] is a [`Token::Number`], otherwise a
+    /// [`ParserError`] is returned.
+    fn parse_unsigned_literal_u64(&self, parser: &mut Parser) -> StdResult<u64, ParserError> {
+        let token_with_location = parser.next_token();
+        match token_with_location.token {
+            Token::Number(maybe_u64, _) => maybe_u64.parse::<u64>().map_err(|error| {
+                ParserError::ParserError(format!(
+                    "Failed to parse '{maybe_u64}' into a u64 due to: {error}"
+                ))
+            }),
+            _ => parser.expected("literal integer", token_with_location),
+        }
     }
 }
 
@@ -558,9 +599,9 @@ impl Dialect for ModelarDbDialect {
     /// as a CREATE TIME SERIES TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
     /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
     /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
-    /// VACUUM \[table_name\[, table_name\]+\] statement. If all checks fail, [`None`] is returned
-    /// so [`sqlparser`] uses its parsing methods for all other statements. If parsing succeeds, a
-    /// [`Statement`] is returned, and if not, a [`ParserError`] is returned.
+    /// VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If all checks fail,
+    /// [`None`] is returned so [`sqlparser`] uses its parsing methods for all other statements.
+    /// If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_time_series_table(parser) {
             Some(self.parse_create_time_series_table(parser))
@@ -1661,33 +1702,62 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_vacuum_all_tables() {
-        let table_names = parse_vacuum_and_extract_table_names("VACUUM");
+        let (table_names, maybe_retention_period_in_seconds) =
+            parse_vacuum_and_extract_table_names("VACUUM");
 
         assert!(table_names.is_empty());
+        assert!(maybe_retention_period_in_seconds.is_none());
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_single_table() {
-        let table_names = parse_vacuum_and_extract_table_names("VACUUM table_name");
+        let (table_names, maybe_retention_period_in_seconds) =
+            parse_vacuum_and_extract_table_names("VACUUM table_name");
 
         assert_eq!(table_names, vec!["table_name".to_owned()]);
+        assert!(maybe_retention_period_in_seconds.is_none());
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables() {
-        let table_names = parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2");
+        let (table_names, maybe_retention_period_in_seconds) =
+            parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2");
 
         assert_eq!(
             table_names,
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
+        assert!(maybe_retention_period_in_seconds.is_none());
     }
 
-    fn parse_vacuum_and_extract_table_names(sql_statement: &str) -> Vec<String> {
+    #[test]
+    fn test_tokenize_and_parse_vacuum_with_retention_period() {
+        let (table_names, maybe_retention_period_in_seconds) =
+            parse_vacuum_and_extract_table_names("VACUUM RETAIN 30");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_retention_period_in_seconds, Some(30));
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_multiple_tables_with_retention_period() {
+        let (table_names, maybe_retention_period_in_seconds) =
+            parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2 RETAIN 30");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert_eq!(maybe_retention_period_in_seconds, Some(30));
+    }
+
+    fn parse_vacuum_and_extract_table_names(sql_statement: &str) -> (Vec<String>, Option<u64>) {
         let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
 
         match modelardb_statement {
-            ModelarDbStatement::Vacuum(table_names) => table_names,
+            ModelarDbStatement::Vacuum(table_names, maybe_retention_period_in_seconds) => {
+                (table_names, maybe_retention_period_in_seconds)
+            }
             _ => panic!("Expected ModelarDbStatement::Vacuum."),
         }
     }
@@ -1703,7 +1773,68 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_vacuum_only_comma() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM,").is_err());
+    }
+
+    #[test]
     fn test_tokenize_and_parse_vacuum_quoted_table_name() {
         assert!(tokenize_and_parse_sql_statement("VACUUM 'table_name'").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_without_number() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_number_without_retain() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM 30").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_with_float() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN 30.5").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_with_non_numeric() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN thirty").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_with_negative() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN -30").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_with_max_plus_one() {
+        assert!(
+            tokenize_and_parse_sql_statement(&format!(
+                "VACUUM RETAIN {}",
+                MAX_RETENTION_PERIOD_IN_SECONDS + 1
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_twice() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN 30 RETAIN 30").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_multiple_tables_retain_without_number() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM table_1, table_2 RETAIN").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_tables_and_retain_mixed() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM table_1, RETAIN 30, table_2").is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_first() {
+        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN 30 table_1, table_2").is_err());
     }
 }

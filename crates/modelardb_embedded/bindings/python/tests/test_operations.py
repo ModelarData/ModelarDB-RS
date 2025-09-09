@@ -439,8 +439,6 @@ class TestOperations(unittest.TestCase):
 
     def test_data_folder_vacuum(self):
         with TemporaryDirectory() as temp_dir:
-            os.environ["MODELARDBD_RETENTION_PERIOD_IN_SECONDS"] = "0"
-
             data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
@@ -452,7 +450,7 @@ class TestOperations(unittest.TestCase):
             file_count = len(os.listdir(folder_path))
             self.assertEqual(file_count, 1)
 
-            data_folder.vacuum(TIME_SERIES_TABLE_NAME)
+            data_folder.vacuum(TIME_SERIES_TABLE_NAME, retention_period_in_seconds=0)
 
             # No files should remain in the column folder.
             file_count = len(os.listdir(folder_path))
