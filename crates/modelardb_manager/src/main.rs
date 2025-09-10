@@ -69,8 +69,8 @@ async fn main() -> Result<()> {
         _ => print_usage_and_exit_with_error("remote_data_folder"),
     };
 
-    let connection_info = arguments::argument_to_connection_info(remote_delta_lake_str)?;
-    let remote_delta_lake = DeltaLake::try_remote_from_connection_info(connection_info).await?;
+    let remote_storage_configuration = modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
+    let remote_delta_lake = DeltaLake::try_remote_from_storage_configuration(remote_storage_configuration.clone()).await?;
     let nodes = remote_delta_lake.nodes().await?;
 
     let mut cluster = Cluster::new();
@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
     // Create the Context.
     let context = Arc::new(Context {
         remote_delta_lake,
+        remote_storage_configuration,
         cluster: RwLock::new(cluster),
         key,
     });
