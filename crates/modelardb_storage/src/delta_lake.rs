@@ -92,11 +92,11 @@ impl DeltaLake {
     /// `local_url` has the schema `memory`, the Delta tables are managed in memory. Return
     /// [`ModelarDbStorageError`] if `local_url` cannot be parsed or the metadata tables cannot be
     /// created.
-    pub async fn try_from_local_url(local_url: &str) -> Result<Self> {
+    pub async fn open_local_url(local_url: &str) -> Result<Self> {
         match local_url.split_once("://") {
-            None => Self::try_from_local_path(StdPath::new(local_url)).await,
-            Some(("file", local_path)) => Self::try_from_local_path(StdPath::new(local_path)).await,
-            Some(("memory", _)) => Self::new_in_memory().await,
+            None => Self::open_local(StdPath::new(local_url)).await,
+            Some(("file", local_path)) => Self::open_local(StdPath::new(local_path)).await,
+            Some(("memory", _)) => Self::open_memory().await,
             _ => Err(ModelarDbStorageError::InvalidArgument(format!(
                 "{local_url} is not a valid local URL."
             ))),
@@ -104,7 +104,7 @@ impl DeltaLake {
     }
 
     /// Create a new [`DeltaLake`] that manages the Delta tables in memory.
-    pub async fn new_in_memory() -> Result<Self> {
+    pub async fn open_memory() -> Result<Self> {
         let delta_lake = Self {
             location: "memory:///modelardb".to_owned(),
             storage_options: HashMap::new(),
@@ -122,7 +122,7 @@ impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages the Delta tables in `data_folder_path`. Returns a
     /// [`ModelarDbStorageError`] if `data_folder_path` does not exist and could not be created or
     /// the metadata tables cannot be created.
-    pub async fn try_from_local_path(data_folder_path: &StdPath) -> Result<Self> {
+    pub async fn open_local(data_folder_path: &StdPath) -> Result<Self> {
         // Ensure the directories in the path exists as LocalFileSystem otherwise returns an error.
         fs::create_dir_all(data_folder_path)
             .map_err(|error| DeltaTableError::generic(error.to_string()))?;
@@ -154,7 +154,7 @@ impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages Delta tables in the remote object store given by
     /// `storage_configuration`. Returns [`ModelarDbStorageError`] if a connection to the specified
     /// object store could not be created.
-    pub async fn try_remote_from_storage_configuration(
+    pub async fn open_object_store(
         storage_configuration: protocol::manager_metadata::StorageConfiguration,
     ) -> Result<Self> {
         match storage_configuration {
@@ -164,7 +164,7 @@ impl DeltaLake {
                 // deltalake_aws storage subcrate.
                 deltalake::aws::register_handlers(None);
 
-                Self::try_from_s3_configuration(
+                Self::open_s3(
                     s3_configuration.endpoint,
                     s3_configuration.bucket_name,
                     s3_configuration.access_key_id,
@@ -175,7 +175,7 @@ impl DeltaLake {
             protocol::manager_metadata::StorageConfiguration::AzureConfiguration(
                 azure_configuration,
             ) => {
-                Self::try_from_azure_configuration(
+                Self::open_azure(
                     azure_configuration.account_name,
                     azure_configuration.access_key,
                     azure_configuration.container_name,
@@ -188,7 +188,7 @@ impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages the Delta tables in an object store with an
     /// S3-compatible API. Returns a [`ModelarDbStorageError`] if a connection to the object store
     /// could not be made or the metadata tables cannot be created.
-    pub async fn try_from_s3_configuration(
+    pub async fn open_s3(
         endpoint: String,
         bucket_name: String,
         access_key_id: String,
@@ -239,7 +239,7 @@ impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages the Delta tables in an object store with an
     /// Azure-compatible API. Returns a [`ModelarDbStorageError`] if a connection to the object
     /// store could not be made or the metadata tables cannot be created.
-    pub async fn try_from_azure_configuration(
+    pub async fn open_azure(
         account_name: String,
         access_key: String,
         container_name: String,
@@ -1230,7 +1230,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_metadata_delta_lake_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let delta_lake = DeltaLake::try_from_local_path(temp_dir.path())
+        let delta_lake = DeltaLake::open_local(temp_dir.path())
             .await
             .unwrap();
 
@@ -1457,7 +1457,7 @@ mod tests {
 
     async fn create_delta_lake_and_save_normal_tables() -> (TempDir, DeltaLake) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let delta_lake = DeltaLake::try_from_local_path(temp_dir.path())
+        let delta_lake = DeltaLake::open_local(temp_dir.path())
             .await
             .unwrap();
 
@@ -1536,7 +1536,7 @@ mod tests {
     #[tokio::test]
     async fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let delta_lake = DeltaLake::try_from_local_path(temp_dir.path())
+        let delta_lake = DeltaLake::open_local(temp_dir.path())
             .await
             .unwrap();
 
@@ -1606,7 +1606,7 @@ mod tests {
 
     async fn create_delta_lake_and_save_time_series_table() -> (TempDir, DeltaLake) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let delta_lake = DeltaLake::try_from_local_path(temp_dir.path())
+        let delta_lake = DeltaLake::open_local(temp_dir.path())
             .await
             .unwrap();
 

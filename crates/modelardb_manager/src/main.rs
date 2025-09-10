@@ -70,10 +70,12 @@ async fn main() -> Result<()> {
     };
 
     let remote_storage_configuration = modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
-    let remote_delta_lake = DeltaLake::try_remote_from_storage_configuration(remote_storage_configuration.clone()).await?;
-    let nodes = remote_delta_lake.nodes().await?;
+    let remote_delta_lake = DeltaLake::open_object_store(remote_storage_configuration.clone()).await?;
+
+    remote_delta_lake.create_and_register_manager_metadata_delta_lake_tables().await?;
 
     let mut cluster = Cluster::new();
+    let nodes = remote_delta_lake.nodes().await?;
     for node in nodes {
         cluster.register_node(node)?;
     }
