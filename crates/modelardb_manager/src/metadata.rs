@@ -295,7 +295,7 @@ mod tests {
     async fn create_delta_lake() -> (TempDir, DeltaLake) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let delta_lake = DeltaLake::try_from_local_path(temp_dir.path())
+        let delta_lake = DeltaLake::open_local(temp_dir.path())
             .await
             .unwrap();
 

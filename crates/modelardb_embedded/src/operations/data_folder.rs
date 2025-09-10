@@ -118,7 +118,7 @@ impl DataFolder {
     /// Creates a [`DataFolder`] that manages data in memory and returns it. If the metadata tables
     /// could not be created, [`ModelarDbEmbeddedError`] is returned.
     pub async fn open_memory() -> Result<Self> {
-        let delta_lake = DeltaLake::new_in_memory().await?;
+        let delta_lake = DeltaLake::open_memory().await?;
         Self::try_new_and_register_tables(delta_lake).await
     }
 
@@ -126,7 +126,7 @@ impl DataFolder {
     /// returns it. If the folder does not exist and could not be created or the metadata tables
     /// could not be created, [`ModelarDbEmbeddedError`] is returned.
     pub async fn open_local(data_folder_path: &StdPath) -> Result<Self> {
-        let delta_lake = DeltaLake::try_from_local_path(data_folder_path).await?;
+        let delta_lake = DeltaLake::open_local(data_folder_path).await?;
         Self::try_new_and_register_tables(delta_lake).await
     }
 
@@ -146,7 +146,7 @@ impl DataFolder {
         deltalake::aws::register_handlers(None);
 
         // Construct data folder.
-        let delta_lake = DeltaLake::try_from_s3_configuration(
+        let delta_lake = DeltaLake::open_s3(
             endpoint.clone(),
             bucket_name.clone(),
             access_key_id.clone(),
@@ -165,7 +165,7 @@ impl DataFolder {
         access_key: String,
         container_name: String,
     ) -> Result<Self> {
-        let delta_lake = DeltaLake::try_from_azure_configuration(
+        let delta_lake = DeltaLake::open_azure(
             account_name.clone(),
             access_key.clone(),
             container_name.clone(),
