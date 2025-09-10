@@ -147,7 +147,9 @@ impl TimeSeriesTableMetadata {
         }
 
         // If the schema contains an unsupported data type that does not correspond to a timestamp,
-        // field, or tag column, return an error.
+        // field, or tag column, return an error. Note that this is only possible if the schema is
+        // provided directly since the schema of a time series table created using SQL is always
+        // valid.
         for field in query_schema.fields() {
             let data_type = field.data_type();
             if data_type != &ArrowTimestamp::DATA_TYPE
