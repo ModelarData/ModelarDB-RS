@@ -87,10 +87,10 @@ impl Manager {
     /// retrieved from the remote data folder, or the tables could not be created,
     /// return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
-        let local_metadata_manager = &context
+        let local_delta_lake = &context
             .data_folders
             .local_data_folder
-            .table_metadata_manager;
+            .delta_lake;
 
         let remote_data_folder = &context
             .data_folders
@@ -99,10 +99,10 @@ impl Manager {
             .ok_or(ModelarDbServerError::InvalidState(
                 "Remote data folder is missing.".to_owned(),
             ))?;
-        let remote_metadata_manager = &remote_data_folder.table_metadata_manager;
+        let remote_delta_lake = &remote_data_folder.delta_lake;
 
-        let local_table_names = local_metadata_manager.table_names().await?;
-        let remote_table_names = remote_metadata_manager.table_names().await?;
+        let local_table_names = local_delta_lake.table_names().await?;
+        let remote_table_names = remote_delta_lake.table_names().await?;
 
         // Check that all the local tables exist in the cluster's database schema already.
         let invalid_node_tables: Vec<String> = local_table_names
@@ -123,7 +123,7 @@ impl Manager {
             .filter(|table| !local_table_names.contains(table));
 
         for table_name in missing_cluster_tables {
-            if remote_metadata_manager.is_normal_table(table_name).await? {
+            if remote_delta_lake.is_normal_table(table_name).await? {
                 let delta_table = remote_data_folder
                     .delta_lake
                     .delta_table(table_name)
@@ -132,7 +132,7 @@ impl Manager {
                 let schema = TableProvider::schema(&delta_table);
                 context.create_normal_table(table_name, &schema).await?;
             } else {
-                let time_series_table_metadata = remote_metadata_manager
+                let time_series_table_metadata = remote_delta_lake
                     .time_series_table_metadata_for_time_series_table(table_name)
                     .await?;
 
