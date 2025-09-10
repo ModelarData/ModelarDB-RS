@@ -112,71 +112,31 @@ pub fn grid(value: Value, timestamps: &[Timestamp], value_builder: &mut ValueBui
 mod tests {
     use super::*;
 
-    use modelardb_test::{
-        ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
-    };
+    use modelardb_test::{ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX};
     use proptest::num::f32 as ProptestValue;
     use proptest::{prop_assert, prop_assume, proptest};
 
     // Tests for PMCMean.
     proptest! {
     #[test]
-    fn test_can_fit_sequence_of_finite_value_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
-        can_fit_sequence_of_value_within_error_bound(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(), value)
-    }
-
-    #[test]
-    fn test_can_fit_sequence_of_finite_value_with_relative_error_bound_zero(value in ProptestValue::ANY) {
-        can_fit_sequence_of_value_within_error_bound(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(), value)
+    fn test_can_fit_sequence_of_finite_value_with_lossless_error_bound(value in ProptestValue::ANY) {
+        can_fit_sequence_of_value_within_error_bound(ErrorBound::Lossless, value)
     }
     }
 
     #[test]
-    fn test_can_fit_sequence_of_positive_infinity_with_absolute_error_bound_zero() {
-        can_fit_sequence_of_value_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            Value::INFINITY,
-        )
+    fn test_can_fit_sequence_of_positive_infinity_with_lossless_error_bound() {
+        can_fit_sequence_of_value_within_error_bound(ErrorBound::Lossless, Value::INFINITY)
     }
 
     #[test]
-    fn test_can_fit_sequence_of_positive_infinity_with_relative_error_bound_zero() {
-        can_fit_sequence_of_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            Value::INFINITY,
-        )
+    fn test_can_fit_sequence_of_negative_infinity_with_lossless_error_bound() {
+        can_fit_sequence_of_value_within_error_bound(ErrorBound::Lossless, Value::NEG_INFINITY)
     }
 
     #[test]
-    fn test_can_fit_sequence_of_negative_infinity_with_absolute_error_bound_zero() {
-        can_fit_sequence_of_value_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            Value::NEG_INFINITY,
-        )
-    }
-
-    #[test]
-    fn test_can_fit_sequence_of_negative_infinity_with_relative_error_bound_zero() {
-        can_fit_sequence_of_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            Value::NEG_INFINITY,
-        )
-    }
-
-    #[test]
-    fn test_can_fit_sequence_of_nans_with_absolute_error_bound_zero() {
-        can_fit_sequence_of_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            Value::NAN,
-        )
-    }
-
-    #[test]
-    fn test_can_fit_sequence_of_nans_with_relative_error_bound_zero() {
-        can_fit_sequence_of_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            Value::NAN,
-        )
+    fn test_can_fit_sequence_of_nans_with_lossless_error_bound() {
+        can_fit_sequence_of_value_within_error_bound(ErrorBound::Lossless, Value::NAN)
     }
 
     fn can_fit_sequence_of_value_within_error_bound(error_bound: ErrorBound, value: Value) {
@@ -194,15 +154,8 @@ mod tests {
 
     proptest! {
     #[test]
-    fn test_can_fit_one_value_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
-        let error_bound_zero = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
-        prop_assert!(PMCMean::new(error_bound_zero).fit_value(value));
-    }
-
-    #[test]
-    fn test_can_fit_one_value_with_relative_error_bound_zero(value in ProptestValue::ANY) {
-        let error_bound_zero = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        prop_assert!(PMCMean::new(error_bound_zero).fit_value(value));
+    fn test_can_fit_one_value_with_lossless_error_bound(value in ProptestValue::ANY) {
+        prop_assert!(PMCMean::new(ErrorBound::Lossless).fit_value(value));
     }
 
     #[test]
@@ -315,18 +268,9 @@ mod tests {
     }
 
     #[test]
-    fn test_cannot_fit_sequence_of_different_values_with_absolute_error_bound_zero() {
-        let error_bound_zero = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
+    fn test_cannot_fit_sequence_of_different_values_with_lossless_error_bound() {
         assert!(!fit_sequence_of_different_values_with_error_bound(
-            error_bound_zero
-        ))
-    }
-
-    #[test]
-    fn test_cannot_fit_sequence_of_different_values_with_relative_error_bound_zero() {
-        let error_bound_zero = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
-        assert!(!fit_sequence_of_different_values_with_error_bound(
-            error_bound_zero
+            ErrorBound::Lossless
         ))
     }
 

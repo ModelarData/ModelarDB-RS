@@ -1098,6 +1098,7 @@ mod tests {
             .map(|error_bound| match error_bound {
                 ErrorBound::Absolute(value) => *value,
                 ErrorBound::Relative(value) => -*value,
+                ErrorBound::Lossless => 0.0,
             })
             .collect();
 

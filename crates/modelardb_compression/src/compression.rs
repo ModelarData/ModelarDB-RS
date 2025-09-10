@@ -264,8 +264,8 @@ mod tests {
 
     use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, Int8Array};
     use arrow::datatypes::{DataType, Field};
+    use modelardb_test::ERROR_BOUND_FIVE;
     use modelardb_test::data_generation::{self, ValuesStructure};
-    use modelardb_test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
     use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
 
@@ -277,11 +277,11 @@ mod tests {
 
     // Tests for try_compress().
     #[test]
-    fn test_try_compress_empty_time_series_within_absolute_error_bound_zero() {
+    fn test_try_compress_empty_time_series_within_lossless_error_bound() {
         let compressed_record_batch = try_compress(
             &TimestampBuilder::new().finish(),
             &ValueBuilder::new().finish(),
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             compressed_schema(),
             vec![TAG_VALUE.to_owned()],
             0,
@@ -291,55 +291,21 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_empty_time_series_within_relative_error_bound_zero() {
-        let compressed_record_batch = try_compress(
-            &TimestampBuilder::new().finish(),
-            &ValueBuilder::new().finish(),
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            compressed_schema(),
-            vec![TAG_VALUE.to_owned()],
-            0,
-        )
-        .unwrap();
-        assert_eq!(0, compressed_record_batch.num_rows());
-    }
-
-    #[test]
-    fn test_try_compress_regular_constant_time_series_within_absolute_error_bound_zero() {
+    fn test_try_compress_regular_constant_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Constant(None),
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &[models::PMC_MEAN_ID],
         );
     }
 
     #[test]
-    fn test_try_compress_regular_constant_time_series_within_relative_error_bound_zero() {
-        generate_compress_and_assert_known_segment(
-            false,
-            ValuesStructure::Constant(None),
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            &[models::PMC_MEAN_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_irregular_constant_time_series_within_absolute_error_bound_zero() {
+    fn test_try_compress_irregular_constant_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Constant(None),
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &[models::PMC_MEAN_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_irregular_constant_time_series_within_relative_error_bound_zero() {
-        generate_compress_and_assert_known_segment(
-            true,
-            ValuesStructure::Constant(None),
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &[models::PMC_MEAN_ID],
         );
     }
@@ -385,41 +351,21 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_linear_time_series_within_absolute_error_bound_zero() {
+    fn test_try_compress_regular_linear_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Linear(None),
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &[models::SWING_ID],
         );
     }
 
     #[test]
-    fn test_try_compress_regular_linear_time_series_within_relative_error_bound_zero() {
-        generate_compress_and_assert_known_segment(
-            false,
-            ValuesStructure::Linear(None),
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            &[models::SWING_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_irregular_linear_time_series_within_absolute_error_bound_zero() {
+    fn test_try_compress_irregular_linear_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Linear(None),
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &[models::SWING_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_irregular_linear_time_series_within_relative_error_bound_zero() {
-        generate_compress_and_assert_known_segment(
-            true,
-            ValuesStructure::Linear(None),
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &[models::SWING_ID],
         );
     }
@@ -465,41 +411,21 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_random_time_series_within_absolute_error_bound_zero() {
+    fn test_try_compress_regular_random_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::largest_random_without_overflow(),
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &[models::MACAQUE_V_ID],
         );
     }
 
     #[test]
-    fn test_try_compress_regular_random_time_series_within_relative_error_bound_zero() {
-        generate_compress_and_assert_known_segment(
-            false,
-            ValuesStructure::largest_random_without_overflow(),
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            &[models::MACAQUE_V_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_irregular_random_time_series_within_absolute_error_bound_zero() {
+    fn test_try_compress_irregular_random_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::largest_random_without_overflow(),
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            &[models::MACAQUE_V_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_irregular_random_time_series_within_relative_error_bound_zero() {
-        generate_compress_and_assert_known_segment(
-            true,
-            ValuesStructure::largest_random_without_overflow(),
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             &[models::MACAQUE_V_ID],
         );
     }
@@ -534,10 +460,9 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_random_linear_constant_time_series_within_absolute_error_bound_zero()
-     {
+    fn test_try_compress_regular_random_linear_constant_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_time_series(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             false,
             &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
             &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
@@ -545,21 +470,10 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_random_linear_constant_time_series_within_relative_error_bound_zero()
-     {
+    fn test_try_compress_irregular_random_linear_constant_time_series_within_lossless_error_bound()
+    {
         generate_compress_and_assert_known_time_series(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            false,
-            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
-            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_irregular_random_linear_constant_time_series_within_absolute_error_bound_zero()
-     {
-        generate_compress_and_assert_known_time_series(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             true,
             &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
             &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
@@ -567,21 +481,9 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_random_linear_constant_time_series_within_relative_error_bound_zero()
-     {
+    fn test_try_compress_regular_constant_linear_random_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_time_series(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            true,
-            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
-            &[models::MACAQUE_V_ID, models::SWING_ID, models::PMC_MEAN_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_regular_constant_linear_random_time_series_within_absolute_error_bound_zero()
-     {
-        generate_compress_and_assert_known_time_series(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             false,
             &[models::PMC_MEAN_ID, models::SWING_ID, models::MACAQUE_V_ID],
             &[models::PMC_MEAN_ID, models::SWING_ID],
@@ -589,32 +491,10 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_constant_linear_random_time_series_within_relative_error_bound_zero()
-     {
+    fn test_try_compress_irregular_constant_linear_random_time_series_within_lossless_error_bound()
+    {
         generate_compress_and_assert_known_time_series(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            false,
-            &[models::PMC_MEAN_ID, models::SWING_ID, models::MACAQUE_V_ID],
-            &[models::PMC_MEAN_ID, models::SWING_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_irregular_constant_linear_random_time_series_within_absolute_error_bound_zero()
-     {
-        generate_compress_and_assert_known_time_series(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            true,
-            &[models::PMC_MEAN_ID, models::SWING_ID, models::MACAQUE_V_ID],
-            &[models::PMC_MEAN_ID, models::SWING_ID],
-        );
-    }
-
-    #[test]
-    fn test_try_compress_irregular_constant_linear_random_time_series_within_relative_error_bound_zero()
-     {
-        generate_compress_and_assert_known_time_series(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::Lossless,
             true,
             &[models::PMC_MEAN_ID, models::SWING_ID, models::MACAQUE_V_ID],
             &[models::PMC_MEAN_ID, models::SWING_ID],
@@ -707,23 +587,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_synthetic_time_series_without_noise_within_absolute_error_bound_zero()
-     {
-        generate_compress_and_assert_time_series(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            false,
-            None,
-        )
-    }
-
-    #[test]
-    fn test_try_compress_regular_synthetic_time_series_without_noise_within_relative_error_bound_zero()
-     {
-        generate_compress_and_assert_time_series(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            false,
-            None,
-        )
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_lossless_error_bound() {
+        generate_compress_and_assert_time_series(ErrorBound::Lossless, false, None)
     }
 
     #[test]
@@ -747,23 +612,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_regular_synthetic_time_series_with_noise_within_absolute_error_bound_zero()
-    {
-        generate_compress_and_assert_time_series(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            false,
-            ADD_NOISE_RANGE,
-        )
-    }
-
-    #[test]
-    fn test_try_compress_regular_synthetic_time_series_with_noise_within_relative_error_bound_zero()
-    {
-        generate_compress_and_assert_time_series(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            false,
-            ADD_NOISE_RANGE,
-        )
+    fn test_try_compress_regular_synthetic_time_series_with_noise_within_lossless_error_bound() {
+        generate_compress_and_assert_time_series(ErrorBound::Lossless, false, ADD_NOISE_RANGE)
     }
 
     #[test]
@@ -787,23 +637,9 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_absolute_error_bound_zero()
-     {
-        generate_compress_and_assert_time_series(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            true,
-            None,
-        )
-    }
-
-    #[test]
-    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_relative_error_bound_zero()
-     {
-        generate_compress_and_assert_time_series(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            true,
-            None,
-        )
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_lossless_error_bound()
+    {
+        generate_compress_and_assert_time_series(ErrorBound::Lossless, true, None)
     }
 
     #[test]
@@ -827,23 +663,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_absolute_error_bound_zero()
-     {
-        generate_compress_and_assert_time_series(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-            true,
-            ADD_NOISE_RANGE,
-        )
-    }
-
-    #[test]
-    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_relative_error_bound_zero()
-     {
-        generate_compress_and_assert_time_series(
-            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-            true,
-            ADD_NOISE_RANGE,
-        )
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_lossless_error_bound() {
+        generate_compress_and_assert_time_series(ErrorBound::Lossless, true, ADD_NOISE_RANGE)
     }
 
     #[test]
@@ -967,7 +788,6 @@ mod tests {
     // Tests for compress_and_store_residuals_in_a_separate_segment().
     #[test]
     fn test_compress_and_store_residuals_in_a_separate_segment() {
-        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
         let uncompressed_timestamps = TimestampArray::from_iter_values((100..=500).step_by(100));
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
 
@@ -979,7 +799,7 @@ mod tests {
         );
 
         compress_and_store_residuals_in_a_separate_segment(
-            error_bound,
+            ErrorBound::Lossless,
             0,
             uncompressed_timestamps.len() - 1,
             &uncompressed_timestamps,

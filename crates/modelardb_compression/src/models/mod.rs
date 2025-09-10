@@ -75,6 +75,7 @@ pub fn is_value_within_error_bound(
                 (result * 100.0) <= error_bound
             }
         }
+        ErrorBound::Lossless => equal_or_nan(real_value as f64, approximate_value as f64),
     }
 }
 
@@ -84,14 +85,7 @@ pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
     match error_bound {
         ErrorBound::Absolute(error_bound) => error_bound as f64 * 0.99,
         ErrorBound::Relative(error_bound) => f64::abs(value * (error_bound as f64 / 100.1)),
-    }
-}
-
-/// Returns true if compression is lossless i.e., `error_bound` value is 0.
-pub fn is_lossless_compression(error_bound: ErrorBound) -> bool {
-    match error_bound {
-        ErrorBound::Absolute(error_bound) => error_bound == 0.0,
-        ErrorBound::Relative(error_bound) => error_bound == 0.0,
+        ErrorBound::Lossless => 0.0,
     }
 }
 
@@ -292,7 +286,6 @@ mod tests {
 
     use modelardb_test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_ONE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_TEN,
-        ERROR_BOUND_ZERO,
     };
     use proptest::num;
     use proptest::num::f32 as ProptestValue;
@@ -301,13 +294,8 @@ mod tests {
     // Tests for is_value_within_error_bound().
     proptest! {
     #[test]
-    fn test_same_value_is_always_within_absolute_error_bound(value in ProptestValue::ANY) {
-        prop_assert!(is_value_within_error_bound(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(), value, value));
-    }
-
-    #[test]
-    fn test_same_value_is_always_within_relative_error_bound(value in ProptestValue::ANY) {
-        prop_assert!(is_value_within_error_bound(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(), value, value));
+    fn test_same_value_is_always_within_lossless_error_bound(value in ProptestValue::ANY) {
+        prop_assert!(is_value_within_error_bound(ErrorBound::Lossless, value, value));
     }
 
     #[test]

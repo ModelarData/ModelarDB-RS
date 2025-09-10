@@ -103,6 +103,7 @@ impl TimeSeriesTableMetadata {
     /// * The number of potentially generated columns does not match the number of columns.
     /// * A generated column includes another generated column in its expression.
     /// * There are more than 32767 columns.
+    /// * The `query_schema` includes columns with unsupported data types.
     /// * The `query_schema` does not include a single timestamp column.
     /// * The `query_schema` does not include at least one stored field column.
     pub fn try_new(
@@ -143,6 +144,23 @@ impl TimeSeriesTableMetadata {
             return Err(ModelarDbTypesError::InvalidArgument(
                 "There cannot be more than 32767 columns in the time series table.".to_owned(),
             ));
+        }
+
+        // If the schema contains an unsupported data type that does not correspond to a timestamp,
+        // field, or tag column, return an error. Note that this is only possible if the schema is
+        // provided directly since the schema of a time series table created using SQL is always
+        // valid.
+        for field in query_schema.fields() {
+            let data_type = field.data_type();
+            if data_type != &ArrowTimestamp::DATA_TYPE
+                && data_type != &ArrowValue::DATA_TYPE
+                && data_type != &DataType::Utf8
+            {
+                return Err(ModelarDbTypesError::InvalidArgument(format!(
+                    "The data type '{data_type}' of column '{}' is not supported in a time series table.",
+                    field.name()
+                )));
+            }
         }
 
         // Remove the generated field columns from the query schema and the error bounds as these
@@ -274,20 +292,22 @@ fn compute_indices_of_columns_with_data_type(schema: &Schema, data_type: DataTyp
         .collect()
 }
 
-/// Absolute or relative per-value error bound.
+/// Absolute, relative, or lossless per-value error bound.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ErrorBound {
     /// An error bound that guarantees each value cannot deviate more than the [`Value`].
     Absolute(Value),
     /// An error bound that guarantees each value cannot deviate more than 0.0% to 100.0%.
     Relative(f32),
+    /// An error bound that guarantees each value is stored losslessly.
+    Lossless,
 }
 
 impl ErrorBound {
     /// Return an [`ErrorBound::Absolute`] with `value` as its absolute per-value bound. A
-    /// [`ModelarDbTypesError`] is returned if a negative or non-normal value is passed.
+    /// [`ModelarDbTypesError`] is returned if a non-positive or non-normal value is passed.
     pub fn try_new_absolute(value: f32) -> Result<Self> {
-        if !value.is_finite() || value < 0.0 {
+        if !value.is_finite() || value <= 0.0 {
             Err(ModelarDbTypesError::InvalidArgument(
                 "An absolute error bound must be a positive finite value.".to_owned(),
             ))
@@ -297,11 +317,13 @@ impl ErrorBound {
     }
 
     /// Return an [`ErrorBound::Relative`] with `percentage` as its relative per-value bound. A
-    /// [`ModelarDbTypesError`] is returned if a value below 0% or a value above 100% is passed.
+    /// [`ModelarDbTypesError`] is returned if a value that is 0% or below is passed or a value
+    /// above 100% is passed.
     pub fn try_new_relative(percentage: f32) -> Result<Self> {
-        if !(0.0..=100.0).contains(&percentage) {
+        if !(0.0 < percentage && percentage <= 100.0) {
             Err(ModelarDbTypesError::InvalidArgument(
-                "A relative error bound must be a value from 0.0% to 100.0%.".to_owned(),
+                "A relative error bound must be a positive value that is at most 100.0%."
+                    .to_owned(),
             ))
         } else {
             Ok(Self::Relative(percentage))
@@ -389,8 +411,8 @@ mod tests {
     use proptest::num;
     use proptest::proptest;
 
-    use modelardb_test::ERROR_BOUND_ZERO;
     use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
+    use modelardb_test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
 
     // Tests for TimeSeriesTableMetadata.
     #[test]
@@ -458,11 +480,14 @@ mod tests {
     fn create_simple_time_series_table_metadata(
         query_schema: Schema,
     ) -> Result<TimeSeriesTableMetadata> {
+        let error_bounds = vec![ErrorBound::Lossless; query_schema.fields.len()];
+        let generated_columns = vec![None; query_schema.fields.len()];
+
         TimeSeriesTableMetadata::try_new(
             TIME_SERIES_TABLE_NAME.to_owned(),
             Arc::new(query_schema),
-            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap()],
-            vec![None],
+            error_bounds,
+            generated_columns,
         )
     }
 
@@ -533,13 +558,13 @@ mod tests {
                 Field::new("temperature", ArrowValue::DATA_TYPE, false),
             ])),
             vec![
-                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
-                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+                ErrorBound::Lossless,
+                ErrorBound::Lossless,
+                ErrorBound::Lossless,
+                ErrorBound::Lossless,
+                ErrorBound::try_new_absolute(ERROR_BOUND_FIVE).unwrap(),
+                ErrorBound::Lossless,
+                ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             ],
             vec![None, None, None, None, None, None, None],
         )
@@ -608,8 +633,8 @@ mod tests {
 
     // Tests for ErrorBound.
     #[test]
-    fn test_absolute_error_bound_can_be_zero() {
-        assert!(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).is_ok())
+    fn test_absolute_error_bound_cannot_be_zero() {
+        assert!(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).is_err())
     }
 
     proptest! {
@@ -640,8 +665,8 @@ mod tests {
     }
 
     #[test]
-    fn test_relative_error_bound_can_be_zero() {
-        assert!(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).is_ok())
+    fn test_relative_error_bound_cannot_be_zero() {
+        assert!(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).is_err())
     }
 
     proptest! {
