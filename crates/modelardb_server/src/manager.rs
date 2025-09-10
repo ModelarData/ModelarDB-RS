@@ -96,7 +96,9 @@ impl Manager {
     /// retrieved from the remote data folder, or the tables could not be created,
     /// return [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
-        let local_data_folder = &context.data_folders.local_data_folder;
+        let local_data_folder = &context
+            .data_folders
+            .local_data_folder;
 
         let remote_data_folder = &context
             .data_folders
@@ -180,11 +182,11 @@ async fn validate_local_tables_exist_remotely(
     remote_data_folder: &DataFolder,
 ) -> Result<()> {
     let local_table_names = local_data_folder
-        .table_metadata_manager
+        .delta_lake
         .table_names()
         .await?;
     let remote_table_names = remote_data_folder
-        .table_metadata_manager
+        .delta_lake
         .table_names()
         .await?;
 
@@ -215,7 +217,7 @@ async fn validate_normal_tables(
     let mut missing_normal_tables = vec![];
 
     let remote_normal_tables = remote_data_folder
-        .table_metadata_manager
+        .delta_lake
         .normal_table_names()
         .await?;
 
@@ -255,18 +257,18 @@ async fn validate_time_series_tables(
     let mut missing_time_series_tables = vec![];
 
     let remote_time_series_tables = remote_data_folder
-        .table_metadata_manager
+        .delta_lake
         .time_series_table_names()
         .await?;
 
     for table_name in remote_time_series_tables {
         let remote_metadata = remote_data_folder
-            .table_metadata_manager
+            .delta_lake
             .time_series_table_metadata_for_time_series_table(&table_name)
             .await?;
 
         if let Ok(local_metadata) = local_data_folder
-            .table_metadata_manager
+            .delta_lake
             .time_series_table_metadata_for_time_series_table(&table_name)
             .await
         {

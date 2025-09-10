@@ -43,9 +43,9 @@ use deltalake::protocol::{DeltaOperation, SaveMode};
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_types::flight::protocol;
-use modelardb_types::functions::try_convert_bytes_to_schema;
+use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
-use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata, MAX_RETENTION_PERIOD_IN_SECONDS};
+use modelardb_types::types::{ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata, MAX_RETENTION_PERIOD_IN_SECONDS};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -757,6 +757,7 @@ impl DeltaLake {
                     match time_series_table_metadata.error_bounds[schema_index] {
                         ErrorBound::Absolute(value) => (value, false),
                         ErrorBound::Relative(value) => (value, true),
+                        ErrorBound::Lossless => (0.0, false),
                     }
                 } else {
                     (0.0, false)
@@ -1222,7 +1223,7 @@ mod tests {
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
     use modelardb_test::table as test;
-    use modelardb_types::types::{ArrowTimestamp, ArrowValue};
+    use modelardb_types::types::{ArrowTimestamp};
     use tempfile::TempDir;
 
     // Tests for DeltaLake.
@@ -1525,6 +1526,7 @@ mod tests {
             .map(|error_bound| match error_bound {
                 ErrorBound::Absolute(value) => *value,
                 ErrorBound::Relative(value) => *value,
+                ErrorBound::Lossless => 0.0,
             })
             .collect();
 
