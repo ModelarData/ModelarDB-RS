@@ -57,7 +57,13 @@ impl Manager {
         server_mode: ServerMode,
     ) -> Result<(Self, protocol::manager_metadata::StorageConfiguration)> {
         let flight_client = Arc::new(RwLock::new(
-            FlightServiceClient::connect(manager_url.to_owned()).await?,
+            FlightServiceClient::connect(manager_url.to_owned())
+                .await
+                .map_err(|error| {
+                    ModelarDbServerError::InvalidArgument(format!(
+                        "Could not connect to manager at '{manager_url}': {error}",
+                    ))
+                })?,
         ));
 
         let ip_address = env::var("MODELARDBD_IP_ADDRESS").unwrap_or("127.0.0.1".to_string());

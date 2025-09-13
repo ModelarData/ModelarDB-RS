@@ -175,10 +175,11 @@ mod tests {
     // Tests for try_from_command_line_arguments().
     #[tokio::test]
     async fn test_try_from_empty_command_line_arguments() {
-        assert!(
-            DataFolders::try_from_command_line_arguments(&[])
-                .await
-                .is_err()
+        let result = DataFolders::try_from_command_line_arguments(&[]).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "Invalid Argument Error: Too few, too many, or malformed arguments.".to_owned()
         );
     }
 
@@ -212,10 +213,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert!(
-            DataFolders::try_from_command_line_arguments(&["cloud", temp_dir_str])
-                .await
-                .is_err()
-        )
+        let result = DataFolders::try_from_command_line_arguments(&["cloud", temp_dir_str]).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            format!(
+                "Invalid Argument Error: Could not connect to manager at '{temp_dir_str}': transport error",
+            )
+        );
     }
 }
