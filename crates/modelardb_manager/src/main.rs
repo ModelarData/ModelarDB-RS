@@ -25,7 +25,6 @@ use std::{env, process};
 
 use modelardb_storage::delta_lake::DeltaLake;
 use modelardb_types::flight::protocol;
-use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
 use tonic::metadata::{Ascii, MetadataValue};
@@ -100,13 +99,11 @@ pub struct Context {
 /// Flight server. Returns [`ModelarDbManagerError`] if the command line arguments cannot be parsed,
 /// if the metadata cannot be read from the Delta Lake, or if the Apache Arrow Flight server cannot
 /// be started.
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
-
-    // Create a Tokio runtime for executing asynchronous tasks.
-    let runtime = Arc::new(Runtime::new()?);
 
     let user_arguments = collect_command_line_arguments(3);
     let user_arguments: Vec<&str> = user_arguments.iter().map(|arg| arg.as_str()).collect();
@@ -115,36 +112,36 @@ fn main() -> Result<()> {
         _ => print_usage_and_exit_with_error("remote_data_folder"),
     };
 
-    let context = runtime.block_on(async {
-        let remote_data_folder = RemoteDataFolder::try_new(remote_data_folder_str).await?;
+    let remote_data_folder = RemoteDataFolder::try_new(remote_data_folder_str).await?;
 
-        let nodes = remote_data_folder.metadata_manager.nodes().await?;
+    let nodes = remote_data_folder.metadata_manager.nodes().await?;
 
-        let mut cluster = Cluster::new();
-        for node in nodes {
-            cluster.register_node(node)?;
-        }
+    let mut cluster = Cluster::new();
+    for node in nodes {
+        cluster.register_node(node)?;
+    }
 
-        // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
-        let key = remote_data_folder
-            .metadata_manager
-            .manager_key()
-            .await?
-            .to_string()
-            .parse()
-            .map_err(|error: InvalidMetadataValue| {
-                ModelarDbManagerError::InvalidArgument(error.to_string())
-            })?;
+    // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
+    let key = remote_data_folder
+        .metadata_manager
+        .manager_key()
+        .await?
+        .to_string()
+        .parse()
+        .map_err(|error: InvalidMetadataValue| {
+            ModelarDbManagerError::InvalidArgument(error.to_string())
+        })?;
 
-        // Create the Context.
-        Ok::<Arc<Context>, ModelarDbManagerError>(Arc::new(Context {
-            remote_data_folder,
-            cluster: RwLock::new(cluster),
-            key,
-        }))
-    })?;
+    // Create the Context.
+    let context = Arc::new(Context {
+        remote_data_folder,
+        cluster: RwLock::new(cluster),
+        key,
+    });
 
-    start_apache_arrow_flight_server(context, &runtime, *PORT)
+    start_apache_arrow_flight_server(context, *PORT).await?;
+
+    Ok(())
 }
 
 /// Collect the command line arguments that this program was started with.
