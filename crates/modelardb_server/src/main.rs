@@ -58,7 +58,8 @@ pub enum ClusterMode {
 /// [`ModelarDbServerError`](error::ModelarDbServerError) if the command line arguments
 /// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
 /// Flight interface cannot be started.
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
@@ -70,42 +71,37 @@ fn main() -> Result<()> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
     let (cluster_mode, data_folders) = if let Ok(cluster_mode_and_data_folders) =
-        runtime.block_on(DataFolders::try_from_command_line_arguments(&arguments))
+        DataFolders::try_from_command_line_arguments(&arguments).await
     {
         cluster_mode_and_data_folders
     } else {
         print_usage_and_exit_with_error("[server_mode] local_data_folder_url [manager_url]");
     };
 
-    let context = Arc::new(runtime.block_on(Context::try_new(
-        runtime.clone(),
-        data_folders,
-        cluster_mode.clone(),
-    ))?);
+    let context =
+        Arc::new(Context::try_new(runtime.clone(), data_folders, cluster_mode.clone()).await?);
 
     // Register normal tables and time series tables.
-    runtime.block_on(context.register_normal_tables())?;
-    runtime.block_on(context.register_time_series_tables())?;
+    context.register_normal_tables().await?;
+    context.register_time_series_tables().await?;
 
     if let ClusterMode::MultiNode(manager) = &cluster_mode {
-        runtime.block_on(manager.retrieve_and_create_tables(&context))?;
+        manager.retrieve_and_create_tables(&context).await?;
     }
 
     // Setup CTRL+C handler.
     setup_ctrl_c_handler(&context, &runtime);
 
     // Initialize storage engine with spilled buffers.
-    runtime.block_on(async {
-        context
-            .storage_engine
-            .read()
-            .await
-            .initialize(&context)
-            .await
-    })?;
+    context
+        .storage_engine
+        .read()
+        .await
+        .initialize(&context)
+        .await?;
 
     // Start the Apache Arrow Flight interface.
-    remote::start_apache_arrow_flight_server(context, &runtime, *PORT)?;
+    remote::start_apache_arrow_flight_server(context, *PORT).await?;
 
     Ok(())
 }
