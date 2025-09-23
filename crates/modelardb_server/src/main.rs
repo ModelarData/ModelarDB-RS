@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
     }
 
     // Setup CTRL+C handler.
-    setup_ctrl_c_handler(&context, &runtime);
+    setup_ctrl_c_handler(&context);
 
     // Initialize storage engine with spilled buffers.
     context
@@ -132,9 +132,9 @@ pub fn print_usage_and_exit_with_error(parameters: &str) -> ! {
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for
 /// the storage engine, flushes the data the storage engine currently buffers, and terminates the
 /// system without releasing the lock.
-fn setup_ctrl_c_handler(context: &Arc<Context>, runtime: &Arc<Runtime>) {
+fn setup_ctrl_c_handler(context: &Arc<Context>) {
     let ctrl_c_context = context.clone();
-    runtime.spawn(async move {
+    tokio::spawn(async move {
         // Errors are consciously ignored as the program should terminate if the handler cannot be
         // registered as buffers otherwise cannot be flushed.
         tokio::signal::ctrl_c().await.unwrap();
