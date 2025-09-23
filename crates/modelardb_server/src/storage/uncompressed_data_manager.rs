@@ -681,7 +681,6 @@ mod tests {
         // Create a context with a storage engine.
         let context = Arc::new(
             Context::try_new(
-                Arc::new(Runtime::new().unwrap()),
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
             )

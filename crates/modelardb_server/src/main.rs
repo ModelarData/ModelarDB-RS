@@ -28,7 +28,6 @@ mod storage;
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
 
-use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::context::Context;
@@ -64,10 +63,6 @@ async fn main() -> Result<()> {
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
 
-    // Create a Tokio runtime for executing asynchronous tasks. The runtime is not in the context, so
-    // it can be passed to the components in the context.
-    let runtime = Arc::new(Runtime::new()?);
-
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
     let (cluster_mode, data_folders) = if let Ok(cluster_mode_and_data_folders) =
@@ -78,8 +73,7 @@ async fn main() -> Result<()> {
         print_usage_and_exit_with_error("[server_mode] local_data_folder_url [manager_url]");
     };
 
-    let context =
-        Arc::new(Context::try_new(runtime.clone(), data_folders, cluster_mode.clone()).await?);
+    let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone()).await?);
 
     // Register normal tables and time series tables.
     context.register_normal_tables().await?;

@@ -90,7 +90,6 @@ impl StorageEngine {
     /// [`ModelarDbServerError`] if `remote_data_folder` is given but [`DataTransfer`] cannot not be
     /// created.
     pub(super) async fn try_new(
-        runtime: Arc<Runtime>,
         data_folders: DataFolders,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
     ) -> Result<Self> {
@@ -101,6 +100,9 @@ impl StorageEngine {
             configuration_manager.uncompressed_reserved_memory_in_bytes(),
             configuration_manager.compressed_reserved_memory_in_bytes(),
         ));
+
+        // Create a Tokio runtime for executing asynchronous tasks.
+        let runtime = Arc::new(Runtime::new()?);
 
         // Create threads and shared channels.
         let mut join_handles = vec![];

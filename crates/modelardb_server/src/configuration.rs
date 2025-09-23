@@ -244,7 +244,6 @@ mod tests {
     use std::sync::Arc;
 
     use tempfile::TempDir;
-    use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
     use uuid::Uuid;
 
@@ -429,13 +428,9 @@ mod tests {
         )));
 
         let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(
-                Arc::new(Runtime::new().unwrap()),
-                data_folders,
-                &configuration_manager,
-            )
-            .await
-            .unwrap(),
+            StorageEngine::try_new(data_folders, &configuration_manager)
+                .await
+                .unwrap(),
         ));
 
         (storage_engine, configuration_manager)

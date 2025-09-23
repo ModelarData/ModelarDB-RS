@@ -22,7 +22,6 @@ use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::prelude::SessionContext;
 use modelardb_types::types::TimeSeriesTableMetadata;
-use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -48,17 +47,13 @@ impl Context {
     /// Create the components needed in the [`Context`] and use them to create the [`Context`]. If a
     /// metadata manager or storage engine could not be created, [`ModelarDbServerError`] is
     /// returned.
-    pub async fn try_new(
-        runtime: Arc<Runtime>,
-        data_folders: DataFolders,
-        cluster_mode: ClusterMode,
-    ) -> Result<Self> {
+    pub async fn try_new(data_folders: DataFolders, cluster_mode: ClusterMode) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
         let session_context = modelardb_storage::create_session_context();
 
         let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(runtime, data_folders.clone(), &configuration_manager).await?,
+            StorageEngine::try_new(data_folders.clone(), &configuration_manager).await?,
         ));
 
         Ok(Context {
@@ -1004,7 +999,6 @@ mod tests {
 
         Arc::new(
             Context::try_new(
-                Arc::new(Runtime::new().unwrap()),
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
             )
