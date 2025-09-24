@@ -182,7 +182,8 @@ impl StorageEngine {
                 configuration_manager.writer_threads,
                 "Writer",
                 move || {
-                    if let Err(error) = compressed_data_manager.process_compressed_messages(runtime_handle)
+                    if let Err(error) =
+                        compressed_data_manager.process_compressed_messages(runtime_handle)
                     {
                         error!("Failed to receive compressed message due to: {}", error);
                     };

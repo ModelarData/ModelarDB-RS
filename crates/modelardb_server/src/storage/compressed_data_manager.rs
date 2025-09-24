@@ -112,7 +112,8 @@ impl CompressedDataManager {
 
             match message {
                 Message::Data(compressed_segment_batch) => {
-                    runtime_handle.block_on(self.insert_compressed_segments(compressed_segment_batch))?;
+                    runtime_handle
+                        .block_on(self.insert_compressed_segments(compressed_segment_batch))?;
                 }
                 Message::Flush => {
                     self.flush_and_log_errors(&runtime_handle);
