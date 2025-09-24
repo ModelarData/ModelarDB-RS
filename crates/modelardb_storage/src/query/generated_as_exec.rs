@@ -123,7 +123,7 @@ impl ExecutionPlan for GeneratedAsExec {
     }
 
     /// Return the single execution plan batches of rows are read from.
-    fn children(&self) -> Vec<&Arc<(dyn ExecutionPlan)>> {
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![&self.input]
     }
 
@@ -131,8 +131,8 @@ impl ExecutionPlan for GeneratedAsExec {
     /// [`DataFusionError::Plan`] is returned if `children` does not contain exactly one element.
     fn with_new_children(
         self: Arc<Self>,
-        mut children: Vec<Arc<(dyn ExecutionPlan)>>,
-    ) -> DataFusionResult<Arc<(dyn ExecutionPlan)>> {
+        mut children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
             Ok(GeneratedAsExec::new(
                 self.schema.clone(),
