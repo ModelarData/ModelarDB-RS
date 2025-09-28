@@ -35,7 +35,7 @@ use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_types::types::TimeSeriesTableMetadata;
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tracing::error;
 
@@ -90,7 +90,6 @@ impl StorageEngine {
     /// [`ModelarDbServerError`] if `remote_data_folder` is given but [`DataTransfer`] cannot not be
     /// created.
     pub(super) async fn try_new(
-        runtime: Arc<Runtime>,
         data_folders: DataFolders,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
     ) -> Result<Self> {
@@ -101,6 +100,9 @@ impl StorageEngine {
             configuration_manager.uncompressed_reserved_memory_in_bytes(),
             configuration_manager.compressed_reserved_memory_in_bytes(),
         ));
+
+        // Create a handle to the Tokio runtime that can be used in the threads.
+        let runtime_handle = Handle::current();
 
         // Create threads and shared channels.
         let mut join_handles = vec![];
@@ -114,7 +116,7 @@ impl StorageEngine {
         ));
 
         {
-            let runtime = runtime.clone();
+            let runtime_handle = runtime_handle.clone();
             let uncompressed_data_manager = uncompressed_data_manager.clone();
 
             Self::start_threads(
@@ -122,7 +124,7 @@ impl StorageEngine {
                 "Ingestion",
                 move || {
                     if let Err(error) =
-                        uncompressed_data_manager.process_uncompressed_messages(runtime)
+                        uncompressed_data_manager.process_uncompressed_messages(runtime_handle)
                     {
                         error!("Failed to receive uncompressed message due to: {}", error);
                     };
@@ -132,7 +134,7 @@ impl StorageEngine {
         }
 
         {
-            let runtime = runtime.clone();
+            let runtime_handle = runtime_handle.clone();
             let uncompressed_data_manager = uncompressed_data_manager.clone();
 
             Self::start_threads(
@@ -140,7 +142,7 @@ impl StorageEngine {
                 "Compression",
                 move || {
                     if let Err(error) =
-                        uncompressed_data_manager.process_compressor_messages(runtime)
+                        uncompressed_data_manager.process_compressor_messages(runtime_handle)
                     {
                         error!("Failed to receive compressor message due to: {}", error);
                     };
@@ -173,14 +175,15 @@ impl StorageEngine {
         ));
 
         {
-            let runtime = runtime.clone();
+            let runtime_handle = runtime_handle.clone();
             let compressed_data_manager = compressed_data_manager.clone();
 
             Self::start_threads(
                 configuration_manager.writer_threads,
                 "Writer",
                 move || {
-                    if let Err(error) = compressed_data_manager.process_compressed_messages(runtime)
+                    if let Err(error) =
+                        compressed_data_manager.process_compressed_messages(runtime_handle)
                     {
                         error!("Failed to receive compressed message due to: {}", error);
                     };

@@ -26,7 +26,7 @@ use dashmap::DashMap;
 use futures::StreamExt;
 use modelardb_types::types::{TimeSeriesTableMetadata, Timestamp, Value};
 use object_store::path::{Path, PathPart};
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 use tracing::{debug, error, warn};
 
 use crate::context::Context;
@@ -127,13 +127,13 @@ impl UncompressedDataManager {
 
     /// Read and process messages received from the [`StorageEngine`](super::StorageEngine) to
     /// either ingest uncompressed data, flush buffers, or stop.
-    pub(super) fn process_uncompressed_messages(&self, runtime: Arc<Runtime>) -> Result<()> {
+    pub(super) fn process_uncompressed_messages(&self, runtime_handle: Handle) -> Result<()> {
         loop {
             let message = self.channels.ingested_data_receiver.recv()?;
 
             match message {
                 Message::Data(ingested_data_buffer) => {
-                    runtime.block_on(self.insert_data_points(ingested_data_buffer))?;
+                    runtime_handle.block_on(self.insert_data_points(ingested_data_buffer))?;
                 }
                 Message::Flush => {
                     self.flush_and_log_errors();
@@ -524,13 +524,13 @@ impl UncompressedDataManager {
 
     /// Read and process messages received from the [`UncompressedDataManager`] to either compress
     /// uncompressed data, forward a flush message, or stop.
-    pub(super) fn process_compressor_messages(&self, runtime: Arc<Runtime>) -> Result<()> {
+    pub(super) fn process_compressor_messages(&self, runtime_handle: Handle) -> Result<()> {
         loop {
             let message = self.channels.uncompressed_data_receiver.recv()?;
 
             match message {
                 Message::Data(data_buffer) => {
-                    runtime.block_on(self.compress_finished_buffer(data_buffer))?;
+                    runtime_handle.block_on(self.compress_finished_buffer(data_buffer))?;
                 }
                 Message::Flush => {
                     self.channels.compressed_data_sender.send(Message::Flush)?;
@@ -663,6 +663,7 @@ mod tests {
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
+    use tokio::runtime::Runtime;
     use tokio::time::{Duration, sleep};
 
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
@@ -681,7 +682,6 @@ mod tests {
         // Create a context with a storage engine.
         let context = Arc::new(
             Context::try_new(
-                Arc::new(Runtime::new().unwrap()),
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
             )
@@ -1116,7 +1116,10 @@ mod tests {
             .uncompressed_data_sender
             .send(Message::Stop)
             .unwrap();
-        data_manager.process_compressor_messages(runtime).unwrap();
+
+        data_manager
+            .process_compressor_messages(runtime.handle().clone())
+            .unwrap();
 
         assert!(
             remaining_memory
@@ -1167,7 +1170,9 @@ mod tests {
 
         // Since the UncompressedOnDiskDataBuffer is not in memory, the remaining amount of memory
         // should not increase when it is processed.
-        data_manager.process_compressor_messages(runtime).unwrap();
+        data_manager
+            .process_compressor_messages(runtime.handle().clone())
+            .unwrap();
 
         assert_eq!(
             remaining_memory,

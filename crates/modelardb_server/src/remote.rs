@@ -46,7 +46,6 @@ use modelardb_types::flight::protocol;
 use modelardb_types::functions;
 use modelardb_types::types::{Table, TimeSeriesTableMetadata};
 use prost::Message;
-use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
@@ -61,11 +60,7 @@ use crate::error::{ModelarDbServerError, Result};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
 /// process the requests through [`FlightServiceHandler`].
-pub fn start_apache_arrow_flight_server(
-    context: Arc<Context>,
-    runtime: &Arc<Runtime>,
-    port: u16,
-) -> Result<()> {
+pub async fn start_apache_arrow_flight_server(context: Arc<Context>, port: u16) -> Result<()> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse().map_err(|error| {
         ModelarDbServerError::InvalidArgument(format!(
@@ -79,13 +74,11 @@ pub fn start_apache_arrow_flight_server(
         FlightServiceServer::new(handler).max_decoding_message_size(16777216);
 
     info!("Starting Apache Arrow Flight on {}.", localhost_with_port);
-    runtime
-        .block_on(async {
-            Server::builder()
-                .add_service(flight_service_server)
-                .serve(localhost_with_port)
-                .await
-        })
+
+    Server::builder()
+        .add_service(flight_service_server)
+        .serve(localhost_with_port)
+        .await
         .map_err(|error| error.into())
 }
 

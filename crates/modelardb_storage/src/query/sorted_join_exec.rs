@@ -118,7 +118,7 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Return the single execution plan batches of rows are read from.
-    fn children(&self) -> Vec<&Arc<(dyn ExecutionPlan)>> {
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         // iter() returns an iterator that produces elements of type &T.
         self.inputs.iter().collect()
     }
@@ -128,8 +128,8 @@ impl ExecutionPlan for SortedJoinExec {
     /// contain at least one element.
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<(dyn ExecutionPlan)>>,
-    ) -> DataFusionResult<Arc<(dyn ExecutionPlan)>> {
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         if !children.is_empty() {
             Ok(SortedJoinExec::new(
                 self.schema.clone(),

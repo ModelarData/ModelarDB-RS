@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
@@ -106,20 +106,21 @@ impl CompressedDataManager {
     /// Read and process messages received from the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) to either insert compressed
     /// data, flush buffers, or stop.
-    pub(super) fn process_compressed_messages(&self, runtime: Arc<Runtime>) -> Result<()> {
+    pub(super) fn process_compressed_messages(&self, runtime_handle: Handle) -> Result<()> {
         loop {
             let message = self.channels.compressed_data_receiver.recv()?;
 
             match message {
                 Message::Data(compressed_segment_batch) => {
-                    runtime.block_on(self.insert_compressed_segments(compressed_segment_batch))?;
+                    runtime_handle
+                        .block_on(self.insert_compressed_segments(compressed_segment_batch))?;
                 }
                 Message::Flush => {
-                    self.flush_and_log_errors(&runtime);
+                    self.flush_and_log_errors(&runtime_handle);
                     self.channels.result_sender.send(Ok(()))?;
                 }
                 Message::Stop => {
-                    self.flush_and_log_errors(&runtime);
+                    self.flush_and_log_errors(&runtime_handle);
                     self.channels.result_sender.send(Ok(()))?;
                     break;
                 }
@@ -201,8 +202,8 @@ impl CompressedDataManager {
 
     /// Flush the data that the [`CompressedDataManager`] is currently managing. Writes a log
     /// message if some of the data cannot be flushed.
-    fn flush_and_log_errors(&self, runtime: &Runtime) {
-        runtime.block_on(async {
+    fn flush_and_log_errors(&self, runtime_handle: &Handle) {
+        runtime_handle.block_on(async {
             if let Err(error) = self.flush().await {
                 error!(
                     "Failed to flush data in compressed data manager due to: {}",
