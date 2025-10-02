@@ -459,12 +459,7 @@ mod tests {
         );
 
         // The normal table should be registered in the Apache DataFusion catalog.
-        assert!(
-            context
-                .check_if_table_exists(NORMAL_TABLE_NAME)
-                .await
-                .is_err()
-        );
+        assert_check_if_table_exists_error(&context, NORMAL_TABLE_NAME).await;
     }
 
     #[tokio::test]
@@ -512,12 +507,7 @@ mod tests {
         );
 
         // The time series table should be registered in the Apache DataFusion catalog.
-        assert!(
-            context
-                .check_if_table_exists(TIME_SERIES_TABLE_NAME)
-                .await
-                .is_err()
-        );
+        assert_check_if_table_exists_error(&context, TIME_SERIES_TABLE_NAME).await;
     }
 
     #[tokio::test]
@@ -590,12 +580,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            context
-                .check_if_table_exists(NORMAL_TABLE_NAME)
-                .await
-                .is_err()
-        );
+        assert_check_if_table_exists_error(&context, NORMAL_TABLE_NAME).await;
 
         context.drop_table(NORMAL_TABLE_NAME).await.unwrap();
 
@@ -632,12 +617,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            context
-                .check_if_table_exists(TIME_SERIES_TABLE_NAME)
-                .await
-                .is_err()
-        );
+        assert_check_if_table_exists_error(&context, TIME_SERIES_TABLE_NAME).await;
 
         context.drop_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
@@ -940,11 +920,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            context
-                .check_if_table_exists(TIME_SERIES_TABLE_NAME)
-                .await
-                .is_err()
+        assert_check_if_table_exists_error(&context, TIME_SERIES_TABLE_NAME).await;
+    }
+
+    async fn assert_check_if_table_exists_error(context: &Arc<Context>, table_name: &str) {
+        let result = context.check_if_table_exists(table_name).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!("Invalid Argument Error: Table with name '{table_name}' already exists.")
         );
     }
 
