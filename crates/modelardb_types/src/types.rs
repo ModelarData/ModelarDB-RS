@@ -407,7 +407,7 @@ impl fmt::Display for ServerMode {
 mod tests {
     use super::*;
 
-    use arrow::datatypes::Field;
+    use arrow::datatypes::{Field, TimestampMillisecondType};
     use proptest::num;
     use proptest::proptest;
 
@@ -433,12 +433,16 @@ mod tests {
     fn test_cannot_create_time_series_table_metadata_with_invalid_timestamp_type() {
         let schema = Schema::new(vec![
             Field::new("tag", DataType::Utf8, false),
-            Field::new("timestamp", DataType::UInt8, false),
+            Field::new("timestamp", TimestampMillisecondType::DATA_TYPE, false),
             Field::new("value", ArrowValue::DATA_TYPE, false),
         ]);
 
         let result = create_simple_time_series_table_metadata(schema);
-        assert!(result.is_err());
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: The data type 'Timestamp(Millisecond, None)' of column 'timestamp' is not supported in a time series table."
+        );
     }
 
     #[test]
@@ -450,7 +454,11 @@ mod tests {
         ]);
 
         let result = create_simple_time_series_table_metadata(schema);
-        assert!(result.is_err());
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: The data type 'UInt8' of column 'tag' is not supported in a time series table."
+        );
     }
 
     #[test]
@@ -461,7 +469,11 @@ mod tests {
         ]);
 
         let result = create_simple_time_series_table_metadata(schema);
-        assert!(result.is_err());
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: There needs to be at least one field column."
+        );
     }
 
     #[test]
@@ -473,7 +485,11 @@ mod tests {
         ]);
 
         let result = create_simple_time_series_table_metadata(schema);
-        assert!(result.is_err());
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: The data type 'UInt8' of column 'value' is not supported in a time series table."
+        );
     }
 
     /// Return metadata for a time series table with one tag column and the timestamp column at index 1.
@@ -502,7 +518,10 @@ mod tests {
             generated_columns,
         );
 
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: An error bound must be defined for each column."
+        );
     }
 
     #[test]
@@ -516,7 +535,10 @@ mod tests {
             vec![],
         );
 
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: A generated column or None must be defined for each column."
+        );
     }
 
     #[test]
@@ -542,7 +564,10 @@ mod tests {
             generated_columns,
         );
 
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: A generated field column cannot depend on generated field columns."
+        );
     }
 
     fn time_series_table_schema_error_bounds_and_generated_columns()
@@ -634,7 +659,7 @@ mod tests {
     // Tests for ErrorBound.
     #[test]
     fn test_absolute_error_bound_cannot_be_zero() {
-        assert!(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).is_err())
+        assert_absolute_error_bound_error(ERROR_BOUND_ZERO);
     }
 
     proptest! {
@@ -645,28 +670,37 @@ mod tests {
 
         #[test]
         fn test_absolute_error_bound_cannot_be_negative(value in num::f32::NEGATIVE) {
-            assert!(ErrorBound::try_new_absolute(value).is_err())
+            assert_absolute_error_bound_error(value);
         }
     }
 
     #[test]
     fn test_absolute_error_bound_cannot_be_positive_infinity() {
-        assert!(ErrorBound::try_new_absolute(f32::INFINITY).is_err())
+        assert_absolute_error_bound_error(f32::INFINITY);
     }
 
     #[test]
     fn test_absolute_error_bound_cannot_be_negative_infinity() {
-        assert!(ErrorBound::try_new_absolute(f32::NEG_INFINITY).is_err())
+        assert_absolute_error_bound_error(f32::NEG_INFINITY);
     }
 
     #[test]
     fn test_absolute_error_bound_cannot_be_nan() {
-        assert!(ErrorBound::try_new_absolute(f32::NAN).is_err())
+        assert_absolute_error_bound_error(f32::NAN);
+    }
+
+    fn assert_absolute_error_bound_error(value: f32) {
+        let result = ErrorBound::try_new_absolute(value);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: An absolute error bound must be a positive finite value."
+        );
     }
 
     #[test]
     fn test_relative_error_bound_cannot_be_zero() {
-        assert!(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).is_err())
+        assert_relative_error_bound_error(ERROR_BOUND_ZERO);
     }
 
     proptest! {
@@ -675,28 +709,37 @@ mod tests {
             if percentage <= 100.0 {
                 assert!(ErrorBound::try_new_relative(percentage).is_ok())
             } else {
-                assert!(ErrorBound::try_new_relative(percentage).is_err())
+                assert_relative_error_bound_error(percentage);
             }
         }
 
         #[test]
         fn test_relative_error_bound_cannot_be_negative(percentage in num::f32::NEGATIVE) {
-            assert!(ErrorBound::try_new_relative(percentage).is_err())
+            assert_relative_error_bound_error(percentage);
         }
     }
 
     #[test]
     fn test_relative_error_bound_cannot_be_positive_infinity() {
-        assert!(ErrorBound::try_new_relative(f32::INFINITY).is_err())
+        assert_relative_error_bound_error(f32::INFINITY);
     }
 
     #[test]
     fn test_relative_error_bound_cannot_be_negative_infinity() {
-        assert!(ErrorBound::try_new_relative(f32::NEG_INFINITY).is_err())
+        assert_relative_error_bound_error(f32::NEG_INFINITY);
     }
 
     #[test]
     fn test_relative_error_bound_cannot_be_nan() {
-        assert!(ErrorBound::try_new_relative(f32::NAN).is_err())
+        assert_relative_error_bound_error(f32::NAN);
+    }
+
+    fn assert_relative_error_bound_error(value: f32) {
+        let result = ErrorBound::try_new_relative(value);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: A relative error bound must be a positive value that is at most 100.0%."
+        );
     }
 }

@@ -194,7 +194,12 @@ mod tests {
     // Tests for BitReader.
     #[test]
     fn test_bit_reader_cannot_be_empty() {
-        assert!(BitReader::try_new(&[]).is_err());
+        let result = BitReader::try_new(&[]);
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "Invalid Argument Error: The bytes slice must not be empty."
+        );
     }
 
     #[test]

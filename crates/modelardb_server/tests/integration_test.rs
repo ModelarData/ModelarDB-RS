@@ -633,8 +633,12 @@ async fn test_can_drop_time_series_table() {
 async fn test_cannot_drop_missing_table() {
     let mut test_context = TestContext::new().await;
 
-    let result = test_context.drop_table(NORMAL_TABLE_NAME).await;
-    assert!(result.is_err());
+    let response = test_context.drop_table(NORMAL_TABLE_NAME).await;
+
+    assert_eq!(
+        response.err().unwrap().message(),
+        format!("Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist.")
+    );
 }
 
 #[tokio::test]
@@ -695,8 +699,12 @@ async fn test_can_truncate_time_series_table() {
 async fn test_cannot_truncate_missing_table() {
     let mut test_context = TestContext::new().await;
 
-    let result = test_context.truncate_table(NORMAL_TABLE_NAME).await;
-    assert!(result.is_err());
+    let response = test_context.truncate_table(NORMAL_TABLE_NAME).await;
+
+    assert_eq!(
+        response.err().unwrap().message(),
+        format!("Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist.")
+    );
 }
 
 #[tokio::test]
@@ -777,8 +785,12 @@ async fn test_can_vacuum_time_series_table() {
 async fn test_cannot_vacuum_missing_table() {
     let mut test_context = TestContext::new().await;
 
-    let result = test_context.vacuum_table(NORMAL_TABLE_NAME, None).await;
-    assert!(result.is_err());
+    let response = test_context.vacuum_table(NORMAL_TABLE_NAME, None).await;
+
+    assert_eq!(
+        response.err().unwrap().message(),
+        format!("Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist.")
+    );
 }
 
 #[tokio::test]
@@ -1048,11 +1060,12 @@ async fn test_cannot_ingest_invalid_time_series() {
         .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
-    assert!(
-        test_context
-            .send_time_series_to_server(flight_data)
-            .await
-            .is_err()
+    let response = test_context.send_time_series_to_server(flight_data).await;
+
+    assert_eq!(
+        response.err().unwrap().message(),
+        "Schema error: Invalid data for schema. Field { name: \"tag\", data_type: Utf8, nullable: \
+        false, dict_id: 0, dict_is_ordered: false, metadata: {} } refers to node not found in schema"
     );
 
     test_context.flush_data_to_disk().await;
@@ -1375,7 +1388,6 @@ async fn update_configuration_and_assert_error(setting: i32, new_value: Option<u
     let mut test_context = TestContext::new().await;
     let response = test_context.update_configuration(setting, new_value).await;
 
-    assert!(response.is_err());
     assert_eq!(response.err().unwrap().message(), error);
 }
 

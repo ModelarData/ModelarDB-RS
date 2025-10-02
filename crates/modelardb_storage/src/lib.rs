@@ -298,8 +298,12 @@ mod tests {
             .await
             .unwrap();
 
-        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
-        assert!(result.await.is_err());
+        let result = read_record_batch_from_apache_parquet_file(&path, object_store).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parquet Error: EOF: footer metadata requires 8 bytes, but could only read 0"
+        );
     }
 
     #[tokio::test]
@@ -309,8 +313,13 @@ mod tests {
 
         let path = Path::from("test.parquet");
 
-        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
-        assert!(result.await.is_err());
+        let result = read_record_batch_from_apache_parquet_file(&path, object_store).await;
+
+        // The specific error message is OS-dependent, so we only check that it contains the
+        // expected prefix and OS error code.
+        let actual_error_message = result.unwrap_err().to_string();
+        assert!(actual_error_message.contains("Parquet error: Object at location"));
+        assert!(actual_error_message.contains("os error 2"));
     }
 
     // Tests for write_record_batch_to_apache_parquet_file().
@@ -343,7 +352,11 @@ mod tests {
         let (temp_dir, result) =
             write_record_batch_to_temp_dir(&Path::from("test.txt"), &record_batch).await;
 
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parquet Error: Parquet error: 'test.txt' is not a valid file path for an Apache Parquet file."
+        );
+
         assert!(!temp_dir.path().join("test.txt").exists());
     }
 
@@ -353,7 +366,11 @@ mod tests {
         let (temp_dir, result) =
             write_record_batch_to_temp_dir(&Path::from("test"), &record_batch).await;
 
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parquet Error: Parquet error: 'test' is not a valid file path for an Apache Parquet file."
+        );
+
         assert!(!temp_dir.path().join("test").exists());
     }
 

@@ -242,17 +242,25 @@ mod test {
         let mut cluster = Cluster::new();
 
         assert!(cluster.register_node(node.clone()).is_ok());
-        assert!(cluster.register_node(node).is_err());
+
+        let result = cluster.register_node(node);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: A node with the url `localhost` is already registered."
+        );
     }
 
     #[tokio::test]
     async fn test_remove_node_invalid_url() {
         let mut cluster = Cluster::new();
-        assert!(
-            cluster
-                .remove_node("invalid_url", &Uuid::new_v4().to_string().parse().unwrap())
-                .await
-                .is_err()
+        let result = cluster
+            .remove_node("invalid_url", &Uuid::new_v4().to_string().parse().unwrap())
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: A node with the url `invalid_url` does not exist."
         );
     }
 
@@ -277,6 +285,12 @@ mod test {
         let mut cluster = Cluster::new();
 
         assert!(cluster.register_node(node).is_ok());
-        assert!(cluster.query_node().is_err());
+
+        let result = cluster.query_node();
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: There are no cloud nodes to execute the query in the cluster."
+        );
     }
 }
