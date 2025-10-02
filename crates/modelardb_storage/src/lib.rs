@@ -316,14 +316,13 @@ mod tests {
 
         let result = read_record_batch_from_apache_parquet_file(&path, object_store).await;
 
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            format!(
-                "Parquet Error: Parquet error: Object at location {} not found: \
-                The system cannot find the file specified. (os error 2)",
-                full_path.display()
-            )
+        let error_message = format!(
+            "Parquet Error: Parquet error: Object at location {} not found:",
+            full_path.display()
         );
+
+        // The specific error message is OS-dependent, so we only check that it contains the expected prefix.
+        assert!(result.unwrap_err().to_string().contains(&error_message));
     }
 
     // Tests for write_record_batch_to_apache_parquet_file().
