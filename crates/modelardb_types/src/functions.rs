@@ -89,6 +89,11 @@ mod tests {
 
     #[test]
     fn test_invalid_bytes_to_schema() {
-        assert!(try_convert_bytes_to_schema(vec!(1, 2, 4, 8)).is_err());
+        let result = try_convert_bytes_to_schema(vec!(1, 2, 4, 8));
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Arrow Error: Parser error: The buffer length (0) is less than the encapsulated message's reported length (134480385)"
+        );
     }
 }
