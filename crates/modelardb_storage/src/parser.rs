@@ -1834,77 +1834,146 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_vacuum_trailing_comma() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM table_name,").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM table_name,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: EOF"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_leading_comma() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM ,table_name").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM ,table_name");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: , at Line: 1, Column: 8"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_only_comma() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM,").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: , at Line: 1, Column: 7"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_quoted_table_name() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM 'table_name'").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM 'table_name'");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: 'table_name' at Line: 1, Column: 8"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_retain_without_number() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM RETAIN");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: EOF"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_number_without_retain() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM 30").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM 30");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: 30 at Line: 1, Column: 8"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_retain_with_float() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN 30.5").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM RETAIN 30.5");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Failed to parse '30.5' into a u64 due to: invalid digit found in string"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_retain_with_non_numeric() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN thirty").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM RETAIN thirty");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: thirty at Line: 1, Column: 15"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_retain_with_negative() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN -30").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM RETAIN -30");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: - at Line: 1, Column: 15"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_retain_with_max_plus_one() {
-        assert!(
-            tokenize_and_parse_sql_statement(&format!(
-                "VACUUM RETAIN {}",
-                MAX_RETENTION_PERIOD_IN_SECONDS + 1
-            ))
-            .is_err()
+        let result = tokenize_and_parse_sql_statement(&format!(
+            "VACUUM RETAIN {}",
+            MAX_RETENTION_PERIOD_IN_SECONDS + 1
+        ));
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Parser Error: sql parser error: Retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+            )
         );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_retain_twice() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN 30 RETAIN 30").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM RETAIN 30 RETAIN 30");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: RETAIN at Line: 1, Column: 18"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables_retain_without_number() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM table_1, table_2 RETAIN").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM table_1, table_2 RETAIN");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: EOF"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_tables_and_retain_mixed() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM table_1, RETAIN 30, table_2").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM table_1, RETAIN 30, table_2");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: 30 at Line: 1, Column: 24"
+        );
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_retain_first() {
-        assert!(tokenize_and_parse_sql_statement("VACUUM RETAIN 30 table_1, table_2").is_err());
+        let result = tokenize_and_parse_sql_statement("VACUUM RETAIN 30 table_1, table_2");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: table_1 at Line: 1, Column: 18"
+        );
     }
 }
