@@ -312,17 +312,14 @@ mod tests {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let path = Path::from("test.parquet");
-        let full_path = temp_dir.path().join("test.parquet");
 
         let result = read_record_batch_from_apache_parquet_file(&path, object_store).await;
 
-        let error_message = format!(
-            "Parquet Error: Parquet error: Object at location {} not found:",
-            full_path.display()
-        );
-
-        // The specific error message is OS-dependent, so we only check that it contains the expected prefix.
-        assert!(result.unwrap_err().to_string().contains(&error_message));
+        // The specific error message is OS-dependent, so we only check that it contains the
+        // expected prefix and OS error code.
+        let actual_error_message = result.unwrap_err().to_string();
+        assert!(actual_error_message.contains("Parquet error: Object at location"));
+        assert!(actual_error_message.contains("os error 2"));
     }
 
     // Tests for write_record_batch_to_apache_parquet_file().
