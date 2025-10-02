@@ -261,9 +261,7 @@ impl Context {
         // Deregistering the table from the Apache DataFusion session context and deleting the table
         // from the storage engine does not require the table to exist, so the table is checked first.
         if self.check_if_table_exists(table_name).await.is_ok() {
-            return Err(ModelarDbServerError::InvalidArgument(format!(
-                "Table with name '{table_name}' does not exist."
-            )));
+            return Err(table_does_not_exist_error(table_name));
         }
 
         // Deregister the table from the Apache DataFusion session context. This is done first to
@@ -296,9 +294,7 @@ impl Context {
         // Deleting the table from the storage engine does not require the table to exist, so the
         // table is checked first.
         if self.check_if_table_exists(table_name).await.is_ok() {
-            return Err(ModelarDbServerError::InvalidArgument(format!(
-                "Table with name '{table_name}' does not exist."
-            )));
+            return Err(table_does_not_exist_error(table_name));
         }
 
         self.drop_table_from_storage_engine(table_name).await?;
@@ -338,9 +334,7 @@ impl Context {
     ) -> Result<()> {
         // Check if the table exists first to provide a consistent error message if it does not.
         if self.check_if_table_exists(table_name).await.is_ok() {
-            return Err(ModelarDbServerError::InvalidArgument(format!(
-                "Table with name '{table_name}' does not exist."
-            )));
+            return Err(table_does_not_exist_error(table_name));
         }
 
         self.data_folders
@@ -364,12 +358,10 @@ impl Context {
     ) -> Result<Option<Arc<TimeSeriesTableMetadata>>> {
         let database_schema = self.default_database_schema()?;
 
-        let maybe_time_series_table =
-            database_schema.table(table_name).await?.ok_or_else(|| {
-                ModelarDbServerError::InvalidArgument(format!(
-                    "Table with name '{table_name}' does not exist."
-                ))
-            })?;
+        let maybe_time_series_table = database_schema
+            .table(table_name)
+            .await?
+            .ok_or_else(|| table_does_not_exist_error(table_name))?;
 
         let maybe_time_series_table_metadata =
             modelardb_storage::maybe_table_provider_to_time_series_table_metadata(
@@ -398,11 +390,10 @@ impl Context {
     ) -> Result<Arc<Schema>> {
         let database_schema = self.default_database_schema()?;
 
-        let table = database_schema.table(table_name).await?.ok_or_else(|| {
-            ModelarDbServerError::InvalidArgument(format!(
-                "Table with name '{table_name}' does not exist."
-            ))
-        })?;
+        let table = database_schema
+            .table(table_name)
+            .await?
+            .ok_or_else(|| table_does_not_exist_error(table_name))?;
 
         Ok(table.schema())
     }
@@ -422,6 +413,11 @@ impl Context {
 
         Ok(schema)
     }
+}
+
+/// Return a [`ModelarDbServerError`] indicating that a table with `table_name` does not exist.
+fn table_does_not_exist_error(table_name: &str) -> ModelarDbServerError {
+    ModelarDbServerError::InvalidArgument(format!("Table with name '{table_name}' does not exist."))
 }
 
 #[cfg(test)]
@@ -668,9 +664,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!(
-                "Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist."
-            )
+            table_does_not_exist_error(NORMAL_TABLE_NAME).to_string()
         );
     }
 
@@ -746,9 +740,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!(
-                "Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist."
-            )
+            table_does_not_exist_error(NORMAL_TABLE_NAME).to_string()
         );
     }
 
@@ -882,9 +874,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!(
-                "Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist."
-            )
+            table_does_not_exist_error(NORMAL_TABLE_NAME).to_string()
         );
     }
 
@@ -937,9 +927,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!(
-                "Invalid Argument Error: Table with name '{TIME_SERIES_TABLE_NAME}' does not exist."
-            )
+            table_does_not_exist_error(TIME_SERIES_TABLE_NAME).to_string()
         );
     }
 
@@ -1007,9 +995,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!(
-                "Invalid Argument Error: Table with name '{TIME_SERIES_TABLE_NAME}' does not exist."
-            )
+            table_does_not_exist_error(TIME_SERIES_TABLE_NAME).to_string()
         );
     }
 
