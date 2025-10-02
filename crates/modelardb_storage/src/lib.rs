@@ -298,8 +298,12 @@ mod tests {
             .await
             .unwrap();
 
-        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
-        assert!(result.await.is_err());
+        let result = read_record_batch_from_apache_parquet_file(&path, object_store).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parquet Error: EOF: footer metadata requires 8 bytes, but could only read 0"
+        );
     }
 
     #[tokio::test]
@@ -308,9 +312,18 @@ mod tests {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let path = Path::from("test.parquet");
+        let full_path = temp_dir.path().join("test.parquet");
 
-        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
-        assert!(result.await.is_err());
+        let result = read_record_batch_from_apache_parquet_file(&path, object_store).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Parquet Error: Parquet error: Object at location {} not found: \
+                The system cannot find the file specified. (os error 2)",
+                full_path.display()
+            )
+        );
     }
 
     // Tests for write_record_batch_to_apache_parquet_file().
@@ -343,7 +356,11 @@ mod tests {
         let (temp_dir, result) =
             write_record_batch_to_temp_dir(&Path::from("test.txt"), &record_batch).await;
 
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parquet Error: Parquet error: 'test.txt' is not a valid file path for an Apache Parquet file."
+        );
+
         assert!(!temp_dir.path().join("test.txt").exists());
     }
 
@@ -353,7 +370,11 @@ mod tests {
         let (temp_dir, result) =
             write_record_batch_to_temp_dir(&Path::from("test"), &record_batch).await;
 
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parquet Error: Parquet error: 'test' is not a valid file path for an Apache Parquet file."
+        );
+
         assert!(!temp_dir.path().join("test").exists());
     }
 
