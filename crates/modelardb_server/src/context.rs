@@ -660,11 +660,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        let result = context.drop_table(NORMAL_TABLE_NAME).await;
+        let result = context.drop_table("missing_table").await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            table_does_not_exist_error(NORMAL_TABLE_NAME).to_string()
+            table_does_not_exist_error("missing_table").to_string()
         );
     }
 
@@ -736,11 +736,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        let result = context.truncate_table(NORMAL_TABLE_NAME).await;
+        let result = context.truncate_table("missing_table").await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            table_does_not_exist_error(NORMAL_TABLE_NAME).to_string()
+            table_does_not_exist_error("missing_table").to_string()
         );
     }
 
@@ -870,11 +870,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        let result = context.vacuum_table(NORMAL_TABLE_NAME, None).await;
+        let result = context.vacuum_table("missing_table", None).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            table_does_not_exist_error(NORMAL_TABLE_NAME).to_string()
+            table_does_not_exist_error("missing_table").to_string()
         );
     }
 
@@ -990,12 +990,12 @@ mod tests {
         let context = create_context(&temp_dir).await;
 
         let result = context
-            .schema_of_table_in_default_database_schema(TIME_SERIES_TABLE_NAME)
+            .schema_of_table_in_default_database_schema("missing_table")
             .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            table_does_not_exist_error(TIME_SERIES_TABLE_NAME).to_string()
+            table_does_not_exist_error("missing_table").to_string()
         );
     }
 
