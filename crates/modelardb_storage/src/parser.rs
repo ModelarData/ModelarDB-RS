@@ -1618,15 +1618,13 @@ mod tests {
             if keyword == &"END-EXEC" {
                 continue;
             }
-            let modelardb_statement = tokenize_and_parse_sql_statement(
+            let result = tokenize_and_parse_sql_statement(
                 sql.replace("{}", keyword_to_table_name(keyword).as_str())
                     .as_str(),
             );
 
-            assert!(modelardb_statement.is_err());
-
             assert_eq!(
-                modelardb_statement.unwrap_err().to_string(),
+                result.unwrap_err().to_string(),
                 format!(
                     "Invalid Argument Error: Reserved keyword '{}' cannot be used as a table name.",
                     keyword_to_table_name(keyword)
@@ -1677,9 +1675,14 @@ mod tests {
 
     #[test]
     fn test_semantic_checks_for_create_time_series_table_check_wrong_generated_expression() {
-        assert!(tokenize_and_parse_sql_statement(
+        let result = tokenize_and_parse_sql_statement(
             "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_3 * PI() / 180)), tag TAG)",
-        ).is_err());
+        );
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Schema error: No field named field_3. Did you mean 'field_1'?."
+        );
     }
 
     /// Return [`true`] if `modelardb_statement` is [`ModelarDbStatement::CreateNormalTable`] or
@@ -1705,13 +1708,15 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_settings_with_modelardb_dialect() {
-        assert!(
-            Parser::parse_sql(
-                &ModelarDbDialect::new(),
-                "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true"
-            )
-            .is_err()
-        )
+        let result = Parser::parse_sql(
+            &ModelarDbDialect::new(),
+            "SELECT * FROM table_name SETTINGS convert_query_to_cnf = true",
+        );
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "sql parser error: Expected: end of statement, found: SETTINGS at Line: 1, Column: 26"
+        );
     }
 
     #[test]
@@ -1734,25 +1739,35 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_include_one_double_quoted_address_select() {
-        assert!(
-            tokenize_and_parse_sql_statement(
-                "INCLUDE \"grpc://192.168.1.2:9999\" SELECT * FROM table_name",
-            )
-            .is_err()
+        let result = tokenize_and_parse_sql_statement(
+            "INCLUDE \"grpc://192.168.1.2:9999\" SELECT * FROM table_name",
+        );
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: single quoted string, found: \"grpc://192.168.1.2:9999\" at Line: 1, Column: 9"
         );
     }
 
     #[test]
     fn test_tokenize_and_parse_one_address_select() {
-        assert!(
-            tokenize_and_parse_sql_statement("'grpc://192.168.1.2:9999' SELECT * FROM table_name",)
-                .is_err()
+        let result =
+            tokenize_and_parse_sql_statement("'grpc://192.168.1.2:9999' SELECT * FROM table_name");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: an SQL statement, found: 'grpc://192.168.1.2:9999' at Line: 1, Column: 1"
         );
     }
 
     #[test]
     fn test_tokenize_and_parse_include_zero_addresses_select() {
-        assert!(tokenize_and_parse_sql_statement("INCLUDE SELECT * FROM table_name",).is_err());
+        let result = tokenize_and_parse_sql_statement("INCLUDE SELECT * FROM table_name");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: single quoted string, found: SELECT at Line: 1, Column: 9"
+        );
     }
 
     #[test]
