@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn test_invalid_bytes_to_schema() {
-        let result = try_convert_bytes_to_schema(vec!(1, 2, 4, 8));
+        let result = try_convert_bytes_to_schema(vec![1, 2, 4, 8]);
 
         assert_eq!(
             result.unwrap_err().to_string(),
