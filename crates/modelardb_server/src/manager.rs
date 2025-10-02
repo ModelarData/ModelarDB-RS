@@ -304,16 +304,28 @@ mod tests {
         let manager = create_manager();
         let request_metadata = MetadataMap::new();
 
-        assert!(manager.validate_request(&request_metadata).is_err());
+        let result = manager.validate_request(&request_metadata);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: Missing manager key."
+        );
     }
 
     #[tokio::test]
     async fn test_validate_request_with_invalid_key() {
         let manager = create_manager();
         let mut request_metadata = MetadataMap::new();
-        request_metadata.append("x-manager-key", Uuid::new_v4().to_string().parse().unwrap());
 
-        assert!(manager.validate_request(&request_metadata).is_err());
+        let key = Uuid::new_v4().to_string();
+        request_metadata.append("x-manager-key", key.parse().unwrap());
+
+        let result = manager.validate_request(&request_metadata);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!("Invalid State Error: Manager key '\"{key}\"' is invalid.")
+        );
     }
 
     fn create_manager() -> Manager {
