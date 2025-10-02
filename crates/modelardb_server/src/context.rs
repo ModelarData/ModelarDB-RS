@@ -336,6 +336,13 @@ impl Context {
         table_name: &str,
         maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()> {
+        // Check if the table exists first to provide a consistent error message if it does not.
+        if self.check_if_table_exists(table_name).await.is_ok() {
+            return Err(ModelarDbServerError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            )));
+        }
+
         self.data_folders
             .local_data_folder
             .delta_lake
@@ -474,11 +481,15 @@ mod tests {
                 .is_ok()
         );
 
-        assert!(
-            context
-                .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
-                .await
-                .is_err()
+        let result = context
+            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' already exists."
+            )
         );
     }
 
@@ -522,11 +533,15 @@ mod tests {
                 .is_ok()
         );
 
-        assert!(
-            context
-                .create_time_series_table(&table::time_series_table_metadata())
-                .await
-                .is_err()
+        let result = context
+            .create_time_series_table(&table::time_series_table_metadata())
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{TIME_SERIES_TABLE_NAME}' already exists."
+            )
         );
     }
 
@@ -649,7 +664,14 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(context.drop_table(TIME_SERIES_TABLE_NAME).await.is_err());
+        let result = context.drop_table(NORMAL_TABLE_NAME).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist."
+            )
+        );
     }
 
     #[tokio::test]
@@ -720,11 +742,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(
-            context
-                .truncate_table(TIME_SERIES_TABLE_NAME)
-                .await
-                .is_err()
+        let result = context.truncate_table(NORMAL_TABLE_NAME).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist."
+            )
         );
     }
 
@@ -811,14 +835,17 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context_with_time_series_table(&temp_dir).await;
 
-        assert!(
-            context
-                .vacuum_table(
-                    TIME_SERIES_TABLE_NAME,
-                    Some(MAX_RETENTION_PERIOD_IN_SECONDS + 1)
-                )
-                .await
-                .is_err()
+        let retention_period = Some(MAX_RETENTION_PERIOD_IN_SECONDS + 1);
+        let result = context
+            .vacuum_table(TIME_SERIES_TABLE_NAME, retention_period)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "ModelarDB Storage Error: Invalid Argument Error: \
+                Retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+            )
         );
     }
 
@@ -851,11 +878,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(
-            context
-                .vacuum_table(TIME_SERIES_TABLE_NAME, None)
-                .await
-                .is_err()
+        let result = context.vacuum_table(NORMAL_TABLE_NAME, None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist."
+            )
         );
     }
 
@@ -902,11 +931,15 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(
-            context
-                .time_series_table_metadata_from_default_database_schema(TIME_SERIES_TABLE_NAME)
-                .await
-                .is_err()
+        let result = context
+            .time_series_table_metadata_from_default_database_schema(TIME_SERIES_TABLE_NAME)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{TIME_SERIES_TABLE_NAME}' does not exist."
+            )
         );
     }
 
@@ -968,12 +1001,16 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
-        assert!(
-            context
-                .schema_of_table_in_default_database_schema(TIME_SERIES_TABLE_NAME)
-                .await
-                .is_err()
-        )
+        let result = context
+            .schema_of_table_in_default_database_schema(TIME_SERIES_TABLE_NAME)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{TIME_SERIES_TABLE_NAME}' does not exist."
+            )
+        );
     }
 
     /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
