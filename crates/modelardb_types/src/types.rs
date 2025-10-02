@@ -659,7 +659,7 @@ mod tests {
     // Tests for ErrorBound.
     #[test]
     fn test_absolute_error_bound_cannot_be_zero() {
-        assert!(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).is_err())
+        assert_absolute_error_bound_error(ERROR_BOUND_ZERO);
     }
 
     proptest! {
@@ -670,28 +670,37 @@ mod tests {
 
         #[test]
         fn test_absolute_error_bound_cannot_be_negative(value in num::f32::NEGATIVE) {
-            assert!(ErrorBound::try_new_absolute(value).is_err())
+            assert_absolute_error_bound_error(value);
         }
     }
 
     #[test]
     fn test_absolute_error_bound_cannot_be_positive_infinity() {
-        assert!(ErrorBound::try_new_absolute(f32::INFINITY).is_err())
+        assert_absolute_error_bound_error(f32::INFINITY);
     }
 
     #[test]
     fn test_absolute_error_bound_cannot_be_negative_infinity() {
-        assert!(ErrorBound::try_new_absolute(f32::NEG_INFINITY).is_err())
+        assert_absolute_error_bound_error(f32::NEG_INFINITY);
     }
 
     #[test]
     fn test_absolute_error_bound_cannot_be_nan() {
-        assert!(ErrorBound::try_new_absolute(f32::NAN).is_err())
+        assert_absolute_error_bound_error(f32::NAN);
+    }
+
+    fn assert_absolute_error_bound_error(value: f32) {
+        let result = ErrorBound::try_new_absolute(value);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: An absolute error bound must be a positive finite value."
+        );
     }
 
     #[test]
     fn test_relative_error_bound_cannot_be_zero() {
-        assert!(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).is_err())
+        assert_relative_error_bound_error(ERROR_BOUND_ZERO);
     }
 
     proptest! {
@@ -700,28 +709,37 @@ mod tests {
             if percentage <= 100.0 {
                 assert!(ErrorBound::try_new_relative(percentage).is_ok())
             } else {
-                assert!(ErrorBound::try_new_relative(percentage).is_err())
+                assert_relative_error_bound_error(percentage);
             }
         }
 
         #[test]
         fn test_relative_error_bound_cannot_be_negative(percentage in num::f32::NEGATIVE) {
-            assert!(ErrorBound::try_new_relative(percentage).is_err())
+            assert_relative_error_bound_error(percentage);
         }
     }
 
     #[test]
     fn test_relative_error_bound_cannot_be_positive_infinity() {
-        assert!(ErrorBound::try_new_relative(f32::INFINITY).is_err())
+        assert_relative_error_bound_error(f32::INFINITY);
     }
 
     #[test]
     fn test_relative_error_bound_cannot_be_negative_infinity() {
-        assert!(ErrorBound::try_new_relative(f32::NEG_INFINITY).is_err())
+        assert_relative_error_bound_error(f32::NEG_INFINITY);
     }
 
     #[test]
     fn test_relative_error_bound_cannot_be_nan() {
-        assert!(ErrorBound::try_new_relative(f32::NAN).is_err())
+        assert_relative_error_bound_error(f32::NAN);
+    }
+
+    fn assert_relative_error_bound_error(value: f32) {
+        let result = ErrorBound::try_new_relative(value);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: A relative error bound must be a positive value that is at most 100.0%."
+        );
     }
 }
