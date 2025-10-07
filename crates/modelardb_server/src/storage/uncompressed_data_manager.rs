@@ -1002,12 +1002,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (data_manager, _time_series_table_metadata) = create_managers(&temp_dir).await;
 
-        assert!(
-            data_manager
-                .channels
-                .uncompressed_data_receiver
-                .try_recv()
-                .is_err()
+        let result = data_manager.channels.uncompressed_data_receiver.try_recv();
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "receiving on an empty channel"
         );
     }
 

@@ -57,7 +57,13 @@ impl Manager {
         server_mode: ServerMode,
     ) -> Result<(Self, protocol::manager_metadata::StorageConfiguration)> {
         let flight_client = Arc::new(RwLock::new(
-            FlightServiceClient::connect(manager_url.to_owned()).await?,
+            FlightServiceClient::connect(manager_url.to_owned())
+                .await
+                .map_err(|error| {
+                    ModelarDbServerError::InvalidArgument(format!(
+                        "Could not connect to manager at '{manager_url}': {error}",
+                    ))
+                })?,
         ));
 
         let ip_address = env::var("MODELARDBD_IP_ADDRESS").unwrap_or("127.0.0.1".to_string());
@@ -298,16 +304,28 @@ mod tests {
         let manager = create_manager();
         let request_metadata = MetadataMap::new();
 
-        assert!(manager.validate_request(&request_metadata).is_err());
+        let result = manager.validate_request(&request_metadata);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: Missing manager key."
+        );
     }
 
     #[tokio::test]
     async fn test_validate_request_with_invalid_key() {
         let manager = create_manager();
         let mut request_metadata = MetadataMap::new();
-        request_metadata.append("x-manager-key", Uuid::new_v4().to_string().parse().unwrap());
 
-        assert!(manager.validate_request(&request_metadata).is_err());
+        let key = Uuid::new_v4().to_string();
+        request_metadata.append("x-manager-key", key.parse().unwrap());
+
+        let result = manager.validate_request(&request_metadata);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!("Invalid State Error: Manager key '\"{key}\"' is invalid.")
+        );
     }
 
     fn create_manager() -> Manager {
