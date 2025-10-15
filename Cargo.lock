@@ -3044,6 +3044,7 @@ dependencies = [
  "datafusion",
  "deltalake",
  "futures",
+ "modelardb_compression",
  "modelardb_embedded",
  "modelardb_storage",
  "modelardb_types",

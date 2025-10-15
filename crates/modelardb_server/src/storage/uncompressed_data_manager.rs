@@ -587,7 +587,7 @@ impl UncompressedDataManager {
                 let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
 
                 // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
-                modelardb_compression::try_compress(
+                modelardb_compression::try_compress_univariate_arrays(
                     uncompressed_timestamps,
                     uncompressed_values,
                     error_bound,
