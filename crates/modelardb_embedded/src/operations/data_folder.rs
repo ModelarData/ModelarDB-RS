@@ -24,22 +24,17 @@ use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
-use arrow::array::{Float32Array, StringArray};
-use arrow::compute::SortOptions;
 use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::datasource::sink::DataSink;
 use datafusion::error::DataFusionError;
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
-use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
-use datafusion::physical_plan::expressions::Column;
 use datafusion::physical_plan::metrics::MetricsSet;
-use datafusion::physical_plan::sorts::sort;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
 use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
-use modelardb_types::types::{TimeSeriesTableMetadata, TimestampArray};
+use modelardb_types::types::TimeSeriesTableMetadata;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
@@ -219,119 +214,6 @@ impl DataFolder {
         Ok(data_folder)
     }
 
-    /// Compress the `uncompressed_data` from the table with `time_series_table_metadata` and return the
-    /// resulting segments.
-    pub async fn compress_all(
-        &self,
-        time_series_table_metadata: &TimeSeriesTableMetadata,
-        uncompressed_data: &RecordBatch,
-    ) -> Result<Vec<RecordBatch>> {
-        // Sort by all tags and then time to simplify splitting the data into time series.
-        let sorted_uncompressed_data =
-            sort_record_batch_by_tags_and_time(time_series_table_metadata, uncompressed_data)?;
-
-        // Split the sorted uncompressed data into time series and compress them separately.
-        let mut compressed_data = vec![];
-
-        let tag_column_arrays: Vec<&StringArray> = time_series_table_metadata
-            .tag_column_indices
-            .iter()
-            .map(|index| modelardb_types::array!(sorted_uncompressed_data, *index, StringArray))
-            .collect();
-
-        let mut tag_values = Vec::with_capacity(tag_column_arrays.len());
-        for tag_column_array in &tag_column_arrays {
-            tag_values.push(tag_column_array.value(0).to_owned());
-        }
-
-        // The index of the first data point of each time series must be stored so slices
-        // containing only data points for each time series can be extracted and compressed.
-        let mut row_index_start = 0;
-        for row_index in 0..sorted_uncompressed_data.num_rows() {
-            // If any of the tags differ, the data point is from a new time series.
-            let mut is_new_time_series = false;
-            for tag_column_index in 0..tag_column_arrays.len() {
-                is_new_time_series |= tag_values[tag_column_index]
-                    != tag_column_arrays[tag_column_index].value(row_index);
-            }
-
-            if is_new_time_series {
-                let time_series_length = row_index - row_index_start;
-                let uncompressed_time_series =
-                    sorted_uncompressed_data.slice(row_index_start, time_series_length);
-
-                self.compress(
-                    time_series_table_metadata,
-                    &uncompressed_time_series,
-                    &tag_values,
-                    &mut compressed_data,
-                )
-                .await?;
-
-                for (tag_column_index, tag_column_array) in tag_column_arrays.iter().enumerate() {
-                    tag_values[tag_column_index] = tag_column_array.value(row_index).to_owned();
-                }
-
-                row_index_start = row_index;
-            }
-        }
-
-        let time_series_length = sorted_uncompressed_data.num_rows() - row_index_start;
-        let uncompressed_time_series =
-            sorted_uncompressed_data.slice(row_index_start, time_series_length);
-
-        self.compress(
-            time_series_table_metadata,
-            &uncompressed_time_series,
-            &tag_values,
-            &mut compressed_data,
-        )
-        .await?;
-
-        Ok(compressed_data)
-    }
-
-    /// Compress the field columns in `uncompressed_time_series` from the table with
-    /// `time_series_table_metadata` and append the result to `compressed_data`. It is assumed that
-    /// all data points in `uncompressed_time_series` have the same tags as in `tag_values`.
-    async fn compress(
-        &self,
-        time_series_table_metadata: &TimeSeriesTableMetadata,
-        uncompressed_time_series: &RecordBatch,
-        tag_values: &[String],
-        compressed_data: &mut Vec<RecordBatch>,
-    ) -> Result<()> {
-        let uncompressed_timestamps = modelardb_types::array!(
-            uncompressed_time_series,
-            time_series_table_metadata.timestamp_column_index,
-            TimestampArray
-        );
-
-        for field_column_index in &time_series_table_metadata.field_column_indices {
-            let uncompressed_values = modelardb_types::array!(
-                uncompressed_time_series,
-                *field_column_index,
-                Float32Array
-            );
-
-            let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
-
-            let compressed_time_series = modelardb_compression::try_compress(
-                uncompressed_timestamps,
-                uncompressed_values,
-                error_bound,
-                time_series_table_metadata.compressed_schema.clone(),
-                tag_values.to_vec(),
-                *field_column_index as i16,
-            )
-            .expect("uncompressed_timestamps and uncompressed_values should have the same length.");
-
-            compressed_data.push(compressed_time_series);
-        }
-
-        Ok(())
-    }
-
     /// Create a writer for writing multiple batches of data to the table with the table name in
     /// `table_name`. If the table does not exist or a writer for it could not be created, a
     /// [`ModelarDbEmbeddedError`] is returned.
@@ -494,9 +376,8 @@ impl Operations for DataFolder {
                 return Err(schema_mismatch_error);
             }
 
-            let compressed_data = self
-                .compress_all(&time_series_table_metadata, &uncompressed_data)
-                .await?;
+            let compressed_data = modelardb_compression::try_compress_multivariate_record_batch(
+                &time_series_table_metadata, &uncompressed_data)?;
 
             self.delta_lake
                 .write_compressed_segments_to_time_series_table(table_name, compressed_data)
@@ -834,44 +715,6 @@ impl Operations for DataFolder {
     }
 }
 
-/// Sort the `uncompressed_data` from the time series table with `time_series_table_metadata`
-/// according to its tags and then timestamps.
-fn sort_record_batch_by_tags_and_time(
-    time_series_table_metadata: &TimeSeriesTableMetadata,
-    uncompressed_data: &RecordBatch,
-) -> Result<RecordBatch> {
-    let mut physical_sort_exprs = vec![];
-
-    let sort_options = SortOptions {
-        descending: false,
-        nulls_first: false,
-    };
-
-    for tag_column_index in &time_series_table_metadata.tag_column_indices {
-        let field = time_series_table_metadata.schema.field(*tag_column_index);
-        physical_sort_exprs.push(PhysicalSortExpr {
-            expr: Arc::new(Column::new(field.name(), *tag_column_index)),
-            options: sort_options,
-        });
-    }
-
-    let timestamp_column_index = time_series_table_metadata.timestamp_column_index;
-    let field = time_series_table_metadata
-        .schema
-        .field(timestamp_column_index);
-    physical_sort_exprs.push(PhysicalSortExpr {
-        expr: Arc::new(Column::new(field.name(), timestamp_column_index)),
-        options: sort_options,
-    });
-
-    sort::sort_batch(
-        uncompressed_data,
-        &LexOrdering::new(physical_sort_exprs),
-        None,
-    )
-    .map_err(|error| error.into())
-}
-
 /// Compare `source_schema` and `target_schema` and return [`true`] if they have the same number of
 /// columns, their columns have the same types, and their columns nullability is less or equally
 /// restrictive in `source_schema`. Otherwise [`False`] is returned.
@@ -903,13 +746,17 @@ fn schemas_are_compatible(source_schema: &Schema, target_schema: &Schema) -> boo
 mod tests {
     use super::*;
 
-    use arrow::array::{Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array};
+    use arrow::array::{Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, StringArray};
+    use arrow::compute::SortOptions;
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
     use datafusion::datasource::TableProvider;
     use datafusion::logical_expr::col;
+    use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
+    use datafusion::physical_plan::expressions::Column;
+    use datafusion::physical_plan::sorts::sort;
     use modelardb_types::types::{
-        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, ValueArray,
+        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimestampArray, ValueArray
     };
     use tempfile::TempDir;
     use tonic::transport::Channel;

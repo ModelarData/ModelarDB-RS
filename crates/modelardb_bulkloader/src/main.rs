@@ -220,7 +220,6 @@ async fn import_time_series_table(
         system.refresh_memory();
         if current_batch_size > (system.available_memory() as usize / 10 * 8)
             && let Err(write_error) = import_and_clear_time_series_table_batch(
-                data_folder,
                 &mut delta_table_writer,
                 time_series_table_metadata,
                 &mut current_batch,
@@ -234,7 +233,6 @@ async fn import_time_series_table(
     }
 
     if let Err(write_error) = import_and_clear_time_series_table_batch(
-        data_folder,
         &mut delta_table_writer,
         time_series_table_metadata,
         &mut current_batch,
@@ -386,12 +384,11 @@ fn cast_record_batch(record_batch: RecordBatch, cast_double_to_float: bool) -> R
     RecordBatch::try_new(cast_schema, cast_columns).map_err(|error| error.into())
 }
 
-/// Import the `current_batch` into the time series table with `time_series_table_metadata` in
-/// `data_folder` using `delta_table_writer`. Then clear `current_batch` and zero
-/// `current_batch_size`. If a [`RecordBatch`] in `current_batch` has a different schema, the
-/// compression fails, or the write fails, a [`ModelarDbEmbeddedError`] is returned.
+/// Import the `current_batch` into the time series table with `time_series_table_metadata` using
+/// `delta_table_writer`. Then clear `current_batch` and zero `current_batch_size`. If a
+/// [`RecordBatch`] in `current_batch` has a different schema, the compression fails, or the write
+/// fails, a [`ModelarDbEmbeddedError`] is returned.
 async fn import_and_clear_time_series_table_batch(
-    data_folder: &DataFolder,
     delta_table_writer: &mut DeltaTableWriter,
     time_series_table_metadata: &TimeSeriesTableMetadata,
     current_batch: &mut Vec<RecordBatch>,
@@ -400,9 +397,8 @@ async fn import_and_clear_time_series_table_batch(
     if *current_batch_size != 0 {
         let schema = current_batch[0].schema();
         let uncompressed_data = compute::concat_batches(&schema, &*current_batch)?;
-        let compressed_data = data_folder
-            .compress_all(time_series_table_metadata, &uncompressed_data)
-            .await?;
+        let compressed_data = modelardb_compression::try_compress_multivariate_record_batch(
+            time_series_table_metadata, &uncompressed_data)?;
         delta_table_writer.write_all(&compressed_data).await?;
         current_batch.clear();
         *current_batch_size = 0;

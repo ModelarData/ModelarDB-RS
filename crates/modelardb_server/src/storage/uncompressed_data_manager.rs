@@ -591,7 +591,7 @@ impl UncompressedDataManager {
             .map(|(uncompressed_values, field_column_index)| {
                 let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
 
-                modelardb_compression::try_compress(
+                modelardb_compression::try_compress_univariate_arrays(
                     uncompressed_timestamps,
                     uncompressed_values,
                     error_bound,
