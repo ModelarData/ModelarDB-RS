@@ -60,9 +60,6 @@ use crate::{
     sql_and_concat,
 };
 
-/// Named error bound with the value 0.0 to make lossless compression more clear.
-const ERROR_BOUND_ZERO: f32 = 0.0;
-
 /// Types of tables supported by ModelarDB.
 enum TableType {
     NormalTable,
@@ -997,8 +994,7 @@ impl DeltaLake {
         );
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
-        let mut column_to_error_bound =
-            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO)?; query_schema_columns];
+        let mut column_to_error_bound = vec![ErrorBound::Lossless; query_schema_columns];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
         let error_bound_value_array = modelardb_types::array!(batch, 1, Float32Array);
@@ -1009,13 +1005,15 @@ impl DeltaLake {
             let error_bound_value = error_bound_value_array.value(row_index);
             let error_bound_is_relative = error_bound_is_relative_array.value(row_index);
 
-            let error_bound = if error_bound_is_relative {
-                ErrorBound::try_new_relative(error_bound_value)
-            } else {
-                ErrorBound::try_new_absolute(error_bound_value)
-            }?;
+            if error_bound_value != 0.0 {
+                let error_bound = if error_bound_is_relative {
+                    ErrorBound::try_new_relative(error_bound_value)
+                } else {
+                    ErrorBound::try_new_absolute(error_bound_value)
+                }?;
 
-            column_to_error_bound[error_bound_index as usize] = error_bound;
+                column_to_error_bound[error_bound_index as usize] = error_bound;
+            }
         }
 
         Ok(column_to_error_bound)
@@ -1550,7 +1548,7 @@ mod tests {
         ]));
 
         let error_bounds = vec![
-            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
+            ErrorBound::Lossless;
             query_schema.fields.len()
         ];
 
