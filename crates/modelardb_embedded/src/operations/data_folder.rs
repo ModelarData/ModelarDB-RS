@@ -105,8 +105,6 @@ impl DisplayAs for DataFolderDataSink {
 pub struct DataFolder {
     /// Delta Lake for storing metadata and data in Apache Parquet files.
     delta_lake: DeltaLake,
-    /// Context providing access to a specific session of Apache DataFusion.
-    session_context: SessionContext,
 }
 
 impl DataFolder {
@@ -175,11 +173,8 @@ impl DataFolder {
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn try_new_and_register_tables(delta_lake: DeltaLake) -> Result<Self> {
         // Construct data folder.
-        let session_context = modelardb_storage::create_session_context();
-
         let data_folder = DataFolder {
             delta_lake,
-            session_context,
         };
 
         // Register normal tables.
@@ -192,7 +187,7 @@ impl DataFolder {
                 .await?;
 
             modelardb_storage::register_normal_table(
-                &data_folder.session_context,
+                data_folder.delta_lake.session_context(),
                 &normal_table_name,
                 delta_table,
                 data_sink.clone(),
@@ -204,7 +199,7 @@ impl DataFolder {
             let delta_table = data_folder.delta_lake.delta_table(&metadata.name).await?;
 
             modelardb_storage::register_time_series_table(
-                &data_folder.session_context,
+                data_folder.delta_lake.session_context(),
                 delta_table,
                 metadata,
                 data_sink.clone(),
@@ -260,7 +255,7 @@ impl DataFolder {
         &self,
         table_name: &str,
     ) -> Option<Arc<TimeSeriesTableMetadata>> {
-        let table_provider = self.session_context.table_provider(table_name).await.ok()?;
+        let table_provider = self.delta_lake.session_context().table_provider(table_name).await.ok()?;
         modelardb_storage::maybe_table_provider_to_time_series_table_metadata(table_provider)
     }
 }
@@ -290,7 +285,7 @@ impl Operations for DataFolder {
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_normal_table(
-                    &self.session_context,
+                    self.delta_lake.session_context(),
                     table_name,
                     delta_table,
                     data_sink.clone(),
@@ -316,7 +311,7 @@ impl Operations for DataFolder {
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_time_series_table(
-                    &self.session_context,
+                    self.delta_lake.session_context(),
                     delta_table,
                     time_series_table_metadata,
                     data_sink.clone(),
@@ -403,7 +398,7 @@ impl Operations for DataFolder {
     /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`]. If the SQL
     /// could not be executed, [`ModelarDbEmbeddedError`] is returned.
     async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
-        let data_frame = self.session_context.sql(sql).await?;
+        let data_frame = self.delta_lake.session_context().sql(sql).await?;
 
         data_frame
             .execute_stream()
@@ -680,7 +675,7 @@ impl Operations for DataFolder {
     /// returned.
     async fn drop(&mut self, table_name: &str) -> Result<()> {
         // Drop the table from the Apache Arrow DataFusion session.
-        self.session_context.deregister_table(table_name)?;
+        self.delta_lake.session_context().deregister_table(table_name)?;
 
         // Delete the table metadata from the metadata Delta Lake.
         self.delta_lake.drop_table_metadata(table_name).await?;
@@ -801,13 +796,15 @@ mod tests {
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         assert!(
             new_data_folder
-                .session_context
+                .delta_lake
+                .session_context()
                 .table_exist("normal_table_1")
                 .unwrap()
         );
         assert!(
             new_data_folder
-                .session_context
+                .delta_lake
+                .session_context()
                 .table_exist("normal_table_2")
                 .unwrap()
         );
@@ -971,13 +968,15 @@ mod tests {
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         assert!(
             new_data_folder
-                .session_context
+                .delta_lake
+                .session_context()
                 .table_exist("time_series_table_1")
                 .unwrap()
         );
         assert!(
             new_data_folder
-                .session_context
+                .delta_lake
+                .session_context()
                 .table_exist("time_series_table_2")
                 .unwrap()
         );
@@ -2207,7 +2206,8 @@ mod tests {
 
         assert!(
             data_folder
-                .session_context
+                .delta_lake
+                .session_context()
                 .table_exist(NORMAL_TABLE_NAME)
                 .unwrap()
         );
@@ -2217,7 +2217,8 @@ mod tests {
         // Verify that the normal table was deregistered from Apache DataFusion.
         assert!(
             !data_folder
-                .session_context
+                .delta_lake
+                .session_context()
                 .table_exist(NORMAL_TABLE_NAME)
                 .unwrap()
         );
@@ -2247,7 +2248,8 @@ mod tests {
 
         assert!(
             data_folder
-                .session_context
+                .delta_lake
+                .session_context()
                 .table_exist(TIME_SERIES_TABLE_NAME)
                 .unwrap()
         );
@@ -2257,7 +2259,8 @@ mod tests {
         // Verify that the time series table was deregistered from Apache DataFusion.
         assert!(
             !data_folder
-                .session_context
+                .delta_lake
+                .session_context()
                 .table_exist(TIME_SERIES_TABLE_NAME)
                 .unwrap()
         );
@@ -2507,7 +2510,7 @@ mod tests {
         );
 
         // Verify that the normal table is registered with Apache DataFusion.
-        assert!(data_folder.session_context.table_exist(table_name).unwrap())
+        assert!(data_folder.delta_lake.session_context().table_exist(table_name).unwrap())
     }
 
     #[tokio::test]
@@ -2723,7 +2726,7 @@ mod tests {
         assert_eq!(*time_series_table_metadata.query_schema, expected_schema);
 
         // Verify that the time series table is registered with Apache DataFusion.
-        assert!(data_folder.session_context.table_exist(table_name).unwrap());
+        assert!(data_folder.delta_lake.session_context().table_exist(table_name).unwrap());
 
         time_series_table_metadata
     }
