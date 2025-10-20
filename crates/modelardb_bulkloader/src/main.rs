@@ -39,8 +39,7 @@ use deltalake::{ObjectStore, Path};
 use futures::stream::StreamExt;
 use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
 use modelardb_embedded::operations::Operations;
-use modelardb_embedded::operations::data_folder::DataFolder;
-use modelardb_storage::delta_lake::DeltaTableWriter;
+use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
 use modelardb_types::types::TimeSeriesTableMetadata;
 use sysinfo::System;
 
@@ -169,7 +168,7 @@ async fn import(
     }
 
     if let Some(time_series_table_metadata) =
-        data_folder.delta_lake().time_series_table_metadata_for_registered_time_series_table(table_name).await
+        data_folder.time_series_table_metadata_for_registered_time_series_table(table_name).await
     {
         import_time_series_table(
             input_stream,
@@ -201,11 +200,11 @@ async fn import(
 async fn import_time_series_table(
     mut input_stream: Pin<Box<dyn RecordBatchStream>>,
     time_series_table_metadata: &TimeSeriesTableMetadata,
-    data_folder: &mut DataFolder,
+    data_folder: &mut DeltaLake,
     cast_double_to_float: bool,
 ) -> Result<()> {
     let table_name = &time_series_table_metadata.name;
-    let mut delta_table_writer = data_folder.delta_lake().table_writer(table_name).await?;
+    let mut delta_table_writer = data_folder.table_writer(table_name).await?;
 
     let mut system = System::new();
     let mut current_batch = vec![];
@@ -254,9 +253,9 @@ async fn import_time_series_table(
 async fn import_normal_table(
     mut input_stream: Pin<Box<dyn RecordBatchStream>>,
     table_name: &str,
-    data_folder: &mut DataFolder,
+    data_folder: &mut DeltaLake,
 ) -> Result<()> {
-    let mut delta_table_writer = data_folder.delta_lake().table_writer(table_name).await?;
+    let mut delta_table_writer = data_folder.table_writer(table_name).await?;
 
     while let Some(record_batch) = input_stream.next().await {
         let record_batch = record_batch?;
@@ -484,30 +483,30 @@ async fn export(
 /// Returns a [`DataFolder`] for `data_folder_path`. If the necessary environment variables are not
 /// set for S3 and Azure or the [`DataFolder`] cannot access `data_folder_path`, a
 /// [`ModelarDbEmbeddedError`] is returned.
-async fn create_data_folder(data_folder_path: &str) -> Result<DataFolder> {
+async fn create_data_folder(data_folder_path: &str) -> Result<DeltaLake> {
     match data_folder_path.split_once("://") {
         Some(("s3", bucket_name)) => {
             let endpoint = env::var("AWS_ENDPOINT")?;
             let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
             let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
 
-            DataFolder::open_s3(
+            DeltaLake::open_s3(
                 endpoint,
                 bucket_name.to_owned(),
                 access_key_id,
                 secret_access_key,
             )
-            .await
+            .await.map_err(|error| error.into())
         }
         Some(("az", container_name)) => {
             let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
             let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
 
-            DataFolder::open_azure(account_name, access_key, container_name.to_owned()).await
+            DeltaLake::open_azure(account_name, access_key, container_name.to_owned()).await.map_err(|error| error.into())
         }
         _ => {
             let data_folder_path = StdPath::new(data_folder_path);
-            DataFolder::open_local(data_folder_path).await
+            DeltaLake::open_local(data_folder_path).await.map_err(|error| error.into())
         }
     }
 }

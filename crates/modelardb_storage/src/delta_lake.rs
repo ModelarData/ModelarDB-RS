@@ -29,6 +29,7 @@ use chrono::TimeDelta;
 use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, ToDFSchema};
+use datafusion::datasource::sink::DataSink;
 use datafusion::logical_expr::{Expr, lit};
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
@@ -156,9 +157,10 @@ impl DeltaLake {
     ) -> Result<Self> {
         match storage_configuration {
             protocol::manager_metadata::StorageConfiguration::S3Configuration(s3_configuration) => {
-                // Register the S3 storage handlers to allow the use of Amazon S3 object stores.
-                // This is required at runtime to initialize the S3 storage implementation in the
-                // deltalake_aws storage subcrate.
+                // Register the S3 storage handlers to allow the use of Amazon S3 object stores. This is
+                // required at runtime to initialize the S3 storage implementation in the deltalake_aws
+                // storage subcrate. It is safe to call this function multiple times as the handlers are
+                // stored in a DashMap, thus, the handlers are simply overwritten with the same each time.
                 deltalake::aws::register_handlers(None);
 
                 Self::open_s3(
@@ -327,6 +329,39 @@ impl DeltaLake {
             "time_series_table_field_columns",
             delta_table,
         )?;
+
+        Ok(())
+    }
+
+    /// Register all normal tables and time series tables in `self` with its [`SessionContext`].
+    /// `data_sink` set as the [`DataSink`] for all of the tables. If the tables could not be
+    /// registered, [`ModelarDbStorageError`] is returned.
+    pub async fn register_normal_and_time_series_tables(&self, data_sink: Arc<dyn DataSink>) -> Result<()> {
+        // Register normal tables.
+        for normal_table_name in self.normal_table_names().await? {
+            let delta_table = self
+                .delta_table(&normal_table_name)
+                .await?;
+
+            crate::register_normal_table(
+                &self.session_context,
+                &normal_table_name,
+                delta_table,
+                data_sink.clone(),
+            )?;
+        }
+
+        // Register time series tables.
+        for metadata in self.time_series_table_metadata().await? {
+            let delta_table = self.delta_table(&metadata.name).await?;
+
+            crate::register_time_series_table(
+                &self.session_context,
+                delta_table,
+                metadata,
+                data_sink.clone(),
+            )?;
+        }
 
         Ok(())
     }
