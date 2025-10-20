@@ -169,7 +169,7 @@ async fn import(
     }
 
     if let Some(time_series_table_metadata) =
-        data_folder.time_series_table_metadata(table_name).await
+        data_folder.delta_lake().time_series_table_metadata_for_registered_time_series_table(table_name).await
     {
         import_time_series_table(
             input_stream,

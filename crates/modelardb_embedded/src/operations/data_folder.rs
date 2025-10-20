@@ -34,7 +34,6 @@ use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
 use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
-use modelardb_types::types::TimeSeriesTableMetadata;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
@@ -209,12 +208,17 @@ impl DataFolder {
         Ok(data_folder)
     }
 
+    /// Return the [`DeltaLake`] for the [`DataFolder`].
+    pub fn delta_lake(&self) -> &DeltaLake {
+        &self.delta_lake
+    }
+
     /// Create a writer for writing multiple batches of data to the table with the table name in
     /// `table_name`. If the table does not exist or a writer for it could not be created, a
     /// [`ModelarDbEmbeddedError`] is returned.
     pub async fn writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
         let delta_table = self.delta_lake.delta_table(table_name).await?;
-        if self.time_series_table_metadata(table_name).await.is_some() {
+        if self.delta_lake.time_series_table_metadata_for_registered_time_series_table(table_name).await.is_some() {
             self.delta_lake
                 .time_series_table_writer(delta_table)
                 .await
@@ -225,38 +229,6 @@ impl DataFolder {
                 .await
                 .map_err(|error| error.into())
         }
-    }
-
-    /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
-    /// table does not exist or the table is not a normal table, return [`None`].
-    async fn normal_table_schema(&self, table_name: &str) -> Option<Schema> {
-        if self
-            .delta_lake
-            .is_normal_table(table_name)
-            .await
-            .is_ok_and(|is_normal_table| is_normal_table)
-        {
-            self.delta_lake
-                .delta_table(table_name)
-                .await
-                .expect("Delta Lake table should exist if the table is in the metadata Delta Lake.")
-                .get_schema()
-                .expect("Delta Lake table should be loaded and metadata should be in the log.")
-                .try_into()
-                .ok()
-        } else {
-            None
-        }
-    }
-
-    /// Return [`TimeSeriesTableMetadata`] for the table with `table_name` if it exists, is registered
-    /// with Apache DataFusion, and is a time series table.
-    pub async fn time_series_table_metadata(
-        &self,
-        table_name: &str,
-    ) -> Option<Arc<TimeSeriesTableMetadata>> {
-        let table_provider = self.delta_lake.session_context().table_provider(table_name).await.ok()?;
-        modelardb_storage::maybe_table_provider_to_time_series_table_metadata(table_provider)
     }
 }
 
@@ -334,10 +306,10 @@ impl Operations for DataFolder {
     /// Returns the schema of the table with the name in `table_name`. If the table does not exist,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn schema(&mut self, table_name: &str) -> Result<Schema> {
-        if let Some(time_series_table_metadata) = self.time_series_table_metadata(table_name).await
+        if let Some(time_series_table_metadata) = self.delta_lake.time_series_table_metadata_for_registered_time_series_table(table_name).await
         {
             Ok((*time_series_table_metadata.query_schema).to_owned())
-        } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
+        } else if let Some(normal_table_schema) = self.delta_lake.normal_table_schema(table_name).await {
             Ok(normal_table_schema)
         } else {
             Err(ModelarDbEmbeddedError::InvalidArgument(format!(
@@ -361,7 +333,7 @@ impl Operations for DataFolder {
             "The uncompressed data does not match the schema for the table: {table_name}."
         ));
 
-        if let Some(time_series_table_metadata) = self.time_series_table_metadata(table_name).await
+        if let Some(time_series_table_metadata) = self.delta_lake.time_series_table_metadata_for_registered_time_series_table(table_name).await
         {
             // Time series table.
             if !schemas_are_compatible(
@@ -377,7 +349,7 @@ impl Operations for DataFolder {
             self.delta_lake
                 .write_compressed_segments_to_time_series_table(table_name, compressed_data)
                 .await?;
-        } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
+        } else if let Some(normal_table_schema) = self.delta_lake.normal_table_schema(table_name).await {
             // Normal table.
             if !schemas_are_compatible(&uncompressed_data.schema(), &normal_table_schema) {
                 return Err(schema_mismatch_error);
@@ -425,6 +397,7 @@ impl Operations for DataFolder {
             })?;
 
         let target_normal_table_schema = target_data_folder
+            .delta_lake
             .normal_table_schema(target_table_name)
             .await
             .ok_or_else(|| {
@@ -466,7 +439,7 @@ impl Operations for DataFolder {
     ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
         // DataFolder.read() interface is designed for time series tables.
         let time_series_table_medata = if let Some(time_series_table_metadata) =
-            self.time_series_table_metadata(table_name).await
+            self.delta_lake.time_series_table_metadata_for_registered_time_series_table(table_name).await
         {
             time_series_table_metadata
         } else {
@@ -511,7 +484,8 @@ impl Operations for DataFolder {
 
         // DataFolder.copy_time_series_table() interface is designed for time series tables.
         let source_time_series_table_metadata = self
-            .time_series_table_metadata(source_table_name)
+            .delta_lake
+            .time_series_table_metadata_for_registered_time_series_table(source_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
@@ -520,7 +494,8 @@ impl Operations for DataFolder {
             })?;
 
         let target_time_series_table_metadata = target_data_folder
-            .time_series_table_metadata(target_table_name)
+            .delta_lake
+            .time_series_table_metadata_for_registered_time_series_table(target_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
@@ -598,9 +573,10 @@ impl Operations for DataFolder {
         ));
 
         if let (Some(source_time_series_table_metadata), Some(target_time_series_table_metadata)) = (
-            self.time_series_table_metadata(source_table_name).await,
+            self.delta_lake.time_series_table_metadata_for_registered_time_series_table(source_table_name).await,
             target_data_folder
-                .time_series_table_metadata(target_table_name)
+                .delta_lake
+                .time_series_table_metadata_for_registered_time_series_table(target_table_name)
                 .await,
         ) {
             // If both tables are time series tables, check if their schemas match and write the
@@ -621,8 +597,9 @@ impl Operations for DataFolder {
                 .write_compressed_segments_to_time_series_table(target_table_name, record_batches)
                 .await?;
         } else if let (Some(source_normal_table_schema), Some(target_normal_table_schema)) = (
-            self.normal_table_schema(source_table_name).await,
+            self.delta_lake.normal_table_schema(source_table_name).await,
             target_data_folder
+                .delta_lake
                 .normal_table_schema(target_table_name)
                 .await,
         ) {
@@ -751,7 +728,7 @@ mod tests {
     use datafusion::physical_plan::expressions::Column;
     use datafusion::physical_plan::sorts::sort;
     use modelardb_types::types::{
-        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimestampArray, ValueArray
+        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata, TimestampArray, ValueArray
     };
     use tempfile::TempDir;
     use tonic::transport::Channel;

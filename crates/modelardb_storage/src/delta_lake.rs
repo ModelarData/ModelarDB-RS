@@ -442,6 +442,25 @@ impl DeltaLake {
         self.table_names_of_type(TableType::NormalTable).await
     }
 
+    /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
+    /// table does not exist or the table is not a normal table, return [`None`].
+    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Schema> {
+        if self.is_normal_table(table_name)
+            .await
+            .is_ok_and(|is_normal_table| is_normal_table)
+        {
+            self.delta_table(table_name)
+                .await
+                .expect("Delta Lake table should exist if the table is in the metadata Delta Lake.")
+                .get_schema()
+                .expect("Delta Lake table should be loaded and metadata should be in the log.")
+                .try_into()
+                .ok()
+        } else {
+            None
+        }
+    }
+
     /// Return the name of each time series table currently in the metadata Delta Lake. Note that
     /// this does not include normal tables. If the time series table names cannot be retrieved,
     /// [`ModelarDbStorageError`] is returned.
@@ -951,6 +970,16 @@ impl DeltaLake {
             query_schema_bytes,
         )
         .await
+    }
+
+    /// Return [`TimeSeriesTableMetadata`] for the time series table with `table_name` if it exists,
+    /// is registered with Apache DataFusion, and is a time series table.
+    pub async fn time_series_table_metadata_for_registered_time_series_table(
+        &self,
+        table_name: &str,
+    ) -> Option<Arc<TimeSeriesTableMetadata>> {
+        let table_provider = self.session_context.table_provider(table_name).await.ok()?;
+        crate::maybe_table_provider_to_time_series_table_metadata(table_provider)
     }
 
     /// Convert a row from the table "time_series_table_metadata" to an instance of
