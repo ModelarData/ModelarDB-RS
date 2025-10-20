@@ -483,6 +483,22 @@ impl DeltaLake {
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
     }
 
+    /// Return a [`DeltaTableWriter`] for writing to the table with `table_name` in the Delta Lake,
+    /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
+    /// the table does not exist.
+    pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
+        let delta_table = self.delta_table(table_name).await?;
+        if self.time_series_table_metadata_for_registered_time_series_table(table_name).await.is_some() {
+            self.time_series_table_writer(delta_table)
+                .await
+                .map_err(|error| error.into())
+        } else {
+            self.normal_or_metadata_table_writer(delta_table)
+                .await
+                .map_err(|error| error.into())
+        }
+    }
+
     /// Return a [`DeltaTableWriter`] for writing to the time series table with `delta_table` in the
     /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
     /// established or the table does not exist.

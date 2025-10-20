@@ -205,7 +205,7 @@ async fn import_time_series_table(
     cast_double_to_float: bool,
 ) -> Result<()> {
     let table_name = &time_series_table_metadata.name;
-    let mut delta_table_writer = data_folder.writer(table_name).await?;
+    let mut delta_table_writer = data_folder.delta_lake().table_writer(table_name).await?;
 
     let mut system = System::new();
     let mut current_batch = vec![];
@@ -256,7 +256,7 @@ async fn import_normal_table(
     table_name: &str,
     data_folder: &mut DataFolder,
 ) -> Result<()> {
-    let mut delta_table_writer = data_folder.writer(table_name).await?;
+    let mut delta_table_writer = data_folder.delta_lake().table_writer(table_name).await?;
 
     while let Some(record_batch) = input_stream.next().await {
         let record_batch = record_batch?;

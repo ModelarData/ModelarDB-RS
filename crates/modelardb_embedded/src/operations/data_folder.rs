@@ -33,7 +33,7 @@ use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
 use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
-use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
+use modelardb_storage::delta_lake::DeltaLake;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
@@ -211,24 +211,6 @@ impl DataFolder {
     /// Return the [`DeltaLake`] for the [`DataFolder`].
     pub fn delta_lake(&self) -> &DeltaLake {
         &self.delta_lake
-    }
-
-    /// Create a writer for writing multiple batches of data to the table with the table name in
-    /// `table_name`. If the table does not exist or a writer for it could not be created, a
-    /// [`ModelarDbEmbeddedError`] is returned.
-    pub async fn writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
-        let delta_table = self.delta_lake.delta_table(table_name).await?;
-        if self.delta_lake.time_series_table_metadata_for_registered_time_series_table(table_name).await.is_some() {
-            self.delta_lake
-                .time_series_table_writer(delta_table)
-                .await
-                .map_err(|error| error.into())
-        } else {
-            self.delta_lake
-                .normal_or_metadata_table_writer(delta_table)
-                .await
-                .map_err(|error| error.into())
-        }
     }
 }
 
