@@ -84,7 +84,6 @@ impl Context {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .create_normal_table(table_name, schema)
             .await?;
 
@@ -94,7 +93,6 @@ impl Context {
         // Persist the new normal table to the Delta Lake.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .save_normal_table_metadata(table_name)
             .await?;
 
@@ -127,7 +125,6 @@ impl Context {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .create_time_series_table(time_series_table_metadata)
             .await?;
 
@@ -138,7 +135,6 @@ impl Context {
         // Persist the new time series table to the metadata Delta Lake.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .save_time_series_table_metadata(time_series_table_metadata)
             .await?;
 
@@ -159,7 +155,6 @@ impl Context {
         let table_names = self
             .data_folders
             .local_data_folder
-            .delta_lake
             .normal_table_names()
             .await?;
 
@@ -177,7 +172,6 @@ impl Context {
         let delta_table = self
             .data_folders
             .query_data_folder
-            .delta_lake
             .delta_table(table_name)
             .await?;
 
@@ -208,7 +202,6 @@ impl Context {
         let time_series_table_metadata = self
             .data_folders
             .local_data_folder
-            .delta_lake
             .time_series_table_metadata()
             .await?;
 
@@ -229,7 +222,6 @@ impl Context {
         let delta_table = self
             .data_folders
             .query_data_folder
-            .delta_lake
             .delta_table(&time_series_table_metadata.name)
             .await?;
 
@@ -273,14 +265,12 @@ impl Context {
         // Drop the table metadata from the metadata Delta Lake.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .drop_table_metadata(table_name)
             .await?;
 
         // Drop the table from the Delta Lake.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .drop_table(table_name)
             .await?;
 
@@ -302,7 +292,6 @@ impl Context {
         // Delete the table data from the data Delta Lake.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .truncate_table(table_name)
             .await?;
 
@@ -339,7 +328,6 @@ impl Context {
 
         self.data_folders
             .local_data_folder
-            .delta_lake
             .vacuum_table(table_name, maybe_retention_period_in_seconds)
             .await?;
 
@@ -424,11 +412,10 @@ fn table_does_not_exist_error(table_name: &str) -> ModelarDbServerError {
 mod tests {
     use super::*;
 
+    use modelardb_storage::data_folder::DataFolder;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
     use tempfile::TempDir;
-
-    use crate::data_folders::DataFolder;
 
     // Tests for Context.
     #[tokio::test]
@@ -455,7 +442,6 @@ mod tests {
             context
                 .data_folders
                 .local_data_folder
-                .delta_lake
                 .is_normal_table(NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -503,7 +489,6 @@ mod tests {
         let time_series_table_metadata = context
             .data_folders
             .local_data_folder
-            .delta_lake
             .time_series_table_metadata()
             .await
             .unwrap();
@@ -608,7 +593,6 @@ mod tests {
             !context
                 .data_folders
                 .local_data_folder
-                .delta_lake
                 .is_normal_table(NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -645,7 +629,6 @@ mod tests {
             !context
                 .data_folders
                 .local_data_folder
-                .delta_lake
                 .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
@@ -675,7 +658,6 @@ mod tests {
 
         let local_data_folder = &context.data_folders.local_data_folder;
         let mut delta_table = local_data_folder
-            .delta_lake
             .delta_table(NORMAL_TABLE_NAME)
             .await
             .unwrap();
@@ -687,7 +669,6 @@ mod tests {
         // The normal table should not be deleted from the metadata Delta Lake.
         assert!(
             local_data_folder
-                .delta_lake
                 .is_normal_table(NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -705,7 +686,6 @@ mod tests {
 
         let local_data_folder = &context.data_folders.local_data_folder;
         let mut delta_table = local_data_folder
-            .delta_lake
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
@@ -720,7 +700,6 @@ mod tests {
         // The time series table should not be deleted from the metadata Delta Lake.
         assert!(
             local_data_folder
-                .delta_lake
                 .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
@@ -782,7 +761,6 @@ mod tests {
         // Write data to the normal table.
         let local_data_folder = &context.data_folders.local_data_folder;
         local_data_folder
-            .delta_lake
             .write_record_batches_to_normal_table(
                 NORMAL_TABLE_NAME,
                 vec![table::normal_table_record_batch()],
@@ -854,7 +832,6 @@ mod tests {
         // Write data to the time series table.
         let local_data_folder = &context.data_folders.local_data_folder;
         local_data_folder
-            .delta_lake
             .write_compressed_segments_to_time_series_table(
                 TIME_SERIES_TABLE_NAME,
                 vec![table::compressed_segments_record_batch()],
@@ -1002,7 +979,7 @@ mod tests {
     /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
         Arc::new(
             Context::try_new(

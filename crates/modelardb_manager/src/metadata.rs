@@ -23,7 +23,7 @@ use arrow::array::{Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use deltalake::DeltaTableError;
 use deltalake::datafusion::logical_expr::{col, lit};
-use modelardb_storage::delta_lake::DeltaLake;
+use modelardb_storage::data_folder::DataFolder;
 use modelardb_storage::{register_metadata_table, sql_and_concat};
 use modelardb_types::types::{Node, ServerMode};
 use uuid::Uuid;
@@ -33,14 +33,14 @@ use crate::error::Result;
 /// Stores the metadata required for reading from and writing to the normal tables and time series tables
 /// and persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
 pub trait ManagerMetadata {
-    async fn create_and_register_manager_metadata_delta_lake_tables(&self) -> Result<()>;
+    async fn create_and_register_manager_metadata_data_folder_tables(&self) -> Result<()>;
     async fn manager_key(&self) -> Result<Uuid>;
     async fn save_node(&self, node: Node) -> Result<()>;
     async fn remove_node(&self, url: &str) -> Result<()>;
     async fn nodes(&self) -> Result<Vec<Node>>;
 }
 
-impl ManagerMetadata for DeltaLake {
+impl ManagerMetadata for DataFolder {
     /// If they do not already exist, create the tables that are specific to the manager metadata
     /// Delta Lake and register them with the Apache DataFusion session context.
     /// * The `manager_metadata` table contains metadata for the manager itself. It is assumed that
@@ -49,7 +49,7 @@ impl ManagerMetadata for DeltaLake {
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return
     /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
-    async fn create_and_register_manager_metadata_delta_lake_tables(&self) -> Result<()> {
+    async fn create_and_register_manager_metadata_data_folder_tables(&self) -> Result<()> {
         // Create and register the manager_metadata table if it does not exist.
         let delta_table = self
             .create_metadata_table(
@@ -167,12 +167,12 @@ mod tests {
 
     // Tests for MetadataManager.
     #[tokio::test]
-    async fn test_create_manager_metadata_delta_lake_tables() {
-        let (_temp_dir, metadata_manager) = create_delta_lake().await;
+    async fn test_create_manager_metadata_data_folder_tables() {
+        let (_temp_dir, data_folder) = create_data_folder().await;
 
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(
-            metadata_manager
+            data_folder
                 .session_context()
                 .sql("SELECT key FROM manager_metadata")
                 .await
@@ -180,7 +180,7 @@ mod tests {
         );
 
         assert!(
-            metadata_manager
+            data_folder
                 .session_context()
                 .sql("SELECT url, mode FROM nodes")
                 .await
@@ -190,13 +190,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_new_manager_key() {
-        let (_temp_dir, metadata_manager) = create_delta_lake().await;
+        let (_temp_dir, data_folder) = create_data_folder().await;
 
         // Verify that the manager key is created and saved correctly.
-        let manager_key = metadata_manager.manager_key().await.unwrap();
+        let manager_key = data_folder.manager_key().await.unwrap();
 
         let sql = "SELECT key FROM manager_metadata";
-        let batch = sql_and_concat(metadata_manager.session_context(), sql)
+        let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();
 
@@ -208,14 +208,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_existing_manager_key() {
-        let (_temp_dir, metadata_manager) = create_delta_lake().await;
+        let (_temp_dir, data_folder) = create_data_folder().await;
 
         // Verify that only a single key is created and saved when retrieving multiple times.
-        let manager_key_1 = metadata_manager.manager_key().await.unwrap();
-        let manager_key_2 = metadata_manager.manager_key().await.unwrap();
+        let manager_key_1 = data_folder.manager_key().await.unwrap();
+        let manager_key_2 = data_folder.manager_key().await.unwrap();
 
         let sql = "SELECT key FROM manager_metadata";
-        let batch = sql_and_concat(metadata_manager.session_context(), sql)
+        let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();
 
@@ -225,17 +225,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_node() {
-        let (_temp_dir, metadata_manager) = create_delta_lake().await;
+        let (_temp_dir, data_folder) = create_data_folder().await;
 
         let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(node_1.clone()).await.unwrap();
+        data_folder.save_node(node_1.clone()).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(node_2.clone()).await.unwrap();
+        data_folder.save_node(node_2.clone()).await.unwrap();
 
         // Verify that the nodes are saved correctly.
         let sql = "SELECT url, mode FROM nodes";
-        let batch = sql_and_concat(metadata_manager.session_context(), sql)
+        let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();
 
@@ -251,19 +251,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_node() {
-        let (_temp_dir, metadata_manager) = create_delta_lake().await;
+        let (_temp_dir, data_folder) = create_data_folder().await;
 
         let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(node_1.clone()).await.unwrap();
+        data_folder.save_node(node_1.clone()).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(node_2.clone()).await.unwrap();
+        data_folder.save_node(node_2.clone()).await.unwrap();
 
-        metadata_manager.remove_node(&node_1.url).await.unwrap();
+        data_folder.remove_node(&node_1.url).await.unwrap();
 
         // Verify that node_1 is removed correctly.
         let sql = "SELECT url, mode FROM nodes";
-        let batch = sql_and_concat(metadata_manager.session_context(), sql)
+        let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();
 
@@ -279,31 +279,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_nodes() {
-        let (_temp_dir, metadata_manager) = create_delta_lake().await;
+        let (_temp_dir, data_folder) = create_data_folder().await;
 
         let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(node_1.clone()).await.unwrap();
+        data_folder.save_node(node_1.clone()).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
-        metadata_manager.save_node(node_2.clone()).await.unwrap();
+        data_folder.save_node(node_2.clone()).await.unwrap();
 
-        let nodes = metadata_manager.nodes().await.unwrap();
+        let nodes = data_folder.nodes().await.unwrap();
 
         assert_eq!(nodes, vec![node_2, node_1]);
     }
 
-    async fn create_delta_lake() -> (TempDir, DeltaLake) {
+    async fn create_data_folder() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let delta_lake = DeltaLake::open_local(temp_dir.path())
+        let data_folder = DataFolder::open_local(temp_dir.path())
             .await
             .unwrap();
 
-        delta_lake
-            .create_and_register_manager_metadata_delta_lake_tables()
+        data_folder
+            .create_and_register_manager_metadata_data_folder_tables()
             .await
             .unwrap();
 
-        (temp_dir, delta_lake)
+        (temp_dir, data_folder)
     }
 }

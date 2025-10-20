@@ -96,16 +96,16 @@ impl FlightServiceHandler {
     /// Return the schema of the table with the name `table_name`. If the table does not exist or
     /// the schema cannot be retrieved, return [`Status`].
     async fn table_schema(&self, table_name: &str) -> StdResult<Arc<Schema>, Status> {
-        let delta_lake = &self.context.remote_delta_lake;
+        let data_folder = &self.context.remote_data_folder;
 
-        if delta_lake
+        if data_folder
             .is_normal_table(table_name)
             .await
             .map_err(error_to_status_internal)?
         {
             let delta_table = self
                 .context
-                .remote_delta_lake
+                .remote_data_folder
                 .delta_table(table_name)
                 .await
                 .map_err(error_to_status_internal)?;
@@ -117,12 +117,12 @@ impl FlightServiceHandler {
                 .map_err(error_to_status_internal)?;
 
             Ok(Arc::new(schema))
-        } else if delta_lake
+        } else if data_folder
             .is_time_series_table(table_name)
             .await
             .map_err(error_to_status_internal)?
         {
-            let time_series_table_metadata = delta_lake
+            let time_series_table_metadata = data_folder
                 .time_series_table_metadata_for_time_series_table(table_name)
                 .await
                 .map_err(error_to_status_internal)?;
@@ -140,7 +140,7 @@ impl FlightServiceHandler {
     async fn check_if_table_exists(&self, table_name: &str) -> StdResult<(), Status> {
         let existing_tables = self
             .context
-            .remote_delta_lake
+            .remote_data_folder
             .table_names()
             .await
             .map_err(error_to_status_internal)?;
@@ -166,14 +166,14 @@ impl FlightServiceHandler {
     ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context
-            .remote_delta_lake
+            .remote_data_folder
             .create_normal_table(table_name, schema)
             .await
             .map_err(error_to_status_internal)?;
 
         // Persist the new normal table to the metadata Delta Lake.
         self.context
-            .remote_delta_lake
+            .remote_data_folder
             .save_normal_table_metadata(table_name)
             .await
             .map_err(error_to_status_internal)?;
@@ -210,14 +210,14 @@ impl FlightServiceHandler {
     ) -> StdResult<(), Status> {
         // Create an empty Delta Lake table.
         self.context
-            .remote_delta_lake
+            .remote_data_folder
             .create_time_series_table(&time_series_table_metadata)
             .await
             .map_err(error_to_status_internal)?;
 
         // Persist the new time series table to the metadata Delta Lake.
         self.context
-            .remote_delta_lake
+            .remote_data_folder
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .map_err(error_to_status_internal)?;
@@ -257,14 +257,14 @@ impl FlightServiceHandler {
         // Drop the table from the remote data folder metadata Delta Lake. This will return an error
         // if the table does not exist.
         self.context
-            .remote_delta_lake
+            .remote_data_folder
             .drop_table_metadata(table_name)
             .await
             .map_err(error_to_status_internal)?;
 
         // Drop the table from the remote data folder data Delta lake.
         self.context
-            .remote_delta_lake
+            .remote_data_folder
             .drop_table(table_name)
             .await
             .map_err(error_to_status_internal)?;
@@ -293,7 +293,7 @@ impl FlightServiceHandler {
 
         // Truncate the table in the remote data folder data Delta lake.
         self.context
-            .remote_delta_lake
+            .remote_data_folder
             .truncate_table(table_name)
             .await
             .map_err(error_to_status_internal)?;
@@ -320,7 +320,7 @@ impl FlightServiceHandler {
     ) -> StdResult<(), Status> {
         // Vacuum the table in the remote data folder Delta lake.
         self.context
-            .remote_delta_lake
+            .remote_data_folder
             .vacuum_table(table_name, maybe_retention_period_in_seconds)
             .await
             .map_err(error_to_status_internal)?;
@@ -378,7 +378,7 @@ impl FlightService for FlightServiceHandler {
         // Retrieve the table names from the metadata Delta Lake.
         let table_names = self
             .context
-            .remote_delta_lake
+            .remote_data_folder
             .table_names()
             .await
             .map_err(error_to_status_internal)?;
@@ -509,7 +509,7 @@ impl FlightService for FlightServiceHandler {
                 if table_names.is_empty() {
                     table_names = self
                         .context
-                        .remote_delta_lake
+                        .remote_data_folder
                         .table_names()
                         .await
                         .map_err(error_to_status_internal)?;
@@ -616,7 +616,7 @@ impl FlightService for FlightServiceHandler {
             // this fails, the metadata Delta Lake and the cluster will be out of sync until the
             // manager is restarted.
             self.context
-                .remote_delta_lake
+                .remote_data_folder
                 .save_node(node)
                 .await
                 .map_err(error_to_status_internal)?;
@@ -650,7 +650,7 @@ impl FlightService for FlightServiceHandler {
 
             // Remove the node with the given url from the metadata Delta Lake.
             self.context
-                .remote_delta_lake
+                .remote_data_folder
                 .remove_node(&node_metadata.url)
                 .await
                 .map_err(error_to_status_internal)?;

@@ -39,7 +39,7 @@ use deltalake::{ObjectStore, Path};
 use futures::stream::StreamExt;
 use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
 use modelardb_embedded::operations::Operations;
-use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
+use modelardb_storage::data_folder::{DataFolder, DeltaTableWriter};
 use modelardb_types::types::TimeSeriesTableMetadata;
 use sysinfo::System;
 
@@ -200,7 +200,7 @@ async fn import(
 async fn import_time_series_table(
     mut input_stream: Pin<Box<dyn RecordBatchStream>>,
     time_series_table_metadata: &TimeSeriesTableMetadata,
-    data_folder: &mut DeltaLake,
+    data_folder: &mut DataFolder,
     cast_double_to_float: bool,
 ) -> Result<()> {
     let table_name = &time_series_table_metadata.name;
@@ -253,7 +253,7 @@ async fn import_time_series_table(
 async fn import_normal_table(
     mut input_stream: Pin<Box<dyn RecordBatchStream>>,
     table_name: &str,
-    data_folder: &mut DeltaLake,
+    data_folder: &mut DataFolder,
 ) -> Result<()> {
     let mut delta_table_writer = data_folder.table_writer(table_name).await?;
 
@@ -483,14 +483,14 @@ async fn export(
 /// Returns a [`DataFolder`] for `data_folder_path`. If the necessary environment variables are not
 /// set for S3 and Azure or the [`DataFolder`] cannot access `data_folder_path`, a
 /// [`ModelarDbEmbeddedError`] is returned.
-async fn create_data_folder(data_folder_path: &str) -> Result<DeltaLake> {
+async fn create_data_folder(data_folder_path: &str) -> Result<DataFolder> {
     match data_folder_path.split_once("://") {
         Some(("s3", bucket_name)) => {
             let endpoint = env::var("AWS_ENDPOINT")?;
             let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
             let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
 
-            DeltaLake::open_s3(
+            DataFolder::open_s3(
                 endpoint,
                 bucket_name.to_owned(),
                 access_key_id,
@@ -502,11 +502,11 @@ async fn create_data_folder(data_folder_path: &str) -> Result<DeltaLake> {
             let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
             let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
 
-            DeltaLake::open_azure(account_name, access_key, container_name.to_owned()).await.map_err(|error| error.into())
+            DataFolder::open_azure(account_name, access_key, container_name.to_owned()).await.map_err(|error| error.into())
         }
         _ => {
             let data_folder_path = StdPath::new(data_folder_path);
-            DeltaLake::open_local(data_folder_path).await.map_err(|error| error.into())
+            DataFolder::open_local(data_folder_path).await.map_err(|error| error.into())
         }
     }
 }

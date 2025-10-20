@@ -23,6 +23,7 @@ use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Result as FlightResult};
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::TableProvider;
+use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::flight::protocol;
 use modelardb_types::types::{Node, ServerMode, TimeSeriesTableMetadata};
 use prost::Message;
@@ -33,7 +34,6 @@ use tonic::transport::Channel;
 
 use crate::PORT;
 use crate::context::Context;
-use crate::data_folders::DataFolder;
 use crate::error::{ModelarDbServerError, Result};
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
@@ -182,11 +182,9 @@ async fn validate_local_tables_exist_remotely(
     remote_data_folder: &DataFolder,
 ) -> Result<()> {
     let local_table_names = local_data_folder
-        .delta_lake
         .table_names()
         .await?;
     let remote_table_names = remote_data_folder
-        .delta_lake
         .table_names()
         .await?;
 
@@ -217,7 +215,6 @@ async fn validate_normal_tables(
     let mut missing_normal_tables = vec![];
 
     let remote_normal_tables = remote_data_folder
-        .delta_lake
         .normal_table_names()
         .await?;
 
@@ -242,7 +239,7 @@ async fn validate_normal_tables(
 /// Retrieve the schema of a normal table from the Delta Lake in the data folder. If the table does
 /// not exist, or the schema could not be retrieved, return [`ModelarDbServerError`].
 async fn normal_table_schema(data_folder: &DataFolder, table_name: &str) -> Result<Arc<Schema>> {
-    let delta_table = data_folder.delta_lake.delta_table(table_name).await?;
+    let delta_table = data_folder.delta_table(table_name).await?;
     Ok(TableProvider::schema(&delta_table))
 }
 
@@ -257,18 +254,15 @@ async fn validate_time_series_tables(
     let mut missing_time_series_tables = vec![];
 
     let remote_time_series_tables = remote_data_folder
-        .delta_lake
         .time_series_table_names()
         .await?;
 
     for table_name in remote_time_series_tables {
         let remote_metadata = remote_data_folder
-            .delta_lake
             .time_series_table_metadata_for_time_series_table(&table_name)
             .await?;
 
         if let Ok(local_metadata) = local_data_folder
-            .delta_lake
             .time_series_table_metadata_for_time_series_table(&table_name)
             .await
         {

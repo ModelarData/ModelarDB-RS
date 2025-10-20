@@ -23,7 +23,7 @@ mod remote;
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
 
-use modelardb_storage::delta_lake::DeltaLake;
+use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::flight::protocol;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
@@ -41,8 +41,8 @@ pub static PORT: LazyLock<u16> =
 
 /// Provides access to the managers components.
 pub struct Context {
-    /// Delta Lake for storing metadata and data in Apache Parquet files.
-    pub remote_delta_lake: DeltaLake,
+    /// [`DataFolder`] for storing metadata and data in Apache Parquet files.
+    pub remote_data_folder: DataFolder,
     /// Storage configuration encoded as a [`StorageConfiguration`](protocol::manager_metadata::StorageConfiguration)
     /// protobuf message to make it possible to transfer the configuration using Apache Arrow Flight.
     pub remote_storage_configuration: protocol::manager_metadata::StorageConfiguration,
@@ -70,18 +70,18 @@ async fn main() -> Result<()> {
     };
 
     let remote_storage_configuration = modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
-    let remote_delta_lake = DeltaLake::open_object_store(remote_storage_configuration.clone()).await?;
+    let remote_data_folder = DataFolder::open_object_store(remote_storage_configuration.clone()).await?;
 
-    remote_delta_lake.create_and_register_manager_metadata_delta_lake_tables().await?;
+    remote_data_folder.create_and_register_manager_metadata_data_folder_tables().await?;
 
     let mut cluster = Cluster::new();
-    let nodes = remote_delta_lake.nodes().await?;
+    let nodes = remote_data_folder.nodes().await?;
     for node in nodes {
         cluster.register_node(node)?;
     }
 
     // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
-    let key = remote_delta_lake
+    let key = remote_data_folder
         .manager_key()
         .await?
         .to_string()
@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
 
     // Create the Context.
     let context = Arc::new(Context {
-        remote_delta_lake,
+        remote_data_folder,
         remote_storage_configuration,
         cluster: RwLock::new(cluster),
         key,

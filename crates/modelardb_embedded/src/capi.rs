@@ -39,7 +39,7 @@ use std::sync::{Arc, LazyLock};
 use arrow::array::{self, Array, Float32Array, Int8Array, MapArray, StringArray, StructArray};
 use arrow::ffi::{self, FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
-use modelardb_storage::delta_lake::DeltaLake;
+use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::types::ErrorBound;
 use tokio::runtime::Runtime;
 
@@ -88,11 +88,11 @@ pub unsafe extern "C" fn modelardb_embedded_open_memory() -> *const c_void {
 }
 
 /// See documentation for [`modelardb_embedded_open_memory`].
-fn open_memory() -> Result<DeltaLake> {
-    let delta_lake = TOKIO_RUNTIME.block_on(DeltaLake::open_memory())?;
+fn open_memory() -> Result<DataFolder> {
+    let data_folder = TOKIO_RUNTIME.block_on(DataFolder::open_memory())?;
     let data_sink = Arc::new(DataFolderDataSink::new());
-    TOKIO_RUNTIME.block_on(delta_lake.register_normal_and_time_series_tables(data_sink))?;
-    Ok(delta_lake)
+    TOKIO_RUNTIME.block_on(data_folder.register_normal_and_time_series_tables(data_sink))?;
+    Ok(data_folder)
 }
 
 /// Creates a [`DataFolder`] that manages data in the local folder at `data_folder_path_path` and
@@ -107,14 +107,14 @@ pub unsafe extern "C" fn modelardb_embedded_open_local(
 }
 
 /// See documentation for [`modelardb_embedded_open_local`].
-unsafe fn open_local(data_folder_path_ptr: *const c_char) -> Result<DeltaLake> {
+unsafe fn open_local(data_folder_path_ptr: *const c_char) -> Result<DataFolder> {
     let data_folder_str = unsafe { c_char_ptr_to_str(data_folder_path_ptr)? };
     let data_folder_path = StdPath::new(data_folder_str);
 
-    let delta_lake = TOKIO_RUNTIME.block_on(DeltaLake::open_local(data_folder_path))?;
+    let data_folder = TOKIO_RUNTIME.block_on(DataFolder::open_local(data_folder_path))?;
     let data_sink = Arc::new(DataFolderDataSink::new());
-    TOKIO_RUNTIME.block_on(delta_lake.register_normal_and_time_series_tables(data_sink))?;
-    Ok(delta_lake)
+    TOKIO_RUNTIME.block_on(data_folder.register_normal_and_time_series_tables(data_sink))?;
+    Ok(data_folder)
 }
 
 /// Creates a [`DataFolder`] that manages data in an object store with a S3-compatible API and
@@ -146,21 +146,21 @@ unsafe fn open_s3(
     bucket_name_ptr: *const c_char,
     access_key_id_ptr: *const c_char,
     secret_access_key_ptr: *const c_char,
-) -> Result<DeltaLake> {
+) -> Result<DataFolder> {
     let endpoint = unsafe { c_char_ptr_to_str(endpoint_ptr)? };
     let bucket_name = unsafe { c_char_ptr_to_str(bucket_name_ptr)? };
     let access_key_id = unsafe { c_char_ptr_to_str(access_key_id_ptr)? };
     let secret_access_key = unsafe { c_char_ptr_to_str(secret_access_key_ptr)? };
 
-    let delta_lake = TOKIO_RUNTIME.block_on(DeltaLake::open_s3(
+    let data_folder = TOKIO_RUNTIME.block_on(DataFolder::open_s3(
         endpoint.to_owned(),
         bucket_name.to_owned(),
         access_key_id.to_owned(),
         secret_access_key.to_owned(),
     ))?;
     let data_sink = Arc::new(DataFolderDataSink::new());
-    TOKIO_RUNTIME.block_on(delta_lake.register_normal_and_time_series_tables(data_sink))?;
-    Ok(delta_lake)
+    TOKIO_RUNTIME.block_on(data_folder.register_normal_and_time_series_tables(data_sink))?;
+    Ok(data_folder)
 }
 
 /// Creates a [`DataFolder`] that manages data in an object store with an Azure-compatible API and
@@ -182,19 +182,19 @@ unsafe fn open_azure(
     account_name_ptr: *const c_char,
     access_key_ptr: *const c_char,
     container_name_ptr: *const c_char,
-) -> Result<DeltaLake> {
+) -> Result<DataFolder> {
     let account_name = unsafe { c_char_ptr_to_str(account_name_ptr)? };
     let access_key = unsafe { c_char_ptr_to_str(access_key_ptr)? };
     let container_name = unsafe { c_char_ptr_to_str(container_name_ptr)? };
 
-    let delta_lake = TOKIO_RUNTIME.block_on(DeltaLake::open_azure(
+    let data_folder = TOKIO_RUNTIME.block_on(DataFolder::open_azure(
         account_name.to_owned(),
         access_key.to_owned(),
         container_name.to_owned(),
     ))?;
     let data_sink = Arc::new(DataFolderDataSink::new());
-    TOKIO_RUNTIME.block_on(delta_lake.register_normal_and_time_series_tables(data_sink))?;
-    Ok(delta_lake)
+    TOKIO_RUNTIME.block_on(data_folder.register_normal_and_time_series_tables(data_sink))?;
+    Ok(data_folder)
 }
 
 /// Creates a [`Client`] that is connected to the Apache Arrow Flight server URL in `node_url_ptr`
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn modelardb_embedded_close(
     is_data_folder: bool,
 ) -> c_int {
     if is_data_folder {
-        let maybe_data_folder_ptr: *mut DeltaLake = maybe_operations_ptr.cast();
+        let maybe_data_folder_ptr: *mut DataFolder = maybe_operations_ptr.cast();
         if !maybe_data_folder_ptr.is_null() && maybe_data_folder_ptr.is_aligned() {
             // The box is assigned to _data_folder as Box::from_raw() is #[must_use].
             let _data_folder = unsafe { Box::from_raw(maybe_data_folder_ptr) };
@@ -1035,7 +1035,7 @@ unsafe fn c_void_to_operations<'a>(
     is_data_folder: bool,
 ) -> Result<&'a mut dyn Operations> {
     if is_data_folder {
-        let maybe_data_folder_ptr: *mut DeltaLake = maybe_operations_ptr.cast();
+        let maybe_data_folder_ptr: *mut DataFolder = maybe_operations_ptr.cast();
         if !maybe_data_folder_ptr.is_null() && maybe_data_folder_ptr.is_aligned() {
             unsafe { Ok(&mut *maybe_data_folder_ptr) }
         } else {

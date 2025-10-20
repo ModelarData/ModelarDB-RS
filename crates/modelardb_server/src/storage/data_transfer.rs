@@ -23,11 +23,11 @@ use std::time::Duration;
 use dashmap::DashMap;
 use deltalake::arrow::array::RecordBatch;
 use futures::TryStreamExt;
+use modelardb_storage::data_folder::DataFolder;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
 
-use crate::data_folders::DataFolder;
 use crate::error::Result;
 
 // TODO: Handle the case where a connection can not be established when transferring data.
@@ -62,13 +62,12 @@ impl DataTransfer {
         remote_data_folder: DataFolder,
         transfer_batch_size_in_bytes: Option<u64>,
     ) -> Result<Self> {
-        let table_names = local_data_folder.delta_lake.table_names().await?;
+        let table_names = local_data_folder.table_names().await?;
 
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
         for table_name in table_names {
             let delta_table = local_data_folder
-                .delta_lake
                 .delta_table(&table_name)
                 .await?;
 
@@ -240,7 +239,6 @@ impl DataTransfer {
 
         let local_delta_ops = self
             .local_data_folder
-            .delta_lake
             .delta_ops(table_name)
             .await?;
 
@@ -253,24 +251,20 @@ impl DataTransfer {
         // Write the data to the remote Delta Lake.
         if self
             .local_data_folder
-            .delta_lake
             .is_time_series_table(table_name)
             .await?
         {
             self.remote_data_folder
-                .delta_lake
                 .write_compressed_segments_to_time_series_table(table_name, record_batches)
                 .await?;
         } else {
             self.remote_data_folder
-                .delta_lake
                 .write_record_batches_to_normal_table(table_name, record_batches)
                 .await?;
         }
 
         // Delete the data that has been transferred to the remote Delta Lake.
         self.local_data_folder
-            .delta_lake
             .truncate_table(table_name)
             .await?;
 
@@ -478,17 +472,15 @@ mod tests {
     async fn create_local_data_folder_with_tables() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
         // Create a normal table.
         local_data_folder
-            .delta_lake
             .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
             .await
             .unwrap();
 
         local_data_folder
-            .delta_lake
             .save_normal_table_metadata(NORMAL_TABLE_NAME)
             .await
             .unwrap();
@@ -496,13 +488,11 @@ mod tests {
         // Create a time series table.
         let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder
-            .delta_lake
             .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 
         local_data_folder
-            .delta_lake
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
@@ -519,7 +509,6 @@ mod tests {
         for _ in 0..batch_write_count {
             // Write to the normal table.
             local_data_folder
-                .delta_lake
                 .write_record_batches_to_normal_table(
                     NORMAL_TABLE_NAME,
                     vec![table::normal_table_record_batch()],
@@ -529,7 +518,6 @@ mod tests {
 
             // Write to the time series table.
             local_data_folder
-                .delta_lake
                 .write_compressed_segments_to_time_series_table(
                     TIME_SERIES_TABLE_NAME,
                     vec![table::compressed_segments_record_batch()],
@@ -547,7 +535,6 @@ mod tests {
     /// Return the total size of the files in the table with `table_name` in `local_data_folder`.
     async fn table_files_size(local_data_folder: &DataFolder, table_name: &str) -> u64 {
         let delta_table = local_data_folder
-            .delta_lake
             .delta_table(table_name)
             .await
             .unwrap();
@@ -567,7 +554,7 @@ mod tests {
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
         let target_dir_url = target_dir.path().to_str().unwrap();
-        let remote_data_folder = DataFolder::try_from_local_url(target_dir_url)
+        let remote_data_folder = DataFolder::open_local_url(target_dir_url)
             .await
             .unwrap();
 

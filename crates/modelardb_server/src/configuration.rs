@@ -241,11 +241,12 @@ mod tests {
 
     use std::sync::Arc;
 
+    use modelardb_storage::data_folder::DataFolder;
     use tempfile::TempDir;
     use tokio::sync::RwLock;
     use uuid::Uuid;
 
-    use crate::data_folders::{DataFolder, DataFolders};
+    use crate::data_folders::DataFolders;
     use crate::manager::Manager;
     use crate::storage::StorageEngine;
 
@@ -407,11 +408,11 @@ mod tests {
         Arc<RwLock<ConfigurationManager>>,
     ) {
         let local_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::try_from_local_url(local_url).await.unwrap();
+        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
 
         let target_dir = tempfile::tempdir().unwrap();
         let target_url = target_dir.path().to_str().unwrap();
-        let remote_data_folder = DataFolder::try_from_local_url(target_url).await.unwrap();
+        let remote_data_folder = DataFolder::open_local_url(target_url).await.unwrap();
 
         let data_folders = DataFolders::new(
             local_data_folder.clone(),

@@ -15,56 +15,13 @@
 
 //! Implementation of a struct that provides access to the local and remote data storage components.
 
-use std::sync::Arc;
-
-use modelardb_storage::delta_lake::DeltaLake;
-use modelardb_types::flight::protocol;
+use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::types::ServerMode;
-use tracing::warn;
 
 use crate::ClusterMode;
 use crate::Result;
 use crate::error::ModelarDbServerError;
 use crate::manager::Manager;
-
-/// Folder for storing metadata and data in Apache Parquet files.
-#[derive(Clone)]
-pub struct DataFolder {
-    /// Delta Lake for storing metadata and data in Apache Parquet files.
-    pub delta_lake: Arc<DeltaLake>,
-}
-
-impl DataFolder {
-    /// Return a [`DataFolder`] with a local [`DeltaLake`] created from `local_url`. If `local_url`
-    /// is a folder that does not exist, it is created. If `local_url` could not be parsed, if the
-    /// folder does not exist and could not be created, or if the metadata tables could not be
-    /// created, [`ModelarDbServerError`] is returned.
-    pub async fn try_from_local_url(local_url: &str) -> Result<Self> {
-        let delta_lake = Arc::new(DeltaLake::open_local_url(local_url).await?);
-
-        if local_url.starts_with("memory://") {
-            warn!(
-                "The local data folder is in memory. Data will not be persisted. Spilling data will \
-                 not decrease memory usage. Configured memory limitations may be exceeded."
-            );
-        };
-
-        Ok(Self { delta_lake })
-    }
-
-    /// Return a [`DataFolder`] created from `storage_configuration`. If a connection could
-    /// not be made or if the metadata tables could not be created, [`ModelarDbServerError`] is
-    /// returned.
-    pub async fn try_from_storage_configuration(
-        storage_configuration: protocol::manager_metadata::StorageConfiguration,
-    ) -> Result<Self> {
-        let delta_lake = Arc::new(
-            DeltaLake::open_object_store(storage_configuration.clone()).await?,
-        );
-
-        Ok(Self { delta_lake })
-    }
-}
 
 /// Folders for storing metadata and data in Apache Parquet files locally and remotely.
 #[derive(Clone)]
@@ -103,7 +60,7 @@ impl DataFolders {
         match arguments {
             &["edge", local_data_folder_url] | &[local_data_folder_url] => {
                 let local_data_folder =
-                    DataFolder::try_from_local_url(local_data_folder_url).await?;
+                    DataFolder::open_local_url(local_data_folder_url).await?;
 
                 Ok((
                     ClusterMode::SingleNode,
@@ -115,10 +72,10 @@ impl DataFolders {
                     Manager::register_node(manager_url, ServerMode::Cloud).await?;
 
                 let local_data_folder =
-                    DataFolder::try_from_local_url(local_data_folder_url).await?;
+                    DataFolder::open_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
-                    DataFolder::try_from_storage_configuration(storage_configuration).await?;
+                    DataFolder::open_object_store(storage_configuration).await?;
 
                 Ok((
                     ClusterMode::MultiNode(manager),
@@ -135,10 +92,10 @@ impl DataFolders {
                     Manager::register_node(manager_url, ServerMode::Edge).await?;
 
                 let local_data_folder =
-                    DataFolder::try_from_local_url(local_data_folder_url).await?;
+                    DataFolder::open_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
-                    DataFolder::try_from_storage_configuration(storage_configuration).await?;
+                    DataFolder::open_object_store(storage_configuration).await?;
 
                 Ok((
                     ClusterMode::MultiNode(manager),

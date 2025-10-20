@@ -32,7 +32,7 @@ use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
 use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
-use modelardb_storage::delta_lake::DeltaLake;
+use modelardb_storage::data_folder::DataFolder;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
@@ -100,7 +100,7 @@ impl DisplayAs for DataFolderDataSink {
 }
 
 #[async_trait]
-impl Operations for DeltaLake {
+impl Operations for DataFolder {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
@@ -250,7 +250,7 @@ impl Operations for DeltaLake {
     ) -> Result<()> {
         let target_data_folder = target
             .as_any()
-            .downcast_ref::<DeltaLake>()
+            .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument("target is not a data folder.".to_owned())
             })?;
@@ -334,7 +334,7 @@ impl Operations for DeltaLake {
     ) -> Result<()> {
         let target_data_folder = target
             .as_any()
-            .downcast_ref::<DeltaLake>()
+            .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument("target is not a data folder.".to_owned())
             })?;
@@ -417,7 +417,7 @@ impl Operations for DeltaLake {
     ) -> Result<()> {
         let target_data_folder = target
             .as_any()
-            .downcast_ref::<DeltaLake>()
+            .downcast_ref::<DataFolder>()
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument("target is not a data folder.".to_owned())
             })?;
@@ -599,7 +599,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_existing_normal_tables_on_open() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         data_folder
             .create(
@@ -618,7 +618,7 @@ mod tests {
             .unwrap();
 
         // Create a new data folder and verify that the existing normal tables are registered.
-        let new_data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         let data_sink = Arc::new(DataFolderDataSink::new());
         new_data_folder.register_normal_and_time_series_tables(data_sink).await.unwrap();
         assert!(
@@ -638,7 +638,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_normal_table_with_empty_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder
             .create(NORMAL_TABLE_NAME, TableType::NormalTable(Schema::empty()))
@@ -654,7 +654,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_existing_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder
             .create(
@@ -692,7 +692,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_time_series_table_with_error_bounds() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let error_bounds = HashMap::from([
             (
@@ -763,7 +763,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_existing_time_series_tables_on_open() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         data_folder
             .create(
@@ -790,7 +790,7 @@ mod tests {
             .unwrap();
 
         // Create a new data folder and verify that the existing time series tables are registered.
-        let new_data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         let data_sink = Arc::new(DataFolderDataSink::new());
         new_data_folder.register_normal_and_time_series_tables(data_sink).await.unwrap();
         assert!(
@@ -810,7 +810,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_time_series_table_with_empty_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder
             .create(
@@ -829,7 +829,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_existing_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder
             .create(
@@ -864,7 +864,7 @@ mod tests {
     #[tokio::test]
     async fn test_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let table_names = data_folder.tables().await.unwrap();
         assert!(table_names.is_empty());
@@ -912,7 +912,7 @@ mod tests {
     #[tokio::test]
     async fn test_missing_table_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder.schema(MISSING_TABLE_NAME).await;
 
@@ -1023,7 +1023,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_to_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder
             .write(MISSING_TABLE_NAME, time_series_table_data())
@@ -1059,7 +1059,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_time_series_table_from_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder_read_time_series_table(
             &mut data_folder,
@@ -1413,7 +1413,7 @@ mod tests {
     }
 
     async fn data_folder_read_time_series_table(
-        data_folder: &mut DeltaLake,
+        data_folder: &mut DataFolder,
         table_name: &str,
         columns: &[(String, Aggregate)],
         group_by: &[String],
@@ -1492,7 +1492,7 @@ mod tests {
     #[tokio::test]
     async fn test_copy_time_series_table_from_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let source = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let source = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let (_temp_dir, target) = create_data_folder_with_time_series_table().await;
 
@@ -1518,7 +1518,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let target = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
@@ -1553,7 +1553,7 @@ mod tests {
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut target = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let table_type =
             TableType::TimeSeriesTable(invalid_table_schema(), HashMap::new(), HashMap::new());
@@ -1807,7 +1807,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let sql = format!("SELECT * FROM {MISSING_TABLE_NAME}");
         let result = data_folder_read(&mut data_folder, &sql).await;
@@ -1853,7 +1853,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut target = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let schema = normal_table_schema().project(&[0, 1]).unwrap();
         target
@@ -1914,7 +1914,7 @@ mod tests {
 
         // Create a normal table that has the same schema as the time series table in source.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut target = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let schema = time_series_table_schema();
         target
@@ -1970,7 +1970,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut target = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         source
             .write(NORMAL_TABLE_NAME, normal_table_data())
@@ -1991,7 +1991,7 @@ mod tests {
     #[tokio::test]
     async fn test_copy_normal_table_from_missing_table_to_normal_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut source = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut source = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
 
@@ -2102,7 +2102,7 @@ mod tests {
     #[tokio::test]
     async fn test_drop_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder.drop(MISSING_TABLE_NAME).await;
 
@@ -2173,7 +2173,7 @@ mod tests {
     #[tokio::test]
     async fn test_truncate_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder.truncate(MISSING_TABLE_NAME).await;
 
@@ -2248,7 +2248,7 @@ mod tests {
     #[tokio::test]
     async fn test_vacuum_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder.vacuum(MISSING_TABLE_NAME, None).await;
 
@@ -2298,7 +2298,7 @@ mod tests {
     }
 
     async fn assert_normal_table_exists(
-        data_folder: &DeltaLake,
+        data_folder: &DataFolder,
         table_name: &str,
         expected_schema: Schema,
     ) {
@@ -2328,7 +2328,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut target = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         target
             .create(
@@ -2404,7 +2404,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let target = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let expected_result = normal_table_data();
         source
@@ -2516,7 +2516,7 @@ mod tests {
     }
 
     async fn assert_time_series_table_exists(
-        data_folder: &DeltaLake,
+        data_folder: &DataFolder,
         table_name: &str,
         expected_schema: Schema,
     ) -> TimeSeriesTableMetadata {
@@ -2558,7 +2558,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut target = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         target
             .create(
@@ -2632,7 +2632,7 @@ mod tests {
         let (_temp_dir, mut source) = create_data_folder_with_time_series_table().await;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let target = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let target = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         source
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
@@ -2662,10 +2662,10 @@ mod tests {
     }
 
     async fn assert_table_not_moved(
-        source: &mut DeltaLake,
+        source: &mut DataFolder,
         source_table_name: &str,
         expected_result: RecordBatch,
-        maybe_target: Option<&mut DeltaLake>,
+        maybe_target: Option<&mut DataFolder>,
         maybe_target_table_name: Option<&str>,
     ) {
         let source_sql = format!("SELECT * FROM {source_table_name}");
@@ -2679,7 +2679,7 @@ mod tests {
         }
     }
 
-    async fn data_folder_read(data_folder: &mut DeltaLake, sql: &str) -> Result<RecordBatch> {
+    async fn data_folder_read(data_folder: &mut DataFolder, sql: &str) -> Result<RecordBatch> {
         let record_batch_stream = data_folder.read(sql).await?;
         record_batch_stream_to_record_batch(record_batch_stream).await
     }
@@ -2687,7 +2687,7 @@ mod tests {
     #[tokio::test]
     async fn test_move_missing_table_to_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut source = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut source = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let (_temp_dir, target) = create_data_folder_with_time_series_table().await;
 
@@ -2719,9 +2719,9 @@ mod tests {
         );
     }
 
-    async fn create_data_folder_with_normal_table() -> (TempDir, DeltaLake) {
+    async fn create_data_folder_with_normal_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         data_folder
             .create(
@@ -2773,9 +2773,9 @@ mod tests {
         ])
     }
 
-    async fn create_data_folder_with_time_series_table() -> (TempDir, DeltaLake) {
+    async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let table_type =
             TableType::TimeSeriesTable(time_series_table_schema(), HashMap::new(), HashMap::new());
@@ -2848,9 +2848,9 @@ mod tests {
     }
 
     async fn create_data_folder_with_time_series_table_with_generated_column()
-    -> (TempDir, DeltaLake) {
+    -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut data_folder = DeltaLake::open_local(temp_dir.path()).await.unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let generated_columns = vec![("generated".to_owned(), "field_1 + field_2".to_owned())];
         let table_type = TableType::TimeSeriesTable(

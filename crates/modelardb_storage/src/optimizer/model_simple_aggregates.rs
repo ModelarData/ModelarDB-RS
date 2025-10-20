@@ -641,7 +641,7 @@ mod tests {
     use tempfile::TempDir;
     use tonic::async_trait;
 
-    use crate::delta_lake::DeltaLake;
+    use crate::data_folder::DataFolder;
     use crate::optimizer;
     use crate::query::grid_exec::GridExec;
     use crate::query::time_series_table::TimeSeriesTable;
@@ -777,7 +777,7 @@ mod tests {
     ) -> Arc<dyn ExecutionPlan> {
         // Setup access to data and metadata in data folder.
         let data_folder_path = temp_dir.path();
-        let delta_lake = DeltaLake::open_local(data_folder_path)
+        let data_folder = DataFolder::open_local(data_folder_path)
             .await
             .unwrap();
 
@@ -796,7 +796,7 @@ mod tests {
         // Create time series table.
         let time_series_table_metadata = table::time_series_table_metadata_arc();
 
-        let delta_table = delta_lake
+        let delta_table = data_folder
             .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();

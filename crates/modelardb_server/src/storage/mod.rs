@@ -19,7 +19,7 @@
 //! metadata and models in in-memory buffers to batch them before saving them to immutable Apache
 //! Parquet files. The path to the Apache Parquet files containing relevant compressed data points
 //! for a query can be retrieved by the query engine using
-//! [`DeltaLake`](modelardb_storage::delta_lake::DeltaLake).
+//! [`DataFolder`](modelardb_storage::data_folder::DataFolder).
 
 mod compressed_data_buffer;
 mod compressed_data_manager;

@@ -24,13 +24,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use futures::StreamExt;
+use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::types::{TimeSeriesTableMetadata, Timestamp, Value};
 use object_store::path::{Path, PathPart};
 use tokio::runtime::Handle;
 use tracing::{debug, error, warn};
 
 use crate::context::Context;
-use crate::data_folders::DataFolder;
 use crate::error::Result;
 use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
@@ -86,7 +86,7 @@ impl UncompressedDataManager {
     /// Add references to the [`UncompressedDataBuffers`](UncompressedDataBuffer) currently on disk
     /// to [`UncompressedDataManager`] which immediately will start compressing them.
     pub(super) async fn initialize(&self, context: &Context) -> Result<()> {
-        let local_data_folder = self.local_data_folder.delta_lake.object_store();
+        let local_data_folder = self.local_data_folder.object_store();
         let mut spilled_buffers =
             local_data_folder.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)));
 
@@ -398,7 +398,7 @@ impl UncompressedDataManager {
             .1;
 
         let maybe_uncompressed_on_disk_data_buffer = uncompressed_in_memory_data_buffer
-            .spill_to_apache_parquet(self.local_data_folder.delta_lake.object_store())
+            .spill_to_apache_parquet(self.local_data_folder.object_store())
             .await;
 
         // If an error occurs the in-memory buffer must be re-added to the map before returning.
@@ -683,7 +683,7 @@ mod tests {
     async fn test_can_compress_existing_on_disk_data_buffers_when_initializing() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
         // Create a context with a storage engine.
         let context = Arc::new(
@@ -727,7 +727,6 @@ mod tests {
         let spilled_buffers = storage_engine
             .uncompressed_data_manager
             .local_data_folder
-            .delta_lake
             .object_store()
             .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
@@ -1069,7 +1068,6 @@ mod tests {
         // The UncompressedDataBuffer should be spilled to tag hash in the uncompressed folder.
         let spilled_buffers = data_manager
             .local_data_folder
-            .delta_lake
             .object_store()
             .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
@@ -1281,13 +1279,12 @@ mod tests {
         temp_dir: &TempDir,
     ) -> (UncompressedDataManager, Arc<TimeSeriesTableMetadata>) {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
         // Ensure the expected metadata is available through the metadata manager.
         let time_series_table_metadata = table::time_series_table_metadata();
 
         local_data_folder
-            .delta_lake
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();

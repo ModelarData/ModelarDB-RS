@@ -16,7 +16,7 @@
 //! Utility functions to register metadata tables, normal tables, and time series tables with Apache
 //! DataFusion and to read and write Apache Parquet files to and from an object store.
 
-pub mod delta_lake;
+pub mod data_folder;
 pub mod error;
 mod optimizer;
 pub mod parser;
