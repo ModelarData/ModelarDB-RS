@@ -34,11 +34,11 @@ pub struct ConfigurationManager {
     /// creating tables, updating the remote object store, and querying.
     pub(crate) cluster_mode: ClusterMode,
     /// Amount of memory to reserve for storing multivariate time series.
-    multivariate_reserved_memory_in_bytes: usize,
+    multivariate_reserved_memory_in_bytes: u64,
     /// Amount of memory to reserve for storing uncompressed data buffers.
-    uncompressed_reserved_memory_in_bytes: usize,
+    uncompressed_reserved_memory_in_bytes: u64,
     /// Amount of memory to reserve for storing compressed data buffers.
-    compressed_reserved_memory_in_bytes: usize,
+    compressed_reserved_memory_in_bytes: u64,
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store. If [`None`], data is not transferred based on batch size.
     transfer_batch_size_in_bytes: Option<u64>,
@@ -91,20 +91,20 @@ impl ConfigurationManager {
         }
     }
 
-    pub(crate) fn multivariate_reserved_memory_in_bytes(&self) -> usize {
+    pub(crate) fn multivariate_reserved_memory_in_bytes(&self) -> u64 {
         self.multivariate_reserved_memory_in_bytes
     }
 
     /// Set the new value and update the amount of memory for multivariate data in the storage engine.
     pub(crate) async fn set_multivariate_reserved_memory_in_bytes(
         &mut self,
-        new_multivariate_reserved_memory_in_bytes: usize,
+        new_multivariate_reserved_memory_in_bytes: u64,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
-        let value_change = new_multivariate_reserved_memory_in_bytes as isize
-            - self.multivariate_reserved_memory_in_bytes as isize;
+        let value_change = new_multivariate_reserved_memory_in_bytes as i64
+            - self.multivariate_reserved_memory_in_bytes as i64;
 
         storage_engine
             .write()
@@ -115,7 +115,7 @@ impl ConfigurationManager {
         self.multivariate_reserved_memory_in_bytes = new_multivariate_reserved_memory_in_bytes;
     }
 
-    pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> usize {
+    pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> u64 {
         self.uncompressed_reserved_memory_in_bytes
     }
 
@@ -124,13 +124,13 @@ impl ConfigurationManager {
     /// cannot be updated because a buffer cannot be spilled.
     pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
-        new_uncompressed_reserved_memory_in_bytes: usize,
+        new_uncompressed_reserved_memory_in_bytes: u64,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Result<()> {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
-        let value_change = new_uncompressed_reserved_memory_in_bytes as isize
-            - self.uncompressed_reserved_memory_in_bytes as isize;
+        let value_change = new_uncompressed_reserved_memory_in_bytes as i64
+            - self.uncompressed_reserved_memory_in_bytes as i64;
 
         storage_engine
             .write()
@@ -143,7 +143,7 @@ impl ConfigurationManager {
         Ok(())
     }
 
-    pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> usize {
+    pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> u64 {
         self.compressed_reserved_memory_in_bytes
     }
 
@@ -152,13 +152,13 @@ impl ConfigurationManager {
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(crate) async fn set_compressed_reserved_memory_in_bytes(
         &mut self,
-        new_compressed_reserved_memory_in_bytes: usize,
+        new_compressed_reserved_memory_in_bytes: u64,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Result<()> {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
-        let value_change = new_compressed_reserved_memory_in_bytes as isize
-            - self.compressed_reserved_memory_in_bytes as isize;
+        let value_change = new_compressed_reserved_memory_in_bytes as i64
+            - self.compressed_reserved_memory_in_bytes as i64;
 
         storage_engine
             .write()

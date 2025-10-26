@@ -727,7 +727,7 @@ impl FlightService for FlightServiceHandler {
 
             match protocol::update_configuration::Setting::try_from(setting) {
                 Ok(protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes) => {
-                    let new_value = new_value.ok_or(invalid_null_error)?;
+                    let new_value = update_configuration.new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
                         .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
@@ -736,7 +736,7 @@ impl FlightService for FlightServiceHandler {
                     Ok(())
                 }
                 Ok(protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes) => {
-                    let new_value = new_value.ok_or(invalid_null_error)?;
+                    let new_value = update_configuration.new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
                         .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
@@ -744,7 +744,7 @@ impl FlightService for FlightServiceHandler {
                         .map_err(error_to_status_internal)
                 }
                 Ok(protocol::update_configuration::Setting::CompressedReservedMemoryInBytes) => {
-                    let new_value = new_value.ok_or(invalid_null_error)?;
+                    let new_value = update_configuration.new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
                         .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
