@@ -253,8 +253,10 @@ impl SortedJoinStream {
     /// rows and if not drop rows from the [`RecordBatches`](RecordBatch) that contain extra. This
     /// can occur as compressed segments are not transferred atomically to the remote data folder.
     fn set_batch_num_rows_to_smallest(&mut self) {
-        // unwrap() is safe as a record batch is read from each input before this method is called.
-        let first_batch_num_rows = self.batches[0].as_ref().unwrap().num_rows();
+        let first_batch_num_rows = self.batches[0]
+            .as_ref()
+            .expect("A record batch should be read from each input before this method is called.")
+            .num_rows();
 
         let mut all_same_num_rows = true;
         let mut smallest_num_rows = usize::MAX;
@@ -279,8 +281,9 @@ impl SortedJoinStream {
     fn sorted_join(&self) -> Poll<Option<DataFusionResult<RecordBatch>>> {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
-        // unwrap() is safe as a record batch is read from each input before this method is called.
-        let batch = self.batches[0].as_ref().unwrap();
+        let batch = self.batches[0]
+            .as_ref()
+            .expect("A record batch should be read from each input before this method is called.");
 
         // The batches are already in the correct order, so they can be appended.
         let mut field_index = 0;
@@ -289,20 +292,27 @@ impl SortedJoinStream {
             match element {
                 SortedJoinColumnType::Timestamp => columns.push(batch.column(0).clone()),
                 SortedJoinColumnType::Field => {
-                    // unwrap() is safe as a record batch has already been read from each input.
-                    let batch = self.batches[field_index].as_ref().unwrap();
+                    let batch = self.batches[field_index]
+                        .as_ref()
+                        .expect("A record batch should be read from each input before this method is called.");
+
                     columns.push(batch.column(1).clone());
                     field_index += 1;
                 }
                 SortedJoinColumnType::Tag(tag_column_name) => {
-                    // unwrap() is safe as all tag columns are present in the schema.
-                    columns.push(batch.column_by_name(tag_column_name).unwrap().clone());
+                    columns.push(
+                        batch
+                            .column_by_name(tag_column_name)
+                            .expect("All tag columns should be in the schema.")
+                            .clone(),
+                    );
                 }
             }
         }
 
-        // unwrap() is safe as SortedJoinStream has ordered columns to match the schema.
-        let batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
+        let batch = RecordBatch::try_new(self.schema.clone(), columns)
+            .expect("SortedJoinStream should have ordered columns to match the schema.");
+
         Poll::Ready(Some(Ok(batch)))
     }
 }
