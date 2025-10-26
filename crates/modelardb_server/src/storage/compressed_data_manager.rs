@@ -92,11 +92,11 @@ impl CompressedDataManager {
             .await?;
 
         // Inform the data transfer component about the new data if a remote data folder was
-        // provided. If the total size of the data related to table_name have reached the transfer
+        // provided. If the total size of the data related to table_name has reached the transfer
         // threshold, all of the data is transferred to the remote object store.
         if let Some(data_transfer) = &*self.data_transfer.read().await {
             data_transfer
-                .increase_table_size(table_name, record_batch_size_in_bytes)
+                .increase_table_size(table_name, record_batch_size_in_bytes as u64)
                 .await?;
         }
 

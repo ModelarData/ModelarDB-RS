@@ -753,7 +753,10 @@ impl FlightService for FlightServiceHandler {
                 }
                 Ok(protocol::update_configuration::Setting::TransferBatchSizeInBytes) => {
                     configuration_manager
-                        .set_transfer_batch_size_in_bytes(new_value, storage_engine)
+                        .set_transfer_batch_size_in_bytes(
+                            update_configuration.new_value,
+                            storage_engine,
+                        )
                         .await
                         .map_err(error_to_status_internal)
                 }

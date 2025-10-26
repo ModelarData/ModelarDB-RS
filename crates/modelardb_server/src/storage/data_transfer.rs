@@ -41,10 +41,10 @@ pub struct DataTransfer {
     /// The data folder that the data should be transferred to.
     remote_data_folder: DataFolder,
     /// Map from table names to the current size of the table in bytes.
-    table_size_in_bytes: DashMap<String, usize>,
+    table_size_in_bytes: DashMap<String, u64>,
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// Delta Lake. If [`None`], data is not transferred based on batch size.
-    transfer_batch_size_in_bytes: Option<usize>,
+    transfer_batch_size_in_bytes: Option<u64>,
     /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
     /// data is not transferred based on time.
     transfer_scheduler_handle: Option<TaskJoinHandle<()>>,
@@ -60,7 +60,7 @@ impl DataTransfer {
     pub async fn try_new(
         local_data_folder: DataFolder,
         remote_data_folder: DataFolder,
-        transfer_batch_size_in_bytes: Option<usize>,
+        transfer_batch_size_in_bytes: Option<u64>,
     ) -> Result<Self> {
         let table_names = local_data_folder
             .table_metadata_manager
@@ -80,7 +80,7 @@ impl DataTransfer {
             let object_store = delta_table.object_store();
             for file_path in delta_table.get_files_iter()? {
                 let object_meta = object_store.head(&file_path).await?;
-                *table_size_in_bytes += object_meta.size as usize;
+                *table_size_in_bytes += object_meta.size;
             }
         }
 
@@ -107,7 +107,7 @@ impl DataTransfer {
     }
 
     /// Increase the size of the table with `table_name` by `size_in_bytes`.
-    pub async fn increase_table_size(&self, table_name: &str, size_in_bytes: usize) -> Result<()> {
+    pub async fn increase_table_size(&self, table_name: &str, size_in_bytes: u64) -> Result<()> {
         // entry() is not used as it would require the allocation of a new String for each lookup as
         // it must be given as a K, while get_mut() accepts the key as a &K so one K can be used.
         if !self.table_size_in_bytes.contains_key(table_name) {
@@ -134,7 +134,7 @@ impl DataTransfer {
 
     /// Remove the table with `table_name` from the tables that are marked as dropped and clear the
     /// size of the table. Return the number of bytes that were cleared.
-    pub(super) fn clear_table(&mut self, table_name: &str) -> usize {
+    pub(super) fn clear_table(&mut self, table_name: &str) -> u64 {
         self.dropped_tables.remove(table_name);
 
         // Return 0 if compressed data has not been saved for the table yet to avoid returning
@@ -146,11 +146,11 @@ impl DataTransfer {
 
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
     /// for, check if the amount of data exceeds `new_value` and transfer all the data if it does.
-    /// If the value is changed successfully return [`Ok`], otherwise return
+    /// If the value is changed successfully, return [`Ok`], otherwise return
     /// (`ModelarDbServerError`)[crate::error::ModelarDbServerError].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &mut self,
-        new_value: Option<usize>,
+        new_value: Option<u64>,
     ) -> Result<()> {
         if let Some(new_batch_size) = new_value {
             self.transfer_larger_than_threshold(new_batch_size).await?;
@@ -161,7 +161,7 @@ impl DataTransfer {
         Ok(())
     }
 
-    /// If a new transfer time is given, stop the existing task transferring data periodically,
+    /// If a new transfer time is given, stop the existing task transferring data periodically
     /// if there is one, and start a new task. If `new_value` is [`None`], the task is just stopped.
     /// `data_transfer` is needed as an argument instead of using `self` so it can be moved into the
     /// periodic task.
@@ -204,7 +204,7 @@ impl DataTransfer {
     /// that if the function fails, some of the compressed files may still have been transferred.
     /// Since the data is transferred separately for each table, the function can be called again if
     /// it failed.
-    pub(crate) async fn transfer_larger_than_threshold(&self, threshold: usize) -> Result<()> {
+    pub(crate) async fn transfer_larger_than_threshold(&self, threshold: u64) -> Result<()> {
         // The clone is performed to not create a deadlock with transfer_data().
         for table_name_size_in_bytes in self.table_size_in_bytes.clone().iter() {
             let table_name = table_name_size_in_bytes.key();
@@ -284,7 +284,7 @@ mod tests {
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use tempfile::{self, TempDir};
 
-    const EXPECTED_TIME_SERIES_TABLE_FILE_SIZE: usize = 2038;
+    const EXPECTED_TIME_SERIES_TABLE_FILE_SIZE: u64 = 2038;
 
     // Tests for data transfer component.
     #[tokio::test]
@@ -508,8 +508,8 @@ mod tests {
     /// data folder and return the total size of the files in each table.
     async fn write_batches_to_tables(
         local_data_folder: &DataFolder,
-        batch_write_count: usize,
-    ) -> (usize, usize) {
+        batch_write_count: u8,
+    ) -> (u64, u64) {
         for _ in 0..batch_write_count {
             // Write to the normal table.
             local_data_folder
@@ -539,7 +539,7 @@ mod tests {
     }
 
     /// Return the total size of the files in the table with `table_name` in `local_data_folder`.
-    async fn table_files_size(local_data_folder: &DataFolder, table_name: &str) -> usize {
+    async fn table_files_size(local_data_folder: &DataFolder, table_name: &str) -> u64 {
         let delta_table = local_data_folder
             .delta_lake
             .delta_table(table_name)
@@ -552,7 +552,7 @@ mod tests {
             files_size += object_meta.unwrap().size;
         }
 
-        files_size as usize
+        files_size
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.

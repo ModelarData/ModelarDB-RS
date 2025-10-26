@@ -41,7 +41,7 @@ pub struct ConfigurationManager {
     compressed_reserved_memory_in_bytes: usize,
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store. If [`None`], data is not transferred based on batch size.
-    transfer_batch_size_in_bytes: Option<usize>,
+    transfer_batch_size_in_bytes: Option<u64>,
     /// The number of seconds between each transfer of data to the remote object store. If [`None`],
     /// data is not transferred based on time.
     transfer_time_in_seconds: Option<usize>,
@@ -171,7 +171,7 @@ impl ConfigurationManager {
         Ok(())
     }
 
-    pub(crate) fn transfer_batch_size_in_bytes(&self) -> Option<usize> {
+    pub(crate) fn transfer_batch_size_in_bytes(&self) -> Option<u64> {
         self.transfer_batch_size_in_bytes
     }
 
@@ -180,7 +180,7 @@ impl ConfigurationManager {
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(crate) async fn set_transfer_batch_size_in_bytes(
         &mut self,
-        new_transfer_batch_size_in_bytes: Option<usize>,
+        new_transfer_batch_size_in_bytes: Option<u64>,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Result<()> {
         storage_engine
@@ -226,7 +226,7 @@ impl ConfigurationManager {
             uncompressed_reserved_memory_in_bytes: self.uncompressed_reserved_memory_in_bytes
                 as u64,
             compressed_reserved_memory_in_bytes: self.compressed_reserved_memory_in_bytes as u64,
-            transfer_batch_size_in_bytes: self.transfer_batch_size_in_bytes.map(|v| v as u64),
+            transfer_batch_size_in_bytes: self.transfer_batch_size_in_bytes,
             transfer_time_in_seconds: self.transfer_time_in_seconds.map(|v| v as u64),
             ingestion_threads: self.ingestion_threads as u32,
             compression_threads: self.compression_threads as u32,

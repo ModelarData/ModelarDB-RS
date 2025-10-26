@@ -351,7 +351,7 @@ impl StorageEngine {
 
     /// Remove the table with `table_name` from the tables that are marked as dropped and clear the
     /// size of the table in the data transfer component. Return the number of bytes that were cleared.
-    pub(super) async fn clear_table(&self, table_name: &str) -> usize {
+    pub(super) async fn clear_table(&self, table_name: &str) -> u64 {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await
         {
@@ -366,7 +366,7 @@ impl StorageEngine {
     /// [`ModelarDbServerError`].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &self,
-        new_value: Option<usize>,
+        new_value: Option<u64>,
     ) -> Result<()> {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await
