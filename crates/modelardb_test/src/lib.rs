@@ -18,9 +18,6 @@
 pub mod data_generation;
 pub mod table;
 
-/// Expected size of the ingested data buffer produced in the tests.
-pub const INGESTED_BUFFER_SIZE: usize = 1438392;
-
 /// Expected size of the uncompressed data buffers produced in the tests.
 pub const UNCOMPRESSED_BUFFER_SIZE: usize = 1048576;
 
