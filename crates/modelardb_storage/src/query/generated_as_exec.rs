@@ -283,16 +283,21 @@ impl Stream for GeneratedAsStream {
                     // Compute the values of the next generated column and, if successful, add it.
                     let maybe_generated_column = column_to_generate.physical_expr.evaluate(&batch);
                     if let Ok(generated_column) = maybe_generated_column {
-                        // unwrap() is safe as generated_column is generated to be batch.num_rows().
-                        columns.push(generated_column.into_array(batch.num_rows()).unwrap());
+                        columns.push(
+                            generated_column.into_array(batch.num_rows()).expect(
+                                "generated_column should have one generated value per row.",
+                            ),
+                        );
+
                         generated_columns += 1;
                     } else {
                         let column_name = self.schema.field(column_to_generate.index).name();
 
-                        // unwrap() is safe as it is only executed if a column was not generated.
                         let physical_expr = &column_to_generate.physical_expr;
                         let failing_row = Self::failing_row(&batch, physical_expr)?;
-                        let cause = maybe_generated_column.err().unwrap();
+                        let cause = maybe_generated_column
+                            .err()
+                            .expect("maybe_generated_column should not be a generated column.");
 
                         let error = format!(
                             "Failed to compute '{column_name}' for {{{failing_row}}} due to: {cause}"
@@ -309,8 +314,10 @@ impl Stream for GeneratedAsStream {
                 // Drop columns that were required to generate values but were not in the query.
                 columns.truncate(schema_fields_len);
 
-                // unwrap() is safe as GeneratedAsStream ordered the columns to match the schema.
-                let batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
+                let batch = RecordBatch::try_new(self.schema.clone(), columns).expect(
+                    "GeneratedAsStream should have ordered the columns to match the schema.",
+                );
+
                 self.baseline_metrics
                     .record_poll(Poll::Ready(Some(Ok(batch))))
             }
