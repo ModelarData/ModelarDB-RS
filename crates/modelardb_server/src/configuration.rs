@@ -44,7 +44,7 @@ pub struct ConfigurationManager {
     transfer_batch_size_in_bytes: Option<u64>,
     /// The number of seconds between each transfer of data to the remote object store. If [`None`],
     /// data is not transferred based on time.
-    transfer_time_in_seconds: Option<usize>,
+    transfer_time_in_seconds: Option<u64>,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
     pub(crate) ingestion_threads: usize,
@@ -194,7 +194,7 @@ impl ConfigurationManager {
         Ok(())
     }
 
-    pub(crate) fn transfer_time_in_seconds(&self) -> Option<usize> {
+    pub(crate) fn transfer_time_in_seconds(&self) -> Option<u64> {
         self.transfer_time_in_seconds
     }
 
@@ -203,7 +203,7 @@ impl ConfigurationManager {
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(crate) async fn set_transfer_time_in_seconds(
         &mut self,
-        new_transfer_time_in_seconds: Option<usize>,
+        new_transfer_time_in_seconds: Option<u64>,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Result<()> {
         storage_engine

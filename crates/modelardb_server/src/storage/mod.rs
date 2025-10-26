@@ -385,7 +385,7 @@ impl StorageEngine {
     /// transfer component does not exist, return [`ModelarDbServerError`].
     pub(super) async fn set_transfer_time_in_seconds(
         &mut self,
-        new_value: Option<usize>,
+        new_value: Option<u64>,
     ) -> Result<()> {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await

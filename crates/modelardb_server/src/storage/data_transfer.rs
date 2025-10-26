@@ -167,7 +167,7 @@ impl DataTransfer {
     /// periodic task.
     pub(super) fn set_transfer_time_in_seconds(
         &mut self,
-        new_value: Option<usize>,
+        new_value: Option<u64>,
         data_transfer: Arc<RwLock<Option<Self>>>,
     ) {
         // Stop the current task periodically transferring data if there is one.
@@ -179,7 +179,7 @@ impl DataTransfer {
         self.transfer_scheduler_handle = if let Some(transfer_time) = new_value {
             let join_handle = tokio::spawn(async move {
                 loop {
-                    tokio::time::sleep(Duration::from_secs(transfer_time as u64)).await;
+                    tokio::time::sleep(Duration::from_secs(transfer_time)).await;
 
                     data_transfer
                         .write()
