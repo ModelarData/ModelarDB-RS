@@ -296,8 +296,7 @@ impl Stream for GeneratedAsStream {
                         let physical_expr = &column_to_generate.physical_expr;
                         let failing_row = Self::failing_row(&batch, physical_expr)?;
                         let cause = maybe_generated_column
-                            .err()
-                            .expect("maybe_generated_column should not be a generated column.");
+                            .expect_err("maybe_generated_column should not be a generated column.");
 
                         let error = format!(
                             "Failed to compute '{column_name}' for {{{failing_row}}} due to: {cause}"

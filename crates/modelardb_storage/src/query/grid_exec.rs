@@ -473,9 +473,9 @@ impl GridStreamMetrics {
             .map(|name| Self::new_counter(metrics, partition, format!("rows_created_by_{name}")))
             .collect::<Vec<_>>()
             .try_into()
-            .expect(&format!(
-                "Size of arrays in GridStreamMetrics should be {MODEL_TYPE_COUNT}."
-            ));
+            .unwrap_or_else(|_| {
+                panic!("Size of arrays in GridStreamMetrics should be {MODEL_TYPE_COUNT}.")
+            });
 
         // Create metrics for collecting information about the number of segments processed.
         let segments_with_residuals =
@@ -485,9 +485,9 @@ impl GridStreamMetrics {
             .map(|name| Self::new_counter(metrics, partition, format!("segments_with_{name}")))
             .collect::<Vec<_>>()
             .try_into()
-            .expect(&format!(
-                "Size of arrays in GridStreamMetrics should be {MODEL_TYPE_COUNT}."
-            ));
+            .unwrap_or_else(|_| {
+                panic!("Size of arrays in GridStreamMetrics should be {MODEL_TYPE_COUNT}.")
+            });
 
         let segments_regular = Self::new_counter(metrics, partition, "regular_segments");
         let segments_irregular = Self::new_counter(metrics, partition, "irregular_segments");
