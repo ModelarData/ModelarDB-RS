@@ -47,11 +47,11 @@ pub struct ConfigurationManager {
     transfer_time_in_seconds: Option<u64>,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
-    pub(crate) ingestion_threads: usize,
+    pub(crate) ingestion_threads: u8,
     /// Number of threads to allocate for compressing univariate time series to segments.
-    pub(crate) compression_threads: usize,
+    pub(crate) compression_threads: u8,
     /// Number of threads to allocate for writing segments to a local and/or remote data folder.
-    pub(crate) writer_threads: usize,
+    pub(crate) writer_threads: u8,
 }
 
 impl ConfigurationManager {
@@ -221,13 +221,11 @@ impl ConfigurationManager {
     /// protobuf message and serialize it.
     pub(crate) fn encode_and_serialize(&self) -> Vec<u8> {
         let configuration = protocol::Configuration {
-            multivariate_reserved_memory_in_bytes: self.multivariate_reserved_memory_in_bytes
-                as u64,
-            uncompressed_reserved_memory_in_bytes: self.uncompressed_reserved_memory_in_bytes
-                as u64,
-            compressed_reserved_memory_in_bytes: self.compressed_reserved_memory_in_bytes as u64,
+            multivariate_reserved_memory_in_bytes: self.multivariate_reserved_memory_in_bytes,
+            uncompressed_reserved_memory_in_bytes: self.uncompressed_reserved_memory_in_bytes,
+            compressed_reserved_memory_in_bytes: self.compressed_reserved_memory_in_bytes,
             transfer_batch_size_in_bytes: self.transfer_batch_size_in_bytes,
-            transfer_time_in_seconds: self.transfer_time_in_seconds.map(|v| v as u64),
+            transfer_time_in_seconds: self.transfer_time_in_seconds,
             ingestion_threads: self.ingestion_threads as u32,
             compression_threads: self.compression_threads as u32,
             writer_threads: self.writer_threads as u32,

@@ -214,7 +214,7 @@ impl StorageEngine {
     /// Start `num_threads` threads with `name` that executes `function` and whose [`JoinHandle`] is
     /// added to `join_handles.
     fn start_threads<F>(
-        num_threads: usize,
+        num_threads: u8,
         name: &str,
         function: F,
         join_handles: &mut Vec<JoinHandle<()>>,
