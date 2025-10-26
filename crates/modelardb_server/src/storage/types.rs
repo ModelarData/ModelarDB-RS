@@ -27,7 +27,7 @@ use crate::storage::uncompressed_data_buffer::{IngestedDataBuffer, UncompressedD
 /// Resizeable pool of memory for tracking and limiting the amount of memory used by the
 /// [`StorageEngine`](crate::storage::StorageEngine). Signed integers are used to simplify updating
 /// the amount of available memory at runtime. By using signed integers for the amount of available
-/// memory it can simply be decreased without checking the current value as any attempts to reserve
+/// memory, it can simply be decreased without checking the current value as any attempts to reserve
 /// additional memory will be rejected while the amount of available memory is negative. Thus,
 /// [`StorageEngine`](crate::storage::StorageEngine) will decrease its memory usage.
 pub(super) struct MemoryPool {
@@ -36,16 +36,16 @@ pub(super) struct MemoryPool {
     /// How many bytes of memory that are left for storing
     /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing ingested time
     /// series with metadata.
-    remaining_ingested_memory_in_bytes: Mutex<isize>,
+    remaining_ingested_memory_in_bytes: Mutex<i64>,
     /// Condition variable that allows threads to wait for more uncompressed memory to be released.
     wait_for_uncompressed_memory: Condvar,
     /// How many bytes of memory that are left for storing
     /// [`UncompressedDataBuffers`](UncompressedDataBuffer) containing time series without
     /// metadata.
-    remaining_uncompressed_memory_in_bytes: Mutex<isize>,
+    remaining_uncompressed_memory_in_bytes: Mutex<i64>,
     /// How many bytes of memory that are left for storing
     /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer).
-    remaining_compressed_memory_in_bytes: Mutex<isize>,
+    remaining_compressed_memory_in_bytes: Mutex<i64>,
 }
 
 /// The pool of memory the [`StorageEngine`](super::StorageEngine) can use for ingested data, the
@@ -56,9 +56,9 @@ impl MemoryPool {
     /// Create a new [`MemoryPool`] with at most [`i64::MAX`] bytes of memory for ingested,
     /// uncompressed, and compressed data.
     pub(super) fn new(
-        ingested_memory_in_bytes: usize,
-        uncompressed_memory_in_bytes: usize,
-        compressed_memory_in_bytes: usize,
+        ingested_memory_in_bytes: u64,
+        uncompressed_memory_in_bytes: u64,
+        compressed_memory_in_bytes: u64,
     ) -> Self {
         // unwrap() is safe as i64::MAX is 8192 PiB and the value is from ConfigurationManager.
         Self {
@@ -77,7 +77,7 @@ impl MemoryPool {
     }
 
     /// Change the amount of memory available for ingested data by `size_in_bytes`.
-    pub(super) fn adjust_ingested_memory(&self, size_in_bytes: isize) {
+    pub(super) fn adjust_ingested_memory(&self, size_in_bytes: i64) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_ingested_memory_in_bytes.lock().unwrap() += size_in_bytes;
         self.wait_for_ingested_memory.notify_all();
@@ -86,27 +86,30 @@ impl MemoryPool {
     /// Return the amount of memory available for ingested data in bytes.
     #[cfg(test)]
     #[must_use]
-    pub(super) fn remaining_ingested_memory_in_bytes(&self) -> isize {
+    pub(super) fn remaining_ingested_memory_in_bytes(&self) -> i64 {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_ingested_memory_in_bytes.lock().unwrap()
     }
 
     /// Wait until `size_in_bytes` bytes of memory is available for ingested data and then reserve
     /// it.
-    pub(super) fn wait_for_ingested_memory(&self, size_in_bytes: usize) {
+    pub(super) fn wait_for_ingested_memory(&self, size_in_bytes: u64) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut memory_in_bytes = self.remaining_ingested_memory_in_bytes.lock().unwrap();
 
-        while *memory_in_bytes < size_in_bytes as isize {
+        let size_in_bytes = size_in_bytes.try_into()
+            .expect("size_in_bytes should be less than 8192 PiB.");
+
+        while *memory_in_bytes < size_in_bytes {
             // unwrap() is safe as wait() only returns an error if the mutex is poisoned.
             memory_in_bytes = self.wait_for_ingested_memory.wait(memory_in_bytes).unwrap();
         }
 
-        *memory_in_bytes -= size_in_bytes as isize;
+        *memory_in_bytes -= size_in_bytes;
     }
 
     /// Change the amount of memory available for uncompressed data by `size_in_bytes`.
-    pub(super) fn adjust_uncompressed_memory(&self, size_in_bytes: isize) {
+    pub(super) fn adjust_uncompressed_memory(&self, size_in_bytes: i64) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() += size_in_bytes;
         self.wait_for_uncompressed_memory.notify_all();
@@ -114,7 +117,7 @@ impl MemoryPool {
 
     /// Return the amount of memory available for uncompressed data in bytes.
     #[must_use]
-    pub(super) fn remaining_uncompressed_memory_in_bytes(&self) -> isize {
+    pub(super) fn remaining_uncompressed_memory_in_bytes(&self) -> i64 {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_uncompressed_memory_in_bytes.lock().unwrap()
     }
@@ -125,13 +128,16 @@ impl MemoryPool {
     #[must_use]
     pub(super) fn wait_for_uncompressed_memory_until<F: Fn() -> bool>(
         &self,
-        size_in_bytes: usize,
+        size_in_bytes: u64,
         stop_if: F,
     ) -> bool {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut memory_in_bytes = self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
 
-        while *memory_in_bytes < size_in_bytes as isize {
+        let size_in_bytes = size_in_bytes.try_into()
+            .expect("size_in_bytes should be less than 8192 PiB.");
+
+        while *memory_in_bytes < size_in_bytes {
             // There is still not enough memory available, but it is no longer sensible to wait.
             if stop_if() {
                 return false;
@@ -144,19 +150,19 @@ impl MemoryPool {
                 .unwrap();
         }
 
-        *memory_in_bytes -= size_in_bytes as isize;
+        *memory_in_bytes -= size_in_bytes;
         true
     }
 
     /// Change the amount of memory available for storing compressed data by `size_in_bytes`.
-    pub(super) fn adjust_compressed_memory(&self, size_in_bytes: isize) {
+    pub(super) fn adjust_compressed_memory(&self, size_in_bytes: i64) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_compressed_memory_in_bytes.lock().unwrap() += size_in_bytes;
     }
 
     /// Return the amount of memory available for storing compressed data in bytes.
     #[must_use]
-    pub(super) fn remaining_compressed_memory_in_bytes(&self) -> isize {
+    pub(super) fn remaining_compressed_memory_in_bytes(&self) -> i64 {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_compressed_memory_in_bytes.lock().unwrap()
     }
@@ -164,12 +170,13 @@ impl MemoryPool {
     /// Try to reserve `size_in_bytes` bytes of memory for storing compressed data. Returns [`true`]
     /// if the reservation succeeds and [`false`] otherwise.
     #[must_use]
-    pub(super) fn try_reserve_compressed_memory(&self, size_in_bytes: usize) -> bool {
+    pub(super) fn try_reserve_compressed_memory(&self, size_in_bytes: u64) -> bool {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut remaining_compressed_memory_in_bytes =
             self.remaining_compressed_memory_in_bytes.lock().unwrap();
 
-        let size_in_bytes = size_in_bytes as isize;
+        let size_in_bytes: i64 = size_in_bytes.try_into()
+            .expect("size_in_bytes should be less than 8192 PiB.");
 
         if size_in_bytes <= *remaining_compressed_memory_in_bytes {
             *remaining_compressed_memory_in_bytes -= size_in_bytes;
@@ -266,14 +273,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            INGESTED_RESERVED_MEMORY_IN_BYTES as isize
+            INGESTED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
-        memory_pool.adjust_ingested_memory(COMPRESSED_SEGMENTS_SIZE as isize);
+        memory_pool.adjust_ingested_memory(COMPRESSED_SEGMENTS_SIZE as i64);
 
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            (INGESTED_RESERVED_MEMORY_IN_BYTES + COMPRESSED_SEGMENTS_SIZE) as isize
+            (INGESTED_RESERVED_MEMORY_IN_BYTES + COMPRESSED_SEGMENTS_SIZE) as i64
         );
     }
 
@@ -282,14 +289,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            INGESTED_RESERVED_MEMORY_IN_BYTES as isize
+            INGESTED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
-        memory_pool.adjust_ingested_memory(-(COMPRESSED_SEGMENTS_SIZE as isize));
+        memory_pool.adjust_ingested_memory(-(COMPRESSED_SEGMENTS_SIZE as i64));
 
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            (INGESTED_RESERVED_MEMORY_IN_BYTES - COMPRESSED_SEGMENTS_SIZE) as isize
+            (INGESTED_RESERVED_MEMORY_IN_BYTES - COMPRESSED_SEGMENTS_SIZE) as i64
         );
     }
 
@@ -298,14 +305,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            INGESTED_RESERVED_MEMORY_IN_BYTES as isize
+            INGESTED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
-        memory_pool.adjust_ingested_memory(-2 * INGESTED_RESERVED_MEMORY_IN_BYTES as isize);
+        memory_pool.adjust_ingested_memory(-2 * INGESTED_RESERVED_MEMORY_IN_BYTES as i64);
 
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            -(INGESTED_RESERVED_MEMORY_IN_BYTES as isize)
+            -(INGESTED_RESERVED_MEMORY_IN_BYTES as i64)
         );
     }
 
@@ -314,7 +321,7 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            INGESTED_RESERVED_MEMORY_IN_BYTES as isize
+            INGESTED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
         // Blocks if memory cannot be reserved, thus forcing the test to never succeed.
@@ -328,14 +335,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
-        memory_pool.adjust_uncompressed_memory(COMPRESSED_SEGMENTS_SIZE as isize);
+        memory_pool.adjust_uncompressed_memory(COMPRESSED_SEGMENTS_SIZE as i64);
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            (UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + COMPRESSED_SEGMENTS_SIZE) as isize
+            (UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + COMPRESSED_SEGMENTS_SIZE) as i64
         );
     }
 
@@ -344,14 +351,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
-        memory_pool.adjust_uncompressed_memory(-(COMPRESSED_SEGMENTS_SIZE as isize));
+        memory_pool.adjust_uncompressed_memory(-(COMPRESSED_SEGMENTS_SIZE as i64));
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            (UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES - COMPRESSED_SEGMENTS_SIZE) as isize
+            (UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES - COMPRESSED_SEGMENTS_SIZE) as i64
         );
     }
 
@@ -360,14 +367,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
-        memory_pool.adjust_uncompressed_memory(-2 * UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize);
+        memory_pool.adjust_uncompressed_memory(-2 * UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as i64);
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            -(UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
+            -(UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as i64)
         );
     }
 
@@ -376,7 +383,7 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
         assert!(
@@ -394,7 +401,7 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
         assert!(
@@ -410,7 +417,7 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
         assert!(
@@ -422,7 +429,7 @@ mod tests {
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
     }
 
@@ -431,14 +438,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
-        memory_pool.adjust_compressed_memory(COMPRESSED_SEGMENTS_SIZE as isize);
+        memory_pool.adjust_compressed_memory(COMPRESSED_SEGMENTS_SIZE as i64);
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            (COMPRESSED_RESERVED_MEMORY_IN_BYTES + COMPRESSED_SEGMENTS_SIZE) as isize
+            (COMPRESSED_RESERVED_MEMORY_IN_BYTES + COMPRESSED_SEGMENTS_SIZE) as i64
         );
     }
 
@@ -447,14 +454,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
-        memory_pool.adjust_compressed_memory(-(COMPRESSED_SEGMENTS_SIZE as isize));
+        memory_pool.adjust_compressed_memory(-(COMPRESSED_SEGMENTS_SIZE as i64));
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            (COMPRESSED_RESERVED_MEMORY_IN_BYTES - COMPRESSED_SEGMENTS_SIZE) as isize
+            (COMPRESSED_RESERVED_MEMORY_IN_BYTES - COMPRESSED_SEGMENTS_SIZE) as i64
         );
     }
 
@@ -463,14 +470,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
-        memory_pool.adjust_compressed_memory(-2 * COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize);
+        memory_pool.adjust_compressed_memory(-2 * COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64);
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            -(COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
+            -(COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64)
         );
     }
 
@@ -479,7 +486,7 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
         assert!(memory_pool.try_reserve_compressed_memory(COMPRESSED_RESERVED_MEMORY_IN_BYTES));
@@ -492,7 +499,7 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
 
         assert!(
@@ -501,7 +508,7 @@ mod tests {
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64
         );
     }
 

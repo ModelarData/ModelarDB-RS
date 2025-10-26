@@ -25,16 +25,16 @@ pub const INGESTED_BUFFER_SIZE: usize = 1438392;
 pub const UNCOMPRESSED_BUFFER_SIZE: usize = 1048576;
 
 /// Expected size of the compressed segments produced in the tests.
-pub const COMPRESSED_SEGMENTS_SIZE: usize = 1565;
+pub const COMPRESSED_SEGMENTS_SIZE: u64 = 1565;
 
 /// Number of bytes reserved for ingested data in tests.
-pub const INGESTED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+pub const INGESTED_RESERVED_MEMORY_IN_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB
 
 /// Number of bytes reserved for uncompressed data in tests.
-pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB
 
 /// Number of bytes reserved for compressed data in tests.
-pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB
 
 /// Named error bound with the value 0.0 to make tests more readable.
 pub const ERROR_BOUND_ZERO: f32 = 0.0;

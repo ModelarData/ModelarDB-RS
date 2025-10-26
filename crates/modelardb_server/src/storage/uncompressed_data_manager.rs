@@ -203,7 +203,7 @@ impl UncompressedDataManager {
 
         // Return the memory used by the data points to the pool right before they are de-allocated.
         self.memory_pool
-            .adjust_ingested_memory(data_points.get_array_memory_size() as isize);
+            .adjust_ingested_memory(data_points.get_array_memory_size() as i64);
 
         // Print a single warning if any buffers are spilled so ingestion can be optimized.
         if buffers_are_spilled {
@@ -358,7 +358,7 @@ impl UncompressedDataManager {
         // It is not guaranteed that compressing the data buffers in the channel releases any memory
         // as all the data buffers that are waiting to be compressed may all be stored on disk.
         if self.memory_pool.wait_for_uncompressed_memory_until(
-            uncompressed_data_buffer::compute_memory_size(number_of_fields),
+            uncompressed_data_buffer::compute_memory_size(number_of_fields) as u64,
             || self.channels.uncompressed_data_sender.is_empty(),
         ) {
             Ok(false)
@@ -410,7 +410,7 @@ impl UncompressedDataManager {
         // Add the size of the in-memory data buffer back to the remaining reserved bytes.
         let freed_memory = uncompressed_in_memory_data_buffer.memory_size();
         self.memory_pool
-            .adjust_uncompressed_memory(freed_memory as isize);
+            .adjust_uncompressed_memory(freed_memory as i64);
 
         debug!(
             "Spilled in-memory buffer. Remaining reserved bytes: {}.",
@@ -608,7 +608,7 @@ impl UncompressedDataManager {
 
         // Add the size of the uncompressed buffer back to the remaining reserved bytes.
         self.memory_pool
-            .adjust_uncompressed_memory(memory_use as isize);
+            .adjust_uncompressed_memory(memory_use as i64);
 
         Ok(())
     }
@@ -619,7 +619,7 @@ impl UncompressedDataManager {
     /// be spilled.
     pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(
         &self,
-        value_change: isize,
+        value_change: i64,
     ) -> Result<()> {
         self.memory_pool.adjust_uncompressed_memory(value_change);
 
@@ -796,7 +796,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_ingested_memory_in_bytes(),
-            ingested_memory_before + (data_size as isize)
+            ingested_memory_before + (data_size as i64)
         );
     }
 
@@ -1046,7 +1046,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_uncompressed_memory_in_bytes()
-                < (uncompressed_data_buffer::compute_memory_size(number_of_fields) as isize)
+                < (uncompressed_data_buffer::compute_memory_size(number_of_fields) as i64)
         );
 
         // If there is enough memory to hold n full buffers, n + 1 are needed to spill a buffer.
@@ -1194,7 +1194,7 @@ mod tests {
         assert_eq!(
             data_manager
                 .memory_pool
-                .remaining_uncompressed_memory_in_bytes() as usize,
+                .remaining_uncompressed_memory_in_bytes() as u64,
             UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
         )
     }

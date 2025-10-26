@@ -261,7 +261,7 @@ impl StorageEngine {
     ) -> Result<()> {
         // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
         self.memory_pool
-            .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size());
+            .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size() as u64);
 
         self.channels
             .ingested_data_sender
@@ -312,7 +312,7 @@ impl StorageEngine {
     }
 
     /// Change the amount of memory for multivariate data in bytes according to `value_change`.
-    pub(super) async fn adjust_multivariate_remaining_memory_in_bytes(&self, value_change: isize) {
+    pub(super) async fn adjust_multivariate_remaining_memory_in_bytes(&self, value_change: i64) {
         self.memory_pool.adjust_ingested_memory(value_change)
     }
 
@@ -321,7 +321,7 @@ impl StorageEngine {
     /// spilled.
     pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(
         &self,
-        value_change: isize,
+        value_change: i64,
     ) -> Result<()> {
         self.uncompressed_data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
@@ -332,7 +332,7 @@ impl StorageEngine {
     /// value is changed successfully return [`Ok`], otherwise return [`ModelarDbServerError`].
     pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
         &self,
-        value_change: isize,
+        value_change: i64,
     ) -> Result<()> {
         self.compressed_data_manager
             .adjust_compressed_remaining_memory_in_bytes(value_change)

@@ -187,10 +187,10 @@ impl CompressedDataManager {
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until at least `size_in_bytes`
     /// bytes of memory is available. If all the data is saved successfully, return [`Ok`],
     /// otherwise return [`ModelarDbServerError`](crate::error::ModelarDbServerError).
-    async fn save_compressed_data_to_free_memory(&self, size_in_bytes: usize) -> Result<()> {
+    async fn save_compressed_data_to_free_memory(&self, size_in_bytes: u64) -> Result<()> {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
-        while self.memory_pool.remaining_compressed_memory_in_bytes() < size_in_bytes as isize {
+        while self.memory_pool.remaining_compressed_memory_in_bytes() < size_in_bytes as i64 {
             let table_name = self
                 .compressed_queue
                 .pop()
@@ -261,7 +261,7 @@ impl CompressedDataManager {
 
         // Update the remaining memory for compressed data.
         self.memory_pool
-            .adjust_compressed_memory(compressed_data_buffer_size_in_bytes as isize);
+            .adjust_compressed_memory(compressed_data_buffer_size_in_bytes as i64);
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
@@ -278,7 +278,7 @@ impl CompressedDataManager {
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
         &self,
-        value_change: isize,
+        value_change: i64,
     ) -> Result<()> {
         self.memory_pool.adjust_compressed_memory(value_change);
         self.save_compressed_data_to_free_memory(0).await?;
@@ -405,7 +405,7 @@ mod tests {
             .time_series_table_metadata
             .field_column_indices
             .len()
-            * COMPRESSED_SEGMENTS_SIZE;
+            * COMPRESSED_SEGMENTS_SIZE as usize;
         let max_compressed_segments = reserved_memory / compressed_buffer_size;
         for _ in 0..max_compressed_segments + 1 {
             data_manager
@@ -494,7 +494,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_compressed_memory_in_bytes(),
-            COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize + 10000
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64 + 10000
         )
     }
 
@@ -517,7 +517,7 @@ mod tests {
 
         data_manager
             .adjust_compressed_remaining_memory_in_bytes(
-                -(COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
+                -(COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64),
             )
             .await
             .unwrap();
@@ -540,7 +540,7 @@ mod tests {
 
         data_manager
             .adjust_compressed_remaining_memory_in_bytes(
-                -((COMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
+                -((COMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as i64),
             )
             .await
             .unwrap();

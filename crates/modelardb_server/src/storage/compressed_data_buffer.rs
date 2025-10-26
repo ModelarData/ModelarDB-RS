@@ -58,7 +58,7 @@ pub(super) struct CompressedDataBuffer {
     /// Compressed segments that make up the compressed data in the [`CompressedDataBuffer`].
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
-    pub(super) size_in_bytes: usize,
+    pub(super) size_in_bytes: u64,
 }
 
 impl CompressedDataBuffer {
@@ -76,7 +76,7 @@ impl CompressedDataBuffer {
     pub(super) fn append_compressed_segments(
         &mut self,
         mut compressed_segments: Vec<RecordBatch>,
-    ) -> Result<usize> {
+    ) -> Result<u64> {
         if compressed_segments.iter().any(|compressed_segments| {
             compressed_segments.schema() != self.time_series_table_metadata.compressed_schema
         }) {
@@ -103,8 +103,8 @@ impl CompressedDataBuffer {
     }
 
     /// Return the size in bytes of `compressed_segments`.
-    fn size_of_compressed_segments(compressed_segments: &RecordBatch) -> usize {
-        let mut total_size: usize = 0;
+    fn size_of_compressed_segments(compressed_segments: &RecordBatch) -> u64 {
+        let mut total_size: u64 = 0;
 
         // Compute the total number of bytes of memory used by the columns.
         for column in compressed_segments.columns() {
@@ -112,7 +112,7 @@ impl CompressedDataBuffer {
             // is both the size of the types, e.g., Array, ArrayData, Buffer, and Bitmap, and the
             // column's values in Apache Arrow format as buffers and the null bitmap if it exists.
             // Apache Arrow Columnar Format: https://arrow.apache.org/docs/format/Columnar.html.
-            total_size += column.get_array_memory_size()
+            total_size += column.get_array_memory_size() as u64
         }
 
         total_size
