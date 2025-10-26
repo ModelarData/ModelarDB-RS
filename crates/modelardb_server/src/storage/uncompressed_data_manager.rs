@@ -96,12 +96,12 @@ impl UncompressedDataManager {
 
             let table_name = path_parts
                 .get(1)
-                .expect("The spilled buffers should be partitioned by the table name.")
+                .expect("The spilled buffers should be partitioned by their table name.")
                 .as_ref();
 
             let tag_hash = path_parts
                 .get(2)
-                .expect("The spilled buffers should be partitioned by the tag hash.")
+                .expect("The spilled buffers should be partitioned by their tag hash.")
                 .as_ref()
                 .parse::<u64>()
                 .unwrap();
