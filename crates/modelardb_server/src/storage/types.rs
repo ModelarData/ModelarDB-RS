@@ -60,26 +60,33 @@ impl MemoryPool {
         uncompressed_memory_in_bytes: usize,
         compressed_memory_in_bytes: usize,
     ) -> Self {
-        // unwrap() is safe as i64::MAX is 8192 PiB and the value is from ConfigurationManager.
         Self {
             wait_for_ingested_memory: Condvar::new(),
             remaining_ingested_memory_in_bytes: Mutex::new(
-                ingested_memory_in_bytes.try_into().unwrap(),
+                ingested_memory_in_bytes
+                    .try_into()
+                    .expect("ingested_memory_in_bytes should be less than 8192 PiB."),
             ),
             wait_for_uncompressed_memory: Condvar::new(),
             remaining_uncompressed_memory_in_bytes: Mutex::new(
-                uncompressed_memory_in_bytes.try_into().unwrap(),
+                uncompressed_memory_in_bytes
+                    .try_into()
+                    .expect("uncompressed_memory_in_bytes should be less than 8192 PiB."),
             ),
             remaining_compressed_memory_in_bytes: Mutex::new(
-                compressed_memory_in_bytes.try_into().unwrap(),
+                compressed_memory_in_bytes
+                    .try_into()
+                    .expect("compressed_memory_in_bytes should be less than 8192 PiB."),
             ),
         }
     }
 
     /// Change the amount of memory available for ingested data by `size_in_bytes`.
     pub(super) fn adjust_ingested_memory(&self, size_in_bytes: isize) {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_ingested_memory_in_bytes.lock().unwrap() += size_in_bytes;
+        *self
+            .remaining_ingested_memory_in_bytes
+            .lock()
+            .expect("Mutex should not be poisoned.") += size_in_bytes;
         self.wait_for_ingested_memory.notify_all();
     }
 
@@ -87,19 +94,25 @@ impl MemoryPool {
     #[cfg(test)]
     #[must_use]
     pub(super) fn remaining_ingested_memory_in_bytes(&self) -> isize {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_ingested_memory_in_bytes.lock().unwrap()
+        *self
+            .remaining_ingested_memory_in_bytes
+            .lock()
+            .expect("Mutex should not be poisoned.")
     }
 
     /// Wait until `size_in_bytes` bytes of memory is available for ingested data and then reserve
     /// it.
     pub(super) fn wait_for_ingested_memory(&self, size_in_bytes: usize) {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        let mut memory_in_bytes = self.remaining_ingested_memory_in_bytes.lock().unwrap();
+        let mut memory_in_bytes = self
+            .remaining_ingested_memory_in_bytes
+            .lock()
+            .expect("Mutex should not be poisoned.");
 
         while *memory_in_bytes < size_in_bytes as isize {
-            // unwrap() is safe as wait() only returns an error if the mutex is poisoned.
-            memory_in_bytes = self.wait_for_ingested_memory.wait(memory_in_bytes).unwrap();
+            memory_in_bytes = self
+                .wait_for_ingested_memory
+                .wait(memory_in_bytes)
+                .expect("Mutex should not be poisoned.");
         }
 
         *memory_in_bytes -= size_in_bytes as isize;
@@ -107,16 +120,20 @@ impl MemoryPool {
 
     /// Change the amount of memory available for uncompressed data by `size_in_bytes`.
     pub(super) fn adjust_uncompressed_memory(&self, size_in_bytes: isize) {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() += size_in_bytes;
+        *self
+            .remaining_uncompressed_memory_in_bytes
+            .lock()
+            .expect("Mutex should not be poisoned.") += size_in_bytes;
         self.wait_for_uncompressed_memory.notify_all();
     }
 
     /// Return the amount of memory available for uncompressed data in bytes.
     #[must_use]
     pub(super) fn remaining_uncompressed_memory_in_bytes(&self) -> isize {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.lock().unwrap()
+        *self
+            .remaining_uncompressed_memory_in_bytes
+            .lock()
+            .expect("Mutex should not be poisoned.")
     }
 
     /// Wait until `size_in_bytes` bytes of memory is available for uncompressed data or `stop_if`
@@ -128,8 +145,10 @@ impl MemoryPool {
         size_in_bytes: usize,
         stop_if: F,
     ) -> bool {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        let mut memory_in_bytes = self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
+        let mut memory_in_bytes = self
+            .remaining_uncompressed_memory_in_bytes
+            .lock()
+            .expect("Mutex should not be poisoned.");
 
         while *memory_in_bytes < size_in_bytes as isize {
             // There is still not enough memory available, but it is no longer sensible to wait.
@@ -137,11 +156,10 @@ impl MemoryPool {
                 return false;
             }
 
-            // unwrap() is safe as wait() only returns an error if the mutex is poisoned.
             memory_in_bytes = self
                 .wait_for_uncompressed_memory
                 .wait(memory_in_bytes)
-                .unwrap();
+                .expect("Mutex should not be poisoned.");
         }
 
         *memory_in_bytes -= size_in_bytes as isize;
@@ -150,24 +168,29 @@ impl MemoryPool {
 
     /// Change the amount of memory available for storing compressed data by `size_in_bytes`.
     pub(super) fn adjust_compressed_memory(&self, size_in_bytes: isize) {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_compressed_memory_in_bytes.lock().unwrap() += size_in_bytes;
+        *self
+            .remaining_compressed_memory_in_bytes
+            .lock()
+            .expect("Mutex should not be poisoned.") += size_in_bytes;
     }
 
     /// Return the amount of memory available for storing compressed data in bytes.
     #[must_use]
     pub(super) fn remaining_compressed_memory_in_bytes(&self) -> isize {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_compressed_memory_in_bytes.lock().unwrap()
+        *self
+            .remaining_compressed_memory_in_bytes
+            .lock()
+            .expect("Mutex should not be poisoned.")
     }
 
     /// Try to reserve `size_in_bytes` bytes of memory for storing compressed data. Returns [`true`]
     /// if the reservation succeeds and [`false`] otherwise.
     #[must_use]
     pub(super) fn try_reserve_compressed_memory(&self, size_in_bytes: usize) -> bool {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        let mut remaining_compressed_memory_in_bytes =
-            self.remaining_compressed_memory_in_bytes.lock().unwrap();
+        let mut remaining_compressed_memory_in_bytes = self
+            .remaining_compressed_memory_in_bytes
+            .lock()
+            .expect("Mutex should not be poisoned.");
 
         let size_in_bytes = size_in_bytes as isize;
 
