@@ -52,14 +52,22 @@ async fn main() -> Result<()> {
         print_usage_and_exit_with_error();
     }
 
-    // unwrap() is safe as the path of the binary is dropped.
-    args.next().unwrap();
+    // Drop the path of the binary.
+    args.next()
+        .expect("args should contain at least five arguments.");
 
-    // unwrap() on args.next() is safe as args contains at least five elements.
-    let operation = args.next().unwrap();
-    let input_path = args.next().unwrap();
-    let output_path = args.next().unwrap();
-    let table_name = args.next().unwrap();
+    let operation = args
+        .next()
+        .expect("args should contain at least five arguments.");
+    let input_path = args
+        .next()
+        .expect("args should contain at least five arguments.");
+    let output_path = args
+        .next()
+        .expect("args should contain at least five arguments.");
+    let table_name = args
+        .next()
+        .expect("args should contain at least five arguments.");
 
     // Collect arguments for flags.
     let mut pre_sql: Vec<String> = vec![];
@@ -311,8 +319,10 @@ async fn table_partitioning_cols(
             for part in object_meta.location.parts() {
                 let part_str = part.as_ref();
                 if part_str.contains("=") && !part_str.ends_with(".parquet") {
-                    // unwrap() is safe as the string contains an equal sign.
-                    let (column_name, _column_value) = part_str.split_once("=").unwrap();
+                    let (column_name, _column_value) = part_str
+                        .split_once("=")
+                        .expect("part_str should contain an equal sign.");
+
                     table_partition_cols.push((column_name.to_owned(), DataType::Utf8));
                 }
             }
