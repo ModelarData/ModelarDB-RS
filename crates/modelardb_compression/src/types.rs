@@ -86,11 +86,10 @@ impl ModelBuilder {
             (SWING_ID, self.swing.bytes_per_value()),
         ];
 
-        // unwrap() cannot fail as the array is not empty and there are no NaN values.
         let model_type_id = bytes_per_value
             .iter()
             .min_by(|x, y| f32::partial_cmp(&x.1, &y.1).unwrap())
-            .unwrap()
+            .expect("bytes_per_value should not be empty and should not contain NaN values.")
             .0;
 
         match model_type_id {
@@ -308,11 +307,14 @@ impl CompressedSegmentBuilder {
         max_value: Value,
         values: &[u8],
     ) -> Value {
-        // unwrap() is safe as values are encoded by update_values_for_pmc_mean().
         match values.len() {
             0 => min_value,
             1 => max_value,
-            _ => Value::from_le_bytes(values.try_into().unwrap()),
+            _ => Value::from_le_bytes(
+                values
+                    .try_into()
+                    .expect("Values should be encoded by encode_values_for_pmc_mean()."),
+            ),
         }
     }
 
@@ -366,18 +368,21 @@ impl CompressedSegmentBuilder {
     }
 
     /// Decode the first and last value stored for a model of type [`Swing`]. For information about
-    /// how the parameters for Swing are encoded, see [`Self::update_values_for_swing`].
+    /// how the parameters for Swing are encoded, see [`Self::encode_values_for_swing`].
     pub(crate) fn decode_values_for_swing(
         min_value: Value,
         max_value: Value,
         values: &[u8],
     ) -> (Value, Value) {
-        // unwrap() is safe as values are encoded by select_swing() and update_values_for_swing().
         match values.len() {
             0 => (min_value, max_value),
             1 => (max_value, min_value),
             5 => {
-                let value = Value::from_le_bytes(values[1..].try_into().unwrap());
+                let value = Value::from_le_bytes(
+                    values[1..]
+                        .try_into()
+                        .expect("Values should be encoded by encode_values_for_swing()."),
+                );
                 match values[0] {
                     0 => (value, max_value),
                     1 => (max_value, value),
@@ -389,8 +394,16 @@ impl CompressedSegmentBuilder {
             8 => {
                 let value_size = VALUE_SIZE_IN_BYTES as usize;
                 (
-                    Value::from_le_bytes(values[0..value_size].try_into().unwrap()),
-                    Value::from_le_bytes(values[value_size..2 * value_size].try_into().unwrap()),
+                    Value::from_le_bytes(
+                        values[0..value_size]
+                            .try_into()
+                            .expect("Values should be encoded by encode_values_for_swing()."),
+                    ),
+                    Value::from_le_bytes(
+                        values[value_size..2 * value_size]
+                            .try_into()
+                            .expect("Values should be encoded by encode_values_for_swing()."),
+                    ),
                 )
             }
             _ => panic!("Unknown encoding of swing."),
