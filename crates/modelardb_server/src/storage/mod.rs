@@ -303,10 +303,11 @@ impl StorageEngine {
         // Wait until all the data in the storage engine has been flushed.
         self.channels.result_receiver.recv()??;
 
-        // unwrap() is safe as join() only returns an error if the thread panicked.
         self.join_handles
             .drain(..)
-            .for_each(|join_handle: JoinHandle<()>| join_handle.join().unwrap());
+            .for_each(|join_handle: JoinHandle<()>| {
+                join_handle.join().expect("Thread should not panic.")
+            });
 
         Ok(())
     }

@@ -352,11 +352,12 @@ fn error_bounds_array_to_error_bounds(
         let column_name = column_names.value(index);
         let error_bound_value = error_bounds_values.value(index);
 
-        // unwrap() is safe because the error bound values are finite [`f32`]s.
         let error_bound = if error_bound_value < 0.0 {
-            ErrorBound::try_new_relative(-error_bound_value).unwrap()
+            ErrorBound::try_new_relative(-error_bound_value)
+                .expect("error_bound_value should be a finite 32-bit floating point number.")
         } else {
-            ErrorBound::try_new_absolute(error_bound_value).unwrap()
+            ErrorBound::try_new_absolute(error_bound_value)
+                .expect("error_bound_value should be a finite 32-bit floating point number.")
         };
         error_bounds.insert(column_name.to_owned(), error_bound);
     }
@@ -1002,8 +1003,10 @@ pub unsafe extern "C" fn modelardb_embedded_error() -> *const c_char {
             THREAD_LAST_ERROR_CSTRING.set(Some(error_cstring));
 
             THREAD_LAST_ERROR_CSTRING.with_borrow(|maybe_error_cstring| {
-                // unwrap() is safe as THREAD_LAST_ERROR_CSTRING has just been set above.
-                maybe_error_cstring.as_ref().unwrap().as_ptr()
+                maybe_error_cstring
+                    .as_ref()
+                    .expect("THREAD_LAST_ERROR_CSTRING should be set.")
+                    .as_ptr()
             })
         }
         None => ptr::null(),

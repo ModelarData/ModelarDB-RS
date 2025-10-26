@@ -236,9 +236,10 @@ impl CompressedDataManager {
     async fn save_compressed_data(&self, table_name: &str) -> Result<()> {
         debug!("Saving compressed segments to disk for {table_name}.");
 
-        // unwrap() is safe as table_name is read from compressed_queue.
-        let (_table_name, compressed_data_buffer) =
-            self.compressed_data_buffers.remove(table_name).unwrap();
+        let (_table_name, compressed_data_buffer) = self
+            .compressed_data_buffers
+            .remove(table_name)
+            .expect("table_name should be read from compressed_queue.");
 
         // Disk space use is over approximated as Apache Parquet applies lossless compression. The
         // actual size is not computed as DeltaTable seems to have no support for listing the files

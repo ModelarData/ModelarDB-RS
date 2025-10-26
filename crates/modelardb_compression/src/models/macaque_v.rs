@@ -276,8 +276,9 @@ pub fn grid(
     maybe_model_last_value: Option<Value>,
 ) {
     // Changes to the decompression must be mirrored in macaque_v::sum().
-    // unwrap() is safe as values is from a segment and thus cannot be empty.
-    let mut bits = BitReader::try_new(values).unwrap();
+    let mut bits = BitReader::try_new(values)
+        .expect("values should not be empty since it is from a segment.");
+
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;
 
