@@ -112,7 +112,7 @@ impl CompressedDataBuffer {
             // is both the size of the types, e.g., Array, ArrayData, Buffer, and Bitmap, and the
             // column's values in Apache Arrow format as buffers and the null bitmap if it exists.
             // Apache Arrow Columnar Format: https://arrow.apache.org/docs/format/Columnar.html.
-            total_size += column.get_array_memory_size() as u64
+            total_size += column.get_array_memory_size() as u64;
         }
 
         total_size
