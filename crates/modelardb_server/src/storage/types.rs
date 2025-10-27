@@ -97,7 +97,8 @@ impl MemoryPool {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut memory_in_bytes = self.remaining_ingested_memory_in_bytes.lock().unwrap();
 
-        let size_in_bytes = size_in_bytes.try_into()
+        let size_in_bytes = size_in_bytes
+            .try_into()
             .expect("size_in_bytes should be less than 8192 PiB.");
 
         while *memory_in_bytes < size_in_bytes {
@@ -134,7 +135,8 @@ impl MemoryPool {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut memory_in_bytes = self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
 
-        let size_in_bytes = size_in_bytes.try_into()
+        let size_in_bytes = size_in_bytes
+            .try_into()
             .expect("size_in_bytes should be less than 8192 PiB.");
 
         while *memory_in_bytes < size_in_bytes {
@@ -175,7 +177,8 @@ impl MemoryPool {
         let mut remaining_compressed_memory_in_bytes =
             self.remaining_compressed_memory_in_bytes.lock().unwrap();
 
-        let size_in_bytes: i64 = size_in_bytes.try_into()
+        let size_in_bytes: i64 = size_in_bytes
+            .try_into()
             .expect("size_in_bytes should be less than 8192 PiB.");
 
         if size_in_bytes <= *remaining_compressed_memory_in_bytes {
