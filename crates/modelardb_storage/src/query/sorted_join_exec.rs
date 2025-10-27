@@ -40,6 +40,10 @@ use datafusion::physical_plan::{
 };
 use futures::stream::{Stream, StreamExt};
 
+/// Message given when trying to operate on data before it is read from the inputs.
+const EXPECT_INPUT_READ: &str =
+    "A record batch should be read from each input before this method is called.";
+
 /// The different types of columns supported by [`SortedJoinExec`], used for specifying the order in
 /// which the timestamp, field, and tag columns should be returned by [`SortedJoinStream`].
 #[derive(Debug, Clone)]
@@ -255,7 +259,7 @@ impl SortedJoinStream {
     fn set_batch_num_rows_to_smallest(&mut self) {
         let first_batch_num_rows = self.batches[0]
             .as_ref()
-            .expect("A record batch should be read from each input before this method is called.")
+            .expect(EXPECT_INPUT_READ)
             .num_rows();
 
         let mut all_same_num_rows = true;
@@ -281,9 +285,7 @@ impl SortedJoinStream {
     fn sorted_join(&self) -> Poll<Option<DataFusionResult<RecordBatch>>> {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
-        let batch = self.batches[0]
-            .as_ref()
-            .expect("A record batch should be read from each input before this method is called.");
+        let batch = self.batches[0].as_ref().expect(EXPECT_INPUT_READ);
 
         // The batches are already in the correct order, so they can be appended.
         let mut field_index = 0;
@@ -292,9 +294,7 @@ impl SortedJoinStream {
             match element {
                 SortedJoinColumnType::Timestamp => columns.push(batch.column(0).clone()),
                 SortedJoinColumnType::Field => {
-                    let batch = self.batches[field_index]
-                        .as_ref()
-                        .expect("A record batch should be read from each input before this method is called.");
+                    let batch = self.batches[field_index].as_ref().expect(EXPECT_INPUT_READ);
 
                     columns.push(batch.column(1).clone());
                     field_index += 1;

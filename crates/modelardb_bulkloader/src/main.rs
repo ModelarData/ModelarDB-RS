@@ -53,21 +53,13 @@ async fn main() -> Result<()> {
     }
 
     // Drop the path of the binary.
-    args.next()
-        .expect("args should contain at least five arguments.");
+    let expect_five_args = "args should contain at least five arguments.";
+    args.next().expect(expect_five_args);
 
-    let operation = args
-        .next()
-        .expect("args should contain at least five arguments.");
-    let input_path = args
-        .next()
-        .expect("args should contain at least five arguments.");
-    let output_path = args
-        .next()
-        .expect("args should contain at least five arguments.");
-    let table_name = args
-        .next()
-        .expect("args should contain at least five arguments.");
+    let operation = args.next().expect(expect_five_args);
+    let input_path = args.next().expect(expect_five_args);
+    let output_path = args.next().expect(expect_five_args);
+    let table_name = args.next().expect(expect_five_args);
 
     // Collect arguments for flags.
     let mut pre_sql: Vec<String> = vec![];

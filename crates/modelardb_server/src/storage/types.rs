@@ -24,6 +24,9 @@ use crate::error::Result;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::uncompressed_data_buffer::{IngestedDataBuffer, UncompressedDataBuffer};
 
+/// Message given when failing to acquire a mutex or wait on a mutex.
+const EXPECT_MUTEX_NOT_POISONED: &str = "Mutex should not be poisoned.";
+
 /// Resizeable pool of memory for tracking and limiting the amount of memory used by the
 /// [`StorageEngine`](crate::storage::StorageEngine). Signed integers are used to simplify updating
 /// the amount of available memory at runtime. By using signed integers for the amount of available
@@ -60,23 +63,25 @@ impl MemoryPool {
         uncompressed_memory_in_bytes: usize,
         compressed_memory_in_bytes: usize,
     ) -> Self {
+        let expect_less_than_i64_max = "Size in bytes should be less than 8192 PiB.";
+
         Self {
             wait_for_ingested_memory: Condvar::new(),
             remaining_ingested_memory_in_bytes: Mutex::new(
                 ingested_memory_in_bytes
                     .try_into()
-                    .expect("ingested_memory_in_bytes should be less than 8192 PiB."),
+                    .expect(expect_less_than_i64_max),
             ),
             wait_for_uncompressed_memory: Condvar::new(),
             remaining_uncompressed_memory_in_bytes: Mutex::new(
                 uncompressed_memory_in_bytes
                     .try_into()
-                    .expect("uncompressed_memory_in_bytes should be less than 8192 PiB."),
+                    .expect(expect_less_than_i64_max),
             ),
             remaining_compressed_memory_in_bytes: Mutex::new(
                 compressed_memory_in_bytes
                     .try_into()
-                    .expect("compressed_memory_in_bytes should be less than 8192 PiB."),
+                    .expect(expect_less_than_i64_max),
             ),
         }
     }
@@ -86,7 +91,7 @@ impl MemoryPool {
         *self
             .remaining_ingested_memory_in_bytes
             .lock()
-            .expect("Mutex should not be poisoned.") += size_in_bytes;
+            .expect(EXPECT_MUTEX_NOT_POISONED) += size_in_bytes;
         self.wait_for_ingested_memory.notify_all();
     }
 
@@ -97,7 +102,7 @@ impl MemoryPool {
         *self
             .remaining_ingested_memory_in_bytes
             .lock()
-            .expect("Mutex should not be poisoned.")
+            .expect(EXPECT_MUTEX_NOT_POISONED)
     }
 
     /// Wait until `size_in_bytes` bytes of memory is available for ingested data and then reserve
@@ -106,13 +111,13 @@ impl MemoryPool {
         let mut memory_in_bytes = self
             .remaining_ingested_memory_in_bytes
             .lock()
-            .expect("Mutex should not be poisoned.");
+            .expect(EXPECT_MUTEX_NOT_POISONED);
 
         while *memory_in_bytes < size_in_bytes as isize {
             memory_in_bytes = self
                 .wait_for_ingested_memory
                 .wait(memory_in_bytes)
-                .expect("Mutex should not be poisoned.");
+                .expect(EXPECT_MUTEX_NOT_POISONED);
         }
 
         *memory_in_bytes -= size_in_bytes as isize;
@@ -123,7 +128,7 @@ impl MemoryPool {
         *self
             .remaining_uncompressed_memory_in_bytes
             .lock()
-            .expect("Mutex should not be poisoned.") += size_in_bytes;
+            .expect(EXPECT_MUTEX_NOT_POISONED) += size_in_bytes;
         self.wait_for_uncompressed_memory.notify_all();
     }
 
@@ -133,7 +138,7 @@ impl MemoryPool {
         *self
             .remaining_uncompressed_memory_in_bytes
             .lock()
-            .expect("Mutex should not be poisoned.")
+            .expect(EXPECT_MUTEX_NOT_POISONED)
     }
 
     /// Wait until `size_in_bytes` bytes of memory is available for uncompressed data or `stop_if`
@@ -148,7 +153,7 @@ impl MemoryPool {
         let mut memory_in_bytes = self
             .remaining_uncompressed_memory_in_bytes
             .lock()
-            .expect("Mutex should not be poisoned.");
+            .expect(EXPECT_MUTEX_NOT_POISONED);
 
         while *memory_in_bytes < size_in_bytes as isize {
             // There is still not enough memory available, but it is no longer sensible to wait.
@@ -159,7 +164,7 @@ impl MemoryPool {
             memory_in_bytes = self
                 .wait_for_uncompressed_memory
                 .wait(memory_in_bytes)
-                .expect("Mutex should not be poisoned.");
+                .expect(EXPECT_MUTEX_NOT_POISONED);
         }
 
         *memory_in_bytes -= size_in_bytes as isize;
@@ -171,7 +176,7 @@ impl MemoryPool {
         *self
             .remaining_compressed_memory_in_bytes
             .lock()
-            .expect("Mutex should not be poisoned.") += size_in_bytes;
+            .expect(EXPECT_MUTEX_NOT_POISONED) += size_in_bytes;
     }
 
     /// Return the amount of memory available for storing compressed data in bytes.
@@ -180,7 +185,7 @@ impl MemoryPool {
         *self
             .remaining_compressed_memory_in_bytes
             .lock()
-            .expect("Mutex should not be poisoned.")
+            .expect(EXPECT_MUTEX_NOT_POISONED)
     }
 
     /// Try to reserve `size_in_bytes` bytes of memory for storing compressed data. Returns [`true`]
@@ -190,7 +195,7 @@ impl MemoryPool {
         let mut remaining_compressed_memory_in_bytes = self
             .remaining_compressed_memory_in_bytes
             .lock()
-            .expect("Mutex should not be poisoned.");
+            .expect(EXPECT_MUTEX_NOT_POISONED);
 
         let size_in_bytes = size_in_bytes as isize;
 

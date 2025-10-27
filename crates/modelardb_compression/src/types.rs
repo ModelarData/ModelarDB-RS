@@ -374,15 +374,13 @@ impl CompressedSegmentBuilder {
         max_value: Value,
         values: &[u8],
     ) -> (Value, Value) {
+        let expect_encoded = "Values should be encoded by encode_values_for_swing()";
+
         match values.len() {
             0 => (min_value, max_value),
             1 => (max_value, min_value),
             5 => {
-                let value = Value::from_le_bytes(
-                    values[1..]
-                        .try_into()
-                        .expect("Values should be encoded by encode_values_for_swing()."),
-                );
+                let value = Value::from_le_bytes(values[1..].try_into().expect(expect_encoded));
                 match values[0] {
                     0 => (value, max_value),
                     1 => (max_value, value),
@@ -394,15 +392,11 @@ impl CompressedSegmentBuilder {
             8 => {
                 let value_size = VALUE_SIZE_IN_BYTES as usize;
                 (
-                    Value::from_le_bytes(
-                        values[0..value_size]
-                            .try_into()
-                            .expect("Values should be encoded by encode_values_for_swing()."),
-                    ),
+                    Value::from_le_bytes(values[0..value_size].try_into().expect(expect_encoded)),
                     Value::from_le_bytes(
                         values[value_size..2 * value_size]
                             .try_into()
-                            .expect("Values should be encoded by encode_values_for_swing()."),
+                            .expect(expect_encoded),
                     ),
                 )
             }
