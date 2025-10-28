@@ -503,7 +503,7 @@ impl DataFolder {
             TableType::TimeSeriesTable => "time_series_table",
         };
 
-        let sql = format!("SELECT table_name FROM {table_type}_metadata");
+        let sql = format!("SELECT table_name FROM metadata.{table_type}_metadata");
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
         let table_names = modelardb_types::array!(batch, 0, StringArray);
@@ -960,7 +960,7 @@ impl DataFolder {
     /// Delta Lake. If the [`TimeSeriesTableMetadata`] cannot be retrieved,
     /// [`ModelarDbStorageError`] is returned.
     pub async fn time_series_table_metadata(&self) -> Result<Vec<Arc<TimeSeriesTableMetadata>>> {
-        let sql = "SELECT table_name, query_schema FROM time_series_table_metadata";
+        let sql = "SELECT table_name, query_schema FROM metadata.time_series_table_metadata";
         let batch = sql_and_concat(&self.session_context, sql).await?;
 
         let mut time_series_table_metadata: Vec<Arc<TimeSeriesTableMetadata>> = vec![];
@@ -992,7 +992,7 @@ impl DataFolder {
         table_name: &str,
     ) -> Result<TimeSeriesTableMetadata> {
         let sql = format!(
-            "SELECT table_name, query_schema FROM time_series_table_metadata WHERE table_name = '{table_name}'"
+            "SELECT table_name, query_schema FROM metadata.time_series_table_metadata WHERE table_name = '{table_name}'"
         );
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
@@ -1060,7 +1060,7 @@ impl DataFolder {
     ) -> Result<Vec<ErrorBound>> {
         let sql = format!(
             "SELECT column_index, error_bound_value, error_bound_is_relative
-             FROM time_series_table_field_columns
+             FROM metadata.time_series_table_field_columns
              WHERE table_name = '{table_name}'
              ORDER BY column_index"
         );
@@ -1100,7 +1100,7 @@ impl DataFolder {
     ) -> Result<Vec<Option<GeneratedColumn>>> {
         let sql = format!(
             "SELECT column_index, generated_column_expr
-             FROM time_series_table_field_columns
+             FROM metadata.time_series_table_field_columns
              WHERE table_name = '{table_name}'
              ORDER BY column_index"
         );
@@ -1305,7 +1305,7 @@ mod tests {
         assert!(
             data_folder
                 .session_context
-                .sql("SELECT table_name FROM normal_table_metadata")
+                .sql("SELECT table_name FROM metadata.normal_table_metadata")
                 .await
                 .is_ok()
         );
@@ -1313,7 +1313,7 @@ mod tests {
         assert!(
             data_folder
                 .session_context
-                .sql("SELECT table_name, query_schema FROM time_series_table_metadata")
+                .sql("SELECT table_name, query_schema FROM metadata.time_series_table_metadata")
                 .await
                 .is_ok()
         );
@@ -1321,7 +1321,7 @@ mod tests {
         assert!(data_folder
             .session_context
             .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                  generated_column_expr FROM time_series_table_field_columns")
+                  generated_column_expr FROM metadata.time_series_table_field_columns")
             .await
             .is_ok());
     }
@@ -1407,7 +1407,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
 
         // Retrieve the normal table from the metadata Delta Lake.
-        let sql = "SELECT table_name FROM normal_table_metadata ORDER BY table_name";
+        let sql = "SELECT table_name FROM metadata.normal_table_metadata ORDER BY table_name";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();
@@ -1423,7 +1423,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
 
         // Check that a row has been added to the time_series_table_metadata table.
-        let sql = "SELECT table_name, query_schema FROM time_series_table_metadata";
+        let sql = "SELECT table_name, query_schema FROM metadata.time_series_table_metadata";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();
@@ -1442,7 +1442,7 @@ mod tests {
 
         // Check that a row has been added to the time_series_table_field_columns table for each field column.
         let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                   generated_column_expr FROM time_series_table_field_columns ORDER BY column_name";
+                   generated_column_expr FROM metadata.time_series_table_field_columns ORDER BY column_name";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();
@@ -1477,7 +1477,7 @@ mod tests {
             .unwrap();
 
         // Verify that normal_table_2 was deleted from the normal_table_metadata table.
-        let sql = "SELECT table_name FROM normal_table_metadata";
+        let sql = "SELECT table_name FROM metadata.normal_table_metadata";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();
@@ -1495,7 +1495,7 @@ mod tests {
             .unwrap();
 
         // Verify that the time series table was deleted from the time_series_table_metadata table.
-        let sql = "SELECT table_name FROM time_series_table_metadata";
+        let sql = "SELECT table_name FROM metadata.time_series_table_metadata";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();
@@ -1503,7 +1503,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 0);
 
         // Verify that the field columns were deleted from the time_series_table_field_columns table.
-        let sql = "SELECT table_name FROM time_series_table_field_columns";
+        let sql = "SELECT table_name FROM metadata.time_series_table_field_columns";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();

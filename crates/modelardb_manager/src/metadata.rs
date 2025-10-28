@@ -80,7 +80,7 @@ impl ManagerMetadata for DataFolder {
     /// already exist, create one and save it to the Delta Lake. If a key could not be retrieved
     /// or created, return [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     async fn manager_key(&self) -> Result<Uuid> {
-        let sql = "SELECT key FROM manager_metadata";
+        let sql = "SELECT key FROM metadata.manager_metadata";
         let batch = sql_and_concat(self.session_context(), sql).await?;
 
         let keys = modelardb_types::array!(batch, 0, StringArray);
@@ -139,7 +139,7 @@ impl ManagerMetadata for DataFolder {
     async fn nodes(&self) -> Result<Vec<Node>> {
         let mut nodes: Vec<Node> = vec![];
 
-        let sql = "SELECT url, mode FROM nodes";
+        let sql = "SELECT url, mode FROM metadata.nodes";
         let batch = sql_and_concat(self.session_context(), sql).await?;
 
         let url_array = modelardb_types::array!(batch, 0, StringArray);
@@ -174,7 +174,7 @@ mod tests {
         assert!(
             data_folder
                 .session_context()
-                .sql("SELECT key FROM manager_metadata")
+                .sql("SELECT key FROM metadata.manager_metadata")
                 .await
                 .is_ok()
         );
@@ -182,7 +182,7 @@ mod tests {
         assert!(
             data_folder
                 .session_context()
-                .sql("SELECT url, mode FROM nodes")
+                .sql("SELECT url, mode FROM metadata.nodes")
                 .await
                 .is_ok()
         );
@@ -195,7 +195,7 @@ mod tests {
         // Verify that the manager key is created and saved correctly.
         let manager_key = data_folder.manager_key().await.unwrap();
 
-        let sql = "SELECT key FROM manager_metadata";
+        let sql = "SELECT key FROM metadata.manager_metadata";
         let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();
@@ -214,7 +214,7 @@ mod tests {
         let manager_key_1 = data_folder.manager_key().await.unwrap();
         let manager_key_2 = data_folder.manager_key().await.unwrap();
 
-        let sql = "SELECT key FROM manager_metadata";
+        let sql = "SELECT key FROM metadata.manager_metadata";
         let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();
@@ -234,7 +234,7 @@ mod tests {
         data_folder.save_node(node_2.clone()).await.unwrap();
 
         // Verify that the nodes are saved correctly.
-        let sql = "SELECT url, mode FROM nodes";
+        let sql = "SELECT url, mode FROM metadata.nodes";
         let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();
@@ -262,7 +262,7 @@ mod tests {
         data_folder.remove_node(&node_1.url).await.unwrap();
 
         // Verify that node_1 is removed correctly.
-        let sql = "SELECT url, mode FROM nodes";
+        let sql = "SELECT url, mode FROM metadata.nodes";
         let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();

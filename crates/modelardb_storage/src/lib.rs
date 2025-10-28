@@ -30,7 +30,7 @@ use arrow::compute;
 use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
 use bytes::Bytes;
-use datafusion::catalog::TableProvider;
+use datafusion::catalog::{MemorySchemaProvider, TableProvider};
 use datafusion::datasource::sink::DataSink;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::execution::session_state::SessionStateBuilder;
@@ -44,6 +44,7 @@ use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties}
 use datafusion::parquet::format::SortingColumn;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
+use datafusion::sql::TableReference;
 use deltalake::DeltaTable;
 use futures::StreamExt;
 use modelardb_types::types::TimeSeriesTableMetadata;
@@ -77,7 +78,13 @@ pub fn create_session_context() -> SessionContext {
     }
 
     let session_state = session_state_builder.build();
-    SessionContext::new_with_state(session_state)
+    let session_context = SessionContext::new_with_state(session_state);
+    let default_catalog = session_context.catalog("datafusion")
+        .expect("The datafusion catalog should always exist.");
+    default_catalog.register_schema("metadata", Arc::new(MemorySchemaProvider::new()))
+        .expect("Catalog register schema should never fail.");
+
+    session_context
 }
 
 /// Register the metadata table stored in `delta_table` with `table_name` in `session_context`. If
@@ -88,8 +95,9 @@ pub fn register_metadata_table(
     table_name: &str,
     delta_table: DeltaTable,
 ) -> Result<()> {
+    let table_reference = TableReference::partial("metadata", table_name);
     let metadata_table = Arc::new(MetadataTable::new(delta_table));
-    session_context.register_table(table_name, metadata_table)?;
+    session_context.register_table(table_reference, metadata_table)?;
 
     Ok(())
 }
