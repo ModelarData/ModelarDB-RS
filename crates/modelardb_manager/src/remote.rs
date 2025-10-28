@@ -629,10 +629,7 @@ impl FlightService for FlightServiceHandler {
                     .expect("key should not contain invalid characters.")
                     .to_owned(),
                 storage_configuration: Some(
-                    self.context
-                        .remote_data_folder
-                        .storage_configuration
-                        .clone(),
+                    self.context.remote_storage_configuration.clone(),
                 ),
             };
 
