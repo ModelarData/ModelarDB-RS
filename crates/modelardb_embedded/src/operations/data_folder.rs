@@ -53,6 +53,13 @@ impl DataFolderDataSink {
     }
 }
 
+impl Default for DataFolderDataSink {
+    // Trait implemented to silence clippy warning.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl DataSink for DataFolderDataSink {
     /// Return `self` as [`Any`] so it can be downcast.

@@ -58,7 +58,7 @@ impl ManagerMetadata for DataFolder {
             )
             .await?;
 
-        register_metadata_table(&self.session_context(), "manager_metadata", delta_table)?;
+        register_metadata_table(self.session_context(), "manager_metadata", delta_table)?;
 
         // Create and register the nodes table if it does not exist.
         let delta_table = self
@@ -71,7 +71,7 @@ impl ManagerMetadata for DataFolder {
             )
             .await?;
 
-        register_metadata_table(&self.session_context(), "nodes", delta_table)?;
+        register_metadata_table(self.session_context(), "nodes", delta_table)?;
 
         Ok(())
     }
@@ -81,7 +81,7 @@ impl ManagerMetadata for DataFolder {
     /// or created, return [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     async fn manager_key(&self) -> Result<Uuid> {
         let sql = "SELECT key FROM manager_metadata";
-        let batch = sql_and_concat(&self.session_context(), sql).await?;
+        let batch = sql_and_concat(self.session_context(), sql).await?;
 
         let keys = modelardb_types::array!(batch, 0, StringArray);
         if keys.is_empty() {

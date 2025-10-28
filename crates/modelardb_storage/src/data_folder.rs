@@ -520,13 +520,9 @@ impl DataFolder {
             .await
             .is_some()
         {
-            self.time_series_table_writer(delta_table)
-                .await
-                .map_err(|error| error.into())
+            self.time_series_table_writer(delta_table).await
         } else {
-            self.normal_or_metadata_table_writer(delta_table)
-                .await
-                .map_err(|error| error.into())
+            self.normal_or_metadata_table_writer(delta_table).await
         }
     }
 
