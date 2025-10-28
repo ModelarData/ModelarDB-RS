@@ -643,9 +643,13 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .map_err(error_to_status_internal)?;
 
-            // unwrap() is safe since the key cannot contain invalid characters.
             let manager_metadata = protocol::ManagerMetadata {
-                key: self.context.key.to_str().unwrap().to_owned(),
+                key: self
+                    .context
+                    .key
+                    .to_str()
+                    .expect("key should not contain invalid characters.")
+                    .to_owned(),
                 storage_configuration: Some(
                     self.context
                         .remote_data_folder

@@ -218,8 +218,9 @@ pub fn grid(
             let (first_value, last_value) =
                 CompressedSegmentBuilder::decode_values_for_swing(min_value, max_value, values);
 
-            // unwrap() is safe as the model is guaranteed to represent at least one value.
-            let model_end_time = *model_timestamps.last().unwrap();
+            let model_end_time = *model_timestamps
+                .last()
+                .expect("Model should represent at least one value.");
 
             swing::grid(
                 start_time,

@@ -236,8 +236,7 @@ impl Operations for Client {
             .build(stream::iter(vec![Ok(uncompressed_data)]));
 
         let flight_data_stream = flight_data_encoder.map(|maybe_flight_data| {
-            // unwrap() is safe since the stream is created above.
-            maybe_flight_data.unwrap()
+            maybe_flight_data.expect("Flight data should be validated by FlightDataEncoderBuilder.")
         });
 
         write_client.do_put(flight_data_stream).await?;

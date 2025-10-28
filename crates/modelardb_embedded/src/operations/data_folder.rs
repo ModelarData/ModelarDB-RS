@@ -355,7 +355,6 @@ impl DataFolder {
 
             let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
 
-            // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
             let compressed_time_series = modelardb_compression::try_compress(
                 uncompressed_timestamps,
                 uncompressed_values,
@@ -364,7 +363,7 @@ impl DataFolder {
                 tag_values.to_vec(),
                 *field_column_index as i16,
             )
-            .unwrap();
+            .expect("uncompressed_timestamps and uncompressed_values should have the same length.");
 
             compressed_data.push(compressed_time_series);
         }

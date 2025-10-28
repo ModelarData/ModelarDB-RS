@@ -96,7 +96,6 @@ impl TimeSeriesTable {
         // Compute the index of the first stored field column in the time series table's query schema.
         // It is used for queries without fields as tags, timestamps, and values are stored together.
         let fallback_field_column = {
-            // unwrap() is safe as all time series tables contain at least one field.
             time_series_table_metadata
                 .query_schema
                 .fields()
@@ -106,7 +105,7 @@ impl TimeSeriesTable {
                     time_series_table_metadata.generated_columns[index].is_none()
                         && field.data_type() == &ArrowValue::DATA_TYPE
                 })
-                .unwrap() as u16
+                .expect("Time series tables should contain at least one field.") as u16
         };
 
         // Add the tag columns to the base schema for queryable compressed segments.
@@ -235,8 +234,9 @@ fn query_order_and_requirement(
     for index in &time_series_table_metadata.tag_column_indices {
         let tag_column_name = time_series_table_metadata.schema.field(*index).name();
 
-        // unwrap() is safe as the tag columns are always present in the schema.
-        let schema_index = schema.index_of(tag_column_name).unwrap();
+        let schema_index = schema
+            .index_of(tag_column_name)
+            .expect("Tag columns should always be in the schema.");
 
         physical_sort_exprs.push(PhysicalSortExpr {
             expr: Arc::new(Column::new(tag_column_name, schema_index)),
@@ -290,8 +290,10 @@ fn rewrite_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> 
     match filter {
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
             if let Expr::Column(column) = &**left {
-                // unwrap() is safe as it has already been checked that the fields exists.
-                let field = query_schema.field_with_name(&column.name).unwrap();
+                let field = query_schema
+                    .field_with_name(&column.name)
+                    .expect("The columns in the filter should exist in the query schema.");
+
                 // Type aliases cannot be used as a constructor and thus cannot be used here.
                 if *field.data_type() == DataType::Timestamp(TimeUnit::Microsecond, None) {
                     match op {
@@ -325,8 +327,10 @@ fn rewrite_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> 
                     None
                 }
             } else if let Expr::Column(column) = &**right {
-                // unwrap() is safe as it has already been checked that the fields exists.
-                let field = query_schema.field_with_name(&column.name).unwrap();
+                let field = query_schema
+                    .field_with_name(&column.name)
+                    .expect("The columns in the filter should exist in the query schema.");
+
                 // Type aliases cannot be used as a constructor and thus cannot be used here.
                 if *field.data_type() == DataType::Timestamp(TimeUnit::Microsecond, None) {
                     match op {
