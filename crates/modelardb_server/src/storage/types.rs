@@ -27,6 +27,9 @@ use crate::storage::uncompressed_data_buffer::{IngestedDataBuffer, UncompressedD
 /// Message given when failing to acquire a mutex or wait on a mutex.
 const EXPECT_MUTEX_NOT_POISONED: &str = "Mutex should not be poisoned.";
 
+/// Message given when failing to parse size in bytes from u64 to i64.
+const EXPECT_LESS_THAN_I64_MAX: &str = "Size in bytes should be less than 8192 PiB.";
+
 /// Resizeable pool of memory for tracking and limiting the amount of memory used by the
 /// [`StorageEngine`](crate::storage::StorageEngine). Signed integers are used to simplify updating
 /// the amount of available memory at runtime. By using signed integers for the amount of available
@@ -63,25 +66,23 @@ impl MemoryPool {
         uncompressed_memory_in_bytes: u64,
         compressed_memory_in_bytes: u64,
     ) -> Self {
-        let expect_less_than_i64_max = "Size in bytes should be less than 8192 PiB.";
-
         Self {
             wait_for_ingested_memory: Condvar::new(),
             remaining_ingested_memory_in_bytes: Mutex::new(
                 ingested_memory_in_bytes
                     .try_into()
-                    .expect(expect_less_than_i64_max),
+                    .expect(EXPECT_LESS_THAN_I64_MAX),
             ),
             wait_for_uncompressed_memory: Condvar::new(),
             remaining_uncompressed_memory_in_bytes: Mutex::new(
                 uncompressed_memory_in_bytes
                     .try_into()
-                    .expect(expect_less_than_i64_max),
+                    .expect(EXPECT_LESS_THAN_I64_MAX),
             ),
             remaining_compressed_memory_in_bytes: Mutex::new(
                 compressed_memory_in_bytes
                     .try_into()
-                    .expect(expect_less_than_i64_max),
+                    .expect(EXPECT_LESS_THAN_I64_MAX),
             ),
         }
     }
@@ -116,7 +117,7 @@ impl MemoryPool {
 
         let size_in_bytes = size_in_bytes
             .try_into()
-            .expect("size_in_bytes should be less than 8192 PiB.");
+            .expect(EXPECT_LESS_THAN_I64_MAX);
 
         while *memory_in_bytes < size_in_bytes {
             memory_in_bytes = self
@@ -163,7 +164,7 @@ impl MemoryPool {
 
         let size_in_bytes = size_in_bytes
             .try_into()
-            .expect("size_in_bytes should be less than 8192 PiB.");
+            .expect(EXPECT_LESS_THAN_I64_MAX);
 
         while *memory_in_bytes < size_in_bytes {
             // There is still not enough memory available, but it is no longer sensible to wait.
@@ -209,7 +210,7 @@ impl MemoryPool {
 
         let size_in_bytes: i64 = size_in_bytes
             .try_into()
-            .expect("size_in_bytes should be less than 8192 PiB.");
+            .expect(EXPECT_LESS_THAN_I64_MAX);
 
         if size_in_bytes <= *remaining_compressed_memory_in_bytes {
             *remaining_compressed_memory_in_bytes -= size_in_bytes;
