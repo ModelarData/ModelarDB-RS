@@ -41,11 +41,11 @@ const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 /// resulting segments.
 pub fn try_compress_multivariate_record_batch(
     time_series_table_metadata: &TimeSeriesTableMetadata,
-    uncompressed_time_seires: &RecordBatch,
+    uncompressed_time_series: &RecordBatch,
 ) -> Result<Vec<RecordBatch>> {
     // Sort by all tags and then time to simplify splitting the data into time series.
     let sorted_uncompressed_data =
-      sort_record_batch_by_tags_and_time(time_series_table_metadata, uncompressed_time_seires)?;
+      sort_record_batch_by_tags_and_time(time_series_table_metadata, uncompressed_time_series)?;
 
     // Split the sorted uncompressed data into time series and compress them separately.
     let mut compressed_data = vec![];
@@ -438,20 +438,6 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_constant_time_series_within_lossless_error_bound() {
-        let compressed_record_batch = try_compress_univariate_arrays(
-            &TimestampBuilder::new().finish(),
-            &ValueBuilder::new().finish(),
-            ErrorBound::Lossless,
-            compressed_schema(),
-            vec![TAG_VALUE.to_owned()],
-            0,
-        )
-        .unwrap();
-        assert_eq!(0, compressed_record_batch.num_rows());
-    }
-
-    #[test]
-    fn test_try_compress_regular_constant_time_series_within_losless_error_bound() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Constant(None),
