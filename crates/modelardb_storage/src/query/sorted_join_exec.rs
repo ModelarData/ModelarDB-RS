@@ -14,11 +14,9 @@
  */
 
 //! Implementation of the Apache DataFusion execution plan [`SortedJoinExec`] and its corresponding
-//! stream [`SortedJoinStream`] which joins multiple sorted array produced by
-//! [`GridExecs`](crate::query::grid_exec::GridExec) streams and combines them with the time series
-//! tags retrieved from the [`TableMetadataManager`](metadata::table_metadata_manager::TableMetadataManager)
-//! to create the complete results containing a timestamp column, one or more field columns, and zero
-//! or more tag columns.
+//! stream [`SortedJoinStream`] which joins multiple sorted arrays produced by
+//! [`GridExecs`](crate::query::grid_exec::GridExec) streams to create the complete results
+//! containing a timestamp column, one or more field columns, and zero or more tag columns.
 
 use std::any::Any;
 use std::fmt::{Formatter, Result as FmtResult};
