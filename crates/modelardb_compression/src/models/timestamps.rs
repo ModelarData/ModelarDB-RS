@@ -79,10 +79,11 @@ fn are_uncompressed_timestamps_regular(uncompressed_timestamps: &[Timestamp]) ->
         return true;
     }
 
-    // unwrap() is safe as uncompressed_timestamps contains at least two timestamps.
     let expected_sampling_interval = uncompressed_timestamps[1] - uncompressed_timestamps[0];
     let mut uncompressed_timestamps = uncompressed_timestamps.iter();
-    let mut previous_timestamp = uncompressed_timestamps.next().unwrap();
+    let mut previous_timestamp = uncompressed_timestamps
+        .next()
+        .expect("uncompressed_timestamps should contain at least two timestamps.");
 
     for current_timestamp in uncompressed_timestamps {
         if current_timestamp - previous_timestamp != expected_sampling_interval {

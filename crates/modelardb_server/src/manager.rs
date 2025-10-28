@@ -83,10 +83,11 @@ impl Manager {
         // Extract the key and the storage configuration for the remote object store from the response.
         let manager_metadata = protocol::ManagerMetadata::decode(message.body)?;
 
-        // unwrap() is safe since the manager always has a remote storage configuration.
         Ok((
             Manager::new(manager_metadata.key),
-            manager_metadata.storage_configuration.unwrap(),
+            manager_metadata
+                .storage_configuration
+                .expect("The manager should have a remote storage configuration."),
         ))
     }
 

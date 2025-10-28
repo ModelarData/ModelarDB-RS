@@ -709,8 +709,13 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     }
 
     // Check if the table name contains whitespace, e.g., spaces or tabs.
-    // unwrap() is safe as ObjectNamePart is an enum with only one variant.
-    let normalized_name = normalize_name(&name.0[0].as_ident().unwrap().value);
+    let normalized_name = normalize_name(
+        &name.0[0]
+            .as_ident()
+            .expect("ObjectNamePart should only have one variant.")
+            .value,
+    );
+
     if normalized_name.contains(char::is_whitespace) {
         let message = "Table name cannot contain whitespace.";
         return Err(ModelarDbStorageError::InvalidArgument(message.to_owned()));
@@ -1114,9 +1119,10 @@ fn extract_generation_exprs_for_all_columns(
                 let _physical_expr =
                     planner::create_physical_expr(&expr, &df_schema, &execution_props)?;
 
-                // unwrap() is safe as sql_to_expr() validates that the expression only
-                // references columns in the schema.
-                generated_column = Some(GeneratedColumn::try_from_expr(expr, &df_schema).unwrap());
+                generated_column = Some(
+                    GeneratedColumn::try_from_expr(expr, &df_schema)
+                        .expect("Columns in expr should be validated by sql_to_expr()."),
+                );
             }
         }
 
@@ -1157,8 +1163,10 @@ fn semantic_checks_for_drop(
 
         for parts in names {
             let table_name = parts.0.iter().fold(String::new(), |name, part| {
-                // unwrap() is safe as ObjectNamePart is an enum with only one variant.
-                name + &part.as_ident().unwrap().value
+                name + &part
+                    .as_ident()
+                    .expect("ObjectNamePart should only have one variant.")
+                    .value
             });
 
             table_names.push(table_name);
@@ -1194,9 +1202,11 @@ fn semantic_checks_for_truncate(
         let mut table_names = Vec::with_capacity(names.len());
 
         for parts in names {
-            // unwrap() is safe as ObjectNamePart is an enum with only one variant.
             let table_name = parts.name.0.iter().fold(String::new(), |name, part| {
-                name + &part.as_ident().unwrap().value
+                name + &part
+                    .as_ident()
+                    .expect("ObjectNamePart should only have one variant.")
+                    .value
             });
 
             table_names.push(table_name);

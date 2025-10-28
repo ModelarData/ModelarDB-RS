@@ -116,9 +116,13 @@ impl DataTransfer {
         *self.table_size_in_bytes.get_mut(table_name).unwrap() += size_in_bytes;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
-        // remote object store. unwrap() is safe as key has just been added to the map.
+        // remote object store.
         if self.transfer_batch_size_in_bytes.is_some_and(|batch_size| {
-            self.table_size_in_bytes.get(table_name).unwrap().value() >= &batch_size
+            self.table_size_in_bytes
+                .get(table_name)
+                .expect("table_name should have been added to table_size_in_bytes.")
+                .value()
+                >= &batch_size
         }) {
             self.transfer_data(table_name).await?;
         }
@@ -230,8 +234,13 @@ impl DataTransfer {
         }
 
         // All data will be transferred so the current size in bytes is also the amount of data that
-        // will be transferred. unwrap() is safe as the table contains data.
-        let current_size_in_bytes = *self.table_size_in_bytes.get(table_name).unwrap().value();
+        // will be transferred.
+        let current_size_in_bytes = *self
+            .table_size_in_bytes
+            .get(table_name)
+            .expect("table_size_in_bytes should contain table_name since the table contains data.")
+            .value();
+
         let local_delta_ops = self
             .local_data_folder
             .delta_lake

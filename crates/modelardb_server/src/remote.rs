@@ -189,10 +189,9 @@ async fn send_query_result(
             }
         };
 
-        // unwrap() is safe as the result is produced by Apache DataFusion.
         let (encoded_dictionaries, encoded_batch) = data_generator
             .encoded_batch(&record_batch, &mut dictionary_tracker, &writer_options)
-            .unwrap();
+            .map_err(error_to_status_internal)?;
 
         for encoded_dictionary in encoded_dictionaries {
             send_flight_data(&sender, Ok(encoded_dictionary.into())).await?;

@@ -370,16 +370,25 @@ impl GridStream {
             columns.push(Arc::new(tag_builder.finish()));
         }
 
-        // Update the current batch, unwrap() is safe as GridStream uses a static schema.
-        // For simplicity, all data points are reconstructed and then pruned by time.
-        let current_batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
+        // Update the current batch. For simplicity, all data points are reconstructed and then pruned by time.
+        let current_batch = RecordBatch::try_new(self.schema.clone(), columns)
+            .expect("GridStream should use a static schema.");
 
         self.current_batch = if let Some(predicate) = &self.maybe_predicate {
-            // unwrap() is safe as the predicate has been written for the schema.
-            let column_value = predicate.evaluate(&current_batch).unwrap();
-            let array = column_value.into_array(current_batch.num_rows()).unwrap();
-            let boolean_array = as_boolean_array(&array).unwrap();
-            filter_record_batch(&current_batch, boolean_array).unwrap()
+            let column_value = predicate
+                .evaluate(&current_batch)
+                .expect("predicate should be written for the schema.");
+
+            let array = column_value
+                .into_array(current_batch.num_rows())
+                .expect("predicate should result in one value per row.");
+
+            let boolean_array =
+                as_boolean_array(&array).expect("array should only contain booleans.");
+
+            filter_record_batch(&current_batch, boolean_array).expect(
+                "Length of boolean_array should be equal to the number of rows in current_batch.",
+            )
         } else {
             current_batch
         };
@@ -458,17 +467,17 @@ impl GridStreamMetrics {
         let baseline_metrics = BaselineMetrics::new(metrics, partition);
 
         // Create metrics for collecting information about the number of created data points.
-        // unwrap() is safe if the size of the arrays in GridStreamMetrics is MODEL_TYPE_COUNT.
         let rows_created = Self::new_counter(metrics, partition, "rows_created");
         let rows_created_by_model_type = MODEL_TYPE_NAMES
             .iter()
             .map(|name| Self::new_counter(metrics, partition, format!("rows_created_by_{name}")))
             .collect::<Vec<_>>()
             .try_into()
-            .unwrap();
+            .unwrap_or_else(|_| {
+                panic!("Size of arrays in GridStreamMetrics should be {MODEL_TYPE_COUNT}.")
+            });
 
         // Create metrics for collecting information about the number of segments processed.
-        // unwrap() is safe if the size of the arrays in GridStreamMetrics is MODEL_TYPE_COUNT.
         let segments_with_residuals =
             Self::new_counter(metrics, partition, "segments_with_residuals");
         let segments_with_model_type = MODEL_TYPE_NAMES
@@ -476,7 +485,9 @@ impl GridStreamMetrics {
             .map(|name| Self::new_counter(metrics, partition, format!("segments_with_{name}")))
             .collect::<Vec<_>>()
             .try_into()
-            .unwrap();
+            .unwrap_or_else(|_| {
+                panic!("Size of arrays in GridStreamMetrics should be {MODEL_TYPE_COUNT}.")
+            });
 
         let segments_regular = Self::new_counter(metrics, partition, "regular_segments");
         let segments_irregular = Self::new_counter(metrics, partition, "irregular_segments");
