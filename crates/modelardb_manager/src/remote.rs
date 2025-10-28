@@ -628,9 +628,7 @@ impl FlightService for FlightServiceHandler {
                     .to_str()
                     .expect("key should not contain invalid characters.")
                     .to_owned(),
-                storage_configuration: Some(
-                    self.context.remote_storage_configuration.clone(),
-                ),
+                storage_configuration: Some(self.context.remote_storage_configuration.clone()),
             };
 
             let protobuf_bytes = manager_metadata.encode_to_vec();

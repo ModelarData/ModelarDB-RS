@@ -167,8 +167,9 @@ async fn import(
         data_folder.read(sql).await?;
     }
 
-    if let Some(time_series_table_metadata) =
-        data_folder.time_series_table_metadata_for_registered_time_series_table(table_name).await
+    if let Some(time_series_table_metadata) = data_folder
+        .time_series_table_metadata_for_registered_time_series_table(table_name)
+        .await
     {
         import_time_series_table(
             input_stream,
@@ -397,7 +398,9 @@ async fn import_and_clear_time_series_table_batch(
         let schema = current_batch[0].schema();
         let uncompressed_data = compute::concat_batches(&schema, &*current_batch)?;
         let compressed_data = modelardb_compression::try_compress_multivariate_record_batch(
-            time_series_table_metadata, &uncompressed_data)?;
+            time_series_table_metadata,
+            &uncompressed_data,
+        )?;
         delta_table_writer.write_all(&compressed_data).await?;
         current_batch.clear();
         *current_batch_size = 0;
@@ -496,17 +499,22 @@ async fn create_data_folder(data_folder_path: &str) -> Result<DataFolder> {
                 access_key_id,
                 secret_access_key,
             )
-            .await.map_err(|error| error.into())
+            .await
+            .map_err(|error| error.into())
         }
         Some(("az", container_name)) => {
             let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
             let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
 
-            DataFolder::open_azure(account_name, access_key, container_name.to_owned()).await.map_err(|error| error.into())
+            DataFolder::open_azure(account_name, access_key, container_name.to_owned())
+                .await
+                .map_err(|error| error.into())
         }
         _ => {
             let data_folder_path = StdPath::new(data_folder_path);
-            DataFolder::open_local(data_folder_path).await.map_err(|error| error.into())
+            DataFolder::open_local(data_folder_path)
+                .await
+                .map_err(|error| error.into())
         }
     }
 }

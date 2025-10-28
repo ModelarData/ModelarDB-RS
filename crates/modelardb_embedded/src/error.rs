@@ -76,7 +76,9 @@ impl Display for ModelarDbEmbeddedError {
             Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
             Self::EnvironmentVar(reason) => write!(f, "Environment Variable Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
-            Self::ModelarDbCompression(reason) => write!(f, "ModelarDB Compression Error: {reason}"),
+            Self::ModelarDbCompression(reason) => {
+                write!(f, "ModelarDB Compression Error: {reason}")
+            }
             Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),

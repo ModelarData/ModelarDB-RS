@@ -59,8 +59,7 @@ impl DataFolders {
         // Match the provided command line arguments to the supported inputs.
         match arguments {
             &["edge", local_data_folder_url] | &[local_data_folder_url] => {
-                let local_data_folder =
-                    DataFolder::open_local_url(local_data_folder_url).await?;
+                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
                 Ok((
                     ClusterMode::SingleNode,
@@ -71,8 +70,7 @@ impl DataFolders {
                 let (manager, storage_configuration) =
                     Manager::register_node(manager_url, ServerMode::Cloud).await?;
 
-                let local_data_folder =
-                    DataFolder::open_local_url(local_data_folder_url).await?;
+                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
                     DataFolder::open_object_store(storage_configuration).await?;
@@ -91,8 +89,7 @@ impl DataFolders {
                 let (manager, storage_configuration) =
                     Manager::register_node(manager_url, ServerMode::Edge).await?;
 
-                let local_data_folder =
-                    DataFolder::open_local_url(local_data_folder_url).await?;
+                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
                     DataFolder::open_object_store(storage_configuration).await?;

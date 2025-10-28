@@ -43,8 +43,8 @@ use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use datafusion::parquet::format::SortingColumn;
 use datafusion::prelude::SessionContext;
-use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::TableReference;
+use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use futures::StreamExt;
 use modelardb_types::types::TimeSeriesTableMetadata;
@@ -79,9 +79,11 @@ pub fn create_session_context() -> SessionContext {
 
     let session_state = session_state_builder.build();
     let session_context = SessionContext::new_with_state(session_state);
-    let default_catalog = session_context.catalog("datafusion")
+    let default_catalog = session_context
+        .catalog("datafusion")
         .expect("The datafusion catalog should always exist.");
-    default_catalog.register_schema("metadata", Arc::new(MemorySchemaProvider::new()))
+    default_catalog
+        .register_schema("metadata", Arc::new(MemorySchemaProvider::new()))
         .expect("Catalog register schema should never fail.");
 
     session_context

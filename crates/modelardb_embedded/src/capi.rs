@@ -44,9 +44,9 @@ use modelardb_types::types::ErrorBound;
 use tokio::runtime::Runtime;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::operations::data_folder::DataFolderDataSink;
 use crate::operations::Operations;
 use crate::operations::client::{Client, Node};
+use crate::operations::data_folder::DataFolderDataSink;
 use crate::record_batch_stream_to_record_batch;
 use crate::{Aggregate, TableType};
 

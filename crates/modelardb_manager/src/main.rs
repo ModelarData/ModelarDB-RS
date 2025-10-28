@@ -69,10 +69,14 @@ async fn main() -> Result<()> {
         _ => print_usage_and_exit_with_error("remote_data_folder"),
     };
 
-    let remote_storage_configuration = modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
-    let remote_data_folder = DataFolder::open_object_store(remote_storage_configuration.clone()).await?;
+    let remote_storage_configuration =
+        modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
+    let remote_data_folder =
+        DataFolder::open_object_store(remote_storage_configuration.clone()).await?;
 
-    remote_data_folder.create_and_register_manager_metadata_data_folder_tables().await?;
+    remote_data_folder
+        .create_and_register_manager_metadata_data_folder_tables()
+        .await?;
 
     let mut cluster = Cluster::new();
     let nodes = remote_data_folder.nodes().await?;

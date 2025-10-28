@@ -774,9 +774,7 @@ mod tests {
     ) -> Arc<dyn ExecutionPlan> {
         // Setup access to data and metadata in data folder.
         let data_folder_path = temp_dir.path();
-        let data_folder = DataFolder::open_local(data_folder_path)
-            .await
-            .unwrap();
+        let data_folder = DataFolder::open_local(data_folder_path).await.unwrap();
 
         // Setup access to Apache DataFusion.
         let session_context = crate::create_session_context();

@@ -67,9 +67,7 @@ impl DataTransfer {
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
         for table_name in table_names {
-            let delta_table = local_data_folder
-                .delta_table(&table_name)
-                .await?;
+            let delta_table = local_data_folder.delta_table(&table_name).await?;
 
             let mut table_size_in_bytes = table_size_in_bytes.entry(table_name).or_insert(0);
 
@@ -237,10 +235,7 @@ impl DataTransfer {
             .expect("table_size_in_bytes should contain table_name since the table contains data.")
             .value();
 
-        let local_delta_ops = self
-            .local_data_folder
-            .delta_ops(table_name)
-            .await?;
+        let local_delta_ops = self.local_data_folder.delta_ops(table_name).await?;
 
         // Read the data that is currently stored for the table with table_name.
         let (_table, stream) = local_delta_ops.load().await?;
@@ -264,9 +259,7 @@ impl DataTransfer {
         }
 
         // Delete the data that has been transferred to the remote Delta Lake.
-        self.local_data_folder
-            .truncate_table(table_name)
-            .await?;
+        self.local_data_folder.truncate_table(table_name).await?;
 
         // Remove the transferred data from the in-memory tracking of compressed files.
         *self.table_size_in_bytes.get_mut(table_name).unwrap() -= current_size_in_bytes;
@@ -534,10 +527,7 @@ mod tests {
 
     /// Return the total size of the files in the table with `table_name` in `local_data_folder`.
     async fn table_files_size(local_data_folder: &DataFolder, table_name: &str) -> u64 {
-        let delta_table = local_data_folder
-            .delta_table(table_name)
-            .await
-            .unwrap();
+        let delta_table = local_data_folder.delta_table(table_name).await.unwrap();
 
         let mut files_size = 0;
         for file_path in delta_table.get_files_iter().unwrap() {
@@ -554,9 +544,7 @@ mod tests {
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
         let target_dir_url = target_dir.path().to_str().unwrap();
-        let remote_data_folder = DataFolder::open_local_url(target_dir_url)
-            .await
-            .unwrap();
+        let remote_data_folder = DataFolder::open_local_url(target_dir_url).await.unwrap();
 
         // Set the transfer batch size so that data is transferred if three batches are written.
         let data_transfer = DataTransfer::try_new(

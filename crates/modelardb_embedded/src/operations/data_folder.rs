@@ -118,11 +118,9 @@ impl Operations for DataFolder {
     async fn create(&mut self, table_name: &str, table_type: TableType) -> Result<()> {
         match table_type {
             TableType::NormalTable(schema) => {
-                let delta_table = self.create_normal_table(table_name, &schema)
-                    .await?;
+                let delta_table = self.create_normal_table(table_name, &schema).await?;
 
-                self.save_normal_table_metadata(table_name)
-                    .await?;
+                self.save_normal_table_metadata(table_name).await?;
 
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
@@ -165,15 +163,15 @@ impl Operations for DataFolder {
     /// Returns the name of all the tables. If the table names could not be retrieved from the
     /// metadata Delta Lake, [`ModelarDbEmbeddedError`] is returned.
     async fn tables(&mut self) -> Result<Vec<String>> {
-        self.table_names()
-            .await
-            .map_err(|error| error.into())
+        self.table_names().await.map_err(|error| error.into())
     }
 
     /// Returns the schema of the table with the name in `table_name`. If the table does not exist,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn schema(&mut self, table_name: &str) -> Result<Schema> {
-        if let Some(time_series_table_metadata) = self.time_series_table_metadata_for_registered_time_series_table(table_name).await
+        if let Some(time_series_table_metadata) = self
+            .time_series_table_metadata_for_registered_time_series_table(table_name)
+            .await
         {
             Ok((*time_series_table_metadata.query_schema).to_owned())
         } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
@@ -200,7 +198,9 @@ impl Operations for DataFolder {
             "The uncompressed data does not match the schema for the table: {table_name}."
         ));
 
-        if let Some(time_series_table_metadata) = self.time_series_table_metadata_for_registered_time_series_table(table_name).await
+        if let Some(time_series_table_metadata) = self
+            .time_series_table_metadata_for_registered_time_series_table(table_name)
+            .await
         {
             // Time series table.
             if !schemas_are_compatible(
@@ -211,7 +211,9 @@ impl Operations for DataFolder {
             }
 
             let compressed_data = modelardb_compression::try_compress_multivariate_record_batch(
-                &time_series_table_metadata, &uncompressed_data)?;
+                &time_series_table_metadata,
+                &uncompressed_data,
+            )?;
 
             self.write_compressed_segments_to_time_series_table(table_name, compressed_data)
                 .await?;
@@ -301,8 +303,9 @@ impl Operations for DataFolder {
         tags: HashMap<String, String>,
     ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
         // DataFolder.read() interface is designed for time series tables.
-        let time_series_table_medata = if let Some(time_series_table_metadata) =
-            self.time_series_table_metadata_for_registered_time_series_table(table_name).await
+        let time_series_table_medata = if let Some(time_series_table_metadata) = self
+            .time_series_table_metadata_for_registered_time_series_table(table_name)
+            .await
         {
             time_series_table_metadata
         } else {
@@ -433,7 +436,8 @@ impl Operations for DataFolder {
         ));
 
         if let (Some(source_time_series_table_metadata), Some(target_time_series_table_metadata)) = (
-            self.time_series_table_metadata_for_registered_time_series_table(source_table_name).await,
+            self.time_series_table_metadata_for_registered_time_series_table(source_table_name)
+                .await,
             target_data_folder
                 .time_series_table_metadata_for_registered_time_series_table(target_table_name)
                 .await,
@@ -572,7 +576,10 @@ fn schemas_are_compatible(source_schema: &Schema, target_schema: &Schema) -> boo
 mod tests {
     use super::*;
 
-    use arrow::array::{Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, StringArray};
+    use arrow::array::{
+        Array, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
+        StringArray,
+    };
     use arrow::compute::SortOptions;
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
@@ -582,7 +589,8 @@ mod tests {
     use datafusion::physical_plan::expressions::Column;
     use datafusion::physical_plan::sorts::sort;
     use modelardb_types::types::{
-        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata, TimestampArray, ValueArray
+        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata,
+        TimestampArray, ValueArray,
     };
     use tempfile::TempDir;
     use tonic::transport::Channel;
@@ -626,7 +634,10 @@ mod tests {
         // Create a new data folder and verify that the existing normal tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         let data_sink = Arc::new(DataFolderDataSink::new());
-        new_data_folder.register_normal_and_time_series_tables(data_sink).await.unwrap();
+        new_data_folder
+            .register_normal_and_time_series_tables(data_sink)
+            .await
+            .unwrap();
         assert!(
             new_data_folder
                 .session_context()
@@ -798,7 +809,10 @@ mod tests {
         // Create a new data folder and verify that the existing time series tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         let data_sink = Arc::new(DataFolderDataSink::new());
-        new_data_folder.register_normal_and_time_series_tables(data_sink).await.unwrap();
+        new_data_folder
+            .register_normal_and_time_series_tables(data_sink)
+            .await
+            .unwrap();
         assert!(
             new_data_folder
                 .session_context()
@@ -931,10 +945,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_to_normal_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
-        let mut delta_table = data_folder
-            .delta_table(NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 0);
 
@@ -2059,12 +2070,7 @@ mod tests {
         );
 
         // Verify that the normal table was dropped from the Delta Lake.
-        assert!(
-            data_folder
-                .delta_table(NORMAL_TABLE_NAME)
-                .await
-                .is_err()
-        );
+        assert!(data_folder.delta_table(NORMAL_TABLE_NAME).await.is_err());
     }
 
     #[tokio::test]
@@ -2130,10 +2136,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut delta_table = data_folder
-            .delta_table(NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 1);
 
@@ -2281,10 +2284,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut delta_table = source
-            .delta_table(NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = source.delta_table(NORMAL_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 1);
 
@@ -2309,24 +2309,21 @@ mod tests {
         expected_schema: Schema,
     ) {
         // Verify that the normal table exists in the Delta Lake.
-        let delta_table = data_folder
-            .delta_table(table_name)
-            .await
-            .unwrap();
+        let delta_table = data_folder.delta_table(table_name).await.unwrap();
 
         let actual_schema = TableProvider::schema(&delta_table);
         assert_eq!(actual_schema, Arc::new(expected_schema));
 
         // Verify that the normal table exists in the metadata Delta Lake.
-        assert!(
-            data_folder
-                .is_normal_table(table_name)
-                .await
-                .unwrap()
-        );
+        assert!(data_folder.is_normal_table(table_name).await.unwrap());
 
         // Verify that the normal table is registered with Apache DataFusion.
-        assert!(data_folder.session_context().table_exist(table_name).unwrap())
+        assert!(
+            data_folder
+                .session_context()
+                .table_exist(table_name)
+                .unwrap()
+        )
     }
 
     #[tokio::test]
@@ -2447,10 +2444,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut delta_table = source
-            .delta_table(TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 2);
 
@@ -2489,10 +2483,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut delta_table = source
-            .delta_table(TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 2);
 
@@ -2539,7 +2530,12 @@ mod tests {
         assert_eq!(*time_series_table_metadata.query_schema, expected_schema);
 
         // Verify that the time series table is registered with Apache DataFusion.
-        assert!(data_folder.session_context().table_exist(table_name).unwrap());
+        assert!(
+            data_folder
+                .session_context()
+                .table_exist(table_name)
+                .unwrap()
+        );
 
         time_series_table_metadata
     }

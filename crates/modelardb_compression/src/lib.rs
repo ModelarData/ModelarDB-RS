@@ -26,8 +26,8 @@ mod types;
 
 // Re-export the few functions and types users are meant to use.
 pub use compression::try_compress_multivariate_record_batch;
-pub use compression::try_compress_univariate_record_batch;
 pub use compression::try_compress_univariate_arrays;
+pub use compression::try_compress_univariate_record_batch;
 pub use models::grid;
 pub use models::is_value_within_error_bound;
 pub use models::len;

@@ -45,7 +45,7 @@ pub fn try_compress_multivariate_record_batch(
 ) -> Result<Vec<RecordBatch>> {
     // Sort by all tags and then time to simplify splitting the data into time series.
     let sorted_uncompressed_data =
-      sort_record_batch_by_tags_and_time(time_series_table_metadata, uncompressed_time_series)?;
+        sort_record_batch_by_tags_and_time(time_series_table_metadata, uncompressed_time_series)?;
 
     // Split the sorted uncompressed data into time series and compress them separately.
     let mut compressed_data = vec![];
@@ -69,13 +69,13 @@ pub fn try_compress_multivariate_record_batch(
         let mut is_new_time_series = false;
         for tag_column_index in 0..tag_column_arrays.len() {
             is_new_time_series |= tag_values[tag_column_index]
-            != tag_column_arrays[tag_column_index].value(row_index);
+                != tag_column_arrays[tag_column_index].value(row_index);
         }
 
         if is_new_time_series {
             let time_series_length = row_index - row_index_start;
             let uncompressed_time_series =
-            sorted_uncompressed_data.slice(row_index_start, time_series_length);
+                sorted_uncompressed_data.slice(row_index_start, time_series_length);
 
             try_compress_univariate_record_batch(
                 time_series_table_metadata,
@@ -94,7 +94,7 @@ pub fn try_compress_multivariate_record_batch(
 
     let time_series_length = sorted_uncompressed_data.num_rows() - row_index_start;
     let uncompressed_time_series =
-    sorted_uncompressed_data.slice(row_index_start, time_series_length);
+        sorted_uncompressed_data.slice(row_index_start, time_series_length);
 
     try_compress_univariate_record_batch(
         time_series_table_metadata,
@@ -134,7 +134,6 @@ fn sort_record_batch_by_tags_and_time(
         options: sort_options,
     });
 
-
     let indices = compute::lexsort_to_indices(&sort_columns, None)?;
     let sorted_columns = compute::take_arrays(uncompressed_data.columns(), &indices, None)?;
     RecordBatch::try_new(uncompressed_data.schema(), sorted_columns).map_err(|error| error.into())
@@ -157,11 +156,8 @@ pub fn try_compress_univariate_record_batch(
     );
 
     for field_column_index in &time_series_table_metadata.field_column_indices {
-        let uncompressed_values = modelardb_types::array!(
-            uncompressed_time_series,
-            *field_column_index,
-            ValueArray
-        );
+        let uncompressed_values =
+            modelardb_types::array!(uncompressed_time_series, *field_column_index, ValueArray);
 
         let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
 

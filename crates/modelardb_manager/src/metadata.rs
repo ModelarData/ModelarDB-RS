@@ -295,9 +295,7 @@ mod tests {
     async fn create_data_folder() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let data_folder = DataFolder::open_local(temp_dir.path())
-            .await
-            .unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         data_folder
             .create_and_register_manager_metadata_data_folder_tables()
