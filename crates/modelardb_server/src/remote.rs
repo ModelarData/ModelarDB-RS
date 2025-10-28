@@ -714,9 +714,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(error_to_status_internal)?;
 
             let setting = update_configuration.setting;
-            let new_value = update_configuration
-                .new_value
-                .map(|new_value| new_value as usize);
+            let maybe_new_value = update_configuration.new_value;
 
             let mut configuration_manager = self.context.configuration_manager.write().await;
             let storage_engine = self.context.storage_engine.clone();
@@ -726,7 +724,7 @@ impl FlightService for FlightServiceHandler {
 
             match protocol::update_configuration::Setting::try_from(setting) {
                 Ok(protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes) => {
-                    let new_value = new_value.ok_or(invalid_null_error)?;
+                    let new_value = maybe_new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
                         .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
@@ -735,7 +733,7 @@ impl FlightService for FlightServiceHandler {
                     Ok(())
                 }
                 Ok(protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes) => {
-                    let new_value = new_value.ok_or(invalid_null_error)?;
+                    let new_value = maybe_new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
                         .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
@@ -743,7 +741,7 @@ impl FlightService for FlightServiceHandler {
                         .map_err(error_to_status_internal)
                 }
                 Ok(protocol::update_configuration::Setting::CompressedReservedMemoryInBytes) => {
-                    let new_value = new_value.ok_or(invalid_null_error)?;
+                    let new_value = maybe_new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
                         .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
@@ -752,13 +750,13 @@ impl FlightService for FlightServiceHandler {
                 }
                 Ok(protocol::update_configuration::Setting::TransferBatchSizeInBytes) => {
                     configuration_manager
-                        .set_transfer_batch_size_in_bytes(new_value, storage_engine)
+                        .set_transfer_batch_size_in_bytes(maybe_new_value, storage_engine)
                         .await
                         .map_err(error_to_status_internal)
                 }
                 Ok(protocol::update_configuration::Setting::TransferTimeInSeconds) => {
                     configuration_manager
-                        .set_transfer_time_in_seconds(new_value, storage_engine)
+                        .set_transfer_time_in_seconds(maybe_new_value, storage_engine)
                         .await
                         .map_err(error_to_status_internal)
                 }
