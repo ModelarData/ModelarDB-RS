@@ -115,9 +115,7 @@ impl MemoryPool {
             .lock()
             .expect(EXPECT_MUTEX_NOT_POISONED);
 
-        let size_in_bytes = size_in_bytes
-            .try_into()
-            .expect(EXPECT_LESS_THAN_I64_MAX);
+        let size_in_bytes = size_in_bytes.try_into().expect(EXPECT_LESS_THAN_I64_MAX);
 
         while *memory_in_bytes < size_in_bytes {
             memory_in_bytes = self
@@ -162,9 +160,7 @@ impl MemoryPool {
             .lock()
             .expect(EXPECT_MUTEX_NOT_POISONED);
 
-        let size_in_bytes = size_in_bytes
-            .try_into()
-            .expect(EXPECT_LESS_THAN_I64_MAX);
+        let size_in_bytes = size_in_bytes.try_into().expect(EXPECT_LESS_THAN_I64_MAX);
 
         while *memory_in_bytes < size_in_bytes {
             // There is still not enough memory available, but it is no longer sensible to wait.
@@ -208,9 +204,7 @@ impl MemoryPool {
             .lock()
             .expect(EXPECT_MUTEX_NOT_POISONED);
 
-        let size_in_bytes: i64 = size_in_bytes
-            .try_into()
-            .expect(EXPECT_LESS_THAN_I64_MAX);
+        let size_in_bytes: i64 = size_in_bytes.try_into().expect(EXPECT_LESS_THAN_I64_MAX);
 
         if size_in_bytes <= *remaining_compressed_memory_in_bytes {
             *remaining_compressed_memory_in_bytes -= size_in_bytes;
