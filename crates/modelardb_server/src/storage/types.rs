@@ -118,7 +118,7 @@ impl MemoryPool {
             .try_into()
             .expect("size_in_bytes should be less than 8192 PiB.");
 
-        while *memory_in_bytes < size_in_bytes as isize {
+        while *memory_in_bytes < size_in_bytes {
             memory_in_bytes = self
                 .wait_for_ingested_memory
                 .wait(memory_in_bytes)
