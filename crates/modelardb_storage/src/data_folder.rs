@@ -46,7 +46,10 @@ use futures::{StreamExt, TryStreamExt};
 use modelardb_types::flight::protocol;
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
-use modelardb_types::types::{ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata, MAX_RETENTION_PERIOD_IN_SECONDS};
+use modelardb_types::types::{
+    ArrowValue, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
+    TimeSeriesTableMetadata,
+};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -330,12 +333,13 @@ impl DataFolder {
     /// Register all normal tables and time series tables in `self` with its [`SessionContext`].
     /// `data_sink` set as the [`DataSink`] for all of the tables. If the tables could not be
     /// registered, [`ModelarDbStorageError`] is returned.
-    pub async fn register_normal_and_time_series_tables(&self, data_sink: Arc<dyn DataSink>) -> Result<()> {
+    pub async fn register_normal_and_time_series_tables(
+        &self,
+        data_sink: Arc<dyn DataSink>,
+    ) -> Result<()> {
         // Register normal tables.
         for normal_table_name in self.normal_table_names().await? {
-            let delta_table = self
-                .delta_table(&normal_table_name)
-                .await?;
+            let delta_table = self.delta_table(&normal_table_name).await?;
 
             crate::register_normal_table(
                 &self.session_context,
@@ -467,7 +471,8 @@ impl DataFolder {
     /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
     /// table does not exist or the table is not a normal table, return [`None`].
     pub async fn normal_table_schema(&self, table_name: &str) -> Option<Schema> {
-        if self.is_normal_table(table_name)
+        if self
+            .is_normal_table(table_name)
             .await
             .is_ok_and(|is_normal_table| is_normal_table)
         {
@@ -510,7 +515,11 @@ impl DataFolder {
     /// the table does not exist.
     pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
         let delta_table = self.delta_table(table_name).await?;
-        if self.time_series_table_metadata_for_registered_time_series_table(table_name).await.is_some() {
+        if self
+            .time_series_table_metadata_for_registered_time_series_table(table_name)
+            .await
+            .is_some()
+        {
             self.time_series_table_writer(delta_table)
                 .await
                 .map_err(|error| error.into())
@@ -1288,16 +1297,14 @@ mod tests {
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
     use modelardb_test::table as test;
-    use modelardb_types::types::{ArrowTimestamp};
+    use modelardb_types::types::ArrowTimestamp;
     use tempfile::TempDir;
 
     // Tests for DataFolder.
     #[tokio::test]
     async fn test_create_metadata_data_folder_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path())
-            .await
-            .unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         assert!(
             data_folder
@@ -1522,9 +1529,7 @@ mod tests {
 
     async fn create_data_folder_and_save_normal_tables() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path())
-            .await
-            .unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         data_folder
             .save_normal_table_metadata("normal_table_1")
@@ -1601,9 +1606,7 @@ mod tests {
     #[tokio::test]
     async fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path())
-            .await
-            .unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let query_schema = Arc::new(Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
@@ -1614,10 +1617,7 @@ mod tests {
             Field::new("generated_column_2", ArrowValue::DATA_TYPE, false),
         ]));
 
-        let error_bounds = vec![
-            ErrorBound::Lossless;
-            query_schema.fields.len()
-        ];
+        let error_bounds = vec![ErrorBound::Lossless; query_schema.fields.len()];
 
         let plus_one_column = Some(GeneratedColumn {
             expr: col("field_1") + Literal(Int64(Some(1))),
@@ -1671,9 +1671,7 @@ mod tests {
 
     async fn create_data_folder_and_save_time_series_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path())
-            .await
-            .unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         // Save a time series table to the metadata Delta Lake.
         let time_series_table_metadata = test::time_series_table_metadata();
