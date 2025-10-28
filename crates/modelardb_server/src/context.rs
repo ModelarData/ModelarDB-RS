@@ -20,7 +20,6 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
-use datafusion::prelude::SessionContext;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -37,8 +36,6 @@ pub struct Context {
     pub data_folders: DataFolders,
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
-    /// Main interface for Apache DataFusion.
-    pub session_context: SessionContext,
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
 }
@@ -50,8 +47,6 @@ impl Context {
     pub async fn try_new(data_folders: DataFolders, cluster_mode: ClusterMode) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
-        let session_context = modelardb_storage::create_session_context();
-
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(data_folders.clone(), &configuration_manager).await?,
         ));
@@ -59,7 +54,6 @@ impl Context {
         Ok(Context {
             data_folders,
             configuration_manager,
-            session_context,
             storage_engine,
         })
     }
@@ -167,8 +161,11 @@ impl Context {
 
     /// Register the normal table with `table_name` in Apache DataFusion. If the normal table does
     /// not exist or could not be registered with Apache DataFusion, return
-    /// [`ModelarDbServerError`].
+    /// [`ModelarDbServerError`]. [`DataFolder.register_normal_and_time_series_tables()`] is not
+    /// used so a unique [`NormalTableDataSink`] can be passed per table.
     async fn register_normal_table(&self, table_name: &str) -> Result<()> {
+        let session_context = self.data_folders.query_data_folder.session_context();
+
         let delta_table = self
             .data_folders
             .query_data_folder
@@ -182,7 +179,7 @@ impl Context {
         ));
 
         modelardb_storage::register_normal_table(
-            &self.session_context,
+            session_context,
             table_name,
             delta_table,
             normal_table_data_sink,
@@ -212,13 +209,16 @@ impl Context {
         Ok(())
     }
 
-    /// Register the time series table with `time_series_table_metadata` in Apache DataFusion. If the
-    /// time series table does not exist or could not be registered with Apache DataFusion, return
-    /// [`ModelarDbServerError`].
+    /// Register the time series table with `time_series_table_metadata` in Apache DataFusion. If
+    /// the time series table does not exist or could not be registered with Apache DataFusion,
+    /// return [`ModelarDbServerError`]. [`DataFolder.register_normal_and_time_series_tables()`] is
+    /// not used so a unique [`TimeSeriesTableDataSink`] can be passed per table.
     async fn register_time_series_table(
         &self,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     ) -> Result<()> {
+        let session_context = self.data_folders.query_data_folder.session_context();
+
         let delta_table = self
             .data_folders
             .query_data_folder
@@ -231,7 +231,7 @@ impl Context {
         ));
 
         modelardb_storage::register_time_series_table(
-            &self.session_context,
+            session_context,
             delta_table,
             time_series_table_metadata.clone(),
             time_series_table_data_sink,
@@ -258,7 +258,8 @@ impl Context {
 
         // Deregister the table from the Apache DataFusion session context. This is done first to
         // avoid data being ingested into the table while it is being deleted.
-        self.session_context.deregister_table(table_name)?;
+        let session_context = self.data_folders.query_data_folder.session_context();
+        session_context.deregister_table(table_name)?;
 
         self.drop_table_from_storage_engine(table_name).await?;
 
@@ -389,7 +390,7 @@ impl Context {
     /// Return the default database schema if it exists, otherwise a [`ModelarDbServerError`]
     /// indicating at what level the lookup failed is returned.
     pub fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>> {
-        let session_context = self.session_context.clone();
+        let session_context = self.data_folders.query_data_folder.session_context();
 
         let catalog = session_context.catalog("datafusion").ok_or_else(|| {
             ModelarDbServerError::InvalidState("Default catalog does not exist.".to_owned())

@@ -109,7 +109,7 @@ impl DataFolder {
             storage_options: HashMap::new(),
             object_store: Arc::new(InMemory::new()),
             delta_table_cache: DashMap::new(),
-            session_context: Arc::new(SessionContext::new()),
+            session_context: Arc::new(crate::create_session_context()),
         };
 
         data_folder.create_and_register_metadata_tables().await?;
@@ -140,7 +140,7 @@ impl DataFolder {
             storage_options: HashMap::new(),
             object_store: Arc::new(object_store),
             delta_table_cache: DashMap::new(),
-            session_context: Arc::new(SessionContext::new()),
+            session_context: Arc::new(crate::create_session_context()),
         };
 
         data_folder.create_and_register_metadata_tables().await?;
@@ -225,7 +225,7 @@ impl DataFolder {
             storage_options,
             object_store: Arc::new(object_store),
             delta_table_cache: DashMap::new(),
-            session_context: Arc::new(SessionContext::new()),
+            session_context: Arc::new(crate::create_session_context()),
         };
 
         data_folder.create_and_register_metadata_tables().await?;
@@ -258,7 +258,7 @@ impl DataFolder {
             storage_options,
             object_store: Arc::new(object_store),
             delta_table_cache: DashMap::new(),
-            session_context: Arc::new(SessionContext::new()),
+            session_context: Arc::new(crate::create_session_context()),
         };
 
         data_folder.create_and_register_metadata_tables().await?;

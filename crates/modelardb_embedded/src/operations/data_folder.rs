@@ -30,7 +30,6 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
-use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use modelardb_storage::data_folder::DataFolder;
 
@@ -391,7 +390,7 @@ impl Operations for DataFolder {
         // Read data to copy from source_table_name in source.
         let source_table = Arc::new(self.delta_table(source_table_name).await?);
 
-        let session_context = SessionContext::new();
+        let session_context = modelardb_storage::create_session_context();
         session_context.register_table(source_table_name, source_table)?;
 
         let df = session_context.sql(&sql).await?;

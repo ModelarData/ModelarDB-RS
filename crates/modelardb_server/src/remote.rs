@@ -469,13 +469,15 @@ impl FlightService for FlightServiceHandler {
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::Statement(statement) => {
-                modelardb_storage::execute_statement(&self.context.session_context, statement)
+                let session_context = self.context.data_folders.query_data_folder.session_context();
+                modelardb_storage::execute_statement(session_context, statement)
                     .await
                     .map_err(|error| error.into())
             }
             ModelarDbStatement::IncludeSelect(statement, addresses) => {
+                let session_context = self.context.data_folders.query_data_folder.session_context();
                 let local_sendable_record_batch_stream =
-                    modelardb_storage::execute_statement(&self.context.session_context, statement)
+                    modelardb_storage::execute_statement(session_context, statement)
                         .await
                         .map_err(error_to_status_internal)?;
 
