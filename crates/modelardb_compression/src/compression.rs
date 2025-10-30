@@ -140,9 +140,9 @@ fn sort_time_series_by_tags_and_time(
 }
 
 /// Compress the field columns in `uncompressed_time_series` from the table with
-/// `time_series_table_metadata` using [`try_compress_univariate_time_series`] and append the result
-/// to `compressed_data`. It is assumed that all data points in `uncompressed_time_series` have the
-/// same tags as in `tag_values`.
+/// `time_series_table_metadata` using [`try_compress_univariate_time_series()`] and append the
+/// result to `compressed_data`. It is assumed that all data points in `uncompressed_time_series`
+/// have the same tags as in `tag_values`.
 pub fn try_split_and_compress_univariate_time_series(
     time_series_table_metadata: &TimeSeriesTableMetadata,
     uncompressed_time_series: &RecordBatch,

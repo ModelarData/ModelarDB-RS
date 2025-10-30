@@ -622,7 +622,7 @@ impl DataFolder {
         .await
     }
 
-    /// Return the location of the table with `table_name.
+    /// Return the location of the table with `table_name`.
     fn location_of_table(&self, table_name: &str) -> String {
         format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
@@ -873,9 +873,9 @@ impl DataFolder {
             .await
     }
 
-    /// Write `compressed_segments` with segments to a Delta Lake table for a time series table with
-    /// `table_name`. Returns an updated [`DeltaTable`] if the file was written successfully,
-    /// otherwise returns [`ModelarDbStorageError`].
+    /// Write `compressed_segments` to a Delta Lake table for a time series table with `table_name`.
+    /// Returns an updated [`DeltaTable`] if the file was written successfully, otherwise returns
+    /// [`ModelarDbStorageError`].
     pub async fn write_compressed_segments_to_time_series_table(
         &self,
         table_name: &str,
