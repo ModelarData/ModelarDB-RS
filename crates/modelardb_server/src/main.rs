@@ -52,11 +52,11 @@ pub enum ClusterMode {
 
 /// Setup tracing that prints to stdout, parse the command line arguments to extract
 /// [`DataFolders`], construct a [`Context`] with the systems components, initialize the normal
-/// tables and time series tables in the metadata Delta Lake, initialize a CTRL+C handler that
-/// flushes the data in memory to disk, and start the Apache Arrow Flight interface. Returns
-/// [`ModelarDbServerError`](error::ModelarDbServerError) if the command line arguments
-/// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
-/// Flight interface cannot be started.
+/// tables and time series tables in the Delta Lake, initialize a CTRL+C handler that flushes the
+/// data in memory to disk, and start the Apache Arrow Flight interface. Returns
+/// [`ModelarDbServerError`](error::ModelarDbServerError) if the command line arguments cannot be
+/// parsed, if the metadata cannot be read from the database, or if the Apache Arrow Flight
+/// interface cannot be started.
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize a tracing layer that logs events to stdout.

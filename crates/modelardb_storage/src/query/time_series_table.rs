@@ -407,7 +407,7 @@ fn convert_logical_expr_to_physical_expr(
 
 /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
 /// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError`] if the necessary
-/// metadata cannot be retrieved from the metadata Delta Lake.
+/// metadata cannot be retrieved from the Delta Lake.
 fn new_data_source_exec(
     delta_table: &DeltaTable,
     partition_filters: &[PartitionFilter],

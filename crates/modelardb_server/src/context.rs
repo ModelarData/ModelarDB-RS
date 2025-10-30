@@ -126,7 +126,7 @@ impl Context {
         self.register_time_series_table(Arc::new(time_series_table_metadata.clone()))
             .await?;
 
-        // Persist the new time series table to the metadata Delta Lake.
+        // Persist the new time series table to the Delta Lake.
         self.data_folders
             .local_data_folder
             .save_time_series_table_metadata(time_series_table_metadata)
@@ -140,9 +140,9 @@ impl Context {
         Ok(())
     }
 
-    /// For each normal table saved in the metadata Delta Lake, register the normal table in Apache
-    /// DataFusion. If the normal tables could not be retrieved from the metadata Delta Lake or a
-    /// normal table could not be registered, return [`ModelarDbServerError`].
+    /// For each normal table saved in the Delta Lake, register the normal table in Apache
+    /// DataFusion. If the normal tables could not be retrieved from the Delta Lake or a normal
+    /// table could not be registered, return [`ModelarDbServerError`].
     pub async fn register_normal_tables(&self) -> Result<()> {
         // We register the normal tables in the local data folder to avoid registering tables that
         // NormalTableDataSink cannot write data to.
@@ -190,9 +190,9 @@ impl Context {
         Ok(())
     }
 
-    /// For each time series table saved in the metadata Delta Lake, register the time series table
-    /// in Apache DataFusion. If the time series tables could not be retrieved from the metadata
-    /// Delta Lake or a time series table could not be registered, return [`ModelarDbServerError`].
+    /// For each time series table saved in the Delta Lake, register the time series table in Apache
+    /// DataFusion. If the time series tables could not be retrieved from the Delta Lake or a time
+    /// series table could not be registered, return [`ModelarDbServerError`].
     pub async fn register_time_series_tables(&self) -> Result<()> {
         // We register the time series tables in the local data folder to avoid registering tables
         // that TimeSeriesTableDataSink cannot write data to.
@@ -246,9 +246,8 @@ impl Context {
     }
 
     /// Drop the table with `table_name` if it exists. The table is deregistered from the Apache
-    /// Arrow Datafusion session context and deleted from the storage engine, metadata Delta Lake,
-    /// and data Delta Lake. If the table does not exist or if it could not be dropped,
-    /// [`ModelarDbServerError`] is returned.
+    /// Arrow Datafusion session context and deleted from the storage engine and Delta Lake. If the
+    /// table does not exist or if it could not be dropped, [`ModelarDbServerError`] is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<()> {
         // Deregistering the table from the Apache DataFusion session context and deleting the table
         // from the storage engine does not require the table to exist, so the table is checked first.
@@ -263,7 +262,7 @@ impl Context {
 
         self.drop_table_from_storage_engine(table_name).await?;
 
-        // Drop the table metadata from the metadata Delta Lake.
+        // Drop the table metadata from the Delta Lake.
         self.data_folders
             .local_data_folder
             .drop_table_metadata(table_name)
@@ -279,8 +278,8 @@ impl Context {
     }
 
     /// Delete all data from the table with `table_name` if it exists. The table data is deleted
-    /// from the storage engine and data Delta Lake. If the table does not exist or if it could not
-    /// be truncated, [`ModelarDbServerError`] is returned.
+    /// from the storage engine and Delta Lake. If the table does not exist or if it could not be
+    /// truncated, [`ModelarDbServerError`] is returned.
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
         // Deleting the table from the storage engine does not require the table to exist, so the
         // table is checked first.
@@ -290,7 +289,7 @@ impl Context {
 
         self.drop_table_from_storage_engine(table_name).await?;
 
-        // Delete the table data from the data Delta Lake.
+        // Delete the table data from the Delta Lake.
         self.data_folders
             .local_data_folder
             .truncate_table(table_name)
@@ -438,7 +437,7 @@ mod tests {
 
         assert!(folder_path.exists());
 
-        // The normal table should be saved to the metadata Delta Lake.
+        // The normal table should be saved to the Delta Lake.
         assert!(
             context
                 .data_folders
@@ -486,7 +485,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The time series table should be saved to the metadata Delta Lake.
+        // The time series table should be saved to the Delta Lake.
         let time_series_table_metadata = context
             .data_folders
             .local_data_folder
@@ -531,7 +530,7 @@ mod tests {
     async fn test_register_normal_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
-        // Save a normal table to the metadata Delta Lake.
+        // Save a normal table to the Delta Lake.
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -551,7 +550,7 @@ mod tests {
     async fn test_register_time_series_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
-        // Save a time series table to the metadata Delta Lake.
+        // Save a time series table to the Delta Lake.
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -589,7 +588,7 @@ mod tests {
                 .is_ok()
         );
 
-        // The normal table should be deleted from the metadata Delta Lake.
+        // The normal table should be deleted from the Delta Lake.
         assert!(
             !context
                 .data_folders
@@ -625,7 +624,7 @@ mod tests {
                 .is_ok()
         );
 
-        // The time series table should be deleted from the metadata Delta Lake.
+        // The time series table should be deleted from the Delta Lake.
         assert!(
             !context
                 .data_folders
@@ -667,7 +666,7 @@ mod tests {
 
         context.truncate_table(NORMAL_TABLE_NAME).await.unwrap();
 
-        // The normal table should not be deleted from the metadata Delta Lake.
+        // The normal table should not be deleted from the Delta Lake.
         assert!(
             local_data_folder
                 .is_normal_table(NORMAL_TABLE_NAME)
@@ -698,7 +697,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The time series table should not be deleted from the metadata Delta Lake.
+        // The time series table should not be deleted from the Delta Lake.
         assert!(
             local_data_folder
                 .is_time_series_table(TIME_SERIES_TABLE_NAME)

@@ -553,7 +553,7 @@ mod tests {
             COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
-        // Create a local data folder and save a single time series table to the metadata Delta Lake.
+        // Create a local data folder and save a single time series table to the Delta Lake.
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 

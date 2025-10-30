@@ -225,9 +225,9 @@ impl UncompressedDataManager {
     /// Insert a single data point into the in-memory buffer with the tag hash that corresponds to
     /// `tag_values` if one exists. If the buffer has been spilled, read it back into memory. If no
     /// buffer exists for the tag hash, allocate a new buffer that will be compressed within the
-    /// error bound in `time_series_table_metadata`. Returns [`true`] if a buffer was spilled, [`false`]
-    /// if not, and [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the error bound
-    /// cannot be retrieved from the metadata Delta Lake.
+    /// error bound in `time_series_table_metadata`. Returns [`true`] if a buffer was spilled,
+    /// [`false`] if not, and [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the
+    /// error bound cannot be retrieved from the Delta Lake.
     async fn insert_data_point(
         &self,
         tag_values: Vec<String>,
@@ -591,7 +591,7 @@ impl UncompressedDataManager {
             .map(|(uncompressed_values, field_column_index)| {
                 let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
 
-                modelardb_compression::try_compress_univariate_arrays(
+                modelardb_compression::try_compress_univariate_time_series(
                     uncompressed_timestamps,
                     uncompressed_values,
                     error_bound,

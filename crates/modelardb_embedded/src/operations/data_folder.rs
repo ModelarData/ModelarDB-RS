@@ -160,8 +160,8 @@ impl Operations for DataFolder {
         Ok(())
     }
 
-    /// Returns the name of all the tables. If the table names could not be retrieved from the
-    /// metadata Delta Lake, [`ModelarDbEmbeddedError`] is returned.
+    /// Returns the name of all the tables. If the table names could not be retrieved from the Delta
+    /// Lake, [`ModelarDbEmbeddedError`] is returned.
     async fn tables(&mut self) -> Result<Vec<String>> {
         self.table_names().await.map_err(|error| error.into())
     }
@@ -210,7 +210,7 @@ impl Operations for DataFolder {
                 return Err(schema_mismatch_error);
             }
 
-            let compressed_data = modelardb_compression::try_compress_multivariate_record_batch(
+            let compressed_data = modelardb_compression::try_compress_multivariate_time_series(
                 &time_series_table_metadata,
                 &uncompressed_data,
             )?;
@@ -505,15 +505,14 @@ impl Operations for DataFolder {
     }
 
     /// Drop the table with the name in `table_name` by deregistering the table from the Apache
-    /// Arrow DataFusion session, deleting all the table files from the data Delta Lake, and
-    /// deleting the table metadata from the metadata Delta Lake. If the table could not be
-    /// deregistered or the metadata or data could not be dropped, [`ModelarDbEmbeddedError`] is
-    /// returned.
+    /// Arrow DataFusion session, deleting all the table files from the Delta Lake, and deleting the
+    /// table metadata from the Delta Lake. If the table could not be deregistered or the metadata
+    /// or data could not be dropped, [`ModelarDbEmbeddedError`] is returned.
     async fn drop(&mut self, table_name: &str) -> Result<()> {
         // Drop the table from the Apache Arrow DataFusion session.
         self.session_context().deregister_table(table_name)?;
 
-        // Delete the table metadata from the metadata Delta Lake.
+        // Delete the table metadata from the Delta Lake.
         self.drop_table_metadata(table_name).await?;
 
         // Drop the table from the Delta Lake.
@@ -635,7 +634,7 @@ mod tests {
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         let data_sink = Arc::new(DataFolderDataSink::new());
         new_data_folder
-            .register_normal_and_time_series_tables(data_sink)
+            .register_tables(data_sink)
             .await
             .unwrap();
         assert!(
@@ -810,7 +809,7 @@ mod tests {
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         let data_sink = Arc::new(DataFolderDataSink::new());
         new_data_folder
-            .register_normal_and_time_series_tables(data_sink)
+            .register_tables(data_sink)
             .await
             .unwrap();
         assert!(
@@ -2061,7 +2060,7 @@ mod tests {
                 .unwrap()
         );
 
-        // Verify that the normal table was dropped from the metadata Delta Lake.
+        // Verify that the normal table was dropped from the Delta Lake.
         assert!(
             !data_folder
                 .is_normal_table(NORMAL_TABLE_NAME)
@@ -2094,7 +2093,7 @@ mod tests {
                 .unwrap()
         );
 
-        // Verify that the time series table was dropped from the metadata Delta Lake.
+        // Verify that the time series table was dropped from the Delta Lake.
         assert!(
             !data_folder
                 .is_time_series_table(TIME_SERIES_TABLE_NAME)
@@ -2314,7 +2313,7 @@ mod tests {
         let actual_schema = TableProvider::schema(&delta_table);
         assert_eq!(actual_schema, Arc::new(expected_schema));
 
-        // Verify that the normal table exists in the metadata Delta Lake.
+        // Verify that the normal table exists in the Delta Lake.
         assert!(data_folder.is_normal_table(table_name).await.unwrap());
 
         // Verify that the normal table is registered with Apache DataFusion.
@@ -2520,7 +2519,7 @@ mod tests {
         // Verify that the time series table exists in the Delta Lake.
         assert!(data_folder.delta_table(table_name).await.is_ok());
 
-        // Verify that the time series table exists in the metadata Delta Lake with the correct schema.
+        // Verify that the time series table exists in the Delta Lake with the correct schema.
         let time_series_table_metadata = data_folder
             .time_series_table_metadata_for_time_series_table(table_name)
             .await

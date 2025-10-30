@@ -397,7 +397,7 @@ async fn import_and_clear_time_series_table_batch(
     if *current_batch_size != 0 {
         let schema = current_batch[0].schema();
         let uncompressed_data = compute::concat_batches(&schema, &*current_batch)?;
-        let compressed_data = modelardb_compression::try_compress_multivariate_record_batch(
+        let compressed_data = modelardb_compression::try_compress_multivariate_time_series(
             time_series_table_metadata,
             &uncompressed_data,
         )?;

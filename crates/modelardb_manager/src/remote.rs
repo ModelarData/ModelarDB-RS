@@ -156,9 +156,9 @@ impl FlightServiceHandler {
         }
     }
 
-    /// Create a normal table, save it to the metadata Delta Lake and create it for each node
-    /// controlled by the manager. If the normal table cannot be saved to the metadata Delta Lake or
-    /// created for each node, return [`Status`].
+    /// Create a normal table, save it to the Delta Lake and create it for each node controlled by
+    /// the manager. If the normal table cannot be saved to the Delta Lake or created for each node,
+    /// return [`Status`].
     async fn save_and_create_cluster_normal_table(
         &self,
         table_name: &str,
@@ -171,7 +171,7 @@ impl FlightServiceHandler {
             .await
             .map_err(error_to_status_internal)?;
 
-        // Persist the new normal table to the metadata Delta Lake.
+        // Persist the new normal table to the Delta Lake.
         self.context
             .remote_data_folder
             .save_normal_table_metadata(table_name)
@@ -201,9 +201,9 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Create a time series table, save it to the metadata Delta Lake and create it for each node
-    /// controlled by the manager. If the time series table cannot be saved to the metadata Delta
-    /// Lake or created for each node, return [`Status`].
+    /// Create a time series table, save it to the Delta Lake and create it for each node controlled
+    /// by the manager. If the time series table cannot be saved to the Delta Lake or created for
+    /// each node, return [`Status`].
     async fn save_and_create_cluster_time_series_table(
         &self,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
@@ -215,7 +215,7 @@ impl FlightServiceHandler {
             .await
             .map_err(error_to_status_internal)?;
 
-        // Persist the new time series table to the metadata Delta Lake.
+        // Persist the new time series table to the Delta Lake.
         self.context
             .remote_data_folder
             .save_time_series_table_metadata(&time_series_table_metadata)
@@ -250,19 +250,19 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Drop the table from the metadata Delta Lake, the data Delta Lake, and from each node
-    /// controlled by the manager. If the table does not exist or the table cannot be dropped from
-    /// the remote data folder and from each node, return [`Status`].
+    /// Drop the table from the Delta Lake, the Delta Lake, and from each node controlled by the
+    /// manager. If the table does not exist or the table cannot be dropped from the remote data
+    /// folder and from each node, return [`Status`].
     async fn drop_cluster_table(&self, table_name: &str) -> StdResult<(), Status> {
-        // Drop the table from the remote data folder metadata Delta Lake. This will return an error
-        // if the table does not exist.
+        // Drop the table from the remote data folder Delta Lake. This will return an error if the
+        // table does not exist.
         self.context
             .remote_data_folder
             .drop_table_metadata(table_name)
             .await
             .map_err(error_to_status_internal)?;
 
-        // Drop the table from the remote data folder data Delta lake.
+        // Drop the table from the remote data folder Delta lake.
         self.context
             .remote_data_folder
             .drop_table(table_name)
@@ -291,7 +291,7 @@ impl FlightServiceHandler {
             )));
         }
 
-        // Truncate the table in the remote data folder data Delta lake.
+        // Truncate the table in the remote data folder Delta lake.
         self.context
             .remote_data_folder
             .truncate_table(table_name)
@@ -375,7 +375,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> StdResult<Response<Self::ListFlightsStream>, Status> {
-        // Retrieve the table names from the metadata Delta Lake.
+        // Retrieve the table names from the Delta Lake.
         let table_names = self
             .context
             .remote_data_folder
@@ -612,9 +612,9 @@ impl FlightService for FlightServiceHandler {
                 .register_node(node.clone())
                 .map_err(error_to_status_internal)?;
 
-            // Use the metadata manager to persist the node to the metadata Delta Lake. Note that if
-            // this fails, the metadata Delta Lake and the cluster will be out of sync until the
-            // manager is restarted.
+            // Use the metadata manager to persist the node to the Delta Lake. Note that if this
+            // fails, the Delta Lake and the cluster will be out of sync until the manager is
+            // restarted.
             self.context
                 .remote_data_folder
                 .save_node(node)
@@ -643,15 +643,15 @@ impl FlightService for FlightServiceHandler {
             let node_metadata = protocol::NodeMetadata::decode(action.body)
                 .map_err(error_to_status_invalid_argument)?;
 
-            // Remove the node with the given url from the metadata Delta Lake.
+            // Remove the node with the given url from the Delta Lake.
             self.context
                 .remote_data_folder
                 .remove_node(&node_metadata.url)
                 .await
                 .map_err(error_to_status_internal)?;
 
-            // Remove the node with the given url from the cluster and kill it. Note that if this fails,
-            // the cluster and metadata Delta Lake will be out of sync until the manager is restarted.
+            // Remove the node with the given url from the cluster and kill it. Note that if this
+            // fails, the cluster and Delta Lake will be out of sync until the manager is restarted.
             self.context
                 .cluster
                 .write()

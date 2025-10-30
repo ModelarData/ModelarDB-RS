@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! Management of the metadata Delta Lake for the manager. Metadata which is unique to the manager,
-//! such as metadata about registered edges, is handled here.
+//! Management of the Delta Lake for the manager. Metadata which is unique to the manager, such as
+//! metadata about registered edges, is handled here.
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -30,8 +30,8 @@ use uuid::Uuid;
 
 use crate::error::Result;
 
-/// Stores the metadata required for reading from and writing to the normal tables and time series tables
-/// and persisting edges. The data that needs to be persisted is stored in the metadata Delta Lake.
+/// Stores the metadata required for reading from and writing to the normal tables and time series
+/// tables and persisting edges. The data that needs to be persisted is stored in the Delta Lake.
 pub trait ManagerMetadata {
     async fn create_and_register_manager_metadata_data_folder_tables(&self) -> Result<()>;
     async fn manager_key(&self) -> Result<Uuid>;
@@ -104,8 +104,8 @@ impl ManagerMetadata for DataFolder {
         }
     }
 
-    /// Save the node to the metadata Delta Lake and return [`Ok`]. If the node could not be saved,
-    /// return [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
+    /// Save the node to the Delta Lake and return [`Ok`]. If the node could not be saved, return
+    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
     async fn save_node(&self, node: Node) -> Result<()> {
         self.write_columns_to_metadata_table(
             "nodes",
@@ -133,8 +133,8 @@ impl ManagerMetadata for DataFolder {
         Ok(())
     }
 
-    /// Return the nodes currently controlled by the manager that have been persisted to the
-    /// metadata Delta Lake. If the nodes could not be retrieved,
+    /// Return the nodes currently controlled by the manager that have been persisted to the Delta
+    /// Lake. If the nodes could not be retrieved,
     /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError) is returned.
     async fn nodes(&self) -> Result<Vec<Node>> {
         let mut nodes: Vec<Node> = vec![];

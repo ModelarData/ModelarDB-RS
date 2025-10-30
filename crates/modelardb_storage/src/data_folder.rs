@@ -1,4 +1,4 @@
-/* Copyright 2024 The ModelarDB Contributors
+/* Copyright 2025 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -266,8 +266,8 @@ impl DataFolder {
         Ok(data_folder)
     }
 
-    /// If they do not already exist, create the tables in the metadata Delta Lake for normal table
-    /// and time series table metadata and register them with the Apache DataFusion session context.
+    /// If they do not already exist, create the tables in the Delta Lake for normal table and time
+    /// series table metadata and register them with the Apache DataFusion session context.
     /// * The `normal_table_metadata` table contains the metadata for normal tables.
     /// * The `time_series_table_metadata` table contains the main metadata for time series tables.
     /// * The `time_series_table_field_columns` table contains the name, index, error bound value,
@@ -331,9 +331,9 @@ impl DataFolder {
     }
 
     /// Register all normal tables and time series tables in `self` with its [`SessionContext`].
-    /// `data_sink` set as the [`DataSink`] for all of the tables. If the tables could not be
+    /// `data_sink` is set as the [`DataSink`] for all of the tables. If the tables could not be
     /// registered, [`ModelarDbStorageError`] is returned.
-    pub async fn register_normal_and_time_series_tables(
+    pub async fn register_tables(
         &self,
         data_sink: Arc<dyn DataSink>,
     ) -> Result<()> {
@@ -386,7 +386,7 @@ impl DataFolder {
     /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
-        let table_path = self.location_of_compressed_table(table_name);
+        let table_path = self.location_of_table(table_name);
         self.delta_table_from_path(&table_path).await
     }
 
@@ -404,7 +404,7 @@ impl DataFolder {
     /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
     pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
-        let table_path = self.location_of_compressed_table(table_name);
+        let table_path = self.location_of_table(table_name);
         self.delta_table_from_path(&table_path)
             .await
             .map(Into::into)
@@ -449,8 +449,8 @@ impl DataFolder {
             .contains(&table_name.to_owned()))
     }
 
-    /// Return the name of each table currently in the metadata Delta Lake. If the table names
-    /// cannot be retrieved, [`ModelarDbStorageError`] is returned.
+    /// Return the name of each table currently in the Delta Lake. If the table names cannot be
+    /// retrieved, [`ModelarDbStorageError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>> {
         let normal_table_names = self.normal_table_names().await?;
         let time_series_table_names = self.time_series_table_names().await?;
@@ -461,8 +461,8 @@ impl DataFolder {
         Ok(table_names)
     }
 
-    /// Return the name of each normal table currently in the metadata Delta Lake. Note that this
-    /// does not include time series tables. If the normal table names cannot be retrieved,
+    /// Return the name of each normal table currently in the Delta Lake. Note that this does not
+    /// include time series tables. If the normal table names cannot be retrieved,
     /// [`ModelarDbStorageError`] is returned.
     pub async fn normal_table_names(&self) -> Result<Vec<String>> {
         self.table_names_of_type(TableType::NormalTable).await
@@ -478,7 +478,7 @@ impl DataFolder {
         {
             self.delta_table(table_name)
                 .await
-                .expect("Delta Lake table should exist if the table is in the metadata Delta Lake.")
+                .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
                 .get_schema()
                 .expect("Delta Lake table should be loaded and metadata should be in the log.")
                 .try_into()
@@ -488,8 +488,8 @@ impl DataFolder {
         }
     }
 
-    /// Return the name of each time series table currently in the metadata Delta Lake. Note that
-    /// this does not include normal tables. If the time series table names cannot be retrieved,
+    /// Return the name of each time series table currently in the Delta Lake. Note that this does
+    /// not include normal tables. If the time series table names cannot be retrieved,
     /// [`ModelarDbStorageError`] is returned.
     pub async fn time_series_table_names(&self) -> Result<Vec<String>> {
         self.table_names_of_type(TableType::TimeSeriesTable).await
@@ -526,9 +526,9 @@ impl DataFolder {
         }
     }
 
-    /// Return a [`DeltaTableWriter`] for writing to the time series table with `delta_table` in the
-    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
-    /// established or the table does not exist.
+    /// Return a [`DeltaTableWriter`] for writing to the time series table corresponding to
+    /// `delta_table` in the Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta
+    /// Lake cannot be established or the table does not exist.
     pub async fn time_series_table_writer(
         &self,
         delta_table: DeltaTable,
@@ -553,9 +553,9 @@ impl DataFolder {
         DeltaTableWriter::try_new(delta_table, partition_columns, writer_properties)
     }
 
-    /// Return a [`DeltaTableWriter`] for writing to the table with `delta_table` in the Delta Lake,
-    /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
-    /// the table does not exist.
+    /// Return a [`DeltaTableWriter`] for writing to the table corresponding to `delta_table` in the
+    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
+    /// established or the table does not exist.
     pub async fn normal_or_metadata_table_writer(
         &self,
         delta_table: DeltaTable,
@@ -599,7 +599,7 @@ impl DataFolder {
             table_name,
             schema,
             &[],
-            self.location_of_compressed_table(table_name),
+            self.location_of_table(table_name),
             SaveMode::ErrorIfExists,
         )
         .await
@@ -616,14 +616,14 @@ impl DataFolder {
             &time_series_table_metadata.name,
             &time_series_table_metadata.compressed_schema,
             &[FIELD_COLUMN.to_owned()],
-            self.location_of_compressed_table(&time_series_table_metadata.name),
+            self.location_of_table(&time_series_table_metadata.name),
             SaveMode::ErrorIfExists,
         )
         .await
     }
 
-    /// Return the location of the compressed time series or normal table with `table_name`.
-    fn location_of_compressed_table(&self, table_name: &str) -> String {
+    /// Return the location of the table with `table_name.
+    fn location_of_table(&self, table_name: &str) -> String {
         format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
 
@@ -672,11 +672,11 @@ impl DataFolder {
         Ok(delta_table)
     }
 
-    /// Drop the metadata Delta Lake table with `table_name` from the Delta Lake by deleting every
-    /// file related to the table. The table folder cannot be deleted directly since folders do not
-    /// exist in object stores and therefore cannot be operated upon. If the table was dropped
-    /// successfully, the paths to the deleted files are returned, otherwise a
-    /// [`ModelarDbStorageError`] is returned.
+    /// Drop the metadata table with `table_name` from the Delta Lake by deleting every file related
+    /// to the table. The table folder cannot be deleted directly since folders do not exist in
+    /// object stores and therefore cannot be operated upon. If the table was dropped successfully,
+    /// the paths to the deleted files are returned, otherwise a [`ModelarDbStorageError`] is
+    /// returned.
     pub async fn drop_metadata_table(&self, table_name: &str) -> Result<Vec<Path>> {
         let table_path = format!("{METADATA_FOLDER}/{table_name}");
         self.delete_table_files(&table_path).await
@@ -753,9 +753,9 @@ impl DataFolder {
         Ok(())
     }
 
-    /// Save the created normal table to the metadata Delta Lake. This consists of adding a row to
-    /// the `normal_table_metadata` table with the `name` of the table. If the normal table metadata
-    /// was saved, return [`Ok`], otherwise return [`ModelarDbStorageError`].
+    /// Save the created normal table to the Delta Lake. This consists of adding a row to the
+    /// `normal_table_metadata` table with the `name` of the table. If the normal table metadata was
+    /// saved, return [`Ok`], otherwise return [`ModelarDbStorageError`].
     pub async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
         self.write_columns_to_metadata_table(
             "normal_table_metadata",
@@ -766,14 +766,14 @@ impl DataFolder {
         Ok(())
     }
 
-    /// Save the created time series table to the metadata Delta Lake. This includes adding a row to
-    /// the `time_series_table_metadata` table and adding a row to the `time_series_table_field_columns`
+    /// Save the created time series table to the Delta Lake. This includes adding a row to the
+    /// `time_series_table_metadata` table and adding a row to the `time_series_table_field_columns`
     /// table for each field column.
     pub async fn save_time_series_table_metadata(
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
-        // Convert the query schema to bytes, so it can be saved in the metadata Delta Lake.
+        // Convert the query schema to bytes, so it can be saved in the Delta Lake.
         let query_schema_bytes =
             try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?;
 
@@ -845,9 +845,8 @@ impl DataFolder {
         Ok(())
     }
 
-    /// Write `columns` to a metadata Delta Lake table with `table_name`. Returns an updated
-    /// [`DeltaTable`] version if the file was written successfully, otherwise returns
-    /// [`ModelarDbStorageError`].
+    /// Write `columns` to a Delta Lake table with `table_name`. Returns an updated [`DeltaTable`]
+    /// version if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
     pub async fn write_columns_to_metadata_table(
         &self,
         table_name: &str,
@@ -874,7 +873,7 @@ impl DataFolder {
             .await
     }
 
-    /// Write `record_batches` with segments to a Delta Lake table for a time series table with
+    /// Write `compressed_segments` with segments to a Delta Lake table for a time series table with
     /// `table_name`. Returns an updated [`DeltaTable`] if the file was written successfully,
     /// otherwise returns [`ModelarDbStorageError`].
     pub async fn write_compressed_segments_to_time_series_table(
@@ -890,7 +889,7 @@ impl DataFolder {
 
     /// Write `record_batches` to the `delta_table_writer` and commit. Returns an updated
     /// [`DeltaTable`] if all `record_batches` are written and committed successfully, otherwise it
-    /// rollback all writes done using `delta_table_writer` and returns [`ModelarDbStorageError`].
+    /// rolls back all writes done using `delta_table_writer` and returns [`ModelarDbStorageError`].
     async fn write_record_batches_to_table(
         &self,
         mut delta_table_writer: DeltaTableWriter,
@@ -905,9 +904,9 @@ impl DataFolder {
         }
     }
 
-    /// Depending on the type of the table with `table_name`, drop either the normal table
-    /// metadata or the time series table metadata from the metadata Delta Lake. If the table does
-    /// not exist or the metadata could not be dropped, [`ModelarDbStorageError`] is returned.
+    /// Depending on the type of the table with `table_name`, drop either the normal table metadata
+    /// or the time series table metadata from the Delta Lake. If the table does not exist or the
+    /// metadata could not be dropped, [`ModelarDbStorageError`] is returned.
     pub async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
         if self.is_normal_table(table_name).await? {
             self.drop_normal_table_metadata(table_name).await
@@ -921,8 +920,8 @@ impl DataFolder {
     }
 
     /// Drop the metadata for the normal table with `table_name` from the `normal_table_metadata`
-    /// table in the metadata Delta Lake. If the metadata could not be dropped,
-    /// [`ModelarDbStorageError`] is returned.
+    /// table in the Delta Lake. If the metadata could not be dropped, [`ModelarDbStorageError`] is
+    /// returned.
     async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<()> {
         let delta_ops = self.metadata_delta_ops("normal_table_metadata").await?;
 
@@ -934,10 +933,10 @@ impl DataFolder {
         Ok(())
     }
 
-    /// Drop the metadata for the time series table with `table_name` from the metadata Delta Lake.
-    /// This includes deleting a row from the `time_series_table_metadata` table and deleting a row
-    /// from the `time_series_table_field_columns` table for each field column. If the metadata
-    /// could not be dropped, [`ModelarDbStorageError`] is returned.
+    /// Drop the metadata for the time series table with `table_name` from the Delta Lake. This
+    /// includes deleting a row from the `time_series_table_metadata` table and deleting a row from
+    /// the `time_series_table_field_columns` table for each field column. If the metadata could not
+    /// be dropped, [`ModelarDbStorageError`] is returned.
     async fn drop_time_series_table_metadata(&self, table_name: &str) -> Result<()> {
         // Delete the table metadata from the time_series_table_metadata table.
         self.metadata_delta_ops("time_series_table_metadata")
@@ -985,7 +984,7 @@ impl DataFolder {
     }
 
     /// Return the [`TimeSeriesTableMetadata`] for the time series table with `table_name` in the
-    /// metadata Delta Lake. If the [`TimeSeriesTableMetadata`] cannot be retrieved,
+    /// Delta Lake. If the [`TimeSeriesTableMetadata`] cannot be retrieved,
     /// [`ModelarDbStorageError`] is returned.
     pub async fn time_series_table_metadata_for_time_series_table(
         &self,
@@ -1406,7 +1405,7 @@ mod tests {
     async fn test_save_normal_table_metadata() {
         let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
 
-        // Retrieve the normal table from the metadata Delta Lake.
+        // Retrieve the normal table from the Delta Lake.
         let sql = "SELECT table_name FROM metadata.normal_table_metadata ORDER BY table_name";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
@@ -1669,7 +1668,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        // Save a time series table to the metadata Delta Lake.
+        // Save a time series table to the Delta Lake.
         let time_series_table_metadata = test::time_series_table_metadata();
         data_folder
             .save_time_series_table_metadata(&time_series_table_metadata)

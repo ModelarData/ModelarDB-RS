@@ -87,11 +87,11 @@ pub unsafe extern "C" fn modelardb_embedded_open_memory() -> *const c_void {
     set_error_and_return_value_ptr(maybe_data_folder)
 }
 
-/// See documentation for [`modelardb_embedded_open_memory`].
+/// See documentation for [`modelardb_embedded_open_memory()`].
 fn open_memory() -> Result<DataFolder> {
     let data_folder = TOKIO_RUNTIME.block_on(DataFolder::open_memory())?;
     let data_sink = Arc::new(DataFolderDataSink::new());
-    TOKIO_RUNTIME.block_on(data_folder.register_normal_and_time_series_tables(data_sink))?;
+    TOKIO_RUNTIME.block_on(data_folder.register_tables(data_sink))?;
     Ok(data_folder)
 }
 
@@ -106,14 +106,14 @@ pub unsafe extern "C" fn modelardb_embedded_open_local(
     set_error_and_return_value_ptr(maybe_data_folder)
 }
 
-/// See documentation for [`modelardb_embedded_open_local`].
+/// See documentation for [`modelardb_embedded_open_local()`].
 unsafe fn open_local(data_folder_path_ptr: *const c_char) -> Result<DataFolder> {
     let data_folder_str = unsafe { c_char_ptr_to_str(data_folder_path_ptr)? };
     let data_folder_path = StdPath::new(data_folder_str);
 
     let data_folder = TOKIO_RUNTIME.block_on(DataFolder::open_local(data_folder_path))?;
     let data_sink = Arc::new(DataFolderDataSink::new());
-    TOKIO_RUNTIME.block_on(data_folder.register_normal_and_time_series_tables(data_sink))?;
+    TOKIO_RUNTIME.block_on(data_folder.register_tables(data_sink))?;
     Ok(data_folder)
 }
 
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn modelardb_embedded_open_s3(
     set_error_and_return_value_ptr(maybe_data_folder)
 }
 
-/// See documentation for [`modelardb_embedded_open_s3`].
+/// See documentation for [`modelardb_embedded_open_s3()`].
 unsafe fn open_s3(
     endpoint_ptr: *const c_char,
     bucket_name_ptr: *const c_char,
@@ -159,7 +159,7 @@ unsafe fn open_s3(
         secret_access_key.to_owned(),
     ))?;
     let data_sink = Arc::new(DataFolderDataSink::new());
-    TOKIO_RUNTIME.block_on(data_folder.register_normal_and_time_series_tables(data_sink))?;
+    TOKIO_RUNTIME.block_on(data_folder.register_tables(data_sink))?;
     Ok(data_folder)
 }
 
@@ -177,7 +177,7 @@ pub unsafe extern "C" fn modelardb_embedded_open_azure(
     set_error_and_return_value_ptr(maybe_data_folder)
 }
 
-/// See documentation for [`modelardb_embedded_open_azure`].
+/// See documentation for [`modelardb_embedded_open_azure()`].
 unsafe fn open_azure(
     account_name_ptr: *const c_char,
     access_key_ptr: *const c_char,
@@ -193,7 +193,7 @@ unsafe fn open_azure(
         container_name.to_owned(),
     ))?;
     let data_sink = Arc::new(DataFolderDataSink::new());
-    TOKIO_RUNTIME.block_on(data_folder.register_normal_and_time_series_tables(data_sink))?;
+    TOKIO_RUNTIME.block_on(data_folder.register_tables(data_sink))?;
     Ok(data_folder)
 }
 
@@ -209,7 +209,7 @@ pub unsafe extern "C" fn modelardb_embedded_connect(
     set_error_and_return_value_ptr(maybe_client)
 }
 
-/// See documentation for [`modelardb_embedded_connect`].
+/// See documentation for [`modelardb_embedded_connect()`].
 unsafe fn connect(node_url_ptr: *const c_char, is_server_node: bool) -> Result<Client> {
     let node_url_str = unsafe { c_char_ptr_to_str(node_url_ptr)? };
 
@@ -305,7 +305,7 @@ pub unsafe extern "C" fn modelardb_embedded_create(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_create`].
+/// See documentation for [`modelardb_embedded_create()`].
 #[allow(clippy::too_many_arguments)]
 unsafe fn create(
     maybe_operations_ptr: *mut c_void,
@@ -402,7 +402,7 @@ pub unsafe extern "C" fn modelardb_embedded_tables(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_tables`].
+/// See documentation for [`modelardb_embedded_tables()`].
 unsafe fn tables(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
@@ -449,7 +449,7 @@ pub unsafe extern "C" fn modelardb_embedded_schema(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_schema`].
+/// See documentation for [`modelardb_embedded_schema()`].
 unsafe fn schema(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
@@ -501,7 +501,7 @@ pub unsafe extern "C" fn modelardb_embedded_write(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_write`].
+/// See documentation for [`modelardb_embedded_write()`].
 unsafe fn write(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
@@ -545,7 +545,7 @@ pub unsafe extern "C" fn modelardb_embedded_read(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_read`].
+/// See documentation for [`modelardb_embedded_read()`].
 unsafe fn read(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
@@ -596,7 +596,7 @@ pub unsafe extern "C" fn modelardb_embedded_copy(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_copy`].
+/// See documentation for [`modelardb_embedded_copy()`].
 unsafe fn copy(
     maybe_source_operations_ptr: *mut c_void,
     is_data_folder: bool,
@@ -662,7 +662,7 @@ pub unsafe extern "C" fn modelardb_embedded_read_time_series_table(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_read_time_series_table`].
+/// See documentation for [`modelardb_embedded_read_time_series_table()`].
 #[allow(clippy::too_many_arguments)]
 unsafe fn read_time_series_table(
     maybe_operations_ptr: *mut c_void,
@@ -789,7 +789,7 @@ pub unsafe extern "C" fn modelardb_embedded_copy_time_series_table(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_copy_time_series_table`].
+/// See documentation for [`modelardb_embedded_copy_time_series_table()`].
 #[allow(clippy::too_many_arguments)]
 unsafe fn copy_time_series_table(
     maybe_source_operations_ptr: *mut c_void,
@@ -879,7 +879,7 @@ pub unsafe extern "C" fn modelardb_embedded_move(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_move`].
+/// See documentation for [`modelardb_embedded_move()`].
 unsafe fn r#move(
     maybe_source_operations_ptr: *mut c_void,
     is_data_folder: bool,
@@ -909,7 +909,7 @@ pub unsafe extern "C" fn modelardb_embedded_truncate(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_truncate`].
+/// See documentation for [`modelardb_embedded_truncate()`].
 unsafe fn truncate(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
@@ -934,7 +934,7 @@ pub unsafe extern "C" fn modelardb_embedded_drop(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_drop`].
+/// See documentation for [`modelardb_embedded_drop()`].
 unsafe fn drop(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
@@ -971,7 +971,7 @@ pub unsafe extern "C" fn modelardb_embedded_vacuum(
     set_error_and_return_code(maybe_unit)
 }
 
-/// See documentation for [`modelardb_embedded_vacuum`].
+/// See documentation for [`modelardb_embedded_vacuum()`].
 unsafe fn vacuum(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,

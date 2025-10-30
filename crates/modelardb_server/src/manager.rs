@@ -14,7 +14,7 @@
  */
 
 //! Interface to connect to and interact with the manager, used if the server is started with a
-//! manager and needs to interact with it to initialize the metadata Delta Lake.
+//! manager and needs to interact with it to initialize the Delta Lake.
 
 use std::sync::Arc;
 use std::{env, str};

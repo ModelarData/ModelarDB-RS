@@ -37,15 +37,15 @@ use crate::types::{CompressedSegmentBatchBuilder, CompressedSegmentBuilder, Mode
 /// that are marked as residuals are stored as separate segments to allow for efficient pruning.
 const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 
-/// Compress the `uncompressed_data` from the table with `time_series_table_metadata` and return the
-/// resulting segments.
-pub fn try_compress_multivariate_record_batch(
+/// Compress the `uncompressed_time_series` from the table with `time_series_table_metadata` and
+/// return the resulting segments.
+pub fn try_compress_multivariate_time_series(
     time_series_table_metadata: &TimeSeriesTableMetadata,
     uncompressed_time_series: &RecordBatch,
 ) -> Result<Vec<RecordBatch>> {
     // Sort by all tags and then time to simplify splitting the data into time series.
     let sorted_uncompressed_data =
-        sort_record_batch_by_tags_and_time(time_series_table_metadata, uncompressed_time_series)?;
+        sort_time_series_by_tags_and_time(time_series_table_metadata, uncompressed_time_series)?;
 
     // Split the sorted uncompressed data into time series and compress them separately.
     let mut compressed_data = vec![];
@@ -77,7 +77,7 @@ pub fn try_compress_multivariate_record_batch(
             let uncompressed_time_series =
                 sorted_uncompressed_data.slice(row_index_start, time_series_length);
 
-            try_compress_univariate_record_batch(
+            try_split_and_compress_univariate_time_series(
                 time_series_table_metadata,
                 &uncompressed_time_series,
                 &tag_values,
@@ -96,7 +96,7 @@ pub fn try_compress_multivariate_record_batch(
     let uncompressed_time_series =
         sorted_uncompressed_data.slice(row_index_start, time_series_length);
 
-    try_compress_univariate_record_batch(
+    try_split_and_compress_univariate_time_series(
         time_series_table_metadata,
         &uncompressed_time_series,
         &tag_values,
@@ -108,9 +108,9 @@ pub fn try_compress_multivariate_record_batch(
 
 /// Sort the `uncompressed_data` from the time series table with `time_series_table_metadata`
 /// according to its tags and then timestamps.
-fn sort_record_batch_by_tags_and_time(
+fn sort_time_series_by_tags_and_time(
     time_series_table_metadata: &TimeSeriesTableMetadata,
-    uncompressed_data: &RecordBatch,
+    uncompressed_time_series: &RecordBatch,
 ) -> Result<RecordBatch> {
     let mut sort_columns = vec![];
 
@@ -120,7 +120,7 @@ fn sort_record_batch_by_tags_and_time(
     });
 
     for tag_column_index in &time_series_table_metadata.tag_column_indices {
-        let tag_column = uncompressed_data.column(*tag_column_index);
+        let tag_column = uncompressed_time_series.column(*tag_column_index);
         sort_columns.push(SortColumn {
             values: (*tag_column).clone(),
             options: sort_options,
@@ -128,26 +128,26 @@ fn sort_record_batch_by_tags_and_time(
     }
 
     let timestamp_column_index = time_series_table_metadata.timestamp_column_index;
-    let timestamp_column = uncompressed_data.column(timestamp_column_index);
+    let timestamp_column = uncompressed_time_series.column(timestamp_column_index);
     sort_columns.push(SortColumn {
         values: (*timestamp_column).clone(),
         options: sort_options,
     });
 
     let indices = compute::lexsort_to_indices(&sort_columns, None)?;
-    let sorted_columns = compute::take_arrays(uncompressed_data.columns(), &indices, None)?;
-    RecordBatch::try_new(uncompressed_data.schema(), sorted_columns).map_err(|error| error.into())
+    let sorted_columns = compute::take_arrays(uncompressed_time_series.columns(), &indices, None)?;
+    RecordBatch::try_new(uncompressed_time_series.schema(), sorted_columns).map_err(|error| error.into())
 }
 
 /// Compress the field columns in `uncompressed_time_series` from the table with
-/// `time_series_table_metadata` using [`try_compress_univariate_arrays`] and append the result to
-/// `compressed_data`. It is assumed that all data points in `uncompressed_time_series` have the
+/// `time_series_table_metadata` using [`try_compress_univariate_time_series`] and append the result
+/// to `compressed_data`. It is assumed that all data points in `uncompressed_time_series` have the
 /// same tags as in `tag_values`.
-pub fn try_compress_univariate_record_batch(
+pub fn try_split_and_compress_univariate_time_series(
     time_series_table_metadata: &TimeSeriesTableMetadata,
     uncompressed_time_series: &RecordBatch,
     tag_values: &[String],
-    compressed_data: &mut Vec<RecordBatch>,
+    compressed_time_series: &mut Vec<RecordBatch>,
 ) -> Result<()> {
     let uncompressed_timestamps = modelardb_types::array!(
         uncompressed_time_series,
@@ -161,7 +161,7 @@ pub fn try_compress_univariate_record_batch(
 
         let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
 
-        let compressed_time_series = try_compress_univariate_arrays(
+        let compressed_time_series = try_compress_univariate_time_series(
             uncompressed_timestamps,
             uncompressed_values,
             error_bound,
@@ -171,7 +171,7 @@ pub fn try_compress_univariate_record_batch(
         )
         .expect("uncompressed_timestamps and uncompressed_values should have the same length.");
 
-        compressed_data.push(compressed_time_series);
+        compressed_time_series.push(compressed_time_series);
     }
 
     Ok(())
@@ -187,7 +187,7 @@ pub fn try_compress_univariate_record_batch(
 /// `uncompressed_values` have different lengths or if `compressed_schema` is not a valid schema for
 /// compressed segments, otherwise the resulting compressed segments are returned as a
 /// [`RecordBatch`] with the `compressed_schema` schema.
-pub fn try_compress_univariate_arrays(
+pub fn try_compress_univariate_time_series(
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
     error_bound: ErrorBound,
@@ -417,10 +417,10 @@ mod tests {
     const ADD_NOISE_RANGE: Option<Range<f32>> = Some(1.0..1.05);
     const TRY_COMPRESS_TEST_LENGTH: usize = 50;
 
-    // Tests for try_compress().
+    // Tests for try_compress_univariate_time_series().
     #[test]
     fn test_try_compress_empty_time_series_within_lossless_error_bound() {
-        let compressed_record_batch = try_compress_univariate_arrays(
+        let compressed_record_batch = try_compress_univariate_time_series(
             &TimestampBuilder::new().finish(),
             &ValueBuilder::new().finish(),
             ErrorBound::Lossless,
@@ -582,7 +582,7 @@ mod tests {
         let uncompressed_values =
             data_generation::generate_values(uncompressed_timestamps.values(), values_structure);
 
-        let compressed_record_batch = try_compress_univariate_arrays(
+        let compressed_record_batch = try_compress_univariate_time_series(
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
@@ -686,7 +686,7 @@ mod tests {
         let uncompressed_values = uncompressed_values.finish();
         assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
 
-        let compressed_record_batch = try_compress_univariate_arrays(
+        let compressed_record_batch = try_compress_univariate_time_series(
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
@@ -843,7 +843,7 @@ mod tests {
                 100.0..200.0,
             );
 
-        let compressed_record_batch = try_compress_univariate_arrays(
+        let compressed_record_batch = try_compress_univariate_time_series(
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
