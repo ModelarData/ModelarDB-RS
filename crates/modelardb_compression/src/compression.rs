@@ -161,7 +161,7 @@ pub fn try_split_and_compress_univariate_time_series(
 
         let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
 
-        let compressed_time_series = try_compress_univariate_time_series(
+        let compressed_segments = try_compress_univariate_time_series(
             uncompressed_timestamps,
             uncompressed_values,
             error_bound,
@@ -171,7 +171,7 @@ pub fn try_split_and_compress_univariate_time_series(
         )
         .expect("uncompressed_timestamps and uncompressed_values should have the same length.");
 
-        compressed_time_series.push(compressed_time_series);
+        compressed_time_series.push(compressed_segments);
     }
 
     Ok(())
