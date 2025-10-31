@@ -262,7 +262,7 @@ impl FlightServiceHandler {
             .await
             .map_err(error_to_status_internal)?;
 
-        // Drop the table from the remote data folder Delta lake.
+        // Drop the table from the remote data folder Delta Lake.
         self.context
             .remote_data_folder
             .drop_table(table_name)
@@ -291,7 +291,7 @@ impl FlightServiceHandler {
             )));
         }
 
-        // Truncate the table in the remote data folder Delta lake.
+        // Truncate the table in the remote data folder Delta Lake.
         self.context
             .remote_data_folder
             .truncate_table(table_name)
@@ -318,7 +318,7 @@ impl FlightServiceHandler {
         table_name: &str,
         maybe_retention_period_in_seconds: Option<u64>,
     ) -> StdResult<(), Status> {
-        // Vacuum the table in the remote data folder Delta lake.
+        // Vacuum the table in the remote data folder Delta Lake.
         self.context
             .remote_data_folder
             .vacuum_table(table_name, maybe_retention_period_in_seconds)
