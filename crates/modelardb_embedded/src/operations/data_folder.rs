@@ -39,7 +39,7 @@ use crate::operations::{
 };
 use crate::{Aggregate, TableType};
 
-/// [`DataSink`] that rejects INSERT statements passed to [`DataFolder.read()`].
+/// [`DataSink`] that rejects INSERT statements passed to [`Operations.read()`].
 pub struct DataFolderDataSink {
     /// The schema of the data sink is empty since it rejects everything.
     schema: Arc<Schema>,

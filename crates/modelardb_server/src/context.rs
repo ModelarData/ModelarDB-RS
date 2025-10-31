@@ -161,8 +161,8 @@ impl Context {
 
     /// Register the normal table with `table_name` in Apache DataFusion. If the normal table does
     /// not exist or could not be registered with Apache DataFusion, return
-    /// [`ModelarDbServerError`]. [`DataFolder.register_normal_and_time_series_tables()`] is not
-    /// used so a unique [`NormalTableDataSink`] can be passed per table.
+    /// [`ModelarDbServerError`]. [`DataFolder.register_tables()`] is not used so a unique
+    /// [`NormalTableDataSink`] can be passed per table.
     async fn register_normal_table(&self, table_name: &str) -> Result<()> {
         let session_context = self.data_folders.query_data_folder.session_context();
 
@@ -211,8 +211,8 @@ impl Context {
 
     /// Register the time series table with `time_series_table_metadata` in Apache DataFusion. If
     /// the time series table does not exist or could not be registered with Apache DataFusion,
-    /// return [`ModelarDbServerError`]. [`DataFolder.register_normal_and_time_series_tables()`] is
-    /// not used so a unique [`TimeSeriesTableDataSink`] can be passed per table.
+    /// return [`ModelarDbServerError`]. [`DataFolder.register_tables()`] is not used so a unique
+    /// [`TimeSeriesTableDataSink`] can be passed per table.
     async fn register_time_series_table(
         &self,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,

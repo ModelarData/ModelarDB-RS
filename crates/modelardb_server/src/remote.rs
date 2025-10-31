@@ -227,8 +227,8 @@ pub fn flight_data_to_record_batch(
         .map_err(|error| Status::invalid_argument(error.to_string()))
 }
 
-/// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
-/// [`Status`] that specifies that the table name is missing.
+/// Return the table stored as the first element in `FlightDescriptor.path`, otherwise a [`Status`]
+/// that specifies that the table name is missing.
 pub fn table_name_from_flight_descriptor(
     flight_descriptor: &FlightDescriptor,
 ) -> StdResult<&String, Status> {
