@@ -628,7 +628,6 @@ mod tests {
 
     use datafusion::arrow::datatypes::Schema;
     use datafusion::datasource::sink::DataSink;
-    use datafusion::execution::session_state::SessionStateBuilder;
     use datafusion::execution::{SendableRecordBatchStream, TaskContext};
     use datafusion::physical_plan::aggregates::AggregateExec;
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
@@ -636,13 +635,11 @@ mod tests {
     use datafusion::physical_plan::filter::FilterExec;
     use datafusion::physical_plan::metrics::MetricsSet;
     use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
-    use datafusion::prelude::SessionContext;
     use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
     use tempfile::TempDir;
     use tonic::async_trait;
 
-    use crate::delta_lake::DeltaLake;
-    use crate::optimizer;
+    use crate::data_folder::DataFolder;
     use crate::query::grid_exec::GridExec;
     use crate::query::time_series_table::TimeSeriesTable;
 
@@ -777,24 +774,15 @@ mod tests {
     ) -> Arc<dyn ExecutionPlan> {
         // Setup access to data and metadata in data folder.
         let data_folder_path = temp_dir.path();
-        let delta_lake = DeltaLake::try_from_local_path(data_folder_path).unwrap();
+        let data_folder = DataFolder::open_local(data_folder_path).await.unwrap();
 
         // Setup access to Apache DataFusion.
-        let mut session_state_builder = SessionStateBuilder::new().with_default_features();
-
-        // Uses the rule method instead of the rules method as the rules method replaces the built-ins.
-        for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
-            session_state_builder =
-                session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
-        }
-
-        let session_state = session_state_builder.build();
-        let session_context = SessionContext::new_with_state(session_state);
+        let session_context = crate::create_session_context();
 
         // Create time series table.
         let time_series_table_metadata = table::time_series_table_metadata_arc();
 
-        let delta_table = delta_lake
+        let delta_table = data_folder
             .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();

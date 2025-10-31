@@ -749,7 +749,7 @@ mod tests {
         compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
         let compressed_schema = Arc::new(Schema::new(compressed_schema_fields));
 
-        let segments = crate::try_compress(
+        let segments = crate::try_compress_univariate_time_series(
             &timestamps,
             &values,
             error_bound,

@@ -25,7 +25,9 @@ mod models;
 mod types;
 
 // Re-export the few functions and types users are meant to use.
-pub use compression::try_compress;
+pub use compression::try_compress_multivariate_time_series;
+pub use compression::try_compress_univariate_time_series;
+pub use compression::try_split_and_compress_univariate_time_series;
 pub use models::grid;
 pub use models::is_value_within_error_bound;
 pub use models::len;

@@ -39,8 +39,7 @@ use deltalake::{ObjectStore, Path};
 use futures::stream::StreamExt;
 use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
 use modelardb_embedded::operations::Operations;
-use modelardb_embedded::operations::data_folder::DataFolder;
-use modelardb_storage::delta_lake::DeltaTableWriter;
+use modelardb_storage::data_folder::{DataFolder, DeltaTableWriter};
 use modelardb_types::types::TimeSeriesTableMetadata;
 use sysinfo::System;
 
@@ -168,8 +167,9 @@ async fn import(
         data_folder.read(sql).await?;
     }
 
-    if let Some(time_series_table_metadata) =
-        data_folder.time_series_table_metadata(table_name).await
+    if let Some(time_series_table_metadata) = data_folder
+        .time_series_table_metadata_for_registered_time_series_table(table_name)
+        .await
     {
         import_time_series_table(
             input_stream,
@@ -205,7 +205,7 @@ async fn import_time_series_table(
     cast_double_to_float: bool,
 ) -> Result<()> {
     let table_name = &time_series_table_metadata.name;
-    let mut delta_table_writer = data_folder.writer(table_name).await?;
+    let mut delta_table_writer = data_folder.table_writer(table_name).await?;
 
     let mut system = System::new();
     let mut current_batch = vec![];
@@ -220,7 +220,6 @@ async fn import_time_series_table(
         system.refresh_memory();
         if current_batch_size > (system.available_memory() as usize / 10 * 8)
             && let Err(write_error) = import_and_clear_time_series_table_batch(
-                data_folder,
                 &mut delta_table_writer,
                 time_series_table_metadata,
                 &mut current_batch,
@@ -234,7 +233,6 @@ async fn import_time_series_table(
     }
 
     if let Err(write_error) = import_and_clear_time_series_table_batch(
-        data_folder,
         &mut delta_table_writer,
         time_series_table_metadata,
         &mut current_batch,
@@ -258,7 +256,7 @@ async fn import_normal_table(
     table_name: &str,
     data_folder: &mut DataFolder,
 ) -> Result<()> {
-    let mut delta_table_writer = data_folder.writer(table_name).await?;
+    let mut delta_table_writer = data_folder.table_writer(table_name).await?;
 
     while let Some(record_batch) = input_stream.next().await {
         let record_batch = record_batch?;
@@ -386,12 +384,11 @@ fn cast_record_batch(record_batch: RecordBatch, cast_double_to_float: bool) -> R
     RecordBatch::try_new(cast_schema, cast_columns).map_err(|error| error.into())
 }
 
-/// Import the `current_batch` into the time series table with `time_series_table_metadata` in
-/// `data_folder` using `delta_table_writer`. Then clear `current_batch` and zero
-/// `current_batch_size`. If a [`RecordBatch`] in `current_batch` has a different schema, the
-/// compression fails, or the write fails, a [`ModelarDbEmbeddedError`] is returned.
+/// Import the `current_batch` into the time series table with `time_series_table_metadata` using
+/// `delta_table_writer`. Then clear `current_batch` and zero `current_batch_size`. If a
+/// [`RecordBatch`] in `current_batch` has a different schema, the compression fails, or the write
+/// fails, a [`ModelarDbEmbeddedError`] is returned.
 async fn import_and_clear_time_series_table_batch(
-    data_folder: &DataFolder,
     delta_table_writer: &mut DeltaTableWriter,
     time_series_table_metadata: &TimeSeriesTableMetadata,
     current_batch: &mut Vec<RecordBatch>,
@@ -400,9 +397,10 @@ async fn import_and_clear_time_series_table_batch(
     if *current_batch_size != 0 {
         let schema = current_batch[0].schema();
         let uncompressed_data = compute::concat_batches(&schema, &*current_batch)?;
-        let compressed_data = data_folder
-            .compress_all(time_series_table_metadata, &uncompressed_data)
-            .await?;
+        let compressed_data = modelardb_compression::try_compress_multivariate_time_series(
+            time_series_table_metadata,
+            &uncompressed_data,
+        )?;
         delta_table_writer.write_all(&compressed_data).await?;
         current_batch.clear();
         *current_batch_size = 0;
@@ -502,16 +500,21 @@ async fn create_data_folder(data_folder_path: &str) -> Result<DataFolder> {
                 secret_access_key,
             )
             .await
+            .map_err(|error| error.into())
         }
         Some(("az", container_name)) => {
             let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
             let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
 
-            DataFolder::open_azure(account_name, access_key, container_name.to_owned()).await
+            DataFolder::open_azure(account_name, access_key, container_name.to_owned())
+                .await
+                .map_err(|error| error.into())
         }
         _ => {
             let data_folder_path = StdPath::new(data_folder_path);
-            DataFolder::open_local(data_folder_path).await
+            DataFolder::open_local(data_folder_path)
+                .await
+                .map_err(|error| error.into())
         }
     }
 }

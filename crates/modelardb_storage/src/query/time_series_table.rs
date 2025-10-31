@@ -407,7 +407,7 @@ fn convert_logical_expr_to_physical_expr(
 
 /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
 /// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError`] if the necessary
-/// metadata cannot be retrieved from the metadata Delta Lake.
+/// metadata cannot be retrieved from the Delta Lake.
 fn new_data_source_exec(
     delta_table: &DeltaTable,
     partition_filters: &[PartitionFilter],
@@ -515,7 +515,7 @@ impl TableProvider for TimeSeriesTable {
         let query_schema = &self.time_series_table_metadata.query_schema;
         let generated_columns = &self.time_series_table_metadata.generated_columns;
 
-        // Clone the Delta Lake table and update it to the latest version. self.delta_lake.load(
+        // Clone the Delta Lake table and update it to the latest version. self.data_folder.load(
         // &mut self) is not an option due to TypeProvider::scan(&self, ...). Storing the DeltaTable
         // in a Mutex and RwLock is also not an option since most of the methods in TypeProvider
         // return a reference and the locks will be dropped at the end of the method.

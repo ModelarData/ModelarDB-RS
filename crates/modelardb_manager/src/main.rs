@@ -23,7 +23,7 @@ mod remote;
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
 
-use modelardb_storage::delta_lake::DeltaLake;
+use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::flight::protocol;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
@@ -32,63 +32,20 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
 use crate::error::{ModelarDbManagerError, Result};
-use crate::metadata::MetadataManager;
+use crate::metadata::ManagerMetadata;
 use crate::remote::start_apache_arrow_flight_server;
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9998 is used.
 pub static PORT: LazyLock<u16> =
     LazyLock::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
 
-/// Stores the storage configuration with the remote data folder to ensure that the information
-/// is consistent with the remote data folder.
-pub struct RemoteDataFolder {
-    /// Storage configuration encoded as a [`StorageConfiguration`](protocol::manager_metadata::StorageConfiguration)
-    /// protobuf message to make it possible to transfer the configuration using Apache Arrow Flight.
-    storage_configuration: protocol::manager_metadata::StorageConfiguration,
-    /// Remote object store for storing data and metadata in Apache Parquet files.
-    delta_lake: Arc<DeltaLake>,
-    /// Manager for the access to the metadata Delta Lake.
-    metadata_manager: Arc<MetadataManager>,
-}
-
-impl RemoteDataFolder {
-    pub fn new(
-        storage_configuration: protocol::manager_metadata::StorageConfiguration,
-        delta_lake: Arc<DeltaLake>,
-        metadata_manager: Arc<MetadataManager>,
-    ) -> Self {
-        Self {
-            storage_configuration,
-            delta_lake,
-            metadata_manager,
-        }
-    }
-
-    /// Create a [`RemoteDataFolder`] from `remote_data_folder_str`. If `remote_data_folder_str`
-    /// cannot be parsed or a connection to the object store cannot be created,
-    /// [`ModelarDbManagerError`] is returned.
-    async fn try_new(remote_data_folder_str: &str) -> Result<Self> {
-        let storage_configuration =
-            modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
-
-        let delta_lake =
-            DeltaLake::try_remote_from_storage_configuration(storage_configuration.clone())?;
-
-        let metadata_manager =
-            MetadataManager::try_from_storage_configuration(storage_configuration.clone()).await?;
-
-        Ok(Self::new(
-            storage_configuration,
-            Arc::new(delta_lake),
-            Arc::new(metadata_manager),
-        ))
-    }
-}
-
 /// Provides access to the managers components.
 pub struct Context {
-    /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
-    pub remote_data_folder: RemoteDataFolder,
+    /// [`DataFolder`] for storing metadata and data in Apache Parquet files.
+    pub remote_data_folder: DataFolder,
+    /// Storage configuration encoded as a [`StorageConfiguration`](protocol::manager_metadata::StorageConfiguration)
+    /// protobuf message to make it possible to transfer the configuration using Apache Arrow Flight.
+    pub remote_storage_configuration: protocol::manager_metadata::StorageConfiguration,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
     /// Key used to identify requests coming from the manager.
@@ -112,18 +69,23 @@ async fn main() -> Result<()> {
         _ => print_usage_and_exit_with_error("remote_data_folder"),
     };
 
-    let remote_data_folder = RemoteDataFolder::try_new(remote_data_folder_str).await?;
+    let remote_storage_configuration =
+        modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
+    let remote_data_folder =
+        DataFolder::open_object_store(remote_storage_configuration.clone()).await?;
 
-    let nodes = remote_data_folder.metadata_manager.nodes().await?;
+    remote_data_folder
+        .create_and_register_manager_metadata_data_folder_tables()
+        .await?;
 
     let mut cluster = Cluster::new();
+    let nodes = remote_data_folder.nodes().await?;
     for node in nodes {
         cluster.register_node(node)?;
     }
 
     // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
     let key = remote_data_folder
-        .metadata_manager
         .manager_key()
         .await?
         .to_string()
@@ -135,6 +97,7 @@ async fn main() -> Result<()> {
     // Create the Context.
     let context = Arc::new(Context {
         remote_data_folder,
+        remote_storage_configuration,
         cluster: RwLock::new(cluster),
         key,
     });

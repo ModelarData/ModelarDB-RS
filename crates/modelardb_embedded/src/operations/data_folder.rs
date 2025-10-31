@@ -18,29 +18,20 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
-use std::path::Path as StdPath;
 use std::pin::Pin;
 use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
-use arrow::array::{Float32Array, StringArray};
-use arrow::compute::SortOptions;
 use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::datasource::sink::DataSink;
 use datafusion::error::DataFusionError;
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
-use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
-use datafusion::physical_plan::expressions::Column;
 use datafusion::physical_plan::metrics::MetricsSet;
-use datafusion::physical_plan::sorts::sort;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, common};
-use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
-use modelardb_storage::delta_lake::{DeltaLake, DeltaTableWriter};
-use modelardb_storage::metadata::table_metadata_manager::TableMetadataManager;
-use modelardb_types::types::{TimeSeriesTableMetadata, TimestampArray};
+use modelardb_storage::data_folder::DataFolder;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
@@ -48,17 +39,24 @@ use crate::operations::{
 };
 use crate::{Aggregate, TableType};
 
-/// [`DataSink`] that rejects INSERT statements passed to [`DataFolder.read()`].
-struct DataFolderDataSink {
+/// [`DataSink`] that rejects INSERT statements passed to [`DataFolder::read()`].
+pub struct DataFolderDataSink {
     /// The schema of the data sink is empty since it rejects everything.
     schema: Arc<Schema>,
 }
 
 impl DataFolderDataSink {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             schema: Arc::new(Schema::empty()),
         }
+    }
+}
+
+impl Default for DataFolderDataSink {
+    // Trait implemented to silence clippy warning.
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -107,321 +105,6 @@ impl DisplayAs for DataFolderDataSink {
     }
 }
 
-/// Provides access to modelardb_embedded's components.
-pub struct DataFolder {
-    /// Delta Lake for storing metadata and data in Apache Parquet files.
-    delta_lake: DeltaLake,
-    /// Metadata manager for providing access to metadata related to tables. It is stored in an
-    /// [`Arc`] because it is shared with each of the time series tables for use in query planning.
-    table_metadata_manager: Arc<TableMetadataManager>,
-    /// Context providing access to a specific session of Apache DataFusion.
-    session_context: SessionContext,
-}
-
-impl DataFolder {
-    /// Creates a [`DataFolder`] that manages data in memory and returns it. If the metadata tables
-    /// could not be created, [`ModelarDbEmbeddedError`] is returned.
-    pub async fn open_memory() -> Result<Self> {
-        let delta_lake = DeltaLake::new_in_memory();
-        let table_metadata_manager = Arc::new(TableMetadataManager::try_new_in_memory().await?);
-
-        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
-    }
-
-    /// Creates a [`DataFolder`] that manages data in the local folder at `data_folder_path` and
-    /// returns it. If the folder does not exist and could not be created or the metadata tables
-    /// could not be created, [`ModelarDbEmbeddedError`] is returned.
-    pub async fn open_local(data_folder_path: &StdPath) -> Result<Self> {
-        let delta_lake = DeltaLake::try_from_local_path(data_folder_path)?;
-
-        let table_metadata_manager =
-            Arc::new(TableMetadataManager::try_from_path(data_folder_path).await?);
-
-        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
-    }
-
-    /// Creates a [`DataFolder`] that manages data in an object store with an S3-compatible API and
-    /// returns it. If a connection to the object store could not be established or the metadata
-    /// tables could not be created, [`ModelarDbEmbeddedError`] is returned.
-    pub async fn open_s3(
-        endpoint: String,
-        bucket_name: String,
-        access_key_id: String,
-        secret_access_key: String,
-    ) -> Result<Self> {
-        // Register the S3 storage handlers to allow the use of Amazon S3 object stores. This is
-        // required at runtime to initialize the S3 storage implementation in the deltalake_aws
-        // storage subcrate. It is safe to call this function multiple times as the handlers are
-        // stored in a DashMap, thus, the handlers are simply overwritten with the same each time.
-        deltalake::aws::register_handlers(None);
-
-        // Construct data folder.
-        let delta_lake = DeltaLake::try_from_s3_configuration(
-            endpoint.clone(),
-            bucket_name.clone(),
-            access_key_id.clone(),
-            secret_access_key.clone(),
-        )?;
-
-        let table_metadata_manager = Arc::new(
-            TableMetadataManager::try_from_s3_configuration(
-                endpoint,
-                bucket_name,
-                access_key_id,
-                secret_access_key,
-            )
-            .await?,
-        );
-
-        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
-    }
-
-    /// Creates a [`DataFolder`] that manages data in an object store with an Azure-compatible API
-    /// and returns it. If a connection to the object store could not be established or the metadata
-    /// tables could not be created, [`ModelarDbEmbeddedError`] is returned.
-    pub async fn open_azure(
-        account_name: String,
-        access_key: String,
-        container_name: String,
-    ) -> Result<Self> {
-        let delta_lake = DeltaLake::try_from_azure_configuration(
-            account_name.clone(),
-            access_key.clone(),
-            container_name.clone(),
-        )?;
-
-        let table_metadata_manager = Arc::new(
-            TableMetadataManager::try_from_azure_configuration(
-                account_name,
-                access_key,
-                container_name,
-            )
-            .await?,
-        );
-
-        Self::try_new_and_register_tables(delta_lake, table_metadata_manager).await
-    }
-
-    /// Create a [`DataFolder`], register all normal tables and time series tables in it with its
-    /// [`SessionContext`], and return it. If the tables could not be registered,
-    /// [`ModelarDbEmbeddedError`] is returned.
-    async fn try_new_and_register_tables(
-        delta_lake: DeltaLake,
-        table_metadata_manager: Arc<TableMetadataManager>,
-    ) -> Result<Self> {
-        // Construct data folder.
-        let session_context = modelardb_storage::create_session_context();
-
-        let data_folder = DataFolder {
-            delta_lake,
-            table_metadata_manager,
-            session_context,
-        };
-
-        // Register normal tables.
-        let data_sink = Arc::new(DataFolderDataSink::new());
-
-        for normal_table_name in data_folder
-            .table_metadata_manager
-            .normal_table_names()
-            .await?
-        {
-            let delta_table = data_folder
-                .delta_lake
-                .delta_table(&normal_table_name)
-                .await?;
-
-            modelardb_storage::register_normal_table(
-                &data_folder.session_context,
-                &normal_table_name,
-                delta_table,
-                data_sink.clone(),
-            )?;
-        }
-
-        // Register time series tables.
-        for metadata in data_folder
-            .table_metadata_manager
-            .time_series_table_metadata()
-            .await?
-        {
-            let delta_table = data_folder.delta_lake.delta_table(&metadata.name).await?;
-
-            modelardb_storage::register_time_series_table(
-                &data_folder.session_context,
-                delta_table,
-                metadata,
-                data_sink.clone(),
-            )?;
-        }
-
-        Ok(data_folder)
-    }
-
-    /// Compress the `uncompressed_data` from the table with `time_series_table_metadata` and return the
-    /// resulting segments.
-    pub async fn compress_all(
-        &self,
-        time_series_table_metadata: &TimeSeriesTableMetadata,
-        uncompressed_data: &RecordBatch,
-    ) -> Result<Vec<RecordBatch>> {
-        // Sort by all tags and then time to simplify splitting the data into time series.
-        let sorted_uncompressed_data =
-            sort_record_batch_by_tags_and_time(time_series_table_metadata, uncompressed_data)?;
-
-        // Split the sorted uncompressed data into time series and compress them separately.
-        let mut compressed_data = vec![];
-
-        let tag_column_arrays: Vec<&StringArray> = time_series_table_metadata
-            .tag_column_indices
-            .iter()
-            .map(|index| modelardb_types::array!(sorted_uncompressed_data, *index, StringArray))
-            .collect();
-
-        let mut tag_values = Vec::with_capacity(tag_column_arrays.len());
-        for tag_column_array in &tag_column_arrays {
-            tag_values.push(tag_column_array.value(0).to_owned());
-        }
-
-        // The index of the first data point of each time series must be stored so slices
-        // containing only data points for each time series can be extracted and compressed.
-        let mut row_index_start = 0;
-        for row_index in 0..sorted_uncompressed_data.num_rows() {
-            // If any of the tags differ, the data point is from a new time series.
-            let mut is_new_time_series = false;
-            for tag_column_index in 0..tag_column_arrays.len() {
-                is_new_time_series |= tag_values[tag_column_index]
-                    != tag_column_arrays[tag_column_index].value(row_index);
-            }
-
-            if is_new_time_series {
-                let time_series_length = row_index - row_index_start;
-                let uncompressed_time_series =
-                    sorted_uncompressed_data.slice(row_index_start, time_series_length);
-
-                self.compress(
-                    time_series_table_metadata,
-                    &uncompressed_time_series,
-                    &tag_values,
-                    &mut compressed_data,
-                )
-                .await?;
-
-                for (tag_column_index, tag_column_array) in tag_column_arrays.iter().enumerate() {
-                    tag_values[tag_column_index] = tag_column_array.value(row_index).to_owned();
-                }
-
-                row_index_start = row_index;
-            }
-        }
-
-        let time_series_length = sorted_uncompressed_data.num_rows() - row_index_start;
-        let uncompressed_time_series =
-            sorted_uncompressed_data.slice(row_index_start, time_series_length);
-
-        self.compress(
-            time_series_table_metadata,
-            &uncompressed_time_series,
-            &tag_values,
-            &mut compressed_data,
-        )
-        .await?;
-
-        Ok(compressed_data)
-    }
-
-    /// Compress the field columns in `uncompressed_time_series` from the table with
-    /// `time_series_table_metadata` and append the result to `compressed_data`. It is assumed that
-    /// all data points in `uncompressed_time_series` have the same tags as in `tag_values`.
-    async fn compress(
-        &self,
-        time_series_table_metadata: &TimeSeriesTableMetadata,
-        uncompressed_time_series: &RecordBatch,
-        tag_values: &[String],
-        compressed_data: &mut Vec<RecordBatch>,
-    ) -> Result<()> {
-        let uncompressed_timestamps = modelardb_types::array!(
-            uncompressed_time_series,
-            time_series_table_metadata.timestamp_column_index,
-            TimestampArray
-        );
-
-        for field_column_index in &time_series_table_metadata.field_column_indices {
-            let uncompressed_values = modelardb_types::array!(
-                uncompressed_time_series,
-                *field_column_index,
-                Float32Array
-            );
-
-            let error_bound = time_series_table_metadata.error_bounds[*field_column_index];
-
-            let compressed_time_series = modelardb_compression::try_compress(
-                uncompressed_timestamps,
-                uncompressed_values,
-                error_bound,
-                time_series_table_metadata.compressed_schema.clone(),
-                tag_values.to_vec(),
-                *field_column_index as i16,
-            )
-            .expect("uncompressed_timestamps and uncompressed_values should have the same length.");
-
-            compressed_data.push(compressed_time_series);
-        }
-
-        Ok(())
-    }
-
-    /// Create a writer for writing multiple batches of data to the table with the table name in
-    /// `table_name`. If the table does not exist or a writer for it could not be created, a
-    /// [`ModelarDbEmbeddedError`] is returned.
-    pub async fn writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
-        let delta_table = self.delta_lake.delta_table(table_name).await?;
-        if self.time_series_table_metadata(table_name).await.is_some() {
-            self.delta_lake
-                .time_series_table_writer(delta_table)
-                .await
-                .map_err(|error| error.into())
-        } else {
-            self.delta_lake
-                .normal_or_metadata_table_writer(delta_table)
-                .await
-                .map_err(|error| error.into())
-        }
-    }
-
-    /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
-    /// table does not exist or the table is not a normal table, return [`None`].
-    async fn normal_table_schema(&self, table_name: &str) -> Option<Schema> {
-        if self
-            .table_metadata_manager
-            .is_normal_table(table_name)
-            .await
-            .is_ok_and(|is_normal_table| is_normal_table)
-        {
-            self.delta_lake
-                .delta_table(table_name)
-                .await
-                .expect("Delta Lake table should exist if the table is in the metadata Delta Lake.")
-                .get_schema()
-                .expect("Delta Lake table should be loaded and metadata should be in the log.")
-                .try_into()
-                .ok()
-        } else {
-            None
-        }
-    }
-
-    /// Return [`TimeSeriesTableMetadata`] for the table with `table_name` if it exists, is registered
-    /// with Apache DataFusion, and is a time series table.
-    pub async fn time_series_table_metadata(
-        &self,
-        table_name: &str,
-    ) -> Option<Arc<TimeSeriesTableMetadata>> {
-        let table_provider = self.session_context.table_provider(table_name).await.ok()?;
-        modelardb_storage::maybe_table_provider_to_time_series_table_metadata(table_provider)
-    }
-}
-
 #[async_trait]
 impl Operations for DataFolder {
     /// Return `self` as [`Any`] so it can be downcast.
@@ -435,19 +118,14 @@ impl Operations for DataFolder {
     async fn create(&mut self, table_name: &str, table_type: TableType) -> Result<()> {
         match table_type {
             TableType::NormalTable(schema) => {
-                let delta_table = self
-                    .delta_lake
-                    .create_normal_table(table_name, &schema)
-                    .await?;
+                let delta_table = self.create_normal_table(table_name, &schema).await?;
 
-                self.table_metadata_manager
-                    .save_normal_table_metadata(table_name)
-                    .await?;
+                self.save_normal_table_metadata(table_name).await?;
 
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_normal_table(
-                    &self.session_context,
+                    self.session_context(),
                     table_name,
                     delta_table,
                     data_sink.clone(),
@@ -462,18 +140,16 @@ impl Operations for DataFolder {
                 )?);
 
                 let delta_table = self
-                    .delta_lake
                     .create_time_series_table(&time_series_table_metadata)
                     .await?;
 
-                self.table_metadata_manager
-                    .save_time_series_table_metadata(&time_series_table_metadata)
+                self.save_time_series_table_metadata(&time_series_table_metadata)
                     .await?;
 
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_time_series_table(
-                    &self.session_context,
+                    self.session_context(),
                     delta_table,
                     time_series_table_metadata,
                     data_sink.clone(),
@@ -484,19 +160,18 @@ impl Operations for DataFolder {
         Ok(())
     }
 
-    /// Returns the name of all the tables. If the table names could not be retrieved from the
-    /// metadata Delta Lake, [`ModelarDbEmbeddedError`] is returned.
+    /// Returns the name of all the tables. If the table names could not be retrieved from the Delta
+    /// Lake, [`ModelarDbEmbeddedError`] is returned.
     async fn tables(&mut self) -> Result<Vec<String>> {
-        self.table_metadata_manager
-            .table_names()
-            .await
-            .map_err(|error| error.into())
+        self.table_names().await.map_err(|error| error.into())
     }
 
     /// Returns the schema of the table with the name in `table_name`. If the table does not exist,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn schema(&mut self, table_name: &str) -> Result<Schema> {
-        if let Some(time_series_table_metadata) = self.time_series_table_metadata(table_name).await
+        if let Some(time_series_table_metadata) = self
+            .time_series_table_metadata_for_registered_time_series_table(table_name)
+            .await
         {
             Ok((*time_series_table_metadata.query_schema).to_owned())
         } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
@@ -523,7 +198,9 @@ impl Operations for DataFolder {
             "The uncompressed data does not match the schema for the table: {table_name}."
         ));
 
-        if let Some(time_series_table_metadata) = self.time_series_table_metadata(table_name).await
+        if let Some(time_series_table_metadata) = self
+            .time_series_table_metadata_for_registered_time_series_table(table_name)
+            .await
         {
             // Time series table.
             if !schemas_are_compatible(
@@ -533,12 +210,12 @@ impl Operations for DataFolder {
                 return Err(schema_mismatch_error);
             }
 
-            let compressed_data = self
-                .compress_all(&time_series_table_metadata, &uncompressed_data)
-                .await?;
+            let compressed_data = modelardb_compression::try_compress_multivariate_time_series(
+                &time_series_table_metadata,
+                &uncompressed_data,
+            )?;
 
-            self.delta_lake
-                .write_compressed_segments_to_time_series_table(table_name, compressed_data)
+            self.write_compressed_segments_to_time_series_table(table_name, compressed_data)
                 .await?;
         } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
             // Normal table.
@@ -546,8 +223,7 @@ impl Operations for DataFolder {
                 return Err(schema_mismatch_error);
             }
 
-            self.delta_lake
-                .write_record_batches_to_normal_table(table_name, vec![uncompressed_data])
+            self.write_record_batches_to_normal_table(table_name, vec![uncompressed_data])
                 .await?;
         } else {
             return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
@@ -561,7 +237,7 @@ impl Operations for DataFolder {
     /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`]. If the SQL
     /// could not be executed, [`ModelarDbEmbeddedError`] is returned.
     async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
-        let data_frame = self.session_context.sql(sql).await?;
+        let data_frame = self.session_context().sql(sql).await?;
 
         data_frame
             .execute_stream()
@@ -606,7 +282,6 @@ impl Operations for DataFolder {
             let record_batches = common::collect(record_batch_stream).await?;
 
             target_data_folder
-                .delta_lake
                 .write_record_batches_to_normal_table(target_table_name, record_batches)
                 .await?;
 
@@ -628,8 +303,9 @@ impl Operations for DataFolder {
         tags: HashMap<String, String>,
     ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
         // DataFolder.read() interface is designed for time series tables.
-        let time_series_table_medata = if let Some(time_series_table_metadata) =
-            self.time_series_table_metadata(table_name).await
+        let time_series_table_medata = if let Some(time_series_table_metadata) = self
+            .time_series_table_metadata_for_registered_time_series_table(table_name)
+            .await
         {
             time_series_table_metadata
         } else {
@@ -674,7 +350,7 @@ impl Operations for DataFolder {
 
         // DataFolder.copy_time_series_table() interface is designed for time series tables.
         let source_time_series_table_metadata = self
-            .time_series_table_metadata(source_table_name)
+            .time_series_table_metadata_for_registered_time_series_table(source_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
@@ -683,7 +359,7 @@ impl Operations for DataFolder {
             })?;
 
         let target_time_series_table_metadata = target_data_folder
-            .time_series_table_metadata(target_table_name)
+            .time_series_table_metadata_for_registered_time_series_table(target_table_name)
             .await
             .ok_or_else(|| {
                 ModelarDbEmbeddedError::InvalidArgument(format!(
@@ -722,9 +398,9 @@ impl Operations for DataFolder {
         let sql = format!("SELECT * FROM {source_table_name} {where_clause}");
 
         // Read data to copy from source_table_name in source.
-        let source_table = Arc::new(self.delta_lake.delta_table(source_table_name).await?);
+        let source_table = Arc::new(self.delta_table(source_table_name).await?);
 
-        let session_context = SessionContext::new();
+        let session_context = modelardb_storage::create_session_context();
         session_context.register_table(source_table_name, source_table)?;
 
         let df = session_context.sql(&sql).await?;
@@ -732,7 +408,6 @@ impl Operations for DataFolder {
 
         // Write read data to target_table_name in target.
         target_data_folder
-            .delta_lake
             .write_compressed_segments_to_time_series_table(target_table_name, record_batches)
             .await?;
 
@@ -761,9 +436,10 @@ impl Operations for DataFolder {
         ));
 
         if let (Some(source_time_series_table_metadata), Some(target_time_series_table_metadata)) = (
-            self.time_series_table_metadata(source_table_name).await,
+            self.time_series_table_metadata_for_registered_time_series_table(source_table_name)
+                .await,
             target_data_folder
-                .time_series_table_metadata(target_table_name)
+                .time_series_table_metadata_for_registered_time_series_table(target_table_name)
                 .await,
         ) {
             // If both tables are time series tables, check if their schemas match and write the
@@ -775,12 +451,11 @@ impl Operations for DataFolder {
                 return Err(schema_mismatch_error);
             }
 
-            let delta_ops = self.delta_lake.delta_ops(source_table_name).await?;
+            let delta_ops = self.delta_ops(source_table_name).await?;
             let (_table, stream) = delta_ops.load().await?;
             let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
             target_data_folder
-                .delta_lake
                 .write_compressed_segments_to_time_series_table(target_table_name, record_batches)
                 .await?;
         } else if let (Some(source_normal_table_schema), Some(target_normal_table_schema)) = (
@@ -795,12 +470,11 @@ impl Operations for DataFolder {
                 return Err(schema_mismatch_error);
             }
 
-            let delta_ops = self.delta_lake.delta_ops(source_table_name).await?;
+            let delta_ops = self.delta_ops(source_table_name).await?;
             let (_table, stream) = delta_ops.load().await?;
             let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
             target_data_folder
-                .delta_lake
                 .write_record_batches_to_normal_table(target_table_name, record_batches)
                 .await?;
         } else {
@@ -820,8 +494,7 @@ impl Operations for DataFolder {
     /// Delta Lake. If the data could not be deleted, [`ModelarDbEmbeddedError`] is returned.
     async fn truncate(&mut self, table_name: &str) -> Result<()> {
         if self.tables().await?.contains(&table_name.to_owned()) {
-            self.delta_lake
-                .truncate_table(table_name)
+            self.truncate_table(table_name)
                 .await
                 .map_err(|error| error.into())
         } else {
@@ -832,21 +505,18 @@ impl Operations for DataFolder {
     }
 
     /// Drop the table with the name in `table_name` by deregistering the table from the Apache
-    /// Arrow DataFusion session, deleting all the table files from the data Delta Lake, and
-    /// deleting the table metadata from the metadata Delta Lake. If the table could not be
-    /// deregistered or the metadata or data could not be dropped, [`ModelarDbEmbeddedError`] is
-    /// returned.
+    /// Arrow DataFusion session, deleting all the table files from the Delta Lake, and deleting the
+    /// table metadata from the Delta Lake. If the table could not be deregistered or the metadata
+    /// or data could not be dropped, [`ModelarDbEmbeddedError`] is returned.
     async fn drop(&mut self, table_name: &str) -> Result<()> {
         // Drop the table from the Apache Arrow DataFusion session.
-        self.session_context.deregister_table(table_name)?;
+        self.session_context().deregister_table(table_name)?;
 
-        // Delete the table metadata from the metadata Delta Lake.
-        self.table_metadata_manager
-            .drop_table_metadata(table_name)
-            .await?;
+        // Delete the table metadata from the Delta Lake.
+        self.drop_table_metadata(table_name).await?;
 
         // Drop the table from the Delta Lake.
-        self.delta_lake.drop_table(table_name).await?;
+        self.drop_table(table_name).await?;
 
         Ok(())
     }
@@ -863,8 +533,7 @@ impl Operations for DataFolder {
         maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()> {
         if self.tables().await?.contains(&table_name.to_owned()) {
-            self.delta_lake
-                .vacuum_table(table_name, maybe_retention_period_in_seconds)
+            self.vacuum_table(table_name, maybe_retention_period_in_seconds)
                 .await
                 .map_err(|error| error.into())
         } else {
@@ -873,44 +542,6 @@ impl Operations for DataFolder {
             )))
         }
     }
-}
-
-/// Sort the `uncompressed_data` from the time series table with `time_series_table_metadata`
-/// according to its tags and then timestamps.
-fn sort_record_batch_by_tags_and_time(
-    time_series_table_metadata: &TimeSeriesTableMetadata,
-    uncompressed_data: &RecordBatch,
-) -> Result<RecordBatch> {
-    let mut physical_sort_exprs = vec![];
-
-    let sort_options = SortOptions {
-        descending: false,
-        nulls_first: false,
-    };
-
-    for tag_column_index in &time_series_table_metadata.tag_column_indices {
-        let field = time_series_table_metadata.schema.field(*tag_column_index);
-        physical_sort_exprs.push(PhysicalSortExpr {
-            expr: Arc::new(Column::new(field.name(), *tag_column_index)),
-            options: sort_options,
-        });
-    }
-
-    let timestamp_column_index = time_series_table_metadata.timestamp_column_index;
-    let field = time_series_table_metadata
-        .schema
-        .field(timestamp_column_index);
-    physical_sort_exprs.push(PhysicalSortExpr {
-        expr: Arc::new(Column::new(field.name(), timestamp_column_index)),
-        options: sort_options,
-    });
-
-    sort::sort_batch(
-        uncompressed_data,
-        &LexOrdering::new(physical_sort_exprs),
-        None,
-    )
-    .map_err(|error| error.into())
 }
 
 /// Compare `source_schema` and `target_schema` and return [`true`] if they have the same number of
@@ -944,13 +575,21 @@ fn schemas_are_compatible(source_schema: &Schema, target_schema: &Schema) -> boo
 mod tests {
     use super::*;
 
-    use arrow::array::{Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array};
+    use arrow::array::{
+        Array, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
+        StringArray,
+    };
+    use arrow::compute::SortOptions;
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
     use datafusion::datasource::TableProvider;
     use datafusion::logical_expr::col;
+    use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
+    use datafusion::physical_plan::expressions::Column;
+    use datafusion::physical_plan::sorts::sort;
     use modelardb_types::types::{
-        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, ValueArray,
+        ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata,
+        TimestampArray, ValueArray,
     };
     use tempfile::TempDir;
     use tonic::transport::Channel;
@@ -993,15 +632,20 @@ mod tests {
 
         // Create a new data folder and verify that the existing normal tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let data_sink = Arc::new(DataFolderDataSink::new());
+        new_data_folder
+            .register_tables(data_sink)
+            .await
+            .unwrap();
         assert!(
             new_data_folder
-                .session_context
+                .session_context()
                 .table_exist("normal_table_1")
                 .unwrap()
         );
         assert!(
             new_data_folder
-                .session_context
+                .session_context()
                 .table_exist("normal_table_2")
                 .unwrap()
         );
@@ -1163,15 +807,20 @@ mod tests {
 
         // Create a new data folder and verify that the existing time series tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let data_sink = Arc::new(DataFolderDataSink::new());
+        new_data_folder
+            .register_tables(data_sink)
+            .await
+            .unwrap();
         assert!(
             new_data_folder
-                .session_context
+                .session_context()
                 .table_exist("time_series_table_1")
                 .unwrap()
         );
         assert!(
             new_data_folder
-                .session_context
+                .session_context()
                 .table_exist("time_series_table_2")
                 .unwrap()
         );
@@ -1295,11 +944,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_to_normal_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
-        let mut delta_table = data_folder
-            .delta_lake
-            .delta_table(NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 0);
 
@@ -1346,7 +991,6 @@ mod tests {
     async fn test_write_to_time_series_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
         let mut delta_table = data_folder
-            .delta_lake
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
@@ -2401,7 +2045,7 @@ mod tests {
 
         assert!(
             data_folder
-                .session_context
+                .session_context()
                 .table_exist(NORMAL_TABLE_NAME)
                 .unwrap()
         );
@@ -2411,28 +2055,21 @@ mod tests {
         // Verify that the normal table was deregistered from Apache DataFusion.
         assert!(
             !data_folder
-                .session_context
+                .session_context()
                 .table_exist(NORMAL_TABLE_NAME)
                 .unwrap()
         );
 
-        // Verify that the normal table was dropped from the metadata Delta Lake.
+        // Verify that the normal table was dropped from the Delta Lake.
         assert!(
             !data_folder
-                .table_metadata_manager
                 .is_normal_table(NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
         );
 
         // Verify that the normal table was dropped from the Delta Lake.
-        assert!(
-            data_folder
-                .delta_lake
-                .delta_table(NORMAL_TABLE_NAME)
-                .await
-                .is_err()
-        );
+        assert!(data_folder.delta_table(NORMAL_TABLE_NAME).await.is_err());
     }
 
     #[tokio::test]
@@ -2441,7 +2078,7 @@ mod tests {
 
         assert!(
             data_folder
-                .session_context
+                .session_context()
                 .table_exist(TIME_SERIES_TABLE_NAME)
                 .unwrap()
         );
@@ -2451,15 +2088,14 @@ mod tests {
         // Verify that the time series table was deregistered from Apache DataFusion.
         assert!(
             !data_folder
-                .session_context
+                .session_context()
                 .table_exist(TIME_SERIES_TABLE_NAME)
                 .unwrap()
         );
 
-        // Verify that the time series table was dropped from the metadata Delta Lake.
+        // Verify that the time series table was dropped from the Delta Lake.
         assert!(
             !data_folder
-                .table_metadata_manager
                 .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
@@ -2468,7 +2104,6 @@ mod tests {
         // Verify that the time series table was dropped from the Delta Lake.
         assert!(
             data_folder
-                .delta_lake
                 .delta_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
@@ -2500,11 +2135,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut delta_table = data_folder
-            .delta_lake
-            .delta_table(NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 1);
 
@@ -2527,7 +2158,6 @@ mod tests {
             .unwrap();
 
         let mut delta_table = data_folder
-            .delta_lake
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
@@ -2653,11 +2283,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut delta_table = source
-            .delta_lake
-            .delta_table(NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = source.delta_table(NORMAL_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 1);
 
@@ -2682,26 +2308,21 @@ mod tests {
         expected_schema: Schema,
     ) {
         // Verify that the normal table exists in the Delta Lake.
-        let delta_table = data_folder
-            .delta_lake
-            .delta_table(table_name)
-            .await
-            .unwrap();
+        let delta_table = data_folder.delta_table(table_name).await.unwrap();
 
         let actual_schema = TableProvider::schema(&delta_table);
         assert_eq!(actual_schema, Arc::new(expected_schema));
 
-        // Verify that the normal table exists in the metadata Delta Lake.
-        assert!(
-            data_folder
-                .table_metadata_manager
-                .is_normal_table(table_name)
-                .await
-                .unwrap()
-        );
+        // Verify that the normal table exists in the Delta Lake.
+        assert!(data_folder.is_normal_table(table_name).await.unwrap());
 
         // Verify that the normal table is registered with Apache DataFusion.
-        assert!(data_folder.session_context.table_exist(table_name).unwrap())
+        assert!(
+            data_folder
+                .session_context()
+                .table_exist(table_name)
+                .unwrap()
+        )
     }
 
     #[tokio::test]
@@ -2822,11 +2443,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut delta_table = source
-            .delta_lake
-            .delta_table(TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 2);
 
@@ -2865,11 +2482,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut delta_table = source
-            .delta_lake
-            .delta_table(TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
+        let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
         assert_eq!(delta_table.get_files_count(), 2);
 
@@ -2904,11 +2517,10 @@ mod tests {
         expected_schema: Schema,
     ) -> TimeSeriesTableMetadata {
         // Verify that the time series table exists in the Delta Lake.
-        assert!(data_folder.delta_lake.delta_table(table_name).await.is_ok());
+        assert!(data_folder.delta_table(table_name).await.is_ok());
 
-        // Verify that the time series table exists in the metadata Delta Lake with the correct schema.
+        // Verify that the time series table exists in the Delta Lake with the correct schema.
         let time_series_table_metadata = data_folder
-            .table_metadata_manager
             .time_series_table_metadata_for_time_series_table(table_name)
             .await
             .unwrap();
@@ -2917,7 +2529,12 @@ mod tests {
         assert_eq!(*time_series_table_metadata.query_schema, expected_schema);
 
         // Verify that the time series table is registered with Apache DataFusion.
-        assert!(data_folder.session_context.table_exist(table_name).unwrap());
+        assert!(
+            data_folder
+                .session_context()
+                .table_exist(table_name)
+                .unwrap()
+        );
 
         time_series_table_metadata
     }

@@ -21,11 +21,11 @@ use std::sync::Arc;
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
+use modelardb_storage::data_folder::DataFolder;
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
-use crate::data_folders::DataFolder;
 use crate::error::Result;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
@@ -87,7 +87,6 @@ impl CompressedDataManager {
         let record_batch_size_in_bytes = record_batch.get_array_memory_size();
 
         self.local_data_folder
-            .delta_lake
             .write_record_batches_to_normal_table(table_name, vec![record_batch])
             .await?;
 
@@ -247,7 +246,6 @@ impl CompressedDataManager {
         let compressed_data_buffer_size_in_bytes = compressed_data_buffer.size_in_bytes;
         let compressed_segments = compressed_data_buffer.record_batches();
         self.local_data_folder
-            .delta_lake
             .write_compressed_segments_to_time_series_table(table_name, compressed_segments)
             .await?;
 
@@ -317,7 +315,6 @@ mod tests {
         let local_data_folder = data_manager.local_data_folder.clone();
 
         let mut delta_table = local_data_folder
-            .delta_lake
             .create_normal_table(NORMAL_TABLE_NAME, &record_batch.schema())
             .await
             .unwrap();
@@ -391,7 +388,6 @@ mod tests {
         let local_data_folder = data_manager.local_data_folder.clone();
 
         let mut delta_table = local_data_folder
-            .delta_lake
             .create_time_series_table(&table::time_series_table_metadata())
             .await
             .unwrap();
@@ -451,7 +447,6 @@ mod tests {
 
         let segments = compressed_segments_record_batch();
         local_data_folder
-            .delta_lake
             .create_time_series_table(&segments.time_series_table_metadata)
             .await
             .unwrap();
@@ -507,7 +502,6 @@ mod tests {
         // Insert data that should be saved when the remaining memory is decreased.
         let segments = compressed_segments_record_batch();
         local_data_folder
-            .delta_lake
             .create_time_series_table(&segments.time_series_table_metadata)
             .await
             .unwrap();
@@ -559,13 +553,12 @@ mod tests {
             COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
-        // Create a local data folder and save a single time series table to the metadata Delta Lake.
+        // Create a local data folder and save a single time series table to the Delta Lake.
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
         let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder
-            .table_metadata_manager
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();

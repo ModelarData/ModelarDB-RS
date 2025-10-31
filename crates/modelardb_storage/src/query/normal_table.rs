@@ -100,7 +100,7 @@ impl TableProvider for NormalTable {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Clone the Delta Lake table and update it to the latest version. self.delta_lake.load(
+        // Clone the Delta Lake table and update it to the latest version. self.data_folder.load(
         // &mut self) is not an option due to TypeProvider::scan(&self, ...). Storing the DeltaTable
         // in a Mutex and RwLock is also not an option since most of the methods in TypeProvider
         // return a reference and the locks will be dropped at the end of the method.
@@ -129,7 +129,7 @@ impl TableProvider for NormalTable {
     /// Create an [`ExecutionPlan`] that will insert the result of `input` into the normal table.
     /// Generally, [`arrow_flight::flight_service_server::FlightService::do_put()`] should be used
     /// instead of this method as it is more efficient. Returns a [`DataFusionError::Plan`] if the
-    /// necessary metadata cannot be retrieved from the metadata Delta Lake.
+    /// necessary metadata cannot be retrieved from the Delta Lake.
     async fn insert_into(
         &self,
         _state: &dyn Session,

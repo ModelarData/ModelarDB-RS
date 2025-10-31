@@ -26,6 +26,7 @@ use arrow::error::ArrowError;
 use datafusion::error::DataFusionError;
 use datafusion::parquet::errors::ParquetError;
 use deltalake::{DeltaTableError, ObjectStoreError};
+use modelardb_compression::error::ModelarDbCompressionError;
 use modelardb_storage::error::ModelarDbStorageError;
 use modelardb_types::error::ModelarDbTypesError;
 use tonic::Status as TonicStatusError;
@@ -47,6 +48,8 @@ pub enum ModelarDbEmbeddedError {
     EnvironmentVar(VarError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
+    /// Error returned by modelardb_compression.
+    ModelarDbCompression(ModelarDbCompressionError),
     /// Error returned by modelardb_storage.
     ModelarDbStorage(ModelarDbStorageError),
     /// Error returned by modelardb_types.
@@ -73,6 +76,9 @@ impl Display for ModelarDbEmbeddedError {
             Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
             Self::EnvironmentVar(reason) => write!(f, "Environment Variable Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
+            Self::ModelarDbCompression(reason) => {
+                write!(f, "ModelarDB Compression Error: {reason}")
+            }
             Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
@@ -93,6 +99,7 @@ impl Error for ModelarDbEmbeddedError {
             Self::DeltaLake(reason) => Some(reason),
             Self::EnvironmentVar(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
+            Self::ModelarDbCompression(reason) => Some(reason),
             Self::ModelarDbStorage(reason) => Some(reason),
             Self::ModelarDbTypes(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
@@ -126,6 +133,12 @@ impl From<DeltaTableError> for ModelarDbEmbeddedError {
 impl From<VarError> for ModelarDbEmbeddedError {
     fn from(error: VarError) -> Self {
         Self::EnvironmentVar(error)
+    }
+}
+
+impl From<ModelarDbCompressionError> for ModelarDbEmbeddedError {
+    fn from(error: ModelarDbCompressionError) -> Self {
+        Self::ModelarDbCompression(error)
     }
 }
 

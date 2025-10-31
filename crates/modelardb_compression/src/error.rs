@@ -19,12 +19,16 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::result::Result as StdResult;
 
+use arrow::error::ArrowError;
+
 /// Result type used throughout `modelardb_compression`.
 pub type Result<T> = StdResult<T, ModelarDbCompressionError>;
 
 /// Error type used throughout `modelardb_compression`.
 #[derive(Debug)]
 pub enum ModelarDbCompressionError {
+    /// Error returned by Apache Arrow.
+    Arrow(ArrowError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
 }
@@ -32,6 +36,7 @@ pub enum ModelarDbCompressionError {
 impl Display for ModelarDbCompressionError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
+            Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
         }
     }
@@ -41,7 +46,14 @@ impl Error for ModelarDbCompressionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         // Return the error that caused self to occur if one exists.
         match self {
+            Self::Arrow(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
         }
+    }
+}
+
+impl From<ArrowError> for ModelarDbCompressionError {
+    fn from(error: ArrowError) -> Self {
+        Self::Arrow(error)
     }
 }

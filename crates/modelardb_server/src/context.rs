@@ -20,7 +20,6 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
-use datafusion::prelude::SessionContext;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -37,8 +36,6 @@ pub struct Context {
     pub data_folders: DataFolders,
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
-    /// Main interface for Apache DataFusion.
-    pub session_context: SessionContext,
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
 }
@@ -50,8 +47,6 @@ impl Context {
     pub async fn try_new(data_folders: DataFolders, cluster_mode: ClusterMode) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
 
-        let session_context = modelardb_storage::create_session_context();
-
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(data_folders.clone(), &configuration_manager).await?,
         ));
@@ -59,7 +54,6 @@ impl Context {
         Ok(Context {
             data_folders,
             configuration_manager,
-            session_context,
             storage_engine,
         })
     }
@@ -84,7 +78,6 @@ impl Context {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .create_normal_table(table_name, schema)
             .await?;
 
@@ -94,7 +87,6 @@ impl Context {
         // Persist the new normal table to the Delta Lake.
         self.data_folders
             .local_data_folder
-            .table_metadata_manager
             .save_normal_table_metadata(table_name)
             .await?;
 
@@ -127,7 +119,6 @@ impl Context {
         // Create an empty Delta Lake table.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .create_time_series_table(time_series_table_metadata)
             .await?;
 
@@ -135,10 +126,9 @@ impl Context {
         self.register_time_series_table(Arc::new(time_series_table_metadata.clone()))
             .await?;
 
-        // Persist the new time series table to the metadata Delta Lake.
+        // Persist the new time series table to the Delta Lake.
         self.data_folders
             .local_data_folder
-            .table_metadata_manager
             .save_time_series_table_metadata(time_series_table_metadata)
             .await?;
 
@@ -150,16 +140,15 @@ impl Context {
         Ok(())
     }
 
-    /// For each normal table saved in the metadata Delta Lake, register the normal table in Apache
-    /// DataFusion. If the normal tables could not be retrieved from the metadata Delta Lake or a
-    /// normal table could not be registered, return [`ModelarDbServerError`].
+    /// For each normal table saved in the Delta Lake, register the normal table in Apache
+    /// DataFusion. If the normal tables could not be retrieved from the Delta Lake or a normal
+    /// table could not be registered, return [`ModelarDbServerError`].
     pub async fn register_normal_tables(&self) -> Result<()> {
         // We register the normal tables in the local data folder to avoid registering tables that
         // NormalTableDataSink cannot write data to.
         let table_names = self
             .data_folders
             .local_data_folder
-            .table_metadata_manager
             .normal_table_names()
             .await?;
 
@@ -172,12 +161,14 @@ impl Context {
 
     /// Register the normal table with `table_name` in Apache DataFusion. If the normal table does
     /// not exist or could not be registered with Apache DataFusion, return
-    /// [`ModelarDbServerError`].
+    /// [`ModelarDbServerError`]. [`modelardb_storage::data_folder::DataFolder::register_tables()`]
+    /// is not used so a unique [`NormalTableDataSink`] can be passed per table.
     async fn register_normal_table(&self, table_name: &str) -> Result<()> {
+        let session_context = self.data_folders.query_data_folder.session_context();
+
         let delta_table = self
             .data_folders
             .query_data_folder
-            .delta_lake
             .delta_table(table_name)
             .await?;
 
@@ -188,7 +179,7 @@ impl Context {
         ));
 
         modelardb_storage::register_normal_table(
-            &self.session_context,
+            session_context,
             table_name,
             delta_table,
             normal_table_data_sink,
@@ -199,16 +190,15 @@ impl Context {
         Ok(())
     }
 
-    /// For each time series table saved in the metadata Delta Lake, register the time series table
-    /// in Apache DataFusion. If the time series tables could not be retrieved from the metadata
-    /// Delta Lake or a time series table could not be registered, return [`ModelarDbServerError`].
+    /// For each time series table saved in the Delta Lake, register the time series table in Apache
+    /// DataFusion. If the time series tables could not be retrieved from the Delta Lake or a time
+    /// series table could not be registered, return [`ModelarDbServerError`].
     pub async fn register_time_series_tables(&self) -> Result<()> {
         // We register the time series tables in the local data folder to avoid registering tables
         // that TimeSeriesTableDataSink cannot write data to.
         let time_series_table_metadata = self
             .data_folders
             .local_data_folder
-            .table_metadata_manager
             .time_series_table_metadata()
             .await?;
 
@@ -219,17 +209,20 @@ impl Context {
         Ok(())
     }
 
-    /// Register the time series table with `time_series_table_metadata` in Apache DataFusion. If the
-    /// time series table does not exist or could not be registered with Apache DataFusion, return
-    /// [`ModelarDbServerError`].
+    /// Register the time series table with `time_series_table_metadata` in Apache DataFusion. If
+    /// the time series table does not exist or could not be registered with Apache DataFusion,
+    /// return [`ModelarDbServerError`].
+    /// [`modelardb_storage::data_folder::DataFolder::register_tables()`] is not used so a unique
+    /// [`TimeSeriesTableDataSink`] can be passed per table.
     async fn register_time_series_table(
         &self,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     ) -> Result<()> {
+        let session_context = self.data_folders.query_data_folder.session_context();
+
         let delta_table = self
             .data_folders
             .query_data_folder
-            .delta_lake
             .delta_table(&time_series_table_metadata.name)
             .await?;
 
@@ -239,7 +232,7 @@ impl Context {
         ));
 
         modelardb_storage::register_time_series_table(
-            &self.session_context,
+            session_context,
             delta_table,
             time_series_table_metadata.clone(),
             time_series_table_data_sink,
@@ -254,9 +247,8 @@ impl Context {
     }
 
     /// Drop the table with `table_name` if it exists. The table is deregistered from the Apache
-    /// Arrow Datafusion session context and deleted from the storage engine, metadata Delta Lake,
-    /// and data Delta Lake. If the table does not exist or if it could not be dropped,
-    /// [`ModelarDbServerError`] is returned.
+    /// Arrow Datafusion session context and deleted from the storage engine and Delta Lake. If the
+    /// table does not exist or if it could not be dropped, [`ModelarDbServerError`] is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<()> {
         // Deregistering the table from the Apache DataFusion session context and deleting the table
         // from the storage engine does not require the table to exist, so the table is checked first.
@@ -266,21 +258,20 @@ impl Context {
 
         // Deregister the table from the Apache DataFusion session context. This is done first to
         // avoid data being ingested into the table while it is being deleted.
-        self.session_context.deregister_table(table_name)?;
+        let session_context = self.data_folders.query_data_folder.session_context();
+        session_context.deregister_table(table_name)?;
 
         self.drop_table_from_storage_engine(table_name).await?;
 
-        // Drop the table metadata from the metadata Delta Lake.
+        // Drop the table metadata from the Delta Lake.
         self.data_folders
             .local_data_folder
-            .table_metadata_manager
             .drop_table_metadata(table_name)
             .await?;
 
         // Drop the table from the Delta Lake.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .drop_table(table_name)
             .await?;
 
@@ -288,8 +279,8 @@ impl Context {
     }
 
     /// Delete all data from the table with `table_name` if it exists. The table data is deleted
-    /// from the storage engine and data Delta Lake. If the table does not exist or if it could not
-    /// be truncated, [`ModelarDbServerError`] is returned.
+    /// from the storage engine and Delta Lake. If the table does not exist or if it could not be
+    /// truncated, [`ModelarDbServerError`] is returned.
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
         // Deleting the table from the storage engine does not require the table to exist, so the
         // table is checked first.
@@ -299,10 +290,9 @@ impl Context {
 
         self.drop_table_from_storage_engine(table_name).await?;
 
-        // Delete the table data from the data Delta Lake.
+        // Delete the table data from the Delta Lake.
         self.data_folders
             .local_data_folder
-            .delta_lake
             .truncate_table(table_name)
             .await?;
 
@@ -339,7 +329,6 @@ impl Context {
 
         self.data_folders
             .local_data_folder
-            .delta_lake
             .vacuum_table(table_name, maybe_retention_period_in_seconds)
             .await?;
 
@@ -401,7 +390,7 @@ impl Context {
     /// Return the default database schema if it exists, otherwise a [`ModelarDbServerError`]
     /// indicating at what level the lookup failed is returned.
     pub fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>> {
-        let session_context = self.session_context.clone();
+        let session_context = self.data_folders.query_data_folder.session_context();
 
         let catalog = session_context.catalog("datafusion").ok_or_else(|| {
             ModelarDbServerError::InvalidState("Default catalog does not exist.".to_owned())
@@ -424,11 +413,10 @@ fn table_does_not_exist_error(table_name: &str) -> ModelarDbServerError {
 mod tests {
     use super::*;
 
+    use modelardb_storage::data_folder::DataFolder;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
     use tempfile::TempDir;
-
-    use crate::data_folders::DataFolder;
 
     // Tests for Context.
     #[tokio::test]
@@ -450,12 +438,11 @@ mod tests {
 
         assert!(folder_path.exists());
 
-        // The normal table should be saved to the metadata Delta Lake.
+        // The normal table should be saved to the Delta Lake.
         assert!(
             context
                 .data_folders
                 .local_data_folder
-                .table_metadata_manager
                 .is_normal_table(NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -499,11 +486,10 @@ mod tests {
             .await
             .unwrap();
 
-        // The time series table should be saved to the metadata Delta Lake.
+        // The time series table should be saved to the Delta Lake.
         let time_series_table_metadata = context
             .data_folders
             .local_data_folder
-            .table_metadata_manager
             .time_series_table_metadata()
             .await
             .unwrap();
@@ -545,7 +531,7 @@ mod tests {
     async fn test_register_normal_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
-        // Save a normal table to the metadata Delta Lake.
+        // Save a normal table to the Delta Lake.
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -565,7 +551,7 @@ mod tests {
     async fn test_register_time_series_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
-        // Save a time series table to the metadata Delta Lake.
+        // Save a time series table to the Delta Lake.
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(&temp_dir).await;
 
@@ -603,12 +589,11 @@ mod tests {
                 .is_ok()
         );
 
-        // The normal table should be deleted from the metadata Delta Lake.
+        // The normal table should be deleted from the Delta Lake.
         assert!(
             !context
                 .data_folders
                 .local_data_folder
-                .table_metadata_manager
                 .is_normal_table(NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -640,12 +625,11 @@ mod tests {
                 .is_ok()
         );
 
-        // The time series table should be deleted from the metadata Delta Lake.
+        // The time series table should be deleted from the Delta Lake.
         assert!(
             !context
                 .data_folders
                 .local_data_folder
-                .table_metadata_manager
                 .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
@@ -675,7 +659,6 @@ mod tests {
 
         let local_data_folder = &context.data_folders.local_data_folder;
         let mut delta_table = local_data_folder
-            .delta_lake
             .delta_table(NORMAL_TABLE_NAME)
             .await
             .unwrap();
@@ -684,10 +667,9 @@ mod tests {
 
         context.truncate_table(NORMAL_TABLE_NAME).await.unwrap();
 
-        // The normal table should not be deleted from the metadata Delta Lake.
+        // The normal table should not be deleted from the Delta Lake.
         assert!(
             local_data_folder
-                .table_metadata_manager
                 .is_normal_table(NORMAL_TABLE_NAME)
                 .await
                 .unwrap()
@@ -705,7 +687,6 @@ mod tests {
 
         let local_data_folder = &context.data_folders.local_data_folder;
         let mut delta_table = local_data_folder
-            .delta_lake
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
@@ -717,10 +698,9 @@ mod tests {
             .await
             .unwrap();
 
-        // The time series table should not be deleted from the metadata Delta Lake.
+        // The time series table should not be deleted from the Delta Lake.
         assert!(
             local_data_folder
-                .table_metadata_manager
                 .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
@@ -782,7 +762,6 @@ mod tests {
         // Write data to the normal table.
         let local_data_folder = &context.data_folders.local_data_folder;
         local_data_folder
-            .delta_lake
             .write_record_batches_to_normal_table(
                 NORMAL_TABLE_NAME,
                 vec![table::normal_table_record_batch()],
@@ -854,7 +833,6 @@ mod tests {
         // Write data to the time series table.
         let local_data_folder = &context.data_folders.local_data_folder;
         local_data_folder
-            .delta_lake
             .write_compressed_segments_to_time_series_table(
                 TIME_SERIES_TABLE_NAME,
                 vec![table::compressed_segments_record_batch()],
@@ -1002,7 +980,7 @@ mod tests {
     /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::try_from_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
         Arc::new(
             Context::try_new(
