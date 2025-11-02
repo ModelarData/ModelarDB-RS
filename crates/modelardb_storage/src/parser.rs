@@ -39,10 +39,7 @@ use modelardb_types::types::{
     TimeSeriesTableMetadata,
 };
 use sqlparser::ast::{
-    CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, DataType as SQLDataType,
-    Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectNamePart,
-    ObjectType, Query, Setting, Statement, TableEngine, TimezoneInfo, TruncateIdentityOption,
-    TruncateTableTarget, Value,
+    CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, CreateTableOptions, DataType as SQLDataType, Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo, TruncateIdentityOption, TruncateTableTarget, Value, ValueWithSpan
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{ALL_KEYWORDS, Keyword};
@@ -100,6 +97,7 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 restrict,
                 purge,
                 temporary,
+                table,
             } => {
                 let table_names = semantic_checks_for_drop(
                     object_type,
@@ -109,6 +107,7 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                     restrict,
                     purge,
                     temporary,
+                    table,
                 )?;
                 Ok(ModelarDbStatement::DropTable(table_names))
             }
@@ -116,7 +115,6 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 table_names,
                 partitions,
                 table,
-                only,
                 identity,
                 cascade,
                 on_cluster,
@@ -125,7 +123,6 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                     table_names,
                     partitions,
                     table,
-                    only,
                     identity,
                     cascade,
                     on_cluster,
@@ -378,7 +375,7 @@ impl ModelarDbDialect {
     }
 
     /// Create a new [`Statement::CreateTable`] with the provided `table_name` and `columns`, and
-    /// with `engine` set to "TimeSeriesTable".
+    /// with `iceberg` set to `true` for a "TimeSeriesTable".
     fn new_create_time_series_table_statement(
         table_name: ObjectName,
         columns: Vec<ColumnDef>,
@@ -393,7 +390,7 @@ impl ModelarDbDialect {
             if_not_exists: false,
             transient: false,
             volatile: false,
-            iceberg: false,
+            iceberg: true,
             name: table_name,
             columns,
             constraints: vec![],
@@ -404,22 +401,14 @@ impl ModelarDbDialect {
                 storage: None,
                 location: None,
             }),
-            table_properties: vec![],
-            with_options: vec![],
+            table_options: CreateTableOptions::None,
             file_format: None,
             location: None,
             query: None,
             without_rowid: false,
             like: None,
             clone: None,
-            engine: Some(TableEngine {
-                name: "TimeSeriesTable".to_owned(),
-                parameters: None,
-            }),
             comment: None,
-            auto_increment_offset: None,
-            default_charset: None,
-            collation: None,
             on_commit: None,
             on_cluster: None,
             primary_key: None,
@@ -427,7 +416,7 @@ impl ModelarDbDialect {
             partition_by: None,
             cluster_by: None,
             clustered_by: None,
-            options: None,
+            inherits: None,
             strict: false,
             copy_grants: false,
             enable_schema_evolution: None,
@@ -467,7 +456,7 @@ impl ModelarDbDialect {
         loop {
             match self.parse_single_quoted_string(parser) {
                 Ok(address) => {
-                    addresses.push(new_setting(address, None, Span::empty(), Value::Null));
+                    addresses.push(new_address_setting(address));
                     if let Token::Comma = parser.peek_nth_token(0).token {
                         parser.next_token();
                     } else {
@@ -571,13 +560,19 @@ impl ModelarDbDialect {
     }
 }
 
-/// Create a [`Setting`] with `key`, `quote_style`, and `value`.
-fn new_setting(key: String, quote_style: Option<char>, span: Span, value: Value) -> Setting {
+/// Create a [`Setting`] that is repurposed for storing `address` as  ClickHouse's SETTINGS is not
+/// supported by ModelarDB.
+fn new_address_setting(address: String) -> Setting {
     let key = Ident {
-        value: key,
-        quote_style,
-        span,
+        value: address,
+        quote_style: None,
+        span: Span::empty(),
     };
+
+    let value = Expr::Value(ValueWithSpan {
+        value: Value::Null,
+        span: Span::empty(),
+    });
 
     Setting { key, value }
 }
@@ -698,7 +693,7 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     let CreateTable {
         name,
         columns,
-        engine,
+        iceberg,
         ..
     } = create_table;
 
@@ -735,8 +730,9 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     object_store::path::Path::parse(&normalized_name)?;
 
     // Create a ModelarDbStatement with the information for creating the table of the specified
-    // type.
-    if let Some(_expected_engine) = engine {
+    // type. As sqlparser's CreateTable does not support time series tables, Iceberg is set to true
+    // if the SQL command was CREATE TIME SERIES TABLE and false if it was CREATE TABLE.
+    if iceberg {
         // Create a time series table for time series that only supports TIMESTAMP, FIELD, and TAG.
         let time_series_table_metadata =
             semantic_checks_for_create_time_series_table(normalized_name, columns)?;
@@ -817,25 +813,20 @@ fn check_unsupported_features_are_disabled(
         if_not_exists,
         transient,
         volatile,
-        iceberg,
+        iceberg: _iceberg, // true if CREATE TIME SERIES TABLE and false if CREATE TABLE.
         name: _name,
         columns: _columns,
         constraints,
         hive_distribution,
         hive_formats,
-        table_properties,
-        with_options,
+        table_options,
         file_format,
         location,
         query,
         without_rowid,
         like,
         clone,
-        engine: _engine,
         comment,
-        auto_increment_offset,
-        default_charset,
-        collation,
         on_commit,
         on_cluster,
         primary_key,
@@ -843,7 +834,7 @@ fn check_unsupported_features_are_disabled(
         partition_by,
         cluster_by,
         clustered_by,
-        options,
+        inherits,
         strict,
         copy_grants,
         enable_schema_evolution,
@@ -867,7 +858,6 @@ fn check_unsupported_features_are_disabled(
     check_unsupported_feature_is_disabled(global.is_some(), "GLOBAL")?;
     check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
     check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
-    check_unsupported_feature_is_disabled(*iceberg, "ICEBERG")?;
     check_unsupported_feature_is_disabled(*volatile, "VOLATILE")?;
     check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
     check_unsupported_feature_is_disabled(
@@ -884,8 +874,7 @@ fn check_unsupported_features_are_disabled(
             }),
         "Hive formats",
     )?;
-    check_unsupported_feature_is_disabled(!table_properties.is_empty(), "Table properties")?;
-    check_unsupported_feature_is_disabled(!with_options.is_empty(), "OPTIONS")?;
+    check_unsupported_feature_is_disabled(table_options != &CreateTableOptions::None, "Table Options")?;
     check_unsupported_feature_is_disabled(file_format.is_some(), "File format")?;
     check_unsupported_feature_is_disabled(location.is_some(), "Location")?;
     check_unsupported_feature_is_disabled(query.is_some(), "Query")?;
@@ -893,9 +882,6 @@ fn check_unsupported_features_are_disabled(
     check_unsupported_feature_is_disabled(like.is_some(), "LIKE")?;
     check_unsupported_feature_is_disabled(clone.is_some(), "CLONE")?;
     check_unsupported_feature_is_disabled(comment.is_some(), "Comment")?;
-    check_unsupported_feature_is_disabled(auto_increment_offset.is_some(), "AUTO INCREMENT")?;
-    check_unsupported_feature_is_disabled(default_charset.is_some(), "Charset")?;
-    check_unsupported_feature_is_disabled(collation.is_some(), "Collation")?;
     check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
     check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
     check_unsupported_feature_is_disabled(primary_key.is_some(), "PRIMARY_KEY")?;
@@ -903,12 +889,16 @@ fn check_unsupported_features_are_disabled(
     check_unsupported_feature_is_disabled(partition_by.is_some(), "PARTITION BY")?;
     check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
     check_unsupported_feature_is_disabled(clustered_by.is_some(), "CLUSTERED BY")?;
-    check_unsupported_feature_is_disabled(options.is_some(), "NAME=VALUE")?;
+    check_unsupported_feature_is_disabled(inherits.is_some(), "INHERITS")?;
     check_unsupported_feature_is_disabled(*strict, "STRICT")?;
     check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;
     check_unsupported_feature_is_disabled(
         enable_schema_evolution.is_some(),
         "ENABLE_SCHEMA_EVOLUTION",
+    )?;
+    check_unsupported_feature_is_disabled(
+        change_tracking.is_some(),
+        "CHANGE_TRACKING",
     )?;
     check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
     check_unsupported_feature_is_disabled(
@@ -997,9 +987,9 @@ fn column_defs_to_time_series_table_query_schema(
                         }
                         option => {
                             return Err(DataFusionError::SQL(
-                                ParserError::ParserError(format!(
+                                Box::new(ParserError::ParserError(format!(
                                     "{option} is not supported in time series tables."
-                                )),
+                                ))),
                                 None,
                             ));
                         }
@@ -1011,9 +1001,9 @@ fn column_defs_to_time_series_table_query_schema(
             SQLDataType::Text => Field::new(normalized_name, DataType::Utf8, false),
             data_type => {
                 return Err(DataFusionError::SQL(
-                    ParserError::ParserError(format!(
+                    Box::new(ParserError::ParserError(format!(
                         "{data_type} is not supported in time series tables."
-                    )),
+                    ))),
                     None,
                 ));
             }
@@ -1153,8 +1143,9 @@ fn semantic_checks_for_drop(
     restrict: bool,
     purge: bool,
     temporary: bool,
+    table: Option<ObjectName>,
 ) -> StdResult<Vec<String>, ParserError> {
-    if object_type != ObjectType::Table || if_exists || cascade || restrict || purge || temporary {
+    if object_type != ObjectType::Table || if_exists || cascade || restrict || purge || temporary || table.is_some() {
         Err(ParserError::ParserError(
             "Only DROP TABLE is supported.".to_owned(),
         ))
@@ -1183,14 +1174,12 @@ fn semantic_checks_for_truncate(
     names: Vec<TruncateTableTarget>,
     partitions: Option<Vec<Expr>>,
     table: bool,
-    only: bool,
     identity: Option<TruncateIdentityOption>,
     cascade: Option<CascadeOption>,
     on_cluster: Option<Ident>,
 ) -> StdResult<Vec<String>, ParserError> {
     if partitions.is_some()
         || !table
-        || only
         || identity.is_some()
         || cascade.is_some()
         || on_cluster.is_some()

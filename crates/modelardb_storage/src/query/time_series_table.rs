@@ -20,7 +20,6 @@
 use std::any::Any;
 use std::collections::HashSet;
 use std::fmt;
-use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::compute::SortOptions;
@@ -39,14 +38,16 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
+use object_store::path::Path;
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator, utils};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{
     LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement, planner,
 };
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
-use deltalake::kernel::LogicalFile;
-use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
+use deltalake::kernel::LogicalFileView;
+use deltalake::{DeltaTable, ObjectMeta, PartitionFilter, PartitionValue};
+use futures::TryStreamExt;
 use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, TimeSeriesTableMetadata};
 
@@ -256,8 +257,8 @@ fn query_order_and_requirement(
         .collect();
 
     (
-        LexOrdering::new(physical_sort_exprs),
-        LexRequirement::new(physical_sort_requirements),
+        LexOrdering::new(physical_sort_exprs).expect("LexOrdering should not be empty."),
+        LexRequirement::new(physical_sort_requirements).expect("LexRequirement should not be empty."),
     )
 }
 
@@ -408,7 +409,7 @@ fn convert_logical_expr_to_physical_expr(
 /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
 /// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError`] if the necessary
 /// metadata cannot be retrieved from the Delta Lake.
-fn new_data_source_exec(
+async fn new_data_source_exec(
     delta_table: &DeltaTable,
     partition_filters: &[PartitionFilter],
     maybe_limit: Option<usize>,
@@ -417,18 +418,17 @@ fn new_data_source_exec(
     output_ordering: Vec<LexOrdering>,
 ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
     // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
-    let mut logical_files = delta_table
+    let mut logical_file_views = delta_table
         .get_active_add_actions_by_partitions(partition_filters)
-        .map_err(|error| DataFusionError::Plan(error.to_string()))?
-        .collect::<StdResult<Vec<LogicalFile>, DeltaTableError>>()
-        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+        .try_collect::<Vec<_>>()
+        .await?;
 
-    logical_files.sort_by_key(|logical_file| logical_file.modification_time());
+    logical_file_views.sort_by_key(|logical_file_view| logical_file_view.modification_time());
 
     // Create the data source operator. Assumes the ObjectStore exists.
-    let partitioned_files = logical_files
+    let partitioned_files = logical_file_views
         .iter()
-        .map(|logical_file| logical_file_to_partitioned_file(logical_file))
+        .map(|logical_file_view| logical_file_view_to_partitioned_file(logical_file_view))
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
     let file_group = FileGroup::new(partitioned_files);
 
@@ -437,10 +437,7 @@ fn new_data_source_exec(
     table_parquet_options.global.pushdown_filters = true;
     table_parquet_options.global.reorder_filters = true;
     let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
-        Arc::new(
-            ParquetSource::default()
-                .with_predicate(file_schema.clone(), parquet_filters.to_owned()),
-        )
+        Arc::new(ParquetSource::default().with_predicate(parquet_filters.to_owned()))
     } else {
         Arc::new(ParquetSource::default())
     };
@@ -454,19 +451,21 @@ fn new_data_source_exec(
     Ok(DataSourceExec::from_data_source(file_scan_config.build()))
 }
 
-/// Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
-/// returned if the time the file was last modified cannot be read from `logical_file`.
-fn logical_file_to_partitioned_file(
-    logical_file: &LogicalFile,
+/// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionFilter`]. A
+/// [`DataFusionError`] is returned if the time the file was last modified cannot be read from
+/// `logical_file_view`.
+fn logical_file_view_to_partitioned_file(
+    logical_file_view: &LogicalFileView,
 ) -> DataFusionResult<PartitionedFile> {
-    let last_modified = logical_file
+    let last_modified = logical_file_view
         .modification_datetime()
         .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
+    let location = Path::parse(logical_file_view.path().as_ref())?;
     let object_meta = ObjectMeta {
-        location: logical_file.object_store_path(),
+        location,
         last_modified,
-        size: logical_file.size() as u64,
+        size: logical_file_view.size() as u64,
         e_tag: None,
         version: None,
     };
@@ -629,21 +628,23 @@ impl TableProvider for TimeSeriesTable {
         for field_column_index in stored_field_columns_in_projection {
             partition_filters[0].value = PartitionValue::Equal(field_column_index.to_string());
 
+            let lex_ordering = LexOrdering::new(self.query_order_segment.to_vec())
+                .expect("query_order_segment should not be empty.");
             let data_source_exec = new_data_source_exec(
                 &delta_table,
                 &partition_filters,
                 limit,
                 &maybe_physical_parquet_filters,
                 self.query_compressed_schema.clone(),
-                vec![LexOrdering::new(self.query_order_segment.to_vec())],
-            )?;
+                vec![lex_ordering],
+            ).await?;
 
             let grid_exec = GridExec::new(
                 self.grid_schema.clone(),
                 maybe_physical_grid_filters.clone(),
                 limit,
                 data_source_exec,
-                self.query_requirement_segment.clone(),
+                self.query_requirement_segment.clone().into(),
                 self.query_order_data_point.clone(),
             );
 
@@ -654,7 +655,7 @@ impl TableProvider for TimeSeriesTable {
             schema_after_projection,
             stored_columns_in_projection,
             field_column_execution_plans,
-            self.query_requirement_data_point.clone(),
+            self.query_requirement_data_point.clone().into(),
         );
 
         // Only include GeneratedAsExec in the query plan if there are columns to generate.

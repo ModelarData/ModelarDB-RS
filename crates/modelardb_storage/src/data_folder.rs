@@ -35,6 +35,8 @@ use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
+use delta_kernel::engine::arrow_conversion::TryIntoKernel;
+use delta_kernel::table_properties::DataSkippingNumIndexedCols;
 use deltalake::delta_datafusion::DeltaDataChecker;
 use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add, StructField};
@@ -421,7 +423,7 @@ impl DataFolder {
         } else {
             // If the table is not in the cache, open it and add it to the cache before returning.
             let delta_table = deltalake::open_table_with_storage_options(
-                &table_path,
+                Url::parse(table_path)?,
                 self.storage_options.clone(),
             )
             .await?;
@@ -470,19 +472,18 @@ impl DataFolder {
 
     /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
     /// table does not exist or the table is not a normal table, return [`None`].
-    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Schema> {
+    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Arc<Schema>> {
         if self
             .is_normal_table(table_name)
             .await
             .is_ok_and(|is_normal_table| is_normal_table)
         {
-            self.delta_table(table_name)
+            let schema = self.delta_table(table_name)
                 .await
                 .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
-                .get_schema()
-                .expect("Delta Lake table should be loaded and metadata should be in the log.")
-                .try_into()
-                .ok()
+                .schema();
+
+            Some(schema)
         } else {
             None
         }
@@ -653,7 +654,7 @@ impl DataFolder {
                 _ => {} // All possible cases must be handled.
             }
 
-            let struct_field: StructField = field.try_into()?;
+            let struct_field: StructField = field.try_into_kernel()?;
             columns.push(struct_field);
         }
 
@@ -1151,7 +1152,8 @@ impl DeltaTableWriter {
         writer_properties: WriterProperties,
     ) -> Result<Self> {
         // Checker for if record batches match the table’s invariants, constraints, and nullability.
-        let snapshot = delta_table.snapshot()?;
+        let delta_table_state = delta_table.snapshot()?;
+        let snapshot = delta_table_state.snapshot();
         let delta_data_checker = DeltaDataChecker::new(snapshot);
 
         // Operation that will be committed.
@@ -1172,7 +1174,7 @@ impl DeltaTableWriter {
         // Writer that will write the record batches.
         let object_store = delta_table.log_store().object_store(Some(operation_id));
         let table_schema: Arc<Schema> = TableProvider::schema(&delta_table);
-        let num_indexed_cols = table_schema.fields.len() as i32;
+        let num_indexed_cols = DataSkippingNumIndexedCols::NumColumns(table_schema.fields.len() as u64);
         let writer_config = WriterConfig::new(
             table_schema,
             partition_columns,

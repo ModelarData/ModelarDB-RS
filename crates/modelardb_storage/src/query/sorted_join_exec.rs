@@ -29,7 +29,7 @@ use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{EquivalenceProperties, LexRequirement};
+use datafusion::physical_expr::{EquivalenceProperties, OrderingRequirements};
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
@@ -65,7 +65,7 @@ pub(crate) struct SortedJoinExec {
     /// Properties about the plan used in query optimization.
     plan_properties: PlanProperties,
     /// The sort order that [`SortedJoinExec`] requires for the data points it receives as its input.
-    query_requirement_data_point: LexRequirement,
+    query_requirement_data_point: OrderingRequirements,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
@@ -75,7 +75,7 @@ impl SortedJoinExec {
         schema: Arc<Schema>,
         return_order: Vec<SortedJoinColumnType>,
         inputs: Vec<Arc<dyn ExecutionPlan>>,
-        query_requirement_data_point: LexRequirement,
+        query_requirement_data_point: OrderingRequirements,
     ) -> Arc<Self> {
         // Specify that the record batches produced by the execution plan will have an unknown order.
         let equivalence_properties = EquivalenceProperties::new(schema.clone());
@@ -181,7 +181,7 @@ impl ExecutionPlan for SortedJoinExec {
 
     /// Specify that [`SortedJoinStream`] requires that its inputs' provide data that is sorted by
     /// `query_requirement_data_point`.
-    fn required_input_ordering(&self) -> Vec<Option<LexRequirement>> {
+    fn required_input_ordering(&self) -> Vec<Option<OrderingRequirements>> {
         vec![Some(self.query_requirement_data_point.clone()); self.inputs.len()]
     }
 

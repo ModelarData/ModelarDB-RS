@@ -110,13 +110,9 @@ impl FlightServiceHandler {
                 .await
                 .map_err(error_to_status_internal)?;
 
-            let schema = delta_table
-                .get_schema()
-                .map_err(error_to_status_internal)?
-                .try_into()
-                .map_err(error_to_status_internal)?;
+            let schema = delta_table.snapshot().map_err(error_to_status_internal)?.snapshot().arrow_schema();
 
-            Ok(Arc::new(schema))
+            Ok(schema)
         } else if data_folder
             .is_time_series_table(table_name)
             .await

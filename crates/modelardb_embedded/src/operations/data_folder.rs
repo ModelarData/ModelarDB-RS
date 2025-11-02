@@ -175,7 +175,7 @@ impl Operations for DataFolder {
         {
             Ok((*time_series_table_metadata.query_schema).to_owned())
         } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
-            Ok(normal_table_schema)
+            Ok((*normal_table_schema).clone())
         } else {
             Err(ModelarDbEmbeddedError::InvalidArgument(format!(
                 "{table_name} is not a table."

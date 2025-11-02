@@ -24,6 +24,7 @@ use dashmap::DashMap;
 use deltalake::arrow::array::RecordBatch;
 use futures::TryStreamExt;
 use modelardb_storage::data_folder::DataFolder;
+use object_store::path::Path;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
@@ -72,7 +73,8 @@ impl DataTransfer {
             let mut table_size_in_bytes = table_size_in_bytes.entry(table_name).or_insert(0);
 
             let object_store = delta_table.object_store();
-            for file_path in delta_table.get_files_iter()? {
+            for file_uri in delta_table.get_file_uris()? {
+                let file_path = Path::parse(file_uri)?;
                 let object_meta = object_store.head(&file_path).await?;
                 *table_size_in_bytes += object_meta.size;
             }

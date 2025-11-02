@@ -29,6 +29,7 @@ path = "src/main.rs"
 [dependencies]
 arrow = { workspace = true, features = ["ffi"] }
 datafusion.workspace = true
+delta_kernel.workspace = true
 deltalake.workspace = true
 futures.workspace = true
 modelardb_compression = { path = "../modelardb_compression" }

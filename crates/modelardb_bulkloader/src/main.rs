@@ -18,7 +18,6 @@
 use std::io::Write;
 use std::path::Path as StdPath;
 use std::pin::Pin;
-use std::result::Result as StdResult;
 use std::sync::Arc;
 use std::{env, io, process};
 
@@ -26,7 +25,7 @@ use arrow::array::RecordBatch;
 use arrow::compute;
 use arrow::compute::kernels;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use arrow::error::ArrowError;
+use delta_kernel::engine::arrow_conversion::TryIntoKernel;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::ListingOptions;
 use datafusion::execution::RecordBatchStream;
@@ -443,12 +442,12 @@ async fn export(
 
     // Create Delta Lake table at output_path.
     let schema = data_folder.schema(table_name).await?;
-    let columns: StdResult<Vec<StructField>, ArrowError> = schema
+    let columns: Vec<StructField> = schema
         .fields()
         .iter()
         .map(|field| {
             let field: &Field = field;
-            let struct_field: StdResult<StructField, ArrowError> = field.try_into();
+            let struct_field: StructField = field.try_into_kernel().expect("An infallible error should never occur.");
             struct_field
         })
         .collect();
@@ -456,7 +455,7 @@ async fn export(
     let delta_table = CreateBuilder::new()
         .with_table_name(table_name)
         .with_location(output_path)
-        .with_columns(columns?)
+        .with_columns(columns)
         .with_partition_columns(&partition_by)
         .await?;
 
