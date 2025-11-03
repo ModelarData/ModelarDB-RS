@@ -274,7 +274,7 @@ impl Operations for DataFolder {
 
         let record_batch_stream = self.read(sql).await?;
 
-        if record_batch_stream.schema() != target_normal_table_schema.into() {
+        if record_batch_stream.schema() != target_normal_table_schema {
             Err(ModelarDbEmbeddedError::InvalidArgument(format!(
                 "The schema of the data to copy does not match the schema of {target_table_name}."
             )))

@@ -1137,6 +1137,7 @@ pub fn extract_include_addresses(query: &Query) -> Option<Vec<String>> {
 
 /// Perform semantic checks to ensure that the DROP statement from which the arguments were extracted
 /// was correct. A [`ParserError`] is returned if any of the additional semantic checks fails.
+#[allow(clippy::too_many_arguments)]
 fn semantic_checks_for_drop(
     object_type: ObjectType,
     if_exists: bool,

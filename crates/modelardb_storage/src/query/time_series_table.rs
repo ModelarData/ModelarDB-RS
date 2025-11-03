@@ -429,7 +429,7 @@ async fn new_data_source_exec(
     // Create the data source operator. Assumes the ObjectStore exists.
     let partitioned_files = logical_file_views
         .iter()
-        .map(|logical_file_view| logical_file_view_to_partitioned_file(logical_file_view))
+        .map(logical_file_view_to_partitioned_file)
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
     let file_group = FileGroup::new(partitioned_files);
 
