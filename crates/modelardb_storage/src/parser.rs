@@ -378,7 +378,9 @@ impl ModelarDbDialect {
     }
 
     /// Create a new [`Statement::CreateTable`] with the provided `table_name` and `columns`, and
-    /// with `iceberg` set to `true` for a "TimeSeriesTable".
+    /// with `iceberg` set to `true` for a "TimeSeriesTable". As sqlparser's CreateTable does not
+    /// support time series tables, Iceberg is set to true as the SQL command was CREATE TIME SERIES
+    /// TABLE.
     fn new_create_time_series_table_statement(
         table_name: ObjectName,
         columns: Vec<ColumnDef>,
