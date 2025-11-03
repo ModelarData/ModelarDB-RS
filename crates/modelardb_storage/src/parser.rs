@@ -903,7 +903,6 @@ fn check_unsupported_features_are_disabled(
         "ENABLE_SCHEMA_EVOLUTION",
     )?;
     check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
-    check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
     check_unsupported_feature_is_disabled(
         data_retention_time_in_days.is_some(),
         "DATA_RETENTION_TIME_IN_DAYS",
