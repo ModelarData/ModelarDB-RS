@@ -633,10 +633,7 @@ mod tests {
         // Create a new data folder and verify that the existing normal tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         let data_sink = Arc::new(DataFolderDataSink::new());
-        new_data_folder
-            .register_tables(data_sink)
-            .await
-            .unwrap();
+        new_data_folder.register_tables(data_sink).await.unwrap();
         assert!(
             new_data_folder
                 .session_context()
@@ -808,10 +805,7 @@ mod tests {
         // Create a new data folder and verify that the existing time series tables are registered.
         let new_data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         let data_sink = Arc::new(DataFolderDataSink::new());
-        new_data_folder
-            .register_tables(data_sink)
-            .await
-            .unwrap();
+        new_data_folder.register_tables(data_sink).await.unwrap();
         assert!(
             new_data_folder
                 .session_context()

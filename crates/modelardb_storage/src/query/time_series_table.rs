@@ -38,7 +38,6 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
-use object_store::path::Path;
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator, utils};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{
@@ -50,6 +49,7 @@ use deltalake::{DeltaTable, ObjectMeta, PartitionFilter, PartitionValue};
 use futures::TryStreamExt;
 use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, TimeSeriesTableMetadata};
+use object_store::path::Path;
 
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
@@ -258,7 +258,8 @@ fn query_order_and_requirement(
 
     (
         LexOrdering::new(physical_sort_exprs).expect("LexOrdering should not be empty."),
-        LexRequirement::new(physical_sort_requirements).expect("LexRequirement should not be empty."),
+        LexRequirement::new(physical_sort_requirements)
+            .expect("LexRequirement should not be empty."),
     )
 }
 
@@ -637,7 +638,8 @@ impl TableProvider for TimeSeriesTable {
                 &maybe_physical_parquet_filters,
                 self.query_compressed_schema.clone(),
                 vec![lex_ordering],
-            ).await?;
+            )
+            .await?;
 
             let grid_exec = GridExec::new(
                 self.grid_schema.clone(),

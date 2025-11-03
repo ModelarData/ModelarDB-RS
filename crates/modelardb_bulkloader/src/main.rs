@@ -25,11 +25,11 @@ use arrow::array::RecordBatch;
 use arrow::compute;
 use arrow::compute::kernels;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use delta_kernel::engine::arrow_conversion::TryIntoKernel;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::ListingOptions;
 use datafusion::execution::RecordBatchStream;
 use datafusion::prelude::SessionContext;
+use delta_kernel::engine::arrow_conversion::TryIntoKernel;
 use deltalake::kernel::StructField;
 use deltalake::logstore::object_store::local::LocalFileSystem;
 use deltalake::operations::create::CreateBuilder;
@@ -447,7 +447,9 @@ async fn export(
         .iter()
         .map(|field| {
             let field: &Field = field;
-            let struct_field: StructField = field.try_into_kernel().expect("An infallible error should never occur.");
+            let struct_field: StructField = field
+                .try_into_kernel()
+                .expect("An infallible error should never occur.");
             struct_field
         })
         .collect();

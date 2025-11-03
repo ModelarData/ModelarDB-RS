@@ -110,7 +110,11 @@ impl FlightServiceHandler {
                 .await
                 .map_err(error_to_status_internal)?;
 
-            let schema = delta_table.snapshot().map_err(error_to_status_internal)?.snapshot().arrow_schema();
+            let schema = delta_table
+                .snapshot()
+                .map_err(error_to_status_internal)?
+                .snapshot()
+                .arrow_schema();
 
             Ok(schema)
         } else if data_folder

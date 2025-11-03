@@ -136,7 +136,8 @@ fn sort_time_series_by_tags_and_time(
 
     let indices = compute::lexsort_to_indices(&sort_columns, None)?;
     let sorted_columns = compute::take_arrays(uncompressed_time_series.columns(), &indices, None)?;
-    RecordBatch::try_new(uncompressed_time_series.schema(), sorted_columns).map_err(|error| error.into())
+    RecordBatch::try_new(uncompressed_time_series.schema(), sorted_columns)
+        .map_err(|error| error.into())
 }
 
 /// Compress the field columns in `uncompressed_time_series` from the table with

@@ -39,7 +39,10 @@ use modelardb_types::types::{
     TimeSeriesTableMetadata,
 };
 use sqlparser::ast::{
-    CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, CreateTableOptions, DataType as SQLDataType, Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo, TruncateIdentityOption, TruncateTableTarget, Value, ValueWithSpan
+    CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, CreateTableOptions,
+    DataType as SQLDataType, Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident,
+    ObjectName, ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo,
+    TruncateIdentityOption, TruncateTableTarget, Value, ValueWithSpan,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{ALL_KEYWORDS, Keyword};
@@ -874,7 +877,10 @@ fn check_unsupported_features_are_disabled(
             }),
         "Hive formats",
     )?;
-    check_unsupported_feature_is_disabled(table_options != &CreateTableOptions::None, "Table Options")?;
+    check_unsupported_feature_is_disabled(
+        table_options != &CreateTableOptions::None,
+        "Table Options",
+    )?;
     check_unsupported_feature_is_disabled(file_format.is_some(), "File format")?;
     check_unsupported_feature_is_disabled(location.is_some(), "Location")?;
     check_unsupported_feature_is_disabled(query.is_some(), "Query")?;
@@ -896,10 +902,7 @@ fn check_unsupported_features_are_disabled(
         enable_schema_evolution.is_some(),
         "ENABLE_SCHEMA_EVOLUTION",
     )?;
-    check_unsupported_feature_is_disabled(
-        change_tracking.is_some(),
-        "CHANGE_TRACKING",
-    )?;
+    check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
     check_unsupported_feature_is_disabled(change_tracking.is_some(), "CHANGE_TRACKING")?;
     check_unsupported_feature_is_disabled(
         data_retention_time_in_days.is_some(),
@@ -1145,7 +1148,14 @@ fn semantic_checks_for_drop(
     temporary: bool,
     table: Option<ObjectName>,
 ) -> StdResult<Vec<String>, ParserError> {
-    if object_type != ObjectType::Table || if_exists || cascade || restrict || purge || temporary || table.is_some() {
+    if object_type != ObjectType::Table
+        || if_exists
+        || cascade
+        || restrict
+        || purge
+        || temporary
+        || table.is_some()
+    {
         Err(ParserError::ParserError(
             "Only DROP TABLE is supported.".to_owned(),
         ))

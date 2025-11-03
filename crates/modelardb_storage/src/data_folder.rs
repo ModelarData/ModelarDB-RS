@@ -335,10 +335,7 @@ impl DataFolder {
     /// Register all normal tables and time series tables in `self` with its [`SessionContext`].
     /// `data_sink` is set as the [`DataSink`] for all of the tables. If the tables could not be
     /// registered, [`ModelarDbStorageError`] is returned.
-    pub async fn register_tables(
-        &self,
-        data_sink: Arc<dyn DataSink>,
-    ) -> Result<()> {
+    pub async fn register_tables(&self, data_sink: Arc<dyn DataSink>) -> Result<()> {
         // Register normal tables.
         for normal_table_name in self.normal_table_names().await? {
             let delta_table = self.delta_table(&normal_table_name).await?;
@@ -423,11 +420,9 @@ impl DataFolder {
         } else {
             // If the table is not in the cache, open it and add it to the cache before returning.
             let table_url = deltalake::ensure_table_uri(table_path)?;
-            let delta_table = deltalake::open_table_with_storage_options(
-                table_url,
-                self.storage_options.clone(),
-            )
-            .await?;
+            let delta_table =
+                deltalake::open_table_with_storage_options(table_url, self.storage_options.clone())
+                    .await?;
 
             self.delta_table_cache
                 .insert(table_path.to_owned(), delta_table.clone());
@@ -479,7 +474,8 @@ impl DataFolder {
             .await
             .is_ok_and(|is_normal_table| is_normal_table)
         {
-            let schema = self.delta_table(table_name)
+            let schema = self
+                .delta_table(table_name)
                 .await
                 .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
                 .schema();
@@ -1175,7 +1171,8 @@ impl DeltaTableWriter {
         // Writer that will write the record batches.
         let object_store = delta_table.log_store().object_store(Some(operation_id));
         let table_schema: Arc<Schema> = TableProvider::schema(&delta_table);
-        let num_indexed_cols = DataSkippingNumIndexedCols::NumColumns(table_schema.fields.len() as u64);
+        let num_indexed_cols =
+            DataSkippingNumIndexedCols::NumColumns(table_schema.fields.len() as u64);
         let writer_config = WriterConfig::new(
             table_schema,
             partition_columns,
