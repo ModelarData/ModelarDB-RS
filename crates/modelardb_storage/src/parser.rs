@@ -560,7 +560,7 @@ impl ModelarDbDialect {
     }
 }
 
-/// Create a [`Setting`] that is repurposed for storing `address` as  ClickHouse's SETTINGS is not
+/// Create a [`Setting`] that is repurposed for storing `address` as ClickHouse's SETTINGS is not
 /// supported by ModelarDB.
 fn new_address_setting(address: String) -> Setting {
     let key = Ident {
