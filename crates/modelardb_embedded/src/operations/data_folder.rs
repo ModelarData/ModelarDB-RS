@@ -946,7 +946,7 @@ mod tests {
         let (_temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
         let mut delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
 
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
 
         data_folder
             .write(NORMAL_TABLE_NAME, normal_table_data())
@@ -954,7 +954,7 @@ mod tests {
             .unwrap();
 
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 1);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
     }
 
     #[tokio::test]
@@ -995,7 +995,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
 
         data_folder
             .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
@@ -1003,7 +1003,7 @@ mod tests {
             .unwrap();
 
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
     }
 
     #[tokio::test]
@@ -2137,12 +2137,12 @@ mod tests {
 
         let mut delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
 
-        assert_eq!(delta_table.get_files_count(), 1);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
 
         data_folder.truncate(NORMAL_TABLE_NAME).await.unwrap();
 
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
 
         // Verify that the normal table still exists.
         assert_normal_table_exists(&data_folder, NORMAL_TABLE_NAME, normal_table_schema()).await;
@@ -2162,12 +2162,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(delta_table.get_files_count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
 
         data_folder.truncate(TIME_SERIES_TABLE_NAME).await.unwrap();
 
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
 
         // Verify that the time series table still exists.
         assert_time_series_table_exists(
@@ -2285,7 +2285,7 @@ mod tests {
 
         let mut delta_table = source.delta_table(NORMAL_TABLE_NAME).await.unwrap();
 
-        assert_eq!(delta_table.get_files_count(), 1);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
 
         source
             .r#move(NORMAL_TABLE_NAME, &target, NORMAL_TABLE_NAME)
@@ -2294,7 +2294,7 @@ mod tests {
 
         // Verify that the data was deleted but the normal table still exists.
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
         assert_normal_table_exists(&source, NORMAL_TABLE_NAME, normal_table_schema()).await;
 
         // Verify that the normal table data was moved to the new data folder.
@@ -2445,7 +2445,7 @@ mod tests {
 
         let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
-        assert_eq!(delta_table.get_files_count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
 
         source
             .r#move(TIME_SERIES_TABLE_NAME, &target, TIME_SERIES_TABLE_NAME)
@@ -2454,7 +2454,7 @@ mod tests {
 
         // Verify that the data was deleted but the time series table still exists.
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
         assert_time_series_table_exists(
             &source,
             TIME_SERIES_TABLE_NAME,
@@ -2484,7 +2484,7 @@ mod tests {
 
         let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
-        assert_eq!(delta_table.get_files_count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
 
         // Even though the query schemas are different, the data should still be moved.
         source
@@ -2498,7 +2498,7 @@ mod tests {
 
         // Verify that the data was deleted but the time series table still exists.
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
         assert_time_series_table_exists(
             &source,
             TIME_SERIES_TABLE_NAME,
@@ -2812,7 +2812,7 @@ mod tests {
 
         sort::sort_batch(
             &time_series_table_data(),
-            &LexOrdering::new(physical_sort_exprs),
+            &LexOrdering::new(physical_sort_exprs).unwrap(),
             None,
         )
         .unwrap()

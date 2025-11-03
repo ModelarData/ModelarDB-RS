@@ -663,7 +663,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(delta_table.get_files_count(), 1);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
 
         context.truncate_table(NORMAL_TABLE_NAME).await.unwrap();
 
@@ -677,7 +677,7 @@ mod tests {
 
         // The normal table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
     }
 
     #[tokio::test]
@@ -691,7 +691,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(delta_table.get_files_count(), 1);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
 
         context
             .truncate_table(TIME_SERIES_TABLE_NAME)
@@ -708,7 +708,7 @@ mod tests {
 
         // The time series table data should be deleted from the Delta Lake.
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
     }
 
     #[tokio::test]

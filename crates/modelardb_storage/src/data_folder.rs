@@ -1617,7 +1617,7 @@ mod tests {
         let error_bounds = vec![ErrorBound::Lossless; query_schema.fields.len()];
 
         let plus_one_column = Some(GeneratedColumn {
-            expr: col("field_1") + Literal(Int64(Some(1))),
+            expr: col("field_1") + Literal(Int64(Some(1)), None),
             source_columns: vec![1],
         });
 

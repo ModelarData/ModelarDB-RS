@@ -532,7 +532,8 @@ mod tests {
         let delta_table = local_data_folder.delta_table(table_name).await.unwrap();
 
         let mut files_size = 0;
-        for file_path in delta_table.get_files_iter().unwrap() {
+        for file_uri in delta_table.get_file_uris().unwrap() {
+            let file_path = Path::parse(file_uri).unwrap();
             let object_meta = delta_table.object_store().head(&file_path).await;
             files_size += object_meta.unwrap().size;
         }
