@@ -35,7 +35,6 @@ use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
-use deltalake::table::builder::ensure_table_uri;
 use delta_kernel::engine::arrow_conversion::TryIntoKernel;
 use delta_kernel::table_properties::DataSkippingNumIndexedCols;
 use deltalake::delta_datafusion::DeltaDataChecker;
@@ -423,7 +422,7 @@ impl DataFolder {
             Ok(delta_table.clone())
         } else {
             // If the table is not in the cache, open it and add it to the cache before returning.
-            let table_url = ensure_table_uri(table_path)?;
+            let table_url = deltalake::ensure_table_uri(table_path)?;
             let delta_table = deltalake::open_table_with_storage_options(
                 table_url,
                 self.storage_options.clone(),
