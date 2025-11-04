@@ -318,14 +318,14 @@ mod tests {
             .create_normal_table(NORMAL_TABLE_NAME, &record_batch.schema())
             .await
             .unwrap();
-        assert_eq!(delta_table.get_files_count(), 0);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
 
         data_manager
             .insert_record_batch(NORMAL_TABLE_NAME, record_batch)
             .await
             .unwrap();
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_files_count(), 1);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
     }
 
     // Tests for insert_compressed_segments().
@@ -413,7 +413,7 @@ mod tests {
 
         // The compressed data should be saved to the table_name folder in the compressed folder.
         delta_table.load().await.unwrap();
-        let parquet_files = delta_table.get_files_iter().unwrap().collect::<Vec<_>>();
+        let parquet_files = delta_table.get_file_uris().unwrap().collect::<Vec<_>>();
 
         // One Apache Parquet file is created for each field column in the batch.
         assert_eq!(parquet_files.len(), 2);

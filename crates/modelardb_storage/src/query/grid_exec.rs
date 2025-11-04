@@ -21,7 +21,6 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
-use std::slice;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
@@ -36,7 +35,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::{EquivalenceProperties, LexOrdering, LexRequirement};
+use datafusion::physical_expr::{EquivalenceProperties, LexOrdering, OrderingRequirements};
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet,
@@ -66,7 +65,7 @@ pub(crate) struct GridExec {
     /// Properties about the plan used in query optimization.
     plan_properties: PlanProperties,
     /// The sort order that [`GridExec`] requires for the segments it receives as its input.
-    query_requirement_segment: LexRequirement,
+    query_requirement_segment: OrderingRequirements,
     /// The sort order [`GridExec`] guarantees for the data points it produces.
     query_order_data_point: LexOrdering,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
@@ -79,7 +78,7 @@ impl GridExec {
         maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
         limit: Option<usize>,
         input: Arc<dyn ExecutionPlan>,
-        query_requirement_segment: LexRequirement,
+        query_requirement_segment: OrderingRequirements,
         query_order_data_point: LexOrdering,
     ) -> Arc<Self> {
         // The sort order for the data points produced by the set of GridExec instances producing
@@ -87,7 +86,7 @@ impl GridExec {
         // assumes the data it receives from all of its inputs uses the same sort order.
         let equivalence_properties = EquivalenceProperties::new_with_orderings(
             schema.clone(),
-            slice::from_ref(&query_order_data_point),
+            vec![query_order_data_point.clone()],
         );
 
         let plan_properties = PlanProperties::new(
@@ -196,7 +195,7 @@ impl ExecutionPlan for GridExec {
 
     /// Specify that [`GridExec`] requires that its input provides data that is sorted by
     /// `query_requirement_segment`.
-    fn required_input_ordering(&self) -> Vec<Option<LexRequirement>> {
+    fn required_input_ordering(&self) -> Vec<Option<OrderingRequirements>> {
         vec![Some(self.query_requirement_segment.clone())]
     }
 

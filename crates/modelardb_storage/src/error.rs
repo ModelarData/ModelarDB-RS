@@ -28,6 +28,7 @@ use modelardb_types::error::ModelarDbTypesError;
 use object_store::Error as ObjectStoreError;
 use object_store::path::Error as ObjectStorePathError;
 use sqlparser::parser::ParserError;
+use url::ParseError;
 
 /// Result type used throughout `modelardb_storage`.
 pub type Result<T> = StdResult<T, ModelarDbStorageError>;
@@ -53,6 +54,8 @@ pub enum ModelarDbStorageError {
     ModelarDbTypes(ModelarDbTypesError),
     /// Error returned by Apache Parquet.
     Parquet(ParquetError),
+    /// Error returned by URL.
+    Parse(ParseError),
     /// Error returned by sqlparser.
     Parser(ParserError),
 }
@@ -69,6 +72,7 @@ impl Display for ModelarDbStorageError {
             Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::Parquet(reason) => write!(f, "Parquet Error: {reason}"),
+            Self::Parse(reason) => write!(f, "Parse Error: {reason}"),
             Self::Parser(reason) => write!(f, "Parser Error: {reason}"),
         }
     }
@@ -87,6 +91,7 @@ impl Error for ModelarDbStorageError {
             Self::ObjectStorePath(reason) => Some(reason),
             Self::ModelarDbTypes(reason) => Some(reason),
             Self::Parquet(reason) => Some(reason),
+            Self::Parse(reason) => Some(reason),
             Self::Parser(reason) => Some(reason),
         }
     }
@@ -137,6 +142,12 @@ impl From<ModelarDbTypesError> for ModelarDbStorageError {
 impl From<ParquetError> for ModelarDbStorageError {
     fn from(error: ParquetError) -> Self {
         Self::Parquet(error)
+    }
+}
+
+impl From<ParseError> for ModelarDbStorageError {
+    fn from(error: ParseError) -> Self {
+        Self::Parse(error)
     }
 }
 

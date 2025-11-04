@@ -28,6 +28,7 @@ use deltalake::errors::DeltaTableError;
 use modelardb_storage::error::ModelarDbStorageError;
 use modelardb_types::error::ModelarDbTypesError;
 use object_store::Error as ObjectStoreError;
+use object_store::path::Error as ObjectStorePathError;
 use prost::DecodeError;
 use tonic::Status as TonicStatusError;
 use tonic::transport::Error as TonicTransportError;
@@ -60,6 +61,8 @@ pub enum ModelarDbServerError {
     ModelarDbTypes(ModelarDbTypesError),
     /// Error returned by ObjectStore.
     ObjectStore(ObjectStoreError),
+    /// Error returned by ObjectStorePath.
+    ObjectStorePath(ObjectStorePathError),
     /// Error returned by Prost when decoding a message that is not valid.
     ProstDecode(DecodeError),
     /// Status returned by Tonic.
@@ -82,6 +85,7 @@ impl Display for ModelarDbServerError {
             Self::ModelarDbStorage(reason) => write!(f, "ModelarDB Storage Error: {reason}"),
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
+            Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
             Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
@@ -104,6 +108,7 @@ impl Error for ModelarDbServerError {
             Self::ModelarDbStorage(reason) => Some(reason),
             Self::ModelarDbTypes(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
+            Self::ObjectStorePath(reason) => Some(reason),
             Self::ProstDecode(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
@@ -162,6 +167,12 @@ impl From<ModelarDbTypesError> for ModelarDbServerError {
 impl From<ObjectStoreError> for ModelarDbServerError {
     fn from(error: ObjectStoreError) -> Self {
         Self::ObjectStore(error)
+    }
+}
+
+impl From<ObjectStorePathError> for ModelarDbServerError {
+    fn from(error: ObjectStorePathError) -> Self {
+        Self::ObjectStorePath(error)
     }
 }
 

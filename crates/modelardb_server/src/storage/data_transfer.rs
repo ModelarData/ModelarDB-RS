@@ -72,7 +72,7 @@ impl DataTransfer {
             let mut table_size_in_bytes = table_size_in_bytes.entry(table_name).or_insert(0);
 
             let object_store = delta_table.object_store();
-            for file_path in delta_table.get_files_iter()? {
+            for file_path in delta_table.get_files_by_partitions(&[]).await? {
                 let object_meta = object_store.head(&file_path).await?;
                 *table_size_in_bytes += object_meta.size;
             }
@@ -274,10 +274,11 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
+    use deltalake::ObjectStore;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use tempfile::{self, TempDir};
 
-    const EXPECTED_TIME_SERIES_TABLE_FILE_SIZE: u64 = 2038;
+    const EXPECTED_TIME_SERIES_TABLE_FILE_SIZE: u64 = 2128;
 
     // Tests for data transfer component.
     #[tokio::test]
@@ -530,7 +531,7 @@ mod tests {
         let delta_table = local_data_folder.delta_table(table_name).await.unwrap();
 
         let mut files_size = 0;
-        for file_path in delta_table.get_files_iter().unwrap() {
+        for file_path in delta_table.get_files_by_partitions(&[]).await.unwrap() {
             let object_meta = delta_table.object_store().head(&file_path).await;
             files_size += object_meta.unwrap().size;
         }

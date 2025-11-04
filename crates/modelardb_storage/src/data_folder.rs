@@ -35,6 +35,8 @@ use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::format::SortingColumn;
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
+use delta_kernel::engine::arrow_conversion::TryIntoKernel;
+use delta_kernel::table_properties::DataSkippingNumIndexedCols;
 use deltalake::delta_datafusion::DeltaDataChecker;
 use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add, StructField};
@@ -333,10 +335,7 @@ impl DataFolder {
     /// Register all normal tables and time series tables in `self` with its [`SessionContext`].
     /// `data_sink` is set as the [`DataSink`] for all of the tables. If the tables could not be
     /// registered, [`ModelarDbStorageError`] is returned.
-    pub async fn register_tables(
-        &self,
-        data_sink: Arc<dyn DataSink>,
-    ) -> Result<()> {
+    pub async fn register_tables(&self, data_sink: Arc<dyn DataSink>) -> Result<()> {
         // Register normal tables.
         for normal_table_name in self.normal_table_names().await? {
             let delta_table = self.delta_table(&normal_table_name).await?;
@@ -420,11 +419,10 @@ impl DataFolder {
             Ok(delta_table.clone())
         } else {
             // If the table is not in the cache, open it and add it to the cache before returning.
-            let delta_table = deltalake::open_table_with_storage_options(
-                &table_path,
-                self.storage_options.clone(),
-            )
-            .await?;
+            let table_url = deltalake::ensure_table_uri(table_path)?;
+            let delta_table =
+                deltalake::open_table_with_storage_options(table_url, self.storage_options.clone())
+                    .await?;
 
             self.delta_table_cache
                 .insert(table_path.to_owned(), delta_table.clone());
@@ -470,19 +468,19 @@ impl DataFolder {
 
     /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
     /// table does not exist or the table is not a normal table, return [`None`].
-    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Schema> {
+    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Arc<Schema>> {
         if self
             .is_normal_table(table_name)
             .await
             .is_ok_and(|is_normal_table| is_normal_table)
         {
-            self.delta_table(table_name)
+            let schema = self
+                .delta_table(table_name)
                 .await
                 .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
-                .get_schema()
-                .expect("Delta Lake table should be loaded and metadata should be in the log.")
-                .try_into()
-                .ok()
+                .schema();
+
+            Some(schema)
         } else {
             None
         }
@@ -653,7 +651,7 @@ impl DataFolder {
                 _ => {} // All possible cases must be handled.
             }
 
-            let struct_field: StructField = field.try_into()?;
+            let struct_field: StructField = field.try_into_kernel()?;
             columns.push(struct_field);
         }
 
@@ -1151,7 +1149,8 @@ impl DeltaTableWriter {
         writer_properties: WriterProperties,
     ) -> Result<Self> {
         // Checker for if record batches match the table’s invariants, constraints, and nullability.
-        let snapshot = delta_table.snapshot()?;
+        let delta_table_state = delta_table.snapshot()?;
+        let snapshot = delta_table_state.snapshot();
         let delta_data_checker = DeltaDataChecker::new(snapshot);
 
         // Operation that will be committed.
@@ -1172,7 +1171,8 @@ impl DeltaTableWriter {
         // Writer that will write the record batches.
         let object_store = delta_table.log_store().object_store(Some(operation_id));
         let table_schema: Arc<Schema> = TableProvider::schema(&delta_table);
-        let num_indexed_cols = table_schema.fields.len() as i32;
+        let num_indexed_cols =
+            DataSkippingNumIndexedCols::NumColumns(table_schema.fields.len() as u64);
         let writer_config = WriterConfig::new(
             table_schema,
             partition_columns,
@@ -1615,7 +1615,7 @@ mod tests {
         let error_bounds = vec![ErrorBound::Lossless; query_schema.fields.len()];
 
         let plus_one_column = Some(GeneratedColumn {
-            expr: col("field_1") + Literal(Int64(Some(1))),
+            expr: col("field_1") + Literal(Int64(Some(1)), None),
             source_columns: vec![1],
         });
 
