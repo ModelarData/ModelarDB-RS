@@ -37,3 +37,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
     "Topic :: System :: Archiving :: Compression",
 ]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
