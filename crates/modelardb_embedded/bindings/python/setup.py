@@ -56,8 +56,9 @@ def copy_src_if_repository():
     git_folder = repository_root / ".git"
     if git_folder.exists():
         source_crates_folder = repository_root / CRATES_FOLDER_NAME
-        shutil.copytree(source_crates_folder, target_crates_folder,
-                        ignore=ignore_bindings_folder)
+        shutil.copytree(
+            source_crates_folder, target_crates_folder, ignore=ignore_bindings_folder
+        )
         copy_file_to_cwd(repository_root, CARGO_BUILD_NAME)
         copy_file_to_cwd(repository_root, CARGO_LOCK_NAME)
         return
@@ -98,7 +99,7 @@ class RustBDistWheel(bdist_wheel):
     def get_tag(self):
         python, abi, plat = super().get_tag()
         # modelardb_embedded is a native library, not a Python extension.
-        python, abi = 'py3', 'none'
+        python, abi = "py3", "none"
         return python, abi, plat
 
 
@@ -107,10 +108,16 @@ class RustBuildExt(build_ext):
         dependencies = ["cargo", "rustc", "protoc"]
         for dependency in dependencies:
             if not shutil.which(dependency):
-                raise FileNotFoundError(f"Requires {', '.join(dependencies)}. Missing {dependency}")
+                raise FileNotFoundError(
+                    f"Requires {', '.join(dependencies)}. Missing {dependency}"
+                )
 
-        self.spawn(["cargo", "build", "--package", "modelardb_embedded", "--lib"])#, "--release"])
-        shutil.move("target/debug/libmodelardb_embedded.so", self.get_ext_fullpath(ext.name))
+        self.spawn(
+            ["cargo", "build", "--package", "modelardb_embedded", "--lib", "--release"]
+        )
+        shutil.move(
+            "target/release/libmodelardb_embedded.so", self.get_ext_fullpath(ext.name)
+        )
 
     def get_ext_filename(self, ext_name):
         # Removes the CPython part of ext_name as the library is not linked to
@@ -125,5 +132,9 @@ setup(
     packages=find_packages(exclude=("tests")),
     include_package_data=True,
     ext_modules=[Extension("modelardb_embedded", sources=[])],
-    cmdclass={"sdist": RustSDist, "bdist_wheel": RustBDistWheel, "build_ext": RustBuildExt },
+    cmdclass={
+        "sdist": RustSDist,
+        "bdist_wheel": RustBDistWheel,
+        "build_ext": RustBuildExt,
+    },
 )

@@ -13,8 +13,11 @@
 # limitations under the License.
 
 import os
+import sys
 import platform
 import warnings
+import sysconfig
+import pathlib
 from datetime import datetime
 from enum import Enum
 from typing import Self
@@ -56,32 +59,37 @@ class Operations:
 
             :raises RuntimeError: If it is not executed on Linux, macOS, or Windows.
             """
-            script_folder = os.path.dirname(os.path.abspath(__file__))
+            # Attempt to load the library installed as part of the Python package.
+            library_folder = pathlib.Path(__file__).parent.parent.resolve()
 
-            # Select the library to use based on the operating system.
+            if sys.platform == "win32":
+                # SHLIB_SUFFIX is not set and .pyd is used by Rust.
+                library_name = "modelardb_embedded.pyd"
+            else:
+                library_name = "modelardb_embedded" + sysconfig.get_config_var("SHLIB_SUFFIX")
+
+            library_path = library_folder / library_name
+            if library_path.exists():
+                return library_path
+
+            # Attempt to load the library compiled in the development repository.
+            repository_root = pathlib.Path(__file__).parent.parent.parent.parent.parent.parent.resolve()
+            library_folder = repository_root / "target" / build
+
             match platform.system():
                 case "Linux":
-                    library_path = (
-                            script_folder
-                            + f"/../../../../../target/{build}/libmodelardb_embedded.so"
-                    )
+                    library_path = library_folder / "libmodelardb_embedded.so"
                 case "Darwin":
-                    library_path = (
-                            script_folder
-                            + f"/../../../../../target/{build}/libmodelardb_embedded.dylib"
-                    )
+                    library_path = library_folder / "libmodelardb_embedded.dylib"
                 case "Windows":
-                    library_path = (
-                            script_folder
-                            + f"\\..\\..\\..\\..\\..\\target\\{build}\\modelardb_embedded.dll"
-                    )
+                    library_path = library_folder / "modelardb_embedded.dll"
                 case _:
                     raise RuntimeError("Only Linux, macOS, and Windows are supported.")
 
-            if not os.path.isfile(library_path):
-                raise RuntimeError("The Rust library has not been compiled.")
+            if library_path.exists():
+                return library_path
 
-            return library_path
+            raise RuntimeError("The Rust modelardb_embedded library has not been compiled.")
 
         # Compute the path to the current working directory to locate the library.
         try:
@@ -109,7 +117,7 @@ class Operations:
             void* modelardb_embedded_connect(char* node_url_ptr,
                                              bool is_server_node);
 
-            int modelardb_embedded_close(void* maybe_operations_ptr, 
+            int modelardb_embedded_close(void* maybe_operations_ptr,
                                          bool is_data_folder);
 
             int modelardb_embedded_create(void* maybe_operations_ptr,
@@ -198,7 +206,7 @@ class Operations:
             """
         )
 
-        return ffi.dlopen(library_path)
+        return ffi.dlopen(str(library_path))
 
     # __library is a class variable to ensure the dynamic library's interface is
     # only defined once by ffi.cdef() and that it is loaded by ffi.dlopen() once.
