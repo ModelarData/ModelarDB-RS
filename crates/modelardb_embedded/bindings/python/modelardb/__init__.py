@@ -17,5 +17,13 @@
 from .error_bound import AbsoluteErrorBound, RelativeErrorBound
 from .ffi_array import FFIArray
 from .node import Server, Manager
-from .operations import Aggregate, Operations, open_memory, open_local, open_s3, open_azure, connect
+from .operations import (
+    Aggregate,
+    Operations,
+    open_memory,
+    open_local,
+    open_s3,
+    open_azure,
+    connect,
+)
 from .table import NormalTable, TimeSeriesTable
