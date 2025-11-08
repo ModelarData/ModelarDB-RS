@@ -104,7 +104,11 @@ class RustBDistWheel(bdist_wheel):
 
 class RustBuildExt(build_ext):
     def build_extension(self, ext):
-        # TODO: Check dependencies are installed
+        dependencies = ["cargo", "rustc", "protoc"]
+        for dependency in dependencies:
+            if not shutil.which(dependency):
+                raise FileNotFoundError(f"Requires {', '.join(dependencies)}. Missing {dependency}")
+
         self.spawn(["cargo", "build", "--package", "modelardb_embedded", "--lib"])#, "--release"])
         shutil.move("target/debug/libmodelardb_embedded.so", self.get_ext_fullpath(ext.name))
 
