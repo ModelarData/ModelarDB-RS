@@ -30,6 +30,7 @@ CARGO_LOCK_NAME = "Cargo.lock"
 def get_repository_root():
     return Path.cwd().parent.parent.parent.parent
 
+
 def ignore_bindings_folder(path, content):
     bindings_folder_name = "bindings"
     if bindings_folder_name in content:
@@ -94,9 +95,31 @@ class RustBDistWheel(bdist_wheel):
         super().run()
         delete_src_if_repository()
 
+    def get_tag(self):
+        python, abi, plat = super().get_tag()
+        # modelardb_embedded is a native library, not a Python extension.
+        python, abi = 'py3', 'none'
+        return python, abi, plat
+
+
+class RustBuildExt(build_ext):
+    def build_extension(self, ext):
+        # TODO: Check dependencies are installed
+        self.spawn(["cargo", "build", "--package", "modelardb_embedded", "--lib"])#, "--release"])
+        shutil.move("target/debug/libmodelardb_embedded.so", self.get_ext_fullpath(ext.name))
+
+    def get_ext_filename(self, ext_name):
+        # Removes the CPython part of ext_name as the library is not linked to
+        # CPython and it simplifies the code for loading the library in Python.
+        filename = super().get_ext_filename(ext_name)
+        start = filename.find(".")
+        end = filename.rfind(".")
+        return filename[:start] + filename[end:]
+
 
 setup(
-    packages=find_packages(),
+    packages=find_packages(exclude=("tests")),
     include_package_data=True,
-    cmdclass={"sdist": RustSDist, "bdist_wheel": RustBDistWheel },
+    ext_modules=[Extension("modelardb_embedded", sources=[])],
+    cmdclass={"sdist": RustSDist, "bdist_wheel": RustBDistWheel, "build_ext": RustBuildExt },
 )
