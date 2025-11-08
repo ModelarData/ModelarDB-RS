@@ -83,12 +83,14 @@ class Operations:
             match platform.system():
                 case "Linux":
                     library_path = library_folder / "libmodelardb_embedded.so"
+                case "FreeBSD":
+                    library_path = library_folder / "libmodelardb_embedded.so"
                 case "Darwin":
                     library_path = library_folder / "libmodelardb_embedded.dylib"
                 case "Windows":
                     library_path = library_folder / "modelardb_embedded.dll"
                 case _:
-                    raise RuntimeError("Only Linux, macOS, and Windows are supported.")
+                    raise RuntimeError("Only Linux, FreeBSD, macOS, and Windows are supported.")
 
             if library_path.exists():
                 return library_path

@@ -15,6 +15,7 @@
 import os
 import sys
 import shutil
+import platform
 from pathlib import Path
 
 from setuptools import setup, find_packages, Extension
@@ -115,9 +116,20 @@ class RustBuildExt(build_ext):
         self.spawn(
             ["cargo", "build", "--package", "modelardb_embedded", "--lib", "--release"]
         )
-        shutil.move(
-            "target/release/libmodelardb_embedded.so", self.get_ext_fullpath(ext.name)
-        )
+
+        match platform.system():
+            case "Linux":
+                library_path = "target/release/libmodelardb_embedded.so"
+            case "FreeBSD":
+                library_path = "target/release/libmodelardb_embedded.so"
+            case "Darwin":
+                library_path = "target/release/libmodelardb_embedded.dylib"
+            case "Windows":
+                library_path = "target/release/modelardb_embedded.dll"
+            case _:
+                raise RuntimeError("Only Linux, FreeBSD, macOS, and Windows are supported.")
+
+        shutil.move(library_path, self.get_ext_fullpath(ext.name))
 
     def get_ext_filename(self, ext_name):
         # Removes the CPython part of ext_name as the library is not linked to
