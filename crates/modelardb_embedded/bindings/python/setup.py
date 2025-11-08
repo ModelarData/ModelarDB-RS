@@ -88,8 +88,15 @@ class RustSDist(sdist):
         delete_src_if_repository()
 
 
+class RustBDistWheel(bdist_wheel):
+    def run(self):
+        copy_src_if_repository()
+        super().run()
+        delete_src_if_repository()
+
+
 setup(
     packages=find_packages(),
     include_package_data=True,
-    cmdclass={"sdist": RustSDist, },
+    cmdclass={"sdist": RustSDist, "bdist_wheel": RustBDistWheel },
 )
