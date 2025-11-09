@@ -17,8 +17,6 @@
 //! models, compute aggregates directly from the segments, and reconstruct the data points for each
 //! compressed segment.
 
-#![allow(clippy::too_many_arguments)]
-
 mod compression;
 pub mod error;
 mod models;

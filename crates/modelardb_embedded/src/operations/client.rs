@@ -313,7 +313,6 @@ impl Operations for Client {
         self.read(&sql).await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn copy_time_series_table(
         &self,
         _source_table_name: &str,

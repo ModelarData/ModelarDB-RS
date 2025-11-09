@@ -165,6 +165,7 @@ pub(crate) struct CompressedSegmentBuilder {
 }
 
 impl CompressedSegmentBuilder {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         model_type_id: i8,
         start_index: usize,
@@ -462,6 +463,7 @@ impl CompressedSegmentBatchBuilder {
     }
 
     /// Append a compressed segment to the builder.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn append_compressed_segment(
         &mut self,
         model_type_id: i8,
@@ -740,6 +742,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn assert_encoding_and_decoding_are_valid_for_swing(
         uncompressed_values: ValueArray,
         expected_model_end_index: usize,
@@ -782,6 +785,7 @@ mod tests {
         assert_eq!(model_last_value, segment_last_value);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_and_assert_expected_segment(
         uncompressed_values: &ValueArray,
         expected_model_type_id: i8,
