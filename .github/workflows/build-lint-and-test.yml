@@ -46,7 +46,7 @@ jobs:
     steps:
     # Setup Windows specific environment variables.
     - name: Setup Windows Environment
-      if: runner.os == "Windows"
+      if: runner.os == 'Windows'
       run: echo "CXXFLAGS=-std:c++20" >> $env:GITHUB_ENV
 
     # Retrieve Code.
