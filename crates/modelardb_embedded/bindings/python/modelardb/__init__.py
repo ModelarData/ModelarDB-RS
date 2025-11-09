@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .operations import Aggregate, Operations, open_memory, open_local, open_s3, open_azure, connect
-from .node import Server, Manager
 from .error_bound import AbsoluteErrorBound, RelativeErrorBound
-from .table import NormalTable, TimeSeriesTable
 from .ffi_array import FFIArray
+from .node import Server, Manager
+from .operations import Aggregate, Operations, open_memory, open_local, open_s3, open_azure, connect
+from .table import NormalTable, TimeSeriesTable
