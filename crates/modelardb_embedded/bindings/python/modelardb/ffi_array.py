@@ -28,7 +28,7 @@ class FFIArray:
         or :class:`RecordBatch`.
 
         :param array: PyArrow :class:`Array` or :class:`RecordBatch` to convert
-        to pointers using Apache Arrow's C Data Interface.
+         to pointers using Apache Arrow's C Data Interface.
         :type array: Array | RecordBatch
         """
         # PyArrow Array to C Data Interface pointers to array and schema.
@@ -50,13 +50,13 @@ class FFIArray:
         and schema using Apache Arrow's C Data Interface.
 
         :param array_type: Type of PyArrow :class:`Array` or
-        :class:`RecordBatch` in :attr:`array_ptr`.
+         :class:`RecordBatch` in :attr:`array_ptr`.
         :type array_type: type
         :param array_ptr: Pointer to Apache Arrow C Data Interface ArrowArray to
-        convert from.
+         convert from.
         :type array_ptr: cdata 'struct ArrowArray*'
         :param schema_ptr: Pointer to Apache Arrow C Data Interface ArrowSchema to
-        convert from.
+         convert from.
         :type schema_ptr: cdata 'struct ArrowSchema*'
         """
         # C Data Interface pointers to array and schema to PyArrow Array.
@@ -81,7 +81,7 @@ class FFIArray:
         Apache Arrow's C Data Interface can be written to.
 
         :param array_type: Type of PyArrow :class:`Array` or
-        :class:`RecordBatch`.
+         :class:`RecordBatch`.
         :type array_type: type
         """
         # Create C Data Interface pointers to array and schema to be converted

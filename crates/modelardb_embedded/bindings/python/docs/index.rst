@@ -1,13 +1,13 @@
-modelardb_embedded Documentation
-================================
+modelardb Documentation
+=======================
 
-Add your content using ``reStructuredText`` syntax. See the
-`reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
-documentation for details.
+`modelardb <https://github.com/ModelarData/ModelarDB-RS/tree/main/crates/modelardb_embedded/bindings/python>`_ is the Python bindings for the Rust library `modelardb_embedded <https://github.com/ModelarData/ModelarDB-RS/tree/main/crates/modelardb_embedded>`_ which can efficiently manage time series on a client computer. modelardb_embedded can be combined with the Time Series Management System `ModelarDB <https://github.com/ModelarData/ModelarDB-RS>`_ to efficiently manage time series across edge, cloud, and client.
+
 
 API
 ---
 .. toctree::
+   :maxdepth: 1
 
    api/modelardb
    api/error_bound

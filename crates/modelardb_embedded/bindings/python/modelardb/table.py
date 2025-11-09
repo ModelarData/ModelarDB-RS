@@ -37,18 +37,18 @@ class TimeSeriesTable:
     than :class:`Table` by storing the time series with metadata as models.
 
     :param schema: The schema of the time series table. It must contain a timestamp
-    column with the type :class:`pyarrow.timestamp("us")`, one or more field columns
-    with the type :class:`pyarrow.float32()`, and zero or more tag columns with the
-    type :class:`pyarrow.string()`.
+     column with the type :class:`pyarrow.timestamp("us")`, one or more field columns
+     with the type :class:`pyarrow.float32()`, and zero or more tag columns with the
+     type :class:`pyarrow.string()`.
     :type schema: Schema
     :param error_bounds: Absolute or relative error bounds for the field columns
-    with type :class:`pyarrow.float32()` in `schema`. If no error bound is
-    specified for a column, the values will be stored losslessly.
+     with type :class:`pyarrow.float32()` in `schema`. If no error bound is
+     specified for a column, the values will be stored losslessly.
     :type error_bounds: dict[str, AbsoluteErrorBound | RelativeErrorBound],
-    optional
+     optional
     :param generated_columns: SQL expressions for generating field columns of
-    type :class:`pyarrow.float32()` in `schema`. If no generated column is
-    specified for a field column, it will be stored.
+     type :class:`pyarrow.float32()` in `schema`. If no generated column is
+     specified for a field column, it will be stored.
     :type generated_columns: dict[str, str], optional
     """
 
@@ -67,7 +67,6 @@ class TimeSeriesTable:
     def __check_if_column_exists(self, columns: list[str], schema: Schema):
         """Raise an error if a column in :attr:`columns` does not exist in
         :attr:`schema`
-
 
         :raises ValueError: If a column does not exist.
         """
