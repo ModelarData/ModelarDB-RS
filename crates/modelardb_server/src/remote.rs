@@ -215,7 +215,10 @@ async fn send_flight_data(
 }
 
 /// Convert `flight_data` to a [`RecordBatch`]. If `schema` does not match the data or `flight_data`
-/// could not be converted, [`Status`] is returned.
+/// could not be converted, [`Status`] is returned. [`Status`] is not put in a [`Box`] as it should
+/// happen rarely and it is immediately returned as [`Status`] by the methods in the
+/// [`FlightService`] trait.
+#[allow(clippy::result_large_err)]
 pub fn flight_data_to_record_batch(
     flight_data: &FlightData,
     schema: &Arc<Schema>,
@@ -228,7 +231,10 @@ pub fn flight_data_to_record_batch(
 }
 
 /// Return the table stored as the first element in `FlightDescriptor.path`, otherwise a [`Status`]
-/// that specifies that the table name is missing.
+/// that specifies that the table name is missing. [`Status`] is not put in a [`Box`] as it should
+/// happen rarely and it is immediately returned as [`Status`] by the methods in the
+/// [`FlightService`] trait.
+#[allow(clippy::result_large_err)]
 pub fn table_name_from_flight_descriptor(
     flight_descriptor: &FlightDescriptor,
 ) -> StdResult<&String, Status> {

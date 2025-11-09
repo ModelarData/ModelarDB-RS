@@ -19,9 +19,6 @@ license = "Apache-2.0"
 edition = "2024"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
-[lints]
-workspace = true
-
 [lib]
 # cdylib is for dynamically linking with process that use bindings.
 # lib is for statically linking with a Rust crate like bulkloader.
