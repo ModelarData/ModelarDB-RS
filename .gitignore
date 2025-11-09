@@ -22,3 +22,4 @@ proptest-regressions
 
 /crates/modelardb_embedded/bindings/python/modelardb.egg-info/
 /crates/modelardb_embedded/bindings/python/build/
+/crates/modelardb_embedded/bindings/python/docs/_build
