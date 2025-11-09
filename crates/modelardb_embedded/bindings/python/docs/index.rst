@@ -1,17 +1,28 @@
-.. modelardb_embedded documentation master file, created by
-   sphinx-quickstart on Sun Nov  9 12:29:17 2025.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
-modelardb_embedded documentation
+modelardb_embedded Documentation
 ================================
 
 Add your content using ``reStructuredText`` syntax. See the
 `reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
 documentation for details.
 
-
+API
+---
 .. toctree::
-   :maxdepth: 2
-   :caption: Contents:
 
+   api/modelardb
+   api/error_bound
+   api/ffi_array
+   api/node
+   api/operations
+   api/table
+
+
+.. Prevents the indices from being generated in the LaTeX documentation
+.. only:: html
+
+    Indices and tables
+    ==================
+
+    * :ref:`genindex`
+    * :ref:`modindex`
+    * :ref:`search`
