@@ -228,7 +228,6 @@ impl Swing {
     }
 
     /// Return the number of values the model currently represents.
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.length
     }
