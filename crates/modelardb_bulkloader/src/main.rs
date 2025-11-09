@@ -345,7 +345,7 @@ fn cast_record_batch(record_batch: RecordBatch, cast_double_to_float: bool) -> R
     let mut cast_fields = Vec::with_capacity(schema.fields.len());
     let mut cast_columns = Vec::with_capacity(columns.len());
 
-    for (index, field) in schema.fields.iter().enumerate()  {
+    for (index, field) in schema.fields.iter().enumerate() {
         let column = &columns[index];
 
         let (field, column) = match field.data_type() {
