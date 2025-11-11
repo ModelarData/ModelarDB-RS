@@ -17,7 +17,7 @@ API
    api/table
 
 
-.. Prevents the indices from being generated in the LaTeX documentation
+.. Prevents the indices from being generated in the LaTeX documentation.
 .. only:: html
 
     Indices and tables
