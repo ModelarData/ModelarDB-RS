@@ -188,7 +188,7 @@ class Operations:
             int modelardb_embedded_drop(void* maybe_operations_ptr,
                                         bool is_data_folder,
                                         char* table_name_ptr);
-            
+
             int modelardb_embedded_vacuum(void* maybe_operations_ptr,
                                           bool is_data_folder,
                                           char* table_name_ptr,
@@ -735,7 +735,7 @@ class Operations:
         :param table_name: The name of the table to vacuum.
         :type table_name: str
         :param retention_period_in_seconds: The retention period in seconds. Data older than the retention
-        period is deleted. If `None`, the default retention period of 7 days is used.
+         period is deleted. If `None`, the default retention period of 7 days is used.
         :type retention_period_in_seconds: int, optional
         :raises ValueError: If incorrect arguments are provided.
         """

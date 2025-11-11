@@ -20,7 +20,7 @@ from dataclasses import dataclass
 class AbsoluteErrorBound:
     """A per value absolute error bound.
 
-    param value: A positive finite value that specifies the error bound.
+    :param value: A positive finite value that specifies the error bound.
     :type value: float
     :raises ValueError: If `value` is not a positive normal value.
     """
@@ -36,7 +36,7 @@ class AbsoluteErrorBound:
 class RelativeErrorBound:
     """A per value relative error bound.
 
-    param value: A positive value that is at most 100 that specifies the error bound as a percentage.
+    :param value: A positive value that is at most 100 that specifies the error bound as a percentage.
     :type value: float
     :raises ValueError: If `value` is not a positive value that is at most 100.
     """
