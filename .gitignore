@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-target
-__pycache__
-*.pyc
-proptest-regressions
-.idea
 *.log
+*.pyc
+.idea
 /data/
+__pycache__
+proptest-regressions
+target
 
-/crates/modelardb_embedded/bindings/python/modelardb.egg-info/
 /crates/modelardb_embedded/bindings/python/build/
-/crates/modelardb_embedded/bindings/python/docs/_build
 /crates/modelardb_embedded/bindings/python/dist
+/crates/modelardb_embedded/bindings/python/docs/_build
+/crates/modelardb_embedded/bindings/python/modelardb.egg-info/
