@@ -27,10 +27,17 @@ CARGO_LOCK_NAME = "Cargo.lock"
 
 
 def get_repository_root():
+    """Return the root directory of the repository."""
     return Path.cwd().parent.parent.parent.parent
 
 
 def ignore_bindings_folder(path, content):
+    """Filter out folders named bindings from shutil.copytree().
+
+
+    :param path: The path of the directory currently being visited.
+    :param content: The contents of the directory currently being visited.
+    """
     bindings_folder_name = "bindings"
     if bindings_folder_name in content:
         return [bindings_folder_name]
@@ -38,13 +45,21 @@ def ignore_bindings_folder(path, content):
 
 
 def copy_file_to_cwd(source_folder: Path, file_name: Path):
+    """Copy :attr:`file_name` in :attr:`source_folder` to the current working directory.
+
+
+    :param schema: The folder to copy a file from.
+    :type schema: Path
+    :param schema: The name of the file to copy.
+    :type schema: Path
+    """
     source_file_path = source_folder / file_name
     target_file_path = Path.cwd() / file_name
     shutil.copyfile(source_file_path, target_file_path)
 
 
 def copy_src_if_repository():
-    """Copies the Rust source code to the current directory if in the repository."""
+    """Copy the Rust source code to the current directory if in the repository."""
     cwd = Path.cwd()
 
     target_crates_folder = cwd / CRATES_FOLDER_NAME
@@ -66,7 +81,7 @@ def copy_src_if_repository():
 
 
 def delete_src_if_repository():
-    """Deletes the Rust source code in the current directory if in the repository."""
+    """Delete the Rust source code in the current directory if in the repository."""
     cwd = Path.cwd()
 
     crates_folder = cwd / CRATES_FOLDER_NAME
@@ -84,6 +99,7 @@ def delete_src_if_repository():
 
 class RustSDist(sdist):
     def run(self):
+        """Copy the source code, run sdist, and delete the source code."""
         copy_src_if_repository()
         super().run()
         delete_src_if_repository()
@@ -91,11 +107,13 @@ class RustSDist(sdist):
 
 class RustBDistWheel(bdist_wheel):
     def run(self):
+        """Copy the source code, run bdist_wheel, and delete the source code."""
         copy_src_if_repository()
         super().run()
         delete_src_if_repository()
 
     def get_tag(self):
+        """Create the part of the package filename specifying supported platforms."""
         python, abi, plat = super().get_tag()
         # modelardb_embedded is a native library, not a Python extension.
         python, abi = "py3", "none"
@@ -104,11 +122,17 @@ class RustBDistWheel(bdist_wheel):
 
 class RustBuildExt(build_ext):
     def build_extension(self, ext):
+        """Compile modelardb_embedded to a normal native library with the
+        release profile. A CPython extension is not build as CPython's API is
+        not used and an extension may need changes for each CPython version.
+
+        :param ext: Information about the extension setuptools expects.
+        """
         dependencies = ["cargo", "rustc", "protoc"]
         for dependency in dependencies:
             if not shutil.which(dependency):
                 raise FileNotFoundError(
-                    f"Requires {', '.join(dependencies)}. Missing {dependency}"
+                    f"Requires {', '.join(dependencies)}. Missing {dependency}."
                 )
 
         self.spawn(
@@ -116,9 +140,7 @@ class RustBuildExt(build_ext):
         )
 
         match platform.system():
-            case "Linux":
-                library_path = "target/release/libmodelardb_embedded.so"
-            case "FreeBSD":
+            case "Linux" | "FreeBSD":
                 library_path = "target/release/libmodelardb_embedded.so"
             case "Darwin":
                 library_path = "target/release/libmodelardb_embedded.dylib"

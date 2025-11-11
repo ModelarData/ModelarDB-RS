@@ -81,7 +81,7 @@ class Operations:
             library_folder = repository_root / "target" / build
 
             match platform.system():
-                case "Linux":
+                case "Linux" | "FreeBSD":
                     library_path = library_folder / "libmodelardb_embedded.so"
                 case "FreeBSD":
                     library_path = library_folder / "libmodelardb_embedded.so"
