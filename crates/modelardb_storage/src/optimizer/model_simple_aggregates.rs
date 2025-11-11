@@ -17,8 +17,6 @@
 //! reconstructed values from a single column without filtering, so they are computed directly from
 //! segments instead of the reconstructed values.
 
-#![allow(clippy::unconditional_recursion)]
-
 use std::mem;
 use std::sync::{Arc, LazyLock};
 

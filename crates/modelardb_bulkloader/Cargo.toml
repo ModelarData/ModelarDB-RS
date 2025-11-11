@@ -19,9 +19,6 @@ license = "Apache-2.0"
 edition = "2024"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
-[lints]
-workspace = true
-
 [[bin]]
 name = "modelardbb"
 path = "src/main.rs"

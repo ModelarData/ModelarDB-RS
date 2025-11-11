@@ -125,6 +125,7 @@ pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usi
 
 /// Compute the sum of the values for a compressed segment whose values are represented by a model
 /// and residuals.
+#[allow(clippy::too_many_arguments)]
 pub fn sum(
     model_type_id: i8,
     start_time: Timestamp,
@@ -185,6 +186,7 @@ pub fn sum(
 /// Reconstruct the data points for a compressed segment whose values are represented by a model and
 /// residuals. Each data point is split into its two components and appended to `timestamp_builder`
 /// and `value_builder`.
+#[allow(clippy::too_many_arguments)]
 pub fn grid(
     model_type_id: i8,
     start_time: Timestamp,

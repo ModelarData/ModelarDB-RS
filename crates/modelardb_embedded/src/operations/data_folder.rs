@@ -331,7 +331,6 @@ impl Operations for DataFolder {
     /// the time series table with the name in `target_table_name` in `target`. Note that duplicate
     /// data is not deleted. If `target` is not a data folder, the schemas of the time series
     /// tables do not match, or the data could not be copied, [`ModelarDbEmbeddedError`] is returned.
-    #[allow(clippy::too_many_arguments)]
     async fn copy_time_series_table(
         &self,
         source_table_name: &str,
