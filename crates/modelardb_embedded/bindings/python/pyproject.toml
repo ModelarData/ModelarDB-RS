@@ -16,7 +16,7 @@
 name = "modelardb"
 description = "Python interface for ModelarDB Embedded"
 version = "0.0.1"
-license = { text="Apache-2.0" }
+license = "Apache-2.0"
 authors = [
   { name="Soeren Kejser Jensen",  email="devel@kejserjensen.dk" }
 ]
@@ -31,9 +31,12 @@ classifiers = [
     "Intended Audience :: Information Technology",
     "Intended Audience :: Other Audience",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Scientific/Engineering",
     "Topic :: System :: Archiving :: Compression",
 ]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
