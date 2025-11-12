@@ -83,8 +83,6 @@ class Operations:
             match platform.system():
                 case "Linux" | "FreeBSD":
                     library_path = library_folder / "libmodelardb_embedded.so"
-                case "FreeBSD":
-                    library_path = library_folder / "libmodelardb_embedded.so"
                 case "Darwin":
                     library_path = library_folder / "libmodelardb_embedded.dylib"
                 case "Windows":
@@ -96,7 +94,7 @@ class Operations:
                 return library_path
 
             raise RuntimeError(
-                "The Rust modelardb_embedded library has not been compiled."
+                "The Rust modelardb_embedded library was not found, has it been compiled?"
             )
 
         # Compute the path to the current working directory to locate the library.
