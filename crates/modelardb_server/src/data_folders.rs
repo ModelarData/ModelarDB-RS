@@ -68,10 +68,10 @@ impl DataFolders {
             // Edge node in a cluster.
             &["edge", local_data_folder_url, remote_data_folder_url]
             | &[local_data_folder_url, remote_data_folder_url] => {
-                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
-
                 let remote_data_folder =
                     DataFolder::open_remote_url(remote_data_folder_url).await?;
+
+                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
                 Ok((
                     ClusterMode::MultiNode,
@@ -84,10 +84,10 @@ impl DataFolders {
             }
             // Cloud node in a cluster.
             &["cloud", local_data_folder_url, remote_data_folder_url] => {
-                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
-
                 let remote_data_folder =
                     DataFolder::open_remote_url(remote_data_folder_url).await?;
+
+                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
                 Ok((
                     ClusterMode::MultiNode,
@@ -121,7 +121,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_try_from_edge_command_line_arguments_without_manager() {
+    async fn test_try_from_edge_command_line_arguments_without_remote_url() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
@@ -129,7 +129,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_try_from_edge_command_line_arguments_without_server_mode_and_manager() {
+    async fn test_try_from_edge_command_line_arguments_without_server_mode_and_remote_url() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
@@ -154,9 +154,8 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!(
-                "Invalid Argument Error: Could not connect to manager at '{temp_dir_str}': transport error",
-            )
+            "ModelarDB Storage Error: Invalid Argument Error: Remote data folder URL must be \
+             s3://bucket-name or azureblobstorage://container-name.",
         );
     }
 }
