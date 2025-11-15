@@ -15,6 +15,7 @@
 
 //! The [`Error`] and [`Result`] types used throughout `modelardb_storage`.
 
+use std::env::VarError;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::Error as IoError;
@@ -42,6 +43,8 @@ pub enum ModelarDbStorageError {
     DataFusion(DataFusionError),
     /// Error returned by Delta Lake.
     DeltaLake(DeltaTableError),
+    /// Error returned by environment variables.
+    EnvironmentVar(VarError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
     /// Error returned from IO operations.
@@ -66,6 +69,7 @@ impl Display for ModelarDbStorageError {
             Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
             Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
+            Self::EnvironmentVar(reason) => write!(f, "Environment Variable Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
@@ -85,6 +89,7 @@ impl Error for ModelarDbStorageError {
             Self::Arrow(reason) => Some(reason),
             Self::DataFusion(reason) => Some(reason),
             Self::DeltaLake(reason) => Some(reason),
+            Self::EnvironmentVar(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
             Self::Io(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
@@ -112,6 +117,12 @@ impl From<DataFusionError> for ModelarDbStorageError {
 impl From<DeltaTableError> for ModelarDbStorageError {
     fn from(error: DeltaTableError) -> Self {
         Self::DeltaLake(error)
+    }
+}
+
+impl From<VarError> for ModelarDbStorageError {
+    fn from(error: VarError) -> Self {
+        Self::EnvironmentVar(error)
     }
 }
 
