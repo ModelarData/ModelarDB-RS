@@ -112,12 +112,12 @@ jobs:
         python-version: 3.11
     - name: Pip Sphinx
       run: python -m pip install sphinx --break-system-packages --user
-    - name: Python Doc
-      run: python -m sphinx.cmd.build -M html . _build
-      working-directory: crates/modelardb_embedded/bindings/python/docs
     - name: Pip Install
       run: python -m pip install . --break-system-packages --user
       working-directory: crates/modelardb_embedded/bindings/python
+    - name: Python Doc
+      run: python -m sphinx.cmd.build -M html . _build
+      working-directory: crates/modelardb_embedded/bindings/python/docs
     - name: Python Unittest
       run: python -m unittest --verbose
       working-directory: crates/modelardb_embedded/bindings/python
