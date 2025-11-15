@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
     {
         cluster_mode_and_data_folders
     } else {
-        print_usage_and_exit_with_error("[server_mode] local_data_folder_url [manager_url]");
+        print_usage_and_exit_with_error("[server_mode] local_data_folder_url [remote_data_folder_url]");
     };
 
     let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone()).await?);
