@@ -17,7 +17,6 @@
 //! defined in `flight/protocol.proto`. The module also provides functions to serialize and
 //! deserialize encoded messages to and from bytes.
 
-use std::env;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
@@ -33,49 +32,6 @@ use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, Table, TimeSer
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
-}
-
-/// Parse `argument` and encode it into a [`StorageConfiguration`](protocol::manager_metadata::StorageConfiguration)
-/// protobuf message. If `argument` is not a valid remote data folder, return [`ModelarDbTypesError`].
-pub fn argument_to_storage_configuration(
-    argument: &str,
-) -> Result<protocol::manager_metadata::StorageConfiguration> {
-    match argument.split_once("://") {
-        Some(("s3", bucket_name)) => {
-            let endpoint = env::var("AWS_ENDPOINT")?;
-            let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
-            let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
-
-            Ok(
-                protocol::manager_metadata::StorageConfiguration::S3Configuration(
-                    protocol::manager_metadata::S3Configuration {
-                        endpoint,
-                        bucket_name: bucket_name.to_owned(),
-                        access_key_id,
-                        secret_access_key,
-                    },
-                ),
-            )
-        }
-        Some(("azureblobstorage", container_name)) => {
-            let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
-            let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
-
-            Ok(
-                protocol::manager_metadata::StorageConfiguration::AzureConfiguration(
-                    protocol::manager_metadata::AzureConfiguration {
-                        account_name,
-                        access_key,
-                        container_name: container_name.to_owned(),
-                    },
-                ),
-            )
-        }
-        _ => Err(ModelarDbTypesError::InvalidArgument(
-            "Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
-                .to_owned(),
-        )),
-    }
 }
 
 /// Encode `node` into a [`NodeMetadata`](protocol::NodeMetadata) protobuf message.
@@ -293,78 +249,10 @@ fn decode_generated_column_expressions(
 mod test {
     use super::*;
 
-    use std::sync::{LazyLock, Mutex};
-
     use modelardb_test::table::{
         self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME, normal_table_schema,
         time_series_table_metadata,
     };
-
-    /// Lock used for env::set_var() as it is not guaranteed to be thread-safe.
-    static SET_VAR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-    // Tests for argument_to_storage_configuration().
-    #[test]
-    fn test_s3_argument_to_storage_configuration() {
-        // env::set_var is safe to call in a single-threaded program.
-        unsafe {
-            let _mutex_guard = SET_VAR_LOCK.lock();
-            env::set_var("AWS_ENDPOINT", "test_endpoint");
-            env::set_var("AWS_ACCESS_KEY_ID", "test_access_key_id");
-            env::set_var("AWS_SECRET_ACCESS_KEY", "test_secret_access_key");
-        }
-
-        let storage_configuration =
-            argument_to_storage_configuration("s3://test_bucket_name").unwrap();
-
-        match storage_configuration {
-            protocol::manager_metadata::StorageConfiguration::S3Configuration(s3_configuration) => {
-                assert_eq!(s3_configuration.endpoint, "test_endpoint");
-                assert_eq!(s3_configuration.bucket_name, "test_bucket_name");
-                assert_eq!(s3_configuration.access_key_id, "test_access_key_id");
-                assert_eq!(s3_configuration.secret_access_key, "test_secret_access_key");
-            }
-            _ => panic!("Expected S3 connection type."),
-        }
-    }
-
-    #[test]
-    fn test_azureblobstorage_argument_to_storage_configuration() {
-        // env::set_var is safe to call in a single-threaded program.
-        unsafe {
-            let _mutex_guard = SET_VAR_LOCK.lock();
-            env::set_var("AZURE_STORAGE_ACCOUNT_NAME", "test_storage_account_name");
-            env::set_var("AZURE_STORAGE_ACCESS_KEY", "test_storage_access_key");
-        }
-
-        let storage_configuration =
-            argument_to_storage_configuration("azureblobstorage://test_container_name").unwrap();
-
-        match storage_configuration {
-            protocol::manager_metadata::StorageConfiguration::AzureConfiguration(
-                azure_configuration,
-            ) => {
-                assert_eq!(
-                    azure_configuration.account_name,
-                    "test_storage_account_name"
-                );
-                assert_eq!(azure_configuration.access_key, "test_storage_access_key");
-                assert_eq!(azure_configuration.container_name, "test_container_name");
-            }
-            _ => panic!("Expected Azure connection type."),
-        }
-    }
-
-    #[test]
-    fn test_invalid_argument_to_storage_configuration() {
-        let result = argument_to_storage_configuration("googlecloudstorage://test");
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid Argument Error: Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
-                .to_owned()
-        );
-    }
 
     // Test for encode_node() and decode_node_metadata().
     #[test]
