@@ -58,6 +58,7 @@ impl DataFolders {
     ) -> Result<(ClusterMode, Self)> {
         // Match the provided command line arguments to the supported inputs.
         match arguments {
+            // Single edge without a cluster.
             &["edge", local_data_folder_url] | &[local_data_folder_url] => {
                 let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
@@ -66,28 +67,11 @@ impl DataFolders {
                     Self::new(local_data_folder.clone(), None, local_data_folder),
                 ))
             }
-            &["cloud", local_data_folder_url, manager_url] => {
+            // Edge node in a cluster.
+            &["edge", local_data_folder_url, remote_data_folder_url]
+            | &[local_data_folder_url, remote_data_folder_url] => {
                 let (manager, storage_configuration) =
-                    Manager::register_node(manager_url, ServerMode::Cloud).await?;
-
-                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
-
-                let remote_data_folder =
-                    DataFolder::open_object_store(storage_configuration).await?;
-
-                Ok((
-                    ClusterMode::MultiNode(manager),
-                    Self::new(
-                        local_data_folder,
-                        Some(remote_data_folder.clone()),
-                        remote_data_folder,
-                    ),
-                ))
-            }
-            &["edge", local_data_folder_url, manager_url]
-            | &[local_data_folder_url, manager_url] => {
-                let (manager, storage_configuration) =
-                    Manager::register_node(manager_url, ServerMode::Edge).await?;
+                    Manager::register_node(remote_data_folder_url, ServerMode::Edge).await?;
 
                 let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
@@ -100,6 +84,25 @@ impl DataFolders {
                         local_data_folder.clone(),
                         Some(remote_data_folder),
                         local_data_folder,
+                    ),
+                ))
+            }
+            // Cloud node in a cluster.
+            &["cloud", local_data_folder_url, remote_data_folder_url] => {
+                let (manager, storage_configuration) =
+                    Manager::register_node(remote_data_folder_url, ServerMode::Cloud).await?;
+
+                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
+
+                let remote_data_folder =
+                    DataFolder::open_object_store(storage_configuration).await?;
+
+                Ok((
+                    ClusterMode::MultiNode(manager),
+                    Self::new(
+                        local_data_folder,
+                        Some(remote_data_folder.clone()),
+                        remote_data_folder,
                     ),
                 ))
             }
