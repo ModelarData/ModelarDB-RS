@@ -15,6 +15,8 @@
 
 //! Implementation of the type used to interact with local and remote storage through a Delta Lake.
 
+pub mod cluster;
+
 use std::collections::HashMap;
 use std::path::Path as StdPath;
 use std::sync::Arc;
