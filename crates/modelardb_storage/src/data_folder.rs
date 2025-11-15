@@ -150,8 +150,9 @@ impl DataFolder {
     }
 
     /// Create a new [`DataFolder`] that manages Delta tables in the remote object store given by
-    /// `remote_url`. Note that only the object store type and bucket/container name are given in
-    /// the url. The remaining parameters are retrieved from environment variables. Returns
+    /// `remote_url`. If `remote_url` has the schema `s3`, the object store is an Amazon S3 bucket.
+    /// If `remote_url` has the schema `azureblobstorage`, the object store is an Azure Blob Storage
+    /// container. The remaining parameters are retrieved from environment variables. Returns
     /// [`ModelarDbStorageError`] if a connection to the specified object store could not be created.
     pub async fn open_object_store(remote_url: &str) -> Result<Self> {
         match remote_url.split_once("://") {
