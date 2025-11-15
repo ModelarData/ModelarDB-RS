@@ -16,12 +16,10 @@
 //! Implementation of a struct that provides access to the local and remote data storage components.
 
 use modelardb_storage::data_folder::DataFolder;
-use modelardb_types::types::ServerMode;
 
 use crate::ClusterMode;
 use crate::Result;
 use crate::error::ModelarDbServerError;
-use crate::manager::Manager;
 
 /// Folders for storing metadata and data in Apache Parquet files locally and remotely.
 #[derive(Clone)]
@@ -70,16 +68,13 @@ impl DataFolders {
             // Edge node in a cluster.
             &["edge", local_data_folder_url, remote_data_folder_url]
             | &[local_data_folder_url, remote_data_folder_url] => {
-                let (manager, storage_configuration) =
-                    Manager::register_node(remote_data_folder_url, ServerMode::Edge).await?;
-
                 let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
-                    DataFolder::open_object_store(storage_configuration).await?;
+                    DataFolder::open_remote_url(remote_data_folder_url).await?;
 
                 Ok((
-                    ClusterMode::MultiNode(manager),
+                    ClusterMode::MultiNode,
                     Self::new(
                         local_data_folder.clone(),
                         Some(remote_data_folder),
@@ -89,16 +84,13 @@ impl DataFolders {
             }
             // Cloud node in a cluster.
             &["cloud", local_data_folder_url, remote_data_folder_url] => {
-                let (manager, storage_configuration) =
-                    Manager::register_node(remote_data_folder_url, ServerMode::Cloud).await?;
-
                 let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
                 let remote_data_folder =
-                    DataFolder::open_object_store(storage_configuration).await?;
+                    DataFolder::open_remote_url(remote_data_folder_url).await?;
 
                 Ok((
-                    ClusterMode::MultiNode(manager),
+                    ClusterMode::MultiNode,
                     Self::new(
                         local_data_folder,
                         Some(remote_data_folder.clone()),
