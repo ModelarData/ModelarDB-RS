@@ -28,7 +28,7 @@ use prost::bytes::Bytes;
 
 use crate::error::{ModelarDbTypesError, Result};
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, Table, TimeSeriesTableMetadata};
+use crate::types::{ErrorBound, GeneratedColumn, Table, TimeSeriesTableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));

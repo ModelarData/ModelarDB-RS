@@ -17,20 +17,6 @@ syntax = "proto3";
 
 package modelardb.flight.protocol;
 
-// Metadata for a node in the ModelarDB cluster, including its URL and server mode.
-message NodeMetadata {
-  enum ServerMode {
-    CLOUD = 0;
-    EDGE = 1;
-  }
-
-  // gRPC URL of the node.
-  string url = 1;
-
-  // Mode indicating whether the node is a cloud or edge server.
-  ServerMode server_mode = 2;
-}
-
 // Metadata for a normal table or a time series table.
 message TableMetadata {
   // Metadata for a normal table, including its name and schema.
