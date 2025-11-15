@@ -34,36 +34,6 @@ pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
 }
 
-/// Encode `node` into a [`NodeMetadata`](protocol::NodeMetadata) protobuf message.
-pub fn encode_node(node: &Node) -> Result<protocol::NodeMetadata> {
-    let server_mode = match node.mode {
-        ServerMode::Edge => protocol::node_metadata::ServerMode::Edge,
-        ServerMode::Cloud => protocol::node_metadata::ServerMode::Cloud,
-    };
-
-    Ok(protocol::NodeMetadata {
-        url: node.url.clone(),
-        server_mode: server_mode as i32,
-    })
-}
-
-/// Decode a [`NodeMetadata`](protocol::NodeMetadata) protobuf message into a [`Node`].
-pub fn decode_node_metadata(node_metadata: &protocol::NodeMetadata) -> Result<Node> {
-    let server_mode = match protocol::node_metadata::ServerMode::try_from(node_metadata.server_mode)
-    {
-        Ok(protocol::node_metadata::ServerMode::Edge) => ServerMode::Edge,
-        Ok(protocol::node_metadata::ServerMode::Cloud) => ServerMode::Cloud,
-        _ => {
-            return Err(ModelarDbTypesError::InvalidArgument(format!(
-                "Unknown server mode: {}.",
-                node_metadata.server_mode
-            )));
-        }
-    };
-
-    Ok(Node::new(node_metadata.url.clone(), server_mode))
-}
-
 /// Encode the metadata for a normal table into a [`TableMetadata`](protocol::TableMetadata)
 /// protobuf message and serialize it. If the schema cannot be converted to bytes, return
 /// [`ModelarDbTypesError`].
@@ -253,18 +223,6 @@ mod test {
         self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME, normal_table_schema,
         time_series_table_metadata,
     };
-
-    // Test for encode_node() and decode_node_metadata().
-    #[test]
-    fn test_encode_and_decode_node_metadata() {
-        let node = Node::new("grpc://server:9999".to_string(), ServerMode::Edge);
-
-        let encoded_node_metadata = encode_node(&node).unwrap();
-        let decoded_node = decode_node_metadata(&encoded_node_metadata).unwrap();
-
-        assert_eq!(node.url, decoded_node.url);
-        assert_eq!(node.mode, decoded_node.mode);
-    }
 
     // Tests for serializing and deserializing table metadata.
     #[test]
