@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
     let remote_storage_configuration =
         modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
     let remote_data_folder =
-        DataFolder::open_object_store(remote_storage_configuration.clone()).await?;
+        DataFolder::open_remote_url(remote_storage_configuration.clone()).await?;
 
     remote_data_folder
         .create_and_register_manager_metadata_data_folder_tables()

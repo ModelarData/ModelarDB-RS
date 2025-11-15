@@ -154,7 +154,7 @@ impl DataFolder {
     /// If `remote_url` has the schema `azureblobstorage`, the object store is an Azure Blob Storage
     /// container. The remaining parameters are retrieved from environment variables. Returns
     /// [`ModelarDbStorageError`] if a connection to the specified object store could not be created.
-    pub async fn open_object_store(remote_url: &str) -> Result<Self> {
+    pub async fn open_remote_url(remote_url: &str) -> Result<Self> {
         match remote_url.split_once("://") {
             Some(("s3", bucket_name)) => {
                 let endpoint = env::var("AWS_ENDPOINT")?;
