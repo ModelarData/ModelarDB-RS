@@ -45,13 +45,16 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    /// Try to retrieve the cluster key from the remote data folder and create a new cluster instance.
-    /// If the cluster key could not be retrieved from the remote data folder or the cluster metadata
-    /// tables do not exist and could not be created, return [`ModelarDbServerError`].
-    pub async fn try_new(remote_data_folder: DataFolder) -> Result<Self> {
+    /// Create and register the cluster metadata tables and save the given `node` in the cluster.
+    /// It is assumed that `node` corresponds to the local system running `modelardbd`. If the
+    /// cluster metadata tables do not exist and could not be created or the node could not be
+    /// saved, return [`ModelarDbServerError`].
+    pub async fn try_new(node: Node, remote_data_folder: DataFolder) -> Result<Self> {
         remote_data_folder
             .create_and_register_cluster_metadata_tables()
             .await?;
+
+        remote_data_folder.save_node(node).await?;
 
         let key = remote_data_folder.cluster_key().await?.to_string();
 
@@ -170,21 +173,19 @@ mod test {
     // Tests for Cluster.
     #[tokio::test]
     async fn test_query_node() {
-        let (_temp_dir, mut cluster) = create_cluster_with_edge().await;
-
         let cloud_node = Node::new("cloud".to_owned(), ServerMode::Cloud);
-        cluster
-            .remote_data_folder
-            .save_node(cloud_node.clone())
-            .await
-            .unwrap();
+        let (_temp_dir, mut cluster) = create_cluster_with_node(cloud_node.clone()).await;
 
-        assert_eq!(cluster.query_node().await.unwrap(), cloud_node);
+        let query_node = cluster.query_node().await.unwrap();
+
+        assert_eq!(query_node, cloud_node);
     }
 
     #[tokio::test]
     async fn test_query_node_no_cloud_nodes() {
-        let (_temp_dir, mut cluster) = create_cluster_with_edge().await;
+        let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
+        let (_temp_dir, mut cluster) = create_cluster_with_node(edge_node).await;
+
         let result = cluster.query_node().await;
 
         assert_eq!(
@@ -193,15 +194,12 @@ mod test {
         );
     }
 
-    async fn create_cluster_with_edge() -> (TempDir, Cluster) {
+    async fn create_cluster_with_node(node: Node) -> (TempDir, Cluster) {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
-        let cluster = Cluster::try_new(local_data_folder.clone()).await.unwrap();
-
-        local_data_folder
-            .save_node(Node::new("edge".to_owned(), ServerMode::Edge))
+        let cluster = Cluster::try_new(node, local_data_folder.clone())
             .await
             .unwrap();
 
