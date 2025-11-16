@@ -45,10 +45,14 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    /// Try to retrieve the cluster key from the remote data folder and create a new cluster
-    /// instance. If the cluster key could not be retrieved from the remote data folder, return
-    /// [`ModelarDbServerError`].
+    /// Try to retrieve the cluster key from the remote data folder and create a new cluster instance.
+    /// If the cluster key could not be retrieved from the remote data folder or the cluster metadata
+    /// tables do not exist and could not be created, return [`ModelarDbServerError`].
     pub async fn try_new(remote_data_folder: DataFolder) -> Result<Self> {
+        remote_data_folder
+            .create_and_register_cluster_metadata_tables()
+            .await?;
+
         let key = remote_data_folder.cluster_key().await?.to_string();
 
         // Convert the key to a MetadataValue since it is used in tonic requests.
