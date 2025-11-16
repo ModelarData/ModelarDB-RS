@@ -305,8 +305,10 @@ mod test {
     // Tests for Cluster.
     #[tokio::test]
     async fn test_query_node() {
+        let temp_dir = tempfile::tempdir().unwrap();
         let cloud_node = Node::new("cloud".to_owned(), ServerMode::Cloud);
-        let (_temp_dir, mut cluster) = create_cluster_with_node(cloud_node.clone()).await;
+
+        let mut cluster = create_cluster_with_node(temp_dir, cloud_node.clone()).await;
 
         let query_node = cluster.query_node().await.unwrap();
 
@@ -315,8 +317,10 @@ mod test {
 
     #[tokio::test]
     async fn test_query_node_no_cloud_nodes() {
+        let temp_dir = tempfile::tempdir().unwrap();
         let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
-        let (_temp_dir, mut cluster) = create_cluster_with_node(edge_node).await;
+
+        let mut cluster = create_cluster_with_node(temp_dir, edge_node).await;
 
         let result = cluster.query_node().await;
 
@@ -326,15 +330,12 @@ mod test {
         );
     }
 
-    async fn create_cluster_with_node(node: Node) -> (TempDir, Cluster) {
-        let temp_dir = tempfile::tempdir().unwrap();
+    async fn create_cluster_with_node(temp_dir: TempDir, node: Node) -> Cluster {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
-        let cluster = Cluster::try_new(node, local_data_folder.clone())
+        Cluster::try_new(node, local_data_folder.clone())
             .await
-            .unwrap();
-
-        (temp_dir, cluster)
+            .unwrap()
     }
 }
