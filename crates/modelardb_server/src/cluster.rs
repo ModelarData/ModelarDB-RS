@@ -17,8 +17,8 @@
 
 use std::str::FromStr;
 
-use arrow_flight::Ticket;
 use arrow_flight::flight_service_client::FlightServiceClient;
+use arrow_flight::{Action, Ticket};
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use log::info;
@@ -100,8 +100,8 @@ impl Cluster {
     }
 
     /// Connect to the Apache Arrow Flight server given by `url` and execute the given `sql`
-    /// statement with the key as metadata. If the statement was successfully executed, return the
-    /// url of the node to simplify logging, otherwise return [`ModelarDbServerError`].
+    /// statement with the cluster key as metadata. If the statement was successfully executed,
+    /// return the url of the node to simplify logging, otherwise return [`ModelarDbServerError`].
     async fn connect_and_do_get(&self, url: &str, sql: &str) -> Result<String> {
         let mut flight_client = FlightServiceClient::connect(url.to_owned()).await?;
 
@@ -112,6 +112,45 @@ impl Cluster {
             .insert("x-cluster-key", self.key.clone());
 
         flight_client.do_get(request).await?;
+
+        Ok(url.to_owned())
+    }
+
+    /// For each node in the cluster, execute the given `action` with the cluster key as metadata.
+    /// If the action was successfully executed for each node, return [`Ok`], otherwise return
+    /// [`ModelarDbServerError`].
+    pub async fn cluster_do_action(&self, action: Action) -> Result<()> {
+        let nodes = self.remote_data_folder.nodes().await?;
+
+        let mut action_futures: FuturesUnordered<_> = nodes
+            .iter()
+            .map(|node| self.connect_and_do_action(&node.url, action.clone()))
+            .collect();
+
+        // Run the futures concurrently and log when the action has been executed on each node.
+        while let Some(result) = action_futures.next().await {
+            info!(
+                "Executed action `{}` on node with url '{}'.",
+                action.r#type, result?
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Connect to the Apache Arrow Flight server given by `url` and make a request to do `action`
+    /// with the cluster key as metadata. If the action was successfully executed, return the url
+    /// of the node to simplify logging, otherwise return [`ModelarDbServerError`].
+    async fn connect_and_do_action(&self, url: &str, action: Action) -> Result<String> {
+        let mut flight_client = FlightServiceClient::connect(url.to_owned()).await?;
+
+        // Add the key to the request metadata to indicate that the request is a cluster operation.
+        let mut request = Request::new(action);
+        request
+            .metadata_mut()
+            .insert("x-cluster-key", self.key.clone());
+
+        flight_client.do_action(request).await?;
 
         Ok(url.to_owned())
     }
