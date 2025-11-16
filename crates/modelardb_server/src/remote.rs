@@ -28,7 +28,7 @@ use std::sync::Arc;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightEndpoint, FlightInfo,
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket, utils,
 };
@@ -394,12 +394,49 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(Box::pin(output)))
     }
 
-    /// Not implemented.
+    /// Given a query, return [`FlightInfo`] containing [`FlightEndpoints`](FlightEndpoint)
+    /// describing which cloud nodes should be used to execute the query. The query must be
+    /// provided in `FlightDescriptor.cmd`.
     async fn get_flight_info(
         &self,
-        _request: Request<FlightDescriptor>,
+        request: Request<FlightDescriptor>,
     ) -> StdResult<Response<FlightInfo>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let flight_descriptor = request.into_inner();
+
+        // Extract the query.
+        let query = str::from_utf8(&flight_descriptor.cmd)
+            .map_err(error_to_status_invalid_argument)?
+            .to_owned();
+
+        // Retrieve the cloud node that should execute the given query.
+        let configuration_manager = self.context.configuration_manager.read().await;
+        if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+            let cloud_node = cluster
+                .query_node()
+                .await
+                .map_err(error_to_status_internal)?;
+
+            info!(
+                "Assigning query '{query}' to cloud node with url '{}'.",
+                cloud_node.url
+            );
+
+            // All data in the query result should be retrieved using a single endpoint.
+            let endpoint = FlightEndpoint::new()
+                .with_ticket(Ticket::new(query))
+                .with_location(cloud_node.url);
+
+            // schema is empty and total_records and total_bytes are -1 since we do not know
+            // anything about the result of the query at this point.
+            let flight_info = FlightInfo::new()
+                .with_descriptor(flight_descriptor)
+                .with_endpoint(endpoint)
+                .with_ordered(true);
+
+            Ok(Response::new(flight_info))
+        } else {
+            Err(Status::internal("The node is not running in a cluster."))
+        }
     }
 
     /// Not implemented.
