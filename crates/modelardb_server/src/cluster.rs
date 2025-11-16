@@ -159,3 +159,52 @@ impl Cluster {
         Ok(url.to_owned())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use modelardb_types::types::ServerMode;
+    use tempfile::TempDir;
+
+    // Tests for Cluster.
+    #[tokio::test]
+    async fn test_query_node() {
+        let (_temp_dir, mut cluster) = create_cluster_with_edge().await;
+
+        let cloud_node = Node::new("cloud".to_owned(), ServerMode::Cloud);
+        cluster
+            .remote_data_folder
+            .save_node(cloud_node.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(cluster.query_node().await.unwrap(), cloud_node);
+    }
+
+    #[tokio::test]
+    async fn test_query_node_no_cloud_nodes() {
+        let (_temp_dir, mut cluster) = create_cluster_with_edge().await;
+        let result = cluster.query_node().await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: There are no cloud nodes to execute the query in the cluster."
+        );
+    }
+
+    async fn create_cluster_with_edge() -> (TempDir, Cluster) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+
+        let cluster = Cluster::try_new(local_data_folder.clone()).await.unwrap();
+
+        local_data_folder
+            .save_node(Node::new("edge".to_owned(), ServerMode::Edge))
+            .await
+            .unwrap();
+
+        (temp_dir, cluster)
+    }
+}
