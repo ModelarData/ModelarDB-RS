@@ -300,7 +300,6 @@ mod test {
     use super::*;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
-    use modelardb_test::table::NORMAL_TABLE_NAME;
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ServerMode};
     use tempfile::TempDir;
 
@@ -375,10 +374,8 @@ mod test {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            format!(
-                "Invalid State Error: The normal table '{NORMAL_TABLE_NAME}' has a different schema \
-                in the local data folder compared to the remote data folder."
-            )
+            "Invalid State Error: The normal table 'normal_table' has a different schema in the \
+            local data folder compared to the remote data folder."
         );
     }
 
@@ -432,6 +429,39 @@ mod test {
         assert_eq!(
             vec!["time_series_table_2", "time_series_table_1"],
             data_folders.local_data_folder.table_names().await.unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_and_create_invalid_local_time_series_table() {
+        let local_temp_dir = tempfile::tempdir().unwrap();
+        let remote_temp_dir = tempfile::tempdir().unwrap();
+
+        let context = create_context(&local_temp_dir, &remote_temp_dir).await;
+        let data_folders = context.data_folders.clone();
+
+        // Create a time series table in the local data folder with the same name as a time series
+        // table in the remote data folder, but with a different schema.
+        create_time_series_table(
+            "time_series_table",
+            "local",
+            data_folders.local_data_folder.clone(),
+        )
+        .await;
+
+        create_time_series_table(
+            "time_series_table",
+            "remote",
+            data_folders.maybe_remote_data_folder.clone().unwrap(),
+        )
+        .await;
+
+        let result = retrieve_and_create_tables(&context).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: The time series table 'time_series_table' has different metadata \
+            in the local data folder compared to the remote data folder."
         );
     }
 
