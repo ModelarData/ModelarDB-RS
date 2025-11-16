@@ -40,6 +40,8 @@ use crate::error::{ModelarDbServerError, Result};
 /// to be applied to every single node in the cluster.
 #[derive(Clone)]
 pub struct Cluster {
+    /// Node that represents the local system running `modelardbd`.
+    node: Node,
     /// Key identifying the cluster. The key is used to validate communication within the cluster
     /// between nodes.
     key: MetadataValue<Ascii>,
@@ -59,7 +61,7 @@ impl Cluster {
             .create_and_register_cluster_metadata_tables()
             .await?;
 
-        remote_data_folder.save_node(node).await?;
+        remote_data_folder.save_node(node.clone()).await?;
 
         let key = remote_data_folder.cluster_key().await?.to_string();
 
@@ -67,6 +69,7 @@ impl Cluster {
         let key = MetadataValue::from_str(&key).expect("UUID Version 4 should be valid ASCII.");
 
         Ok(Self {
+            node,
             key,
             remote_data_folder,
         })
@@ -195,6 +198,16 @@ impl Cluster {
         flight_client.do_action(request).await?;
 
         Ok(url.to_owned())
+    }
+
+    /// Remove the node that was saved when the [`Cluster`] was created from the remote data folder.
+    /// If the node could not be removed, return [`ModelarDbServerError`]. Note that this method
+    /// should only be called when the process running `modelardbd` is stopped.
+    pub async fn remove_node(&self) -> Result<()> {
+        self.remote_data_folder
+            .remove_node(&self.node.url)
+            .await
+            .map_err(|error| error.into())
     }
 }
 
@@ -597,6 +610,22 @@ mod test {
             result.unwrap_err().to_string(),
             "Invalid State Error: There are no cloud nodes to execute the query in the cluster."
         );
+    }
+
+    #[tokio::test]
+    async fn test_remove_node() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
+
+        let cluster = create_cluster_with_node(&temp_dir, edge_node.clone()).await;
+
+        let nodes = cluster.remote_data_folder.nodes().await.unwrap();
+        assert_eq!(vec![edge_node], nodes);
+
+        cluster.remove_node().await.unwrap();
+
+        let nodes = cluster.remote_data_folder.nodes().await.unwrap();
+        assert!(nodes.is_empty());
     }
 
     /// Create a [`Cluster`] that uses a local [`DataFolder`] for the remote data folder.
