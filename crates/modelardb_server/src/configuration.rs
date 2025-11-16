@@ -242,12 +242,12 @@ mod tests {
     use std::sync::Arc;
 
     use modelardb_storage::data_folder::DataFolder;
+    use modelardb_types::types::{Node, ServerMode};
     use tempfile::TempDir;
     use tokio::sync::RwLock;
-    use uuid::Uuid;
 
+    use crate::cluster::Cluster;
     use crate::data_folders::DataFolders;
-    use crate::manager::Manager;
     use crate::storage::StorageEngine;
 
     // Tests for ConfigurationManager.
@@ -416,14 +416,17 @@ mod tests {
 
         let data_folders = DataFolders::new(
             local_data_folder.clone(),
-            Some(remote_data_folder),
+            Some(remote_data_folder.clone()),
             local_data_folder,
         );
 
-        let manager = Manager::new(Uuid::new_v4().to_string());
+        let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
+        let cluster = Cluster::try_new(edge_node, remote_data_folder)
+            .await
+            .unwrap();
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            ClusterMode::MultiNode(manager),
+            ClusterMode::MultiNode(cluster),
         )));
 
         let storage_engine = Arc::new(RwLock::new(

@@ -34,6 +34,7 @@ use crate::error::{ModelarDbServerError, Result};
 
 /// Stores the currently managed nodes in the cluster and allows for performing operations that need
 /// to be applied to every single node in the cluster.
+#[derive(Clone)]
 pub struct Cluster {
     /// Key identifying the cluster. The key is used to validate communication within the cluster
     /// between nodes.

@@ -15,11 +15,15 @@
 
 //! Implementation of a struct that provides access to the local and remote data storage components.
 
-use modelardb_storage::data_folder::DataFolder;
+use std::env;
 
-use crate::ClusterMode;
+use modelardb_storage::data_folder::DataFolder;
+use modelardb_types::types::{Node, ServerMode};
+
 use crate::Result;
+use crate::cluster::Cluster;
 use crate::error::ModelarDbServerError;
+use crate::{ClusterMode, PORT};
 
 /// Folders for storing metadata and data in Apache Parquet files locally and remotely.
 #[derive(Clone)]
@@ -54,6 +58,9 @@ impl DataFolders {
     pub async fn try_from_command_line_arguments(
         arguments: &[&str],
     ) -> Result<(ClusterMode, Self)> {
+        let ip_address = env::var("MODELARDBD_IP_ADDRESS").unwrap_or("127.0.0.1".to_string());
+        let url_with_port = format!("grpc://{ip_address}:{}", &PORT.to_string());
+
         // Match the provided command line arguments to the supported inputs.
         match arguments {
             // Single edge without a cluster.
@@ -73,8 +80,11 @@ impl DataFolders {
 
                 let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
+                let node = Node::new(url_with_port, ServerMode::Edge);
+                let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
+
                 Ok((
-                    ClusterMode::MultiNode,
+                    ClusterMode::MultiNode(cluster),
                     Self::new(
                         local_data_folder.clone(),
                         Some(remote_data_folder),
@@ -89,8 +99,11 @@ impl DataFolders {
 
                 let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
+                let node = Node::new(url_with_port, ServerMode::Cloud);
+                let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
+
                 Ok((
-                    ClusterMode::MultiNode,
+                    ClusterMode::MultiNode(cluster),
                     Self::new(
                         local_data_folder,
                         Some(remote_data_folder.clone()),
@@ -141,7 +154,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(cluster_mode, ClusterMode::SingleNode);
+        assert!(matches!(cluster_mode, ClusterMode::SingleNode));
         assert!(data_folders.maybe_remote_data_folder.is_none());
     }
 

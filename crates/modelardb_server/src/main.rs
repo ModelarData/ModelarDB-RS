@@ -22,16 +22,17 @@ mod error;
 mod manager;
 mod remote;
 mod storage;
+mod cluster;
 
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::cluster::Cluster;
 use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::Result;
-use crate::manager::Manager;
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
@@ -42,10 +43,10 @@ pub static PORT: LazyLock<u16> =
 
 /// The different possible modes that a ModelarDB server can be deployed in, assigned when the
 /// server is started.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub enum ClusterMode {
     SingleNode,
-    MultiNode(Manager),
+    MultiNode(Cluster),
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to extract
@@ -77,8 +78,7 @@ async fn main() -> Result<()> {
     context.register_normal_tables().await?;
     context.register_time_series_tables().await?;
 
-    if let ClusterMode::MultiNode(manager) = &cluster_mode {
-        manager.retrieve_and_create_tables(&context).await?;
+    if let ClusterMode::MultiNode(_cluster) = &cluster_mode {
     }
 
     // Setup CTRL+C handler.
