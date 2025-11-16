@@ -483,6 +483,8 @@ mod test {
         );
     }
 
+    /// Create a normal table named `table_name` with a single column named `column_name` in
+    /// `data_folder`.
     async fn create_normal_table(table_name: &str, column_name: &str, data_folder: DataFolder) {
         let schema = Schema::new(vec![Field::new(column_name, ArrowValue::DATA_TYPE, false)]);
 
@@ -497,6 +499,8 @@ mod test {
             .unwrap();
     }
 
+    /// Create a time series table named `table_name` with a field column named `column_name` in
+    /// `data_folder`.
     async fn create_time_series_table(
         table_name: &str,
         column_name: &str,
@@ -526,6 +530,8 @@ mod test {
             .unwrap();
     }
 
+    /// Call [`Cluster::retrieve_and_create_tables`] if the [`ClusterMode`] of `context` is
+    /// [`ClusterMode::MultiNode`] and panic if not.
     async fn retrieve_and_create_tables(context: &Arc<Context>) -> Result<()> {
         if let ClusterMode::MultiNode(cluster) =
             &context.configuration_manager.read().await.cluster_mode
