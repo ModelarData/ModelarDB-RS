@@ -300,6 +300,7 @@ mod test {
     use super::*;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
+    use modelardb_test::table::{NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ServerMode};
     use tempfile::TempDir;
 
@@ -357,14 +358,14 @@ mod test {
         // Create a normal table in the local data folder with the same name as a normal table in
         // the remote data folder, but with a different schema.
         create_normal_table(
-            "normal_table",
+            NORMAL_TABLE_NAME,
             "local",
             data_folders.local_data_folder.clone(),
         )
         .await;
 
         create_normal_table(
-            "normal_table",
+            NORMAL_TABLE_NAME,
             "remote",
             data_folders.maybe_remote_data_folder.clone().unwrap(),
         )
@@ -374,8 +375,10 @@ mod test {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid State Error: The normal table 'normal_table' has a different schema in the \
-            local data folder compared to the remote data folder."
+            format!(
+                "Invalid State Error: The normal table '{NORMAL_TABLE_NAME}' has a different schema \
+                in the local data folder compared to the remote data folder."
+            )
         );
     }
 
@@ -429,14 +432,14 @@ mod test {
         // Create a time series table in the local data folder with the same name as a time series
         // table in the remote data folder, but with a different schema.
         create_time_series_table(
-            "time_series_table",
+            TIME_SERIES_TABLE_NAME,
             "local",
             data_folders.local_data_folder.clone(),
         )
         .await;
 
         create_time_series_table(
-            "time_series_table",
+            TIME_SERIES_TABLE_NAME,
             "remote",
             data_folders.maybe_remote_data_folder.clone().unwrap(),
         )
@@ -446,8 +449,10 @@ mod test {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid State Error: The time series table 'time_series_table' has different metadata \
-            in the local data folder compared to the remote data folder."
+            format!(
+                "Invalid State Error: The time series table '{TIME_SERIES_TABLE_NAME}' has different \
+                metadata in the local data folder compared to the remote data folder."
+            )
         );
     }
 
@@ -461,14 +466,14 @@ mod test {
 
         // Create tables in the local data folder that are not in the remote data folder.
         create_normal_table(
-            "normal_table",
+            NORMAL_TABLE_NAME,
             "local",
             data_folders.local_data_folder.clone(),
         )
         .await;
 
         create_time_series_table(
-            "time_series_table",
+            TIME_SERIES_TABLE_NAME,
             "local",
             data_folders.local_data_folder.clone(),
         )
@@ -478,8 +483,10 @@ mod test {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid State Error: The following tables do not exist in the remote data folder: \
-            normal_table, time_series_table."
+            format!(
+                "Invalid State Error: The following tables do not exist in the remote data folder: \
+                {NORMAL_TABLE_NAME}, {TIME_SERIES_TABLE_NAME}."
+            )
         );
     }
 
