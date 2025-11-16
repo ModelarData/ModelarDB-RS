@@ -301,7 +301,7 @@ mod test {
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
     use modelardb_test::table::NORMAL_TABLE_NAME;
-    use modelardb_types::types::{ArrowValue, ServerMode};
+    use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ServerMode};
     use tempfile::TempDir;
 
     use crate::ClusterMode;
@@ -396,6 +396,74 @@ mod test {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn test_retrieve_and_create_missing_local_time_series_table() {
+        let local_temp_dir = tempfile::tempdir().unwrap();
+        let remote_temp_dir = tempfile::tempdir().unwrap();
+
+        let context = create_context(&local_temp_dir, &remote_temp_dir).await;
+        let data_folders = context.data_folders.clone();
+
+        // Create a time series table in the remote data folder that should be retrieved and created
+        // in the local data folder and one that already exists.
+        create_time_series_table(
+            "time_series_table_1",
+            "field",
+            data_folders.local_data_folder.clone(),
+        )
+        .await;
+
+        create_time_series_table(
+            "time_series_table_1",
+            "field",
+            data_folders.maybe_remote_data_folder.clone().unwrap(),
+        )
+        .await;
+
+        create_time_series_table(
+            "time_series_table_2",
+            "field",
+            data_folders.maybe_remote_data_folder.clone().unwrap(),
+        )
+        .await;
+
+        retrieve_and_create_tables(&context).await.unwrap();
+
+        assert_eq!(
+            vec!["time_series_table_2", "time_series_table_1"],
+            data_folders.local_data_folder.table_names().await.unwrap()
+        );
+    }
+
+
+    async fn create_time_series_table(
+        table_name: &str,
+        column_name: &str,
+        data_folder: DataFolder,
+    ) {
+        let query_schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new(column_name, ArrowValue::DATA_TYPE, false),
+        ]));
+
+        let time_series_table_metadata = TimeSeriesTableMetadata::try_new(
+            table_name.to_owned(),
+            query_schema,
+            vec![ErrorBound::Lossless, ErrorBound::Lossless],
+            vec![None, None],
+        )
+        .unwrap();
+
+        data_folder
+            .create_time_series_table(&time_series_table_metadata)
+            .await
+            .unwrap();
+
+        data_folder
+            .save_time_series_table_metadata(&time_series_table_metadata)
+            .await
+            .unwrap();
+    }
 
     async fn retrieve_and_create_tables(context: &Arc<Context>) -> Result<()> {
         if let ClusterMode::MultiNode(cluster) =
