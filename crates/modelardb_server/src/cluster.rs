@@ -20,6 +20,8 @@ use std::sync::Arc;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Ticket};
+use datafusion::arrow::datatypes::Schema;
+use datafusion::catalog::TableProvider;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use log::info;
@@ -189,6 +191,43 @@ async fn validate_local_tables_exist_remotely(
     }
 
     Ok(())
+}
+
+/// For each normal table in the remote data folder, if the table also exists in the local data
+/// folder, validate that the schemas are identical. If the schemas are not identical, return
+/// [`ModelarDbServerError`]. Return a vector containing the name and schema of each normal table
+/// that is in the remote data folder but not in the local data folder.
+async fn validate_normal_tables(
+    local_data_folder: &DataFolder,
+    remote_data_folder: &DataFolder,
+) -> Result<Vec<(String, Arc<Schema>)>> {
+    let mut missing_normal_tables = vec![];
+
+    let remote_normal_tables = remote_data_folder.normal_table_names().await?;
+
+    for table_name in remote_normal_tables {
+        let remote_schema = normal_table_schema(remote_data_folder, &table_name).await?;
+
+        if let Ok(local_schema) = normal_table_schema(local_data_folder, &table_name).await {
+            if remote_schema != local_schema {
+                return Err(ModelarDbServerError::InvalidState(format!(
+                    "The normal table '{table_name}' has a different schema in the local data \
+                    folder compared to the remote data folder.",
+                )));
+            }
+        } else {
+            missing_normal_tables.push((table_name, remote_schema));
+        }
+    }
+
+    Ok(missing_normal_tables)
+}
+
+/// Retrieve the schema of a normal table from the Delta Lake in the data folder. If the table does
+/// not exist, or the schema could not be retrieved, return [`ModelarDbServerError`].
+async fn normal_table_schema(data_folder: &DataFolder, table_name: &str) -> Result<Arc<Schema>> {
+    let delta_table = data_folder.delta_table(table_name).await?;
+    Ok(TableProvider::schema(&delta_table))
 }
 
 #[cfg(test)]
