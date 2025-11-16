@@ -27,7 +27,7 @@ use futures::stream::FuturesUnordered;
 use log::info;
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_storage::data_folder::cluster::ClusterMetadata;
-use modelardb_types::types::Node;
+use modelardb_types::types::{Node, TimeSeriesTableMetadata};
 use rand::rng;
 use rand::seq::IteratorRandom;
 use tonic::Request;
@@ -70,6 +70,36 @@ impl Cluster {
             key,
             remote_data_folder,
         })
+    }
+
+    /// Initialize the local database schema with the normal tables and time series tables from the
+    /// cluster's database schema using the remote data folder. If the tables to create could not be
+    /// retrieved from the remote data folder, or the tables could not be created,
+    /// return [`ModelarDbServerError`].
+    pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
+        let local_data_folder = &context.data_folders.local_data_folder;
+
+        validate_local_tables_exist_remotely(local_data_folder, &self.remote_data_folder).await?;
+
+        // Validate that all tables that are in both the local and remote data folder are identical.
+        let missing_normal_tables =
+            validate_normal_tables(local_data_folder, &self.remote_data_folder).await?;
+
+        let missing_time_series_tables =
+            validate_time_series_tables(local_data_folder, &self.remote_data_folder).await?;
+
+        // For each table that does not already exist locally, create the table.
+        for (table_name, schema) in missing_normal_tables {
+            context.create_normal_table(&table_name, &schema).await?;
+        }
+
+        for time_series_table_metadata in missing_time_series_tables {
+            context
+                .create_time_series_table(&time_series_table_metadata)
+                .await?;
+        }
+
+        Ok(())
     }
 
     /// Return the cloud node in the cluster that is currently most capable of running a query.

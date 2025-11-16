@@ -15,6 +15,7 @@
 
 //! Implementation of ModelarDB's main function.
 
+mod cluster;
 mod configuration;
 mod context;
 mod data_folders;
@@ -22,7 +23,6 @@ mod error;
 mod manager;
 mod remote;
 mod storage;
-mod cluster;
 
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
@@ -69,7 +69,9 @@ async fn main() -> Result<()> {
     {
         cluster_mode_and_data_folders
     } else {
-        print_usage_and_exit_with_error("[server_mode] local_data_folder_url [remote_data_folder_url]");
+        print_usage_and_exit_with_error(
+            "[server_mode] local_data_folder_url [remote_data_folder_url]",
+        );
     };
 
     let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone()).await?);
@@ -78,7 +80,8 @@ async fn main() -> Result<()> {
     context.register_normal_tables().await?;
     context.register_time_series_tables().await?;
 
-    if let ClusterMode::MultiNode(_cluster) = &cluster_mode {
+    if let ClusterMode::MultiNode(cluster) = &cluster_mode {
+        cluster.retrieve_and_create_tables(&context).await?;
     }
 
     // Setup CTRL+C handler.
