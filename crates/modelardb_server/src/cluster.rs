@@ -16,6 +16,7 @@
 //! Functionality to perform operations on every node in the cluster.
 
 use std::str::FromStr;
+use std::sync::Arc;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Ticket};
@@ -30,6 +31,7 @@ use rand::seq::IteratorRandom;
 use tonic::Request;
 use tonic::metadata::{Ascii, MetadataValue};
 
+use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 
 /// Stores the currently managed nodes in the cluster and allows for performing operations that need
@@ -162,6 +164,31 @@ impl Cluster {
 
         Ok(url.to_owned())
     }
+}
+
+/// Validate that all tables in the local data folder exist in the remote data folder. If any table
+/// does not exist in the remote data folder, return [`ModelarDbServerError`].
+async fn validate_local_tables_exist_remotely(
+    local_data_folder: &DataFolder,
+    remote_data_folder: &DataFolder,
+) -> Result<()> {
+    let local_table_names = local_data_folder.table_names().await?;
+    let remote_table_names = remote_data_folder.table_names().await?;
+
+    let invalid_tables: Vec<String> = local_table_names
+        .iter()
+        .filter(|table| !remote_table_names.contains(table))
+        .cloned()
+        .collect();
+
+    if !invalid_tables.is_empty() {
+        return Err(ModelarDbServerError::InvalidState(format!(
+            "The following tables do not exist in the remote data folder: {}.",
+            invalid_tables.join(", ")
+        )));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
