@@ -3,7 +3,15 @@ This document describes how to set up and use ModelarDB. Installation instructio
 FreeBSD, and Windows. To support running ModelarDB in a containerized environment, instructions for setting up a Docker
 environment are also provided. Once installed, using ModelarDB is consistent across all platforms.
 
-## Installation
+## Installation from Builds
+Builds for `aarch64 macOS`, `x86_64 Windows`, and `x86_64 Linux` are created for each commit to the `main` branch using
+GitHub Actions. As these builds are created for each commit, they are not considered stable release builds. Also, since
+they are built using GitHub Actions, they are only available for 90 days, as this is GitHub's maximum artifact retention
+period for public repositories. The latest builds can be found in the [Artifacts window for the latest Workflow that
+completed
+successfully](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/build-lint-and-test.yml?query=branch%3Amain).
+
+## Installation from Source
 ### Linux
 The following commands are for Ubuntu Server. However, equivalent commands should work for other Linux distributions.
 
