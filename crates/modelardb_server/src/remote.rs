@@ -711,6 +711,15 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .map_err(error_to_status_internal)?;
 
+            // If running in a cluster, remove the node from the remote data folder.
+            let configuration_manager = self.context.configuration_manager.read().await;
+            if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+                cluster
+                    .remove_node()
+                    .await
+                    .map_err(error_to_status_internal)?;
+            }
+
             // Since the process is killed, a conventional response cannot be given. If the action
             // returns a "Stream removed" message, the edge was successfully flushed and killed.
             std::process::exit(0);
