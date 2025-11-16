@@ -9,7 +9,7 @@ GitHub Actions. As these builds are created for each commit, they are not consid
 they are built using GitHub Actions, they are only available for 90 days, as this is GitHub's maximum artifact retention
 period for public repositories. The latest builds can be found in the [Artifacts window for the latest Workflow that
 completed
-successfully](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/build-lint-and-test.yml?query=branch%3Amain).
+successfully](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/build-lint-test-and-upload.yml?query=branch%3Amain).
 
 ## Installation from Source
 ### Linux
