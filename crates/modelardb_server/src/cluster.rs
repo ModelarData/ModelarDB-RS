@@ -324,7 +324,7 @@ mod test {
         )
         .await;
 
-        retrieve_and_create_tables(&context).await;
+        retrieve_and_create_tables(&context).await.unwrap();
 
         assert_eq!(
             vec![NORMAL_TABLE_NAME],
@@ -333,7 +333,33 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_retrieve_and_create_invalid_local_normal_table() {}
+    async fn test_retrieve_and_create_invalid_local_normal_table() {
+        let local_temp_dir = tempfile::tempdir().unwrap();
+        let remote_temp_dir = tempfile::tempdir().unwrap();
+
+        let context = create_context(&local_temp_dir, &remote_temp_dir).await;
+        let data_folders = context.data_folders.clone();
+
+        // Create a normal table in the local data folder with the same name as a normal table in
+        // the remote data folder, but with a different schema.
+        create_normal_table("local", data_folders.local_data_folder.clone()).await;
+
+        create_normal_table(
+            "remote",
+            data_folders.maybe_remote_data_folder.clone().unwrap(),
+        )
+        .await;
+
+        let result = retrieve_and_create_tables(&context).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid State Error: The normal table '{NORMAL_TABLE_NAME}' has a different schema \
+                in the local data folder compared to the remote data folder."
+            )
+        );
+    }
 
     async fn create_normal_table(column_name: &str, data_folder: DataFolder) {
         let schema = Schema::new(vec![Field::new(column_name, ArrowValue::DATA_TYPE, false)]);
@@ -350,11 +376,11 @@ mod test {
     }
 
 
-    async fn retrieve_and_create_tables(context: &Arc<Context>) {
+    async fn retrieve_and_create_tables(context: &Arc<Context>) -> Result<()> {
         if let ClusterMode::MultiNode(cluster) =
             &context.configuration_manager.read().await.cluster_mode
         {
-            cluster.retrieve_and_create_tables(context).await.unwrap();
+            cluster.retrieve_and_create_tables(context).await
         } else {
             panic!("Cluster should be a MultiNode cluster.")
         }
