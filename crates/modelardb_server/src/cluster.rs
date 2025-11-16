@@ -309,23 +309,25 @@ mod test {
 
     /// Create a [`Context`] for an edge node within a cluster. Note that both the local and remote
     /// data folder in the context uses a local [`DataFolder`].
-    async fn create_context(local_temp_dir: TempDir, remote_temp_dir: TempDir) -> Context {
+    async fn create_context(local_temp_dir: &TempDir, remote_temp_dir: &TempDir) -> Arc<Context> {
         let temp_dir_url = local_temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
         let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
         let cluster = create_cluster_with_node(remote_temp_dir, edge_node).await;
 
-        Context::try_new(
-            DataFolders::new(
-                local_data_folder.clone(),
-                Some(cluster.remote_data_folder.clone()),
-                local_data_folder,
-            ),
-            ClusterMode::MultiNode(cluster),
+        Arc::new(
+            Context::try_new(
+                DataFolders::new(
+                    local_data_folder.clone(),
+                    Some(cluster.remote_data_folder.clone()),
+                    local_data_folder,
+                ),
+                ClusterMode::MultiNode(cluster),
+            )
+            .await
+            .unwrap(),
         )
-        .await
-        .unwrap()
     }
 
     #[tokio::test]
@@ -333,7 +335,7 @@ mod test {
         let temp_dir = tempfile::tempdir().unwrap();
         let cloud_node = Node::new("cloud".to_owned(), ServerMode::Cloud);
 
-        let mut cluster = create_cluster_with_node(temp_dir, cloud_node.clone()).await;
+        let mut cluster = create_cluster_with_node(&temp_dir, cloud_node.clone()).await;
 
         let query_node = cluster.query_node().await.unwrap();
 
@@ -345,7 +347,7 @@ mod test {
         let temp_dir = tempfile::tempdir().unwrap();
         let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
 
-        let mut cluster = create_cluster_with_node(temp_dir, edge_node).await;
+        let mut cluster = create_cluster_with_node(&temp_dir, edge_node).await;
 
         let result = cluster.query_node().await;
 
@@ -356,7 +358,7 @@ mod test {
     }
 
     /// Create a [`Cluster`] that uses a local [`DataFolder`] for the remote data folder.
-    async fn create_cluster_with_node(temp_dir: TempDir, node: Node) -> Cluster {
+    async fn create_cluster_with_node(temp_dir: &TempDir, node: Node) -> Cluster {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
