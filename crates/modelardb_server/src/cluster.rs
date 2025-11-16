@@ -108,7 +108,7 @@ impl Cluster {
     /// Return the cloud node in the cluster that is currently most capable of running a query.
     /// Note that the most capable node is currently selected at random. If there are no cloud nodes
     /// in the cluster, return [`ModelarDbServerError`].
-    pub async fn query_node(&mut self) -> Result<Node> {
+    pub async fn query_node(&self) -> Result<Node> {
         let nodes = self.remote_data_folder.nodes().await?;
 
         let cloud_nodes = nodes
@@ -590,8 +590,7 @@ mod test {
         let temp_dir = tempfile::tempdir().unwrap();
         let cloud_node = Node::new("cloud".to_owned(), ServerMode::Cloud);
 
-        let mut cluster = create_cluster_with_node(&temp_dir, cloud_node.clone()).await;
-
+        let cluster = create_cluster_with_node(&temp_dir, cloud_node.clone()).await;
         let query_node = cluster.query_node().await.unwrap();
 
         assert_eq!(query_node, cloud_node);
@@ -602,8 +601,7 @@ mod test {
         let temp_dir = tempfile::tempdir().unwrap();
         let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
 
-        let mut cluster = create_cluster_with_node(&temp_dir, edge_node).await;
-
+        let cluster = create_cluster_with_node(&temp_dir, edge_node).await;
         let result = cluster.query_node().await;
 
         assert_eq!(
