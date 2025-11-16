@@ -230,6 +230,41 @@ async fn normal_table_schema(data_folder: &DataFolder, table_name: &str) -> Resu
     Ok(TableProvider::schema(&delta_table))
 }
 
+/// For each time series table in the remote data folder, if the table also exists in the local
+/// data folder, validate that the metadata is identical. If the metadata is not identical, return
+/// [`ModelarDbServerError`]. Return a vector containing the metadata of each time series table
+/// that is in the remote data folder but not in the local data folder.
+async fn validate_time_series_tables(
+    local_data_folder: &DataFolder,
+    remote_data_folder: &DataFolder,
+) -> Result<Vec<TimeSeriesTableMetadata>> {
+    let mut missing_time_series_tables = vec![];
+
+    let remote_time_series_tables = remote_data_folder.time_series_table_names().await?;
+
+    for table_name in remote_time_series_tables {
+        let remote_metadata = remote_data_folder
+            .time_series_table_metadata_for_time_series_table(&table_name)
+            .await?;
+
+        if let Ok(local_metadata) = local_data_folder
+            .time_series_table_metadata_for_time_series_table(&table_name)
+            .await
+        {
+            if remote_metadata != local_metadata {
+                return Err(ModelarDbServerError::InvalidState(format!(
+                    "The time series table '{table_name}' has different metadata in the local data \
+                    folder compared to the remote data folder.",
+                )));
+            }
+        } else {
+            missing_time_series_tables.push(remote_metadata);
+        }
+    }
+
+    Ok(missing_time_series_tables)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
