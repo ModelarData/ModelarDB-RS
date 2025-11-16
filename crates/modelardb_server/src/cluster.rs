@@ -299,13 +299,66 @@ async fn validate_time_series_tables(
 mod test {
     use super::*;
 
-    use modelardb_types::types::ServerMode;
+    use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
+    use modelardb_test::table::NORMAL_TABLE_NAME;
+    use modelardb_types::types::{ArrowValue, ServerMode};
     use tempfile::TempDir;
 
     use crate::ClusterMode;
     use crate::data_folders::DataFolders;
 
     // Tests for Cluster.
+    #[tokio::test]
+    async fn test_retrieve_and_create_missing_local_normal_table() {
+        let local_temp_dir = tempfile::tempdir().unwrap();
+        let remote_temp_dir = tempfile::tempdir().unwrap();
+
+        let context = create_context(&local_temp_dir, &remote_temp_dir).await;
+        let data_folders = context.data_folders.clone();
+
+        // Create a normal table in the remote data folder that should be retrieved and created
+        // in the local data folder.
+        create_normal_table(
+            "column",
+            data_folders.maybe_remote_data_folder.clone().unwrap(),
+        )
+        .await;
+
+        retrieve_and_create_tables(&context).await;
+
+        assert_eq!(
+            vec![NORMAL_TABLE_NAME],
+            data_folders.local_data_folder.table_names().await.unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_and_create_invalid_local_normal_table() {}
+
+    async fn create_normal_table(column_name: &str, data_folder: DataFolder) {
+        let schema = Schema::new(vec![Field::new(column_name, ArrowValue::DATA_TYPE, false)]);
+
+        data_folder
+            .create_normal_table(NORMAL_TABLE_NAME, &schema)
+            .await
+            .unwrap();
+
+        data_folder
+            .save_normal_table_metadata(NORMAL_TABLE_NAME)
+            .await
+            .unwrap();
+    }
+
+
+    async fn retrieve_and_create_tables(context: &Arc<Context>) {
+        if let ClusterMode::MultiNode(cluster) =
+            &context.configuration_manager.read().await.cluster_mode
+        {
+            cluster.retrieve_and_create_tables(context).await.unwrap();
+        } else {
+            panic!("Cluster should be a MultiNode cluster.")
+        }
+    }
 
     /// Create a [`Context`] for an edge node within a cluster. Note that both the local and remote
     /// data folder in the context uses a local [`DataFolder`].
