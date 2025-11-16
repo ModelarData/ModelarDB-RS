@@ -379,20 +379,6 @@ mod test {
         );
     }
 
-    async fn create_normal_table(table_name: &str, column_name: &str, data_folder: DataFolder) {
-        let schema = Schema::new(vec![Field::new(column_name, ArrowValue::DATA_TYPE, false)]);
-
-        data_folder
-            .create_normal_table(table_name, &schema)
-            .await
-            .unwrap();
-
-        data_folder
-            .save_normal_table_metadata(table_name)
-            .await
-            .unwrap();
-    }
-
     #[tokio::test]
     async fn test_retrieve_and_create_missing_local_time_series_table() {
         let local_temp_dir = tempfile::tempdir().unwrap();
@@ -465,6 +451,51 @@ mod test {
         );
     }
 
+    #[tokio::test]
+    async fn test_retrieve_and_create_missing_remote_table() {
+        let local_temp_dir = tempfile::tempdir().unwrap();
+        let remote_temp_dir = tempfile::tempdir().unwrap();
+
+        let context = create_context(&local_temp_dir, &remote_temp_dir).await;
+        let data_folders = context.data_folders.clone();
+
+        // Create tables in the local data folder that are not in the remote data folder.
+        create_normal_table(
+            "normal_table",
+            "local",
+            data_folders.local_data_folder.clone(),
+        )
+        .await;
+
+        create_time_series_table(
+            "time_series_table",
+            "local",
+            data_folders.local_data_folder.clone(),
+        )
+        .await;
+
+        let result = retrieve_and_create_tables(&context).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: The following tables do not exist in the remote data folder: \
+            normal_table, time_series_table."
+        );
+    }
+
+    async fn create_normal_table(table_name: &str, column_name: &str, data_folder: DataFolder) {
+        let schema = Schema::new(vec![Field::new(column_name, ArrowValue::DATA_TYPE, false)]);
+
+        data_folder
+            .create_normal_table(table_name, &schema)
+            .await
+            .unwrap();
+
+        data_folder
+            .save_normal_table_metadata(table_name)
+            .await
+            .unwrap();
+    }
 
     async fn create_time_series_table(
         table_name: &str,
