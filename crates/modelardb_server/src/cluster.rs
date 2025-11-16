@@ -317,8 +317,23 @@ mod test {
         let data_folders = context.data_folders.clone();
 
         // Create a normal table in the remote data folder that should be retrieved and created
-        // in the local data folder.
+        // in the local data folder and one that already exists.
         create_normal_table(
+            "normal_table_1",
+            "column",
+            data_folders.local_data_folder.clone(),
+        )
+        .await;
+
+        create_normal_table(
+            "normal_table_1",
+            "column",
+            data_folders.maybe_remote_data_folder.clone().unwrap(),
+        )
+        .await;
+
+        create_normal_table(
+            "normal_table_2",
             "column",
             data_folders.maybe_remote_data_folder.clone().unwrap(),
         )
@@ -327,7 +342,7 @@ mod test {
         retrieve_and_create_tables(&context).await.unwrap();
 
         assert_eq!(
-            vec![NORMAL_TABLE_NAME],
+            vec!["normal_table_2", "normal_table_1"],
             data_folders.local_data_folder.table_names().await.unwrap()
         );
     }
@@ -342,9 +357,15 @@ mod test {
 
         // Create a normal table in the local data folder with the same name as a normal table in
         // the remote data folder, but with a different schema.
-        create_normal_table("local", data_folders.local_data_folder.clone()).await;
+        create_normal_table(
+            "normal_table",
+            "local",
+            data_folders.local_data_folder.clone(),
+        )
+        .await;
 
         create_normal_table(
+            "normal_table",
             "remote",
             data_folders.maybe_remote_data_folder.clone().unwrap(),
         )
@@ -361,16 +382,16 @@ mod test {
         );
     }
 
-    async fn create_normal_table(column_name: &str, data_folder: DataFolder) {
+    async fn create_normal_table(table_name: &str, column_name: &str, data_folder: DataFolder) {
         let schema = Schema::new(vec![Field::new(column_name, ArrowValue::DATA_TYPE, false)]);
 
         data_folder
-            .create_normal_table(NORMAL_TABLE_NAME, &schema)
+            .create_normal_table(table_name, &schema)
             .await
             .unwrap();
 
         data_folder
-            .save_normal_table_metadata(NORMAL_TABLE_NAME)
+            .save_normal_table_metadata(table_name)
             .await
             .unwrap();
     }
