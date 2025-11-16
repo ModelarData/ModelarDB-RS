@@ -633,9 +633,9 @@ impl FlightService for FlightServiceHandler {
     /// object store. Note that data is only transferred to the remote object store if one was
     /// provided when starting the server.
     /// * `KillNode`: An extension of the `FlushNode` action that first flushes all data to disk,
-    /// then flushes all compressed data to the remote object store, and finally kills the process
-    /// that is running the server. Note that since the process is killed, a conventional response
-    /// cannot be returned.
+    /// then flushes all compressed data to the remote object store, then removes the node
+    /// from the cluster if necessary, and finally kills the process that is running the server.
+    /// Note that since the process is killed, a conventional response cannot be returned.
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
     /// configuration is returned in a [`Configuration`](protocol::Configuration) protobuf message.
     /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update

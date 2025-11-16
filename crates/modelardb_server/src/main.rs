@@ -125,8 +125,8 @@ pub fn print_usage_and_exit_with_error(parameters: &str) -> ! {
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for
-/// the storage engine, flushes the data the storage engine currently buffers, and terminates the
-/// system without releasing the lock.
+/// the storage engine, flushes the data the storage engine currently buffers, removes the node
+/// from the cluster if necessary, and terminates the system without releasing the lock.
 fn setup_ctrl_c_handler(context: &Arc<Context>) {
     let ctrl_c_context = context.clone();
     tokio::spawn(async move {
@@ -136,6 +136,12 @@ fn setup_ctrl_c_handler(context: &Arc<Context>) {
 
         // Stop the threads in the storage engine and close it.
         ctrl_c_context.storage_engine.write().await.close().unwrap();
+
+        // If running in a cluster, remove the node from the remote data folder.
+        let configuration_manager = ctrl_c_context.configuration_manager.read().await;
+        if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+            cluster.remove_node().await.unwrap();
+        }
 
         std::process::exit(0)
     });
