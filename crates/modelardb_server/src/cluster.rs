@@ -15,12 +15,20 @@
 
 //! Functionality to perform operations on every node in the cluster.
 
-use rand::rng;
-use rand::seq::IteratorRandom;
+use std::str::FromStr;
 
+use arrow_flight::Ticket;
+use arrow_flight::flight_service_client::FlightServiceClient;
+use futures::StreamExt;
+use futures::stream::FuturesUnordered;
+use log::info;
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_storage::data_folder::cluster::ClusterMetadata;
 use modelardb_types::types::Node;
+use rand::rng;
+use rand::seq::IteratorRandom;
+use tonic::Request;
+use tonic::metadata::{Ascii, MetadataValue};
 
 use crate::error::{ModelarDbServerError, Result};
 
@@ -29,7 +37,7 @@ use crate::error::{ModelarDbServerError, Result};
 pub struct Cluster {
     /// Key identifying the cluster. The key is used to validate communication within the cluster
     /// between nodes.
-    key: String,
+    key: MetadataValue<Ascii>,
     /// The remote data folder that each node in the cluster should be synchronized with.
     /// When a table is created, dropped, vacuumed, or truncated, it is done in the
     /// remote data folder first.
@@ -42,6 +50,9 @@ impl Cluster {
     /// [`ModelarDbServerError`].
     pub async fn try_new(remote_data_folder: DataFolder) -> Result<Self> {
         let key = remote_data_folder.cluster_key().await?.to_string();
+
+        // Convert the key to a MetadataValue since it is used in tonic requests.
+        let key = MetadataValue::from_str(&key).expect("UUID Version 4 should be valid ASCII.");
 
         Ok(Self {
             key,
@@ -65,5 +76,43 @@ impl Cluster {
                 "There are no cloud nodes to execute the query in the cluster.".to_owned(),
             )
         })
+    }
+
+    /// For each node in the cluster, execute the given `sql` statement with the cluster key as
+    /// metadata. If the statement was successfully executed for each node, return [`Ok`], otherwise
+    /// return [`ModelarDbServerError`].
+    pub async fn cluster_do_get(&self, sql: &str) -> Result<()> {
+        let nodes = self.remote_data_folder.nodes().await?;
+
+        let mut do_get_futures: FuturesUnordered<_> = nodes
+            .iter()
+            .map(|node| self.connect_and_do_get(&node.url, sql))
+            .collect();
+
+        // TODO: Fix issue where we return immediately if we encounter an error. If it is a
+        //       connection error, we either need to retry later or remove the node.
+        // Run the futures concurrently and log when the statement has been executed on each node.
+        while let Some(result) = do_get_futures.next().await {
+            info!("Executed statement `{sql}` on node with url '{}'.", result?);
+        }
+
+        Ok(())
+    }
+
+    /// Connect to the Apache Arrow Flight server given by `url` and execute the given `sql`
+    /// statement with the key as metadata. If the statement was successfully executed, return the
+    /// url of the node to simplify logging, otherwise return [`ModelarDbServerError`].
+    async fn connect_and_do_get(&self, url: &str, sql: &str) -> Result<String> {
+        let mut flight_client = FlightServiceClient::connect(url.to_owned()).await?;
+
+        // Add the key to the request metadata to indicate that the request is a cluster operation.
+        let mut request = Request::new(Ticket::new(sql.to_owned()));
+        request
+            .metadata_mut()
+            .insert("x-cluster-key", self.key.clone());
+
+        flight_client.do_get(request).await?;
+
+        Ok(url.to_owned())
     }
 }
