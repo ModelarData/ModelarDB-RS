@@ -192,6 +192,23 @@ impl Cluster {
         Ok(())
     }
 
+    /// Drop the normal table with the given `table_name` in the remote data folder and in each peer
+    /// node. If the normal table could not be dropped, return [`ModelarDbServerError`].
+    pub(crate) async fn drop_cluster_table(&self, table_name: &str) -> Result<()> {
+        // Drop the table from the remote data folder.
+        self.remote_data_folder
+            .drop_table_metadata(table_name)
+            .await?;
+
+        self.remote_data_folder.drop_table(table_name).await?;
+
+        // Drop the table from each peer node.
+        self.cluster_do_get(&format!("DROP TABLE {table_name}"))
+            .await?;
+
+        Ok(())
+    }
+
     /// For each peer node in the cluster, execute the given `sql` statement with the cluster key
     /// as metadata. If the statement was successfully executed for each node, return [`Ok`],
     /// otherwise return [`ModelarDbServerError`].
