@@ -31,7 +31,7 @@ use modelardb_types::types::{Node, TimeSeriesTableMetadata};
 use rand::rng;
 use rand::seq::IteratorRandom;
 use tonic::Request;
-use tonic::metadata::{Ascii, MetadataMap, MetadataValue};
+use tonic::metadata::{Ascii, MetadataValue};
 
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
