@@ -182,10 +182,11 @@ jobs:
         mkdir modelardb_$RUST_TRIPLE
         mv crates/modelardb_embedded/bindings/python/dist/*.whl modelardb_$RUST_TRIPLE/
         mv crates/modelardb_embedded/bindings/python/dist/*.tar.gz modelardb_$RUST_TRIPLE/
-        mv target/release/modelardb modelardb_$RUST_TRIPLE/modelardb
-        mv target/release/modelardbb modelardb_$RUST_TRIPLE/modelardbb
-        mv target/release/modelardbd modelardb_$RUST_TRIPLE/modelardbd
-        mv target/release/modelardbm modelardb_$RUST_TRIPLE/modelardbm
+        if [[ $RUNNER_OS == 'Windows' ]]; then SUFFIX='.exe'; else SUFFIX=''; fi
+        mv target/release/modelardb$SUFFIX modelardb_$RUST_TRIPLE/modelardb$SUFFIX
+        mv target/release/modelardbb$SUFFIX modelardb_$RUST_TRIPLE/modelardbb$SUFFIX
+        mv target/release/modelardbd$SUFFIX modelardb_$RUST_TRIPLE/modelardbd$SUFFIX
+        mv target/release/modelardbm$SUFFIX modelardb_$RUST_TRIPLE/modelardbm$SUFFIX
 
     # Upload Binaries.
     - name: Artifact Upload
