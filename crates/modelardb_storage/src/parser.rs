@@ -132,11 +132,11 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 )?;
                 Ok(ModelarDbStatement::TruncateTable(table_names))
             }
-            // NOTIFY is used as a substitute for VACUUM since Statement does not have a
+            // DropSecret is used as a substitute for VACUUM since Statement does not have a
             // Vacuum enum variant.
-            Statement::NOTIFY { channel, payload } => Ok(ModelarDbStatement::Vacuum(
-                channel.value.split_terminator(';').map(|s| s.to_owned()).collect(),
-                payload.and_then(|p| p.parse::<u64>().ok()),
+            Statement::DropSecret { name, storage_specifier, .. } => Ok(ModelarDbStatement::Vacuum(
+                name.value.split_terminator(';').map(|s| s.to_owned()).collect(),
+                storage_specifier.and_then(|p| p.value.parse::<u64>().ok()),
             )),
             Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
             Statement::Query(ref boxed_query) => {
@@ -493,12 +493,12 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Parse VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a [`Statement::NOTIFY`]
-    /// with the table names in the `channel` field and the optional retention period in the `payload`
-    /// field. Note that [`Statement::NOTIFY`] is used since [`Statement`] does not have a `Vacuum`
-    /// variant. A [`ParserError`] is returned if VACUUM is not the first word, the table names
-    /// cannot be extracted, or the retention period is not a valid positive integer that is at
-    /// most [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds.
+    /// Parse VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a
+    /// [`Statement::DropSecret`] with the table names in the `name` field and the optional
+    /// retention period in the `storage_specifier` field. Note that [`Statement::DropSecret`] is
+    /// used since [`Statement`] does not have a `Vacuum` variant. A [`ParserError`] is returned if
+    /// VACUUM is not the first word, the table names cannot be extracted, or the retention period
+    /// is not a valid positive integer that is at most [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds.
     fn parse_vacuum(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // VACUUM.
         parser.expect_keyword(Keyword::VACUUM)?;
@@ -543,10 +543,13 @@ impl ModelarDbDialect {
             None
         };
 
-        // Return Statement::NOTIFY as a substitute for Vacuum.
-        Ok(Statement::NOTIFY {
-            channel: Ident::new(table_names.join(";")),
-            payload: maybe_retention_period_in_seconds.map(|period| period.to_string()),
+        // Return Statement::DropSecret as a substitute for Vacuum.
+        Ok(Statement::DropSecret {
+            if_exists: false,
+            temporary: None,
+            name: Ident::new(table_names.join(";")),
+            storage_specifier: maybe_retention_period_in_seconds
+                .map(|period| Ident::new(period.to_string())),
         })
     }
 
