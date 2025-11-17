@@ -2058,4 +2058,44 @@ mod tests {
             "Parser Error: sql parser error: Expected: end of statement, found: table_1 at Line: 1, Column: 18"
         );
     }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_last() {
+        let result = tokenize_and_parse_sql_statement("VACUUM table_1, table_2 RETAIN 30 CLUSTER");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: CLUSTER at Line: 1, Column: 35"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_after_tables_before_retain() {
+        let result = tokenize_and_parse_sql_statement("VACUUM table_1, table_2 CLUSTER RETAIN 30");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: CLUSTER at Line: 1, Column: 25"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_trailing_comma() {
+        let result = tokenize_and_parse_sql_statement("VACUUM CLUSTER, table_1");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: , at Line: 1, Column: 15"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_and_cluster_mixed() {
+        let result = tokenize_and_parse_sql_statement("VACUUM RETAIN CLUSTER 30");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: CLUSTER at Line: 1, Column: 15"
+        );
+    }
 }
