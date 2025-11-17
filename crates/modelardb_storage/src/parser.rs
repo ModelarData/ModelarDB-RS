@@ -1799,25 +1799,27 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_vacuum_all_tables() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM");
 
         assert!(table_names.is_empty());
         assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(!cluster)
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_single_table() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM table_name");
 
         assert_eq!(table_names, vec!["table_name".to_owned()]);
         assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(!cluster)
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2");
 
         assert_eq!(
@@ -1825,20 +1827,22 @@ mod tests {
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
         assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(!cluster)
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_with_retention_period() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM RETAIN 30");
 
         assert!(table_names.is_empty());
         assert_eq!(maybe_retention_period_in_seconds, Some(30));
+        assert!(!cluster)
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables_with_retention_period() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2 RETAIN 30");
 
         assert_eq!(
@@ -1846,14 +1850,65 @@ mod tests {
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
         assert_eq!(maybe_retention_period_in_seconds, Some(30));
+        assert!(!cluster)
     }
 
-    fn parse_vacuum_and_extract_table_names(sql_statement: &str) -> (Vec<String>, Option<u64>) {
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster() {
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
+            parse_vacuum_and_extract_table_names("VACUUM CLUSTER");
+
+        assert!(table_names.is_empty());
+        assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_with_multiple_tables() {
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
+            parse_vacuum_and_extract_table_names("VACUUM CLUSTER table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_with_retention_period() {
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
+            parse_vacuum_and_extract_table_names("VACUUM CLUSTER RETAIN 30");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_retention_period_in_seconds, Some(30));
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_with_multiple_tables_and_retention_period() {
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
+            parse_vacuum_and_extract_table_names(
+                "VACUUM CLUSTER table_name_1, table_name_2 RETAIN 30",
+            );
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert_eq!(maybe_retention_period_in_seconds, Some(30));
+        assert!(cluster)
+    }
+
+    fn parse_vacuum_and_extract_table_names(
+        sql_statement: &str,
+    ) -> (Vec<String>, Option<u64>, bool) {
         let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
 
         match modelardb_statement {
-            ModelarDbStatement::Vacuum(table_names, maybe_retention_period_in_seconds) => {
-                (table_names, maybe_retention_period_in_seconds)
+            ModelarDbStatement::Vacuum(table_names, maybe_retention_period_in_seconds, cluster) => {
+                (table_names, maybe_retention_period_in_seconds, cluster)
             }
             _ => panic!("Expected ModelarDbStatement::Vacuum."),
         }
