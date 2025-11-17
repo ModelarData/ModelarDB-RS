@@ -367,6 +367,35 @@ impl FlightServiceHandler {
         Ok(())
     }
 
+    /// Drop the table with the given `table_name`. If the node is running in a cluster, the table
+    /// is dropped in the remote data folder and locally in each node in the cluster. If not, the
+    /// table is only dropped locally.
+    async fn drop_table(
+        &self,
+        table_name: &str,
+        request_metadata: &MetadataMap,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        // If the cluster key is in the request, the request is from a peer node, which means the
+        // table has already been dropped in the remote data folder and propagated to all nodes.
+        if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode
+            && !cluster_key_in_request(cluster, request_metadata)?
+        {
+            cluster
+                .drop_cluster_table(table_name)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        self.context
+            .drop_table(table_name)
+            .await
+            .map_err(error_to_status_invalid_argument)?;
+
+        Ok(())
+    }
+
     /// While there is still more data to receive, ingest the data into the normal table.
     async fn ingest_into_normal_table(
         &self,
@@ -603,13 +632,8 @@ impl FlightService for FlightServiceHandler {
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::DropTable(table_names) => {
-                self.validate_request(request.metadata()).await?;
-
                 for table_name in table_names {
-                    self.context
-                        .drop_table(&table_name)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
+                    self.drop_table(&table_name, request.metadata()).await?;
                 }
 
                 Ok(empty_record_batch_stream())
