@@ -614,10 +614,7 @@ impl FlightService for FlightServiceHandler {
             description: "Get the type of the node.".to_owned(),
         };
 
-        let output = stream::iter(vec![
-            Ok(create_tables_action),
-            Ok(node_type_action),
-        ]);
+        let output = stream::iter(vec![Ok(create_tables_action), Ok(node_type_action)]);
 
         Ok(Response::new(Box::pin(output)))
     }

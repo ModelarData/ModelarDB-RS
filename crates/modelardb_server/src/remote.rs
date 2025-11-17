@@ -247,6 +247,7 @@ pub fn table_name_from_flight_descriptor(
 
 /// Return `true` if the request contains the cluster key and `false` if not. If the request
 /// contains a key that does not match the cluster key, return [`Status`].
+#[allow(clippy::result_large_err)]
 fn cluster_key_in_request(
     cluster: &Cluster,
     request_metadata: &MetadataMap,

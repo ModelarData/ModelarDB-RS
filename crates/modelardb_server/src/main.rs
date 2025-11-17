@@ -42,6 +42,7 @@ pub static PORT: LazyLock<u16> =
 
 /// The different possible modes that a ModelarDB server can be deployed in, assigned when the
 /// server is started.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub(crate) enum ClusterMode {
     SingleNode,
