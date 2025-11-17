@@ -123,11 +123,11 @@ impl Cluster {
         })
     }
 
-    /// For each node in the cluster, execute the given `sql` statement with the cluster key as
-    /// metadata. If the statement was successfully executed for each node, return [`Ok`], otherwise
-    /// return [`ModelarDbServerError`].
+    /// For each peer node in the cluster, execute the given `sql` statement with the cluster key
+    /// as metadata. If the statement was successfully executed for each node, return [`Ok`],
+    /// otherwise return [`ModelarDbServerError`].
     pub async fn cluster_do_get(&self, sql: &str) -> Result<()> {
-        let nodes = self.remote_data_folder.nodes().await?;
+        let nodes = self.peer_nodes().await?;
 
         let mut do_get_futures: FuturesUnordered<_> = nodes
             .iter()
@@ -161,11 +161,11 @@ impl Cluster {
         Ok(url.to_owned())
     }
 
-    /// For each node in the cluster, execute the given `action` with the cluster key as metadata.
-    /// If the action was successfully executed for each node, return [`Ok`], otherwise return
-    /// [`ModelarDbServerError`].
+    /// For each peer node in the cluster, execute the given `action` with the cluster key as
+    /// metadata. If the action was successfully executed for each node, return [`Ok`], otherwise
+    /// return [`ModelarDbServerError`].
     pub async fn cluster_do_action(&self, action: Action) -> Result<()> {
-        let nodes = self.remote_data_folder.nodes().await?;
+        let nodes = self.peer_nodes().await?;
 
         let mut action_futures: FuturesUnordered<_> = nodes
             .iter()
@@ -198,6 +198,17 @@ impl Cluster {
         flight_client.do_action(request).await?;
 
         Ok(url.to_owned())
+    }
+
+    /// Return all nodes in the cluster except the node that was saved when the [`Cluster`] was
+    /// created. If the nodes could not be retrieved, return [`ModelarDbServerError`].
+    async fn peer_nodes(&self) -> Result<Vec<Node>> {
+        let nodes = self.remote_data_folder.nodes().await?;
+
+        Ok(nodes
+            .into_iter()
+            .filter(|node| node.url != self.node.url)
+            .collect())
     }
 
     /// Remove the node that was saved when the [`Cluster`] was created from the remote data folder.
@@ -608,6 +619,31 @@ mod test {
             result.unwrap_err().to_string(),
             "Invalid State Error: There are no cloud nodes to execute the query in the cluster."
         );
+    }
+
+    #[tokio::test]
+    async fn test_peer_nodes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let cloud_node = Node::new("cloud".to_owned(), ServerMode::Cloud);
+        let cluster = create_cluster_with_node(&temp_dir, cloud_node).await;
+
+        let peer_1 = Node::new("peer_1".to_owned(), ServerMode::Edge);
+        cluster
+            .remote_data_folder
+            .save_node(peer_1.clone())
+            .await
+            .unwrap();
+
+        let peer_2 = Node::new("peer_2".to_owned(), ServerMode::Edge);
+        cluster
+            .remote_data_folder
+            .save_node(peer_2.clone())
+            .await
+            .unwrap();
+
+        let peer_nodes = cluster.peer_nodes().await.unwrap();
+        assert_eq!(vec![peer_2, peer_1], peer_nodes);
     }
 
     #[tokio::test]
