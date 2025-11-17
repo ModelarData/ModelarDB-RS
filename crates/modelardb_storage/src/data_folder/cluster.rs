@@ -31,6 +31,7 @@ use crate::error::Result;
 use crate::{register_metadata_table, sql_and_concat};
 
 /// Trait that extends [`DataFolder`] to provide management of the Delta Lake for the cluster.
+#[allow(async_fn_in_trait)]
 pub trait ClusterMetadata {
     async fn create_and_register_cluster_metadata_tables(&self) -> Result<()>;
     async fn cluster_key(&self) -> Result<Uuid>;
