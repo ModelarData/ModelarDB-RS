@@ -31,7 +31,7 @@ use modelardb_types::types::{Node, TimeSeriesTableMetadata};
 use rand::rng;
 use rand::seq::IteratorRandom;
 use tonic::Request;
-use tonic::metadata::{Ascii, MetadataValue};
+use tonic::metadata::{Ascii, MetadataMap, MetadataValue};
 
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
@@ -39,7 +39,7 @@ use crate::error::{ModelarDbServerError, Result};
 /// Stores the currently managed nodes in the cluster and allows for performing operations that need
 /// to be applied to every single node in the cluster.
 #[derive(Clone)]
-pub struct Cluster {
+pub(crate) struct Cluster {
     /// Node that represents the local system running `modelardbd`.
     node: Node,
     /// Key identifying the cluster. The key is used to validate communication within the cluster
@@ -56,7 +56,7 @@ impl Cluster {
     /// It is assumed that `node` corresponds to the local system running `modelardbd`. If the
     /// cluster metadata tables do not exist and could not be created or the node could not be
     /// saved, return [`ModelarDbServerError`].
-    pub async fn try_new(node: Node, remote_data_folder: DataFolder) -> Result<Self> {
+    pub(crate) async fn try_new(node: Node, remote_data_folder: DataFolder) -> Result<Self> {
         remote_data_folder
             .create_and_register_cluster_metadata_tables()
             .await?;
@@ -73,6 +73,11 @@ impl Cluster {
             key,
             remote_data_folder,
         })
+    }
+
+    /// Return the key identifying the cluster.
+    pub(crate) fn key(&self) -> &MetadataValue<Ascii> {
+        &self.key
     }
 
     /// Initialize the local database schema with the normal tables and time series tables from the
@@ -108,7 +113,7 @@ impl Cluster {
     /// Return the cloud node in the cluster that is currently most capable of running a query.
     /// Note that the most capable node is currently selected at random. If there are no cloud nodes
     /// in the cluster, return [`ModelarDbServerError`].
-    pub async fn query_node(&self) -> Result<Node> {
+    pub(crate) async fn query_node(&self) -> Result<Node> {
         let nodes = self.remote_data_folder.nodes().await?;
 
         let cloud_nodes = nodes
@@ -126,7 +131,7 @@ impl Cluster {
     /// For each peer node in the cluster, execute the given `sql` statement with the cluster key
     /// as metadata. If the statement was successfully executed for each node, return [`Ok`],
     /// otherwise return [`ModelarDbServerError`].
-    pub async fn cluster_do_get(&self, sql: &str) -> Result<()> {
+    pub(crate) async fn cluster_do_get(&self, sql: &str) -> Result<()> {
         let nodes = self.peer_nodes().await?;
 
         let mut do_get_futures: FuturesUnordered<_> = nodes
@@ -164,7 +169,7 @@ impl Cluster {
     /// For each peer node in the cluster, execute the given `action` with the cluster key as
     /// metadata. If the action was successfully executed for each node, return [`Ok`], otherwise
     /// return [`ModelarDbServerError`].
-    pub async fn cluster_do_action(&self, action: Action) -> Result<()> {
+    pub(crate) async fn cluster_do_action(&self, action: Action) -> Result<()> {
         let nodes = self.peer_nodes().await?;
 
         let mut action_futures: FuturesUnordered<_> = nodes
@@ -214,7 +219,7 @@ impl Cluster {
     /// Remove the node that was saved when the [`Cluster`] was created from the remote data folder.
     /// If the node could not be removed, return [`ModelarDbServerError`]. Note that this method
     /// should only be called when the process running `modelardbd` is stopped.
-    pub async fn remove_node(&self) -> Result<()> {
+    pub(crate) async fn remove_node(&self) -> Result<()> {
         self.remote_data_folder
             .remove_node(&self.node.url)
             .await

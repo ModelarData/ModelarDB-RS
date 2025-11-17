@@ -343,18 +343,22 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// If the server was started with a manager, validate the request by checking that the key in
-    /// the request metadata matches the key of the manager. If the request is invalid, return a
-    /// [`Status`] with the code [`tonic::Code::Unauthenticated`].
-    async fn validate_request(&self, request_metadata: &MetadataMap) -> StdResult<(), Status> {
-        let configuration_manager = self.context.configuration_manager.read().await;
-
-        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
-            manager
-                .validate_request(request_metadata)
-                .map_err(|error| Status::unauthenticated(error.to_string()))
+    /// Return `true` if the request contains the cluster key and `false` if not. If the request
+    /// contains a key that does not match the cluster key, return [`Status`].
+    async fn cluster_key_in_request(
+        cluster: &Cluster,
+        request_metadata: &MetadataMap,
+    ) -> StdResult<bool, Status> {
+        if let Some(request_key) = request_metadata.get("x-cluster-key") {
+            if cluster.key() == request_key {
+                Ok(true)
+            } else {
+                Err(Status::invalid_argument(
+                    "The cluster key in the request does not match the cluster key in the configuration.",
+                ))
+            }
         } else {
-            Ok(())
+            Ok(false)
         }
     }
 }
