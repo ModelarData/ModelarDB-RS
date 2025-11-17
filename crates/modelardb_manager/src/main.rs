@@ -17,22 +17,20 @@
 
 mod cluster;
 mod error;
-mod metadata;
 mod remote;
 
+use std::env;
 use std::sync::{Arc, LazyLock};
-use std::{env, process};
 
 use modelardb_storage::data_folder::DataFolder;
-use modelardb_types::flight::protocol;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
 use tonic::metadata::{Ascii, MetadataValue};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
 use crate::cluster::Cluster;
 use crate::error::{ModelarDbManagerError, Result};
-use crate::metadata::ManagerMetadata;
 use crate::remote::start_apache_arrow_flight_server;
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9998 is used.
@@ -43,9 +41,6 @@ pub static PORT: LazyLock<u16> =
 pub struct Context {
     /// [`DataFolder`] for storing metadata and data in Apache Parquet files.
     pub remote_data_folder: DataFolder,
-    /// Storage configuration encoded as a [`StorageConfiguration`](protocol::manager_metadata::StorageConfiguration)
-    /// protobuf message to make it possible to transfer the configuration using Apache Arrow Flight.
-    pub remote_storage_configuration: protocol::manager_metadata::StorageConfiguration,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
     /// Key used to identify requests coming from the manager.
@@ -62,32 +57,12 @@ async fn main() -> Result<()> {
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
 
-    let user_arguments = collect_command_line_arguments(3);
-    let user_arguments: Vec<&str> = user_arguments.iter().map(|arg| arg.as_str()).collect();
-    let remote_data_folder_str = match user_arguments.as_slice() {
-        &[remote_data_folder_str] => remote_data_folder_str,
-        _ => print_usage_and_exit_with_error("remote_data_folder"),
-    };
+    let remote_data_folder = DataFolder::open_remote_url("s3://test").await?;
 
-    let remote_storage_configuration =
-        modelardb_types::flight::argument_to_storage_configuration(remote_data_folder_str)?;
-    let remote_data_folder =
-        DataFolder::open_remote_url(remote_storage_configuration.clone()).await?;
-
-    remote_data_folder
-        .create_and_register_manager_metadata_data_folder_tables()
-        .await?;
-
-    let mut cluster = Cluster::new();
-    let nodes = remote_data_folder.nodes().await?;
-    for node in nodes {
-        cluster.register_node(node)?;
-    }
+    let cluster = Cluster::new();
 
     // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
-    let key = remote_data_folder
-        .manager_key()
-        .await?
+    let key = Uuid::new_v4()
         .to_string()
         .parse()
         .map_err(|error: InvalidMetadataValue| {
@@ -97,7 +72,6 @@ async fn main() -> Result<()> {
     // Create the Context.
     let context = Arc::new(Context {
         remote_data_folder,
-        remote_storage_configuration,
         cluster: RwLock::new(cluster),
         key,
     });
@@ -105,27 +79,4 @@ async fn main() -> Result<()> {
     start_apache_arrow_flight_server(context, *PORT).await?;
 
     Ok(())
-}
-
-/// Collect the command line arguments that this program was started with.
-pub fn collect_command_line_arguments(maximum_arguments: usize) -> Vec<String> {
-    let mut args = std::env::args();
-    args.next(); // Skip the executable.
-
-    // Collect at most the maximum number of command line arguments plus one. The plus one argument
-    // is collected to trigger the default pattern when parsing the command line arguments with
-    // pattern matching, making it possible to handle errors caused by too many arguments.
-    args.by_ref().take(maximum_arguments + 1).collect()
-}
-
-/// Prints a usage message with `parameters` appended to the name of the binary executing this
-/// function to stderr and exits with status code one to indicate that an error has occurred.
-pub fn print_usage_and_exit_with_error(parameters: &str) -> ! {
-    // The errors are consciously ignored as the program is terminating.
-    let binary_path = std::env::current_exe().unwrap();
-    let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-
-    // Punctuation at the end does not seem to be common in the usage message of Unix tools.
-    eprintln!("Usage: {binary_name} {parameters}");
-    process::exit(1);
 }
