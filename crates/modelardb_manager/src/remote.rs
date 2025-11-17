@@ -35,16 +35,13 @@ use arrow_flight::{
 use futures::{Stream, stream};
 use modelardb_storage::parser;
 use modelardb_storage::parser::ModelarDbStatement;
-use modelardb_types::flight::protocol;
 use modelardb_types::types::{Table, TimeSeriesTableMetadata};
-use prost::Message;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
 use crate::Context;
 use crate::error::{ModelarDbManagerError, Result};
-use crate::metadata::ManagerMetadata;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
 pub async fn start_apache_arrow_flight_server(context: Arc<Context>, port: u16) -> Result<()> {
@@ -558,14 +555,6 @@ impl FlightService for FlightServiceHandler {
     /// * `CreateTable`: Create the table given in the [`TableMetadata`](protocol::TableMetadata)
     /// protobuf message in the action body. The table is created for each node in the cluster of
     /// nodes controlled by the manager.
-    /// * `RegisterNode`: Register either an edge or cloud node with the manager. The url and mode
-    /// of the node must be provided in the action body as a [`NodeMetadata`](protocol::NodeMetadata)
-    /// protobuf message. The node is added to the cluster of nodes controlled by the manager and
-    /// the key and object store used in the cluster is returned as a
-    /// [`ManagerMetadata`](protocol::ManagerMetadata) protobuf message.
-    /// * `RemoveNode`: Remove the node given in the [`NodeMetadata`](protocol::NodeMetadata)
-    /// protobuf message in the action body. The node is removed from the cluster of nodes
-    /// controlled by the manager and the process running on the node is killed.
     /// * `NodeType`: Get the type of the node. The type is always `manager`. The type of the node
     /// is returned as a string.
     async fn do_action(
@@ -596,72 +585,6 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the tables were created.
             Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "RegisterNode" {
-            // Extract the node from the action body.
-            let node_metadata = protocol::NodeMetadata::decode(action.body)
-                .map_err(error_to_status_invalid_argument)?;
-            let node = modelardb_types::flight::decode_node_metadata(&node_metadata)
-                .map_err(error_to_status_invalid_argument)?;
-
-            // Use the cluster to register the node in memory. This returns an error if the node is
-            // already registered.
-            self.context
-                .cluster
-                .write()
-                .await
-                .register_node(node.clone())
-                .map_err(error_to_status_internal)?;
-
-            // Use the metadata manager to persist the node to the Delta Lake. Note that if this
-            // fails, the Delta Lake and the cluster will be out of sync until the manager is
-            // restarted.
-            self.context
-                .remote_data_folder
-                .save_node(node)
-                .await
-                .map_err(error_to_status_internal)?;
-
-            let manager_metadata = protocol::ManagerMetadata {
-                key: self
-                    .context
-                    .key
-                    .to_str()
-                    .expect("key should not contain invalid characters.")
-                    .to_owned(),
-                storage_configuration: Some(self.context.remote_storage_configuration.clone()),
-            };
-
-            let protobuf_bytes = manager_metadata.encode_to_vec();
-
-            // Return the key for the manager and the storage configuration for the remote object store.
-            Ok(Response::new(Box::pin(stream::once(async {
-                Ok(FlightResult {
-                    body: protobuf_bytes.into(),
-                })
-            }))))
-        } else if action.r#type == "RemoveNode" {
-            let node_metadata = protocol::NodeMetadata::decode(action.body)
-                .map_err(error_to_status_invalid_argument)?;
-
-            // Remove the node with the given url from the Delta Lake.
-            self.context
-                .remote_data_folder
-                .remove_node(&node_metadata.url)
-                .await
-                .map_err(error_to_status_internal)?;
-
-            // Remove the node with the given url from the cluster and kill it. Note that if this
-            // fails, the cluster and Delta Lake will be out of sync until the manager is restarted.
-            self.context
-                .cluster
-                .write()
-                .await
-                .remove_node(&node_metadata.url, &self.context.key)
-                .await
-                .map_err(error_to_status_internal)?;
-
-            // Confirm the node was removed.
-            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "NodeType" {
             let flight_result = FlightResult {
                 body: "manager".bytes().collect(),
@@ -686,17 +609,6 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let register_node_action = ActionType {
-            r#type: "RegisterNode".to_owned(),
-            description: "Register either an edge or cloud node with the manager.".to_owned(),
-        };
-
-        let remove_node_action = ActionType {
-            r#type: "RemoveNode".to_owned(),
-            description: "Remove a node from the manager and kill the process running on the node."
-                .to_owned(),
-        };
-
         let node_type_action = ActionType {
             r#type: "NodeType".to_owned(),
             description: "Get the type of the node.".to_owned(),
@@ -704,8 +616,6 @@ impl FlightService for FlightServiceHandler {
 
         let output = stream::iter(vec![
             Ok(create_tables_action),
-            Ok(register_node_action),
-            Ok(remove_node_action),
             Ok(node_type_action),
         ]);
 
