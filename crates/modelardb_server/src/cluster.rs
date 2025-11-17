@@ -128,6 +128,70 @@ impl Cluster {
         })
     }
 
+    /// Create a normal table with the given `table_name` and `schema` in the remote data folder and
+    /// in each peer node. If the normal table already exists or could not be created, return
+    /// [`ModelarDbServerError`].
+    pub(crate) async fn create_cluster_normal_table(
+        &self,
+        table_name: &str,
+        schema: &Schema,
+    ) -> Result<()> {
+        // Create the normal table in the remote data folder.
+        self.remote_data_folder
+            .create_normal_table(table_name, schema)
+            .await?;
+
+        self.remote_data_folder
+            .save_normal_table_metadata(table_name)
+            .await?;
+
+        // Create the normal table in each peer node.
+        let protobuf_bytes = modelardb_types::flight::encode_and_serialize_normal_table_metadata(
+            table_name, schema,
+        )?;
+
+        let action = Action {
+            r#type: "CreateTable".to_owned(),
+            body: protobuf_bytes.into(),
+        };
+
+        self.cluster_do_action(action).await?;
+
+        Ok(())
+    }
+
+    /// Create a time series table with the given `time_series_table_metadata` in the remote data
+    /// folder and in each peer node. If the time series table already exists or could not be
+    /// created, return [`ModelarDbServerError`].
+    pub(crate) async fn create_cluster_time_series_table(
+        &self,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
+    ) -> Result<()> {
+        // Create the time series table in the remote data folder.
+        self.remote_data_folder
+            .create_time_series_table(time_series_table_metadata)
+            .await?;
+
+        self.remote_data_folder
+            .save_time_series_table_metadata(time_series_table_metadata)
+            .await?;
+
+        // Create the time series table in each peer node.
+        let protobuf_bytes =
+            modelardb_types::flight::encode_and_serialize_time_series_table_metadata(
+                time_series_table_metadata,
+            )?;
+
+        let action = Action {
+            r#type: "CreateTable".to_owned(),
+            body: protobuf_bytes.into(),
+        };
+
+        self.cluster_do_action(action).await?;
+
+        Ok(())
+    }
+
     /// For each peer node in the cluster, execute the given `sql` statement with the cluster key
     /// as metadata. If the statement was successfully executed for each node, return [`Ok`],
     /// otherwise return [`ModelarDbServerError`].

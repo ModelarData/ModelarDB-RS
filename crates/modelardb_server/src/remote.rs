@@ -308,12 +308,12 @@ impl FlightServiceHandler {
         }
     }
 
-    /// Create a normal table with the given `name` and `schema`. If the node is running in a
+    /// Create a normal table with the given `table_name` and `schema`. If the node is running in a
     /// cluster, the table is created in the remote data folder and locally in each node in the
     /// cluster. If not, the table is only created locally.
     async fn create_normal_table(
         &self,
-        name: &str,
+        table_name: &str,
         schema: &Schema,
         request_metadata: &MetadataMap,
     ) -> StdResult<(), Status> {
@@ -325,13 +325,13 @@ impl FlightServiceHandler {
             && !cluster_key_in_request(cluster, request_metadata)?
         {
             cluster
-                .create_cluster_normal_table(name, schema)
+                .create_cluster_normal_table(table_name, schema)
                 .await
                 .map_err(error_to_status_invalid_argument)?;
         }
 
         self.context
-            .create_normal_table(name, schema)
+            .create_normal_table(table_name, schema)
             .await
             .map_err(error_to_status_invalid_argument)?;
 
