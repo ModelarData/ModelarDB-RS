@@ -55,6 +55,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::ClusterMode;
+use crate::cluster::Cluster;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 
@@ -244,6 +245,25 @@ pub fn table_name_from_flight_descriptor(
         .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
 }
 
+/// Return `true` if the request contains the cluster key and `false` if not. If the request
+/// contains a key that does not match the cluster key, return [`Status`].
+fn cluster_key_in_request(
+    cluster: &Cluster,
+    request_metadata: &MetadataMap,
+) -> StdResult<bool, Status> {
+    if let Some(request_key) = request_metadata.get("x-cluster-key") {
+        if cluster.key() == request_key {
+            Ok(true)
+        } else {
+            Err(Status::invalid_argument(
+                "The cluster key in the request does not match the cluster key in the configuration.",
+            ))
+        }
+    } else {
+        Ok(false)
+    }
+}
+
 /// Return an empty stream of [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) that
 /// can be returned when a SQL command has been successfully executed but did not produce any rows
 /// to return.
@@ -286,6 +306,65 @@ impl FlightServiceHandler {
             context,
             dictionaries_by_id: HashMap::new(),
         }
+    }
+
+    /// Create a normal table with the given `name` and `schema`. If the node is running in a
+    /// cluster, the table is created in the remote data folder and locally in each node in the
+    /// cluster. If not, the table is only created locally.
+    async fn create_normal_table(
+        &self,
+        name: &str,
+        schema: &Schema,
+        request_metadata: &MetadataMap,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        // If the cluster key is in the request, the request is from a peer node, which means the
+        // table has already been created in the remote data folder and propagated to all nodes.
+        if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode
+            && !cluster_key_in_request(cluster, request_metadata)?
+        {
+            cluster
+                .create_cluster_normal_table(name, schema)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        self.context
+            .create_normal_table(name, schema)
+            .await
+            .map_err(error_to_status_invalid_argument)?;
+
+        Ok(())
+    }
+
+    /// Create a time series table with the given `time_series_table_metadata`. If the node is
+    /// running in a cluster, the table is created in the remote data folder and locally in each
+    /// node in the cluster. If not, the table is only created locally.
+    async fn create_time_series_table(
+        &self,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
+        request_metadata: &MetadataMap,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        // If the cluster key is in the request, the request is from a peer node, which means the
+        // table has already been created in the remote data folder and propagated to all nodes.
+        if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode
+            && !cluster_key_in_request(cluster, request_metadata)?
+        {
+            cluster
+                .create_cluster_time_series_table(time_series_table_metadata)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        self.context
+            .create_time_series_table(time_series_table_metadata)
+            .await
+            .map_err(error_to_status_invalid_argument)?;
+
+        Ok(())
     }
 
     /// While there is still more data to receive, ingest the data into the normal table.
@@ -341,25 +420,6 @@ impl FlightServiceHandler {
         }
 
         Ok(())
-    }
-
-    /// Return `true` if the request contains the cluster key and `false` if not. If the request
-    /// contains a key that does not match the cluster key, return [`Status`].
-    async fn cluster_key_in_request(
-        cluster: &Cluster,
-        request_metadata: &MetadataMap,
-    ) -> StdResult<bool, Status> {
-        if let Some(request_key) = request_metadata.get("x-cluster-key") {
-            if cluster.key() == request_key {
-                Ok(true)
-            } else {
-                Err(Status::invalid_argument(
-                    "The cluster key in the request does not match the cluster key in the configuration.",
-                ))
-            }
-        } else {
-            Ok(false)
-        }
     }
 }
 
@@ -493,22 +553,14 @@ impl FlightService for FlightServiceHandler {
 
         let sendable_record_batch_stream = match modelardb_statement {
             ModelarDbStatement::CreateNormalTable { name, schema } => {
-                self.validate_request(request.metadata()).await?;
-
-                self.context
-                    .create_normal_table(&name, &schema)
-                    .await
-                    .map_err(error_to_status_invalid_argument)?;
+                self.create_normal_table(&name, &schema, request.metadata())
+                    .await?;
 
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::CreateTimeSeriesTable(time_series_table_metadata) => {
-                self.validate_request(request.metadata()).await?;
-
-                self.context
-                    .create_time_series_table(&time_series_table_metadata)
-                    .await
-                    .map_err(error_to_status_invalid_argument)?;
+                self.create_time_series_table(&time_series_table_metadata, request.metadata())
+                    .await?;
 
                 Ok(empty_record_batch_stream())
             }
@@ -689,24 +741,18 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTable" {
-            self.validate_request(request.metadata()).await?;
-
             let table_metadata =
                 modelardb_types::flight::deserialize_and_extract_table_metadata(&action.body)
                     .map_err(error_to_status_invalid_argument)?;
 
             match table_metadata {
                 Table::NormalTable(table_name, schema) => {
-                    self.context
-                        .create_normal_table(&table_name, &schema)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
+                    self.create_normal_table(&table_name, &schema, request.metadata())
+                        .await?;
                 }
                 Table::TimeSeriesTable(metadata) => {
-                    self.context
-                        .create_time_series_table(&metadata)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
+                    self.create_time_series_table(&metadata, request.metadata())
+                        .await?;
                 }
             }
 
@@ -737,8 +783,6 @@ impl FlightService for FlightServiceHandler {
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "KillNode" {
-            self.validate_request(request.metadata()).await?;
-
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine
                 .flush()
