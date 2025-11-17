@@ -69,7 +69,7 @@ pub enum ModelarDbStatement {
     /// TRUNCATE TABLE.
     TruncateTable(Vec<String>),
     /// VACUUM.
-    Vacuum(Vec<String>, Option<u64>),
+    Vacuum(Vec<String>, Option<u64>, bool),
 }
 
 /// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
@@ -134,9 +134,10 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
             }
             // DropSecret is used as a substitute for VACUUM since Statement does not have a
             // Vacuum enum variant.
-            Statement::DropSecret { name, storage_specifier, .. } => Ok(ModelarDbStatement::Vacuum(
+            Statement::DropSecret { name, storage_specifier, if_exists, .. } => Ok(ModelarDbStatement::Vacuum(
                 name.value.split_terminator(';').map(|s| s.to_owned()).collect(),
                 storage_specifier.and_then(|p| p.value.parse::<u64>().ok()),
+                if_exists,
             )),
             Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
             Statement::Query(ref boxed_query) => {
@@ -175,7 +176,7 @@ pub fn tokenize_and_parse_sql_expression(
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
 /// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements, and
-/// VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements.
+/// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -493,15 +494,26 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Parse VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a
-    /// [`Statement::DropSecret`] with the table names in the `name` field and the optional
-    /// retention period in the `storage_specifier` field. Note that [`Statement::DropSecret`] is
-    /// used since [`Statement`] does not have a `Vacuum` variant. A [`ParserError`] is returned if
-    /// VACUUM is not the first word, the table names cannot be extracted, or the retention period
-    /// is not a valid positive integer that is at most [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds.
+    /// Parse VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a
+    /// [`Statement::DropSecret`] with the table names in the `name` field, the cluster flag in
+    /// the `if_exists` field, and the optional retention period in the `storage_specifier` field.
+    /// Note that [`Statement::DropSecret`] is used since [`Statement`] does not have a `Vacuum`
+    /// variant. A [`ParserError`] is returned if VACUUM is not the first word, the table names
+    /// cannot be extracted, or the retention period is not a valid positive integer that is at
+    /// most [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds.
     fn parse_vacuum(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // VACUUM.
         parser.expect_keyword(Keyword::VACUUM)?;
+
+        // If the next token is CLUSTER, consume it and set the flag to vacuum the entire cluster.
+        let vacuum_cluster = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::CLUSTER
+        {
+            parser.expect_keyword(Keyword::CLUSTER)?;
+            true
+        } else {
+            false
+        };
 
         let mut table_names = vec![];
 
@@ -545,7 +557,7 @@ impl ModelarDbDialect {
 
         // Return Statement::DropSecret as a substitute for Vacuum.
         Ok(Statement::DropSecret {
-            if_exists: false,
+            if_exists: vacuum_cluster,
             temporary: None,
             name: Ident::new(table_names.join(";")),
             storage_specifier: maybe_retention_period_in_seconds
@@ -602,9 +614,10 @@ impl Dialect for ModelarDbDialect {
     /// as a CREATE TIME SERIES TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
     /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
     /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
-    /// VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If all checks fail,
-    /// [`None`] is returned so [`sqlparser`] uses its parsing methods for all other statements.
-    /// If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is returned.
+    /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If all
+    /// checks fail, [`None`] is returned so [`sqlparser`] uses its parsing methods for all other
+    /// statements. If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`]
+    /// is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_time_series_table(parser) {
             Some(self.parse_create_time_series_table(parser))
