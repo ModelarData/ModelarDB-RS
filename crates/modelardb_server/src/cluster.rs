@@ -192,8 +192,8 @@ impl Cluster {
         Ok(())
     }
 
-    /// Drop the normal table with the given `table_name` in the remote data folder and in each peer
-    /// node. If the normal table could not be dropped, return [`ModelarDbServerError`].
+    /// Drop the table with the given `table_name` in the remote data folder and in each peer
+    /// node. If the table could not be dropped, return [`ModelarDbServerError`].
     pub(crate) async fn drop_cluster_table(&self, table_name: &str) -> Result<()> {
         // Drop the table from the remote data folder.
         self.remote_data_folder
@@ -205,6 +205,43 @@ impl Cluster {
         // Drop the table from each peer node.
         self.cluster_do_get(&format!("DROP TABLE {table_name}"))
             .await?;
+
+        Ok(())
+    }
+
+    /// Truncate the table with the given `table_name` in the remote data folder and in each
+    /// peer node. If the table could not be truncated, return [`ModelarDbServerError`].
+    pub(crate) async fn truncate_cluster_table(&self, table_name: &str) -> Result<()> {
+        // Truncate the table in the remote data folder.
+        self.remote_data_folder.truncate_table(table_name).await?;
+
+        // Truncate the table in each peer node.
+        self.cluster_do_get(&format!("TRUNCATE {table_name}"))
+            .await?;
+
+        Ok(())
+    }
+
+    /// Vacuum the table with the given `table_name` in the remote data folder and in each peer
+    /// node. If the table could not be vacuumed, return [`ModelarDbServerError`].
+    pub(crate) async fn vacuum_cluster_table(
+        &self,
+        table_name: &str,
+        maybe_retention_period_in_seconds: Option<u64>,
+    ) -> Result<()> {
+        // Vacuum the table in the remote data folder.
+        self.remote_data_folder
+            .vacuum_table(table_name, maybe_retention_period_in_seconds)
+            .await?;
+
+        // Vacuum the table in each peer node.
+        let vacuum_sql = if let Some(retention_period) = maybe_retention_period_in_seconds {
+            format!("VACUUM {table_name} RETAIN {retention_period}")
+        } else {
+            format!("VACUUM {table_name}")
+        };
+
+        self.cluster_do_get(&vacuum_sql).await?;
 
         Ok(())
     }
