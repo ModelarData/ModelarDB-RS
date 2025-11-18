@@ -67,7 +67,7 @@ pub enum ModelarDbStatement {
     /// DROP TABLE.
     DropTable(Vec<String>),
     /// TRUNCATE TABLE.
-    TruncateTable(Vec<String>),
+    TruncateTable(Vec<String>, bool),
     /// VACUUM.
     Vacuum(Vec<String>, Option<u64>, bool),
 }
@@ -122,7 +122,7 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 cascade,
                 on_cluster,
             } => {
-                let table_names = semantic_checks_for_truncate(
+                let (table_names, cluster) = semantic_checks_for_truncate(
                     table_names,
                     partitions,
                     table,
@@ -130,7 +130,8 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                     cascade,
                     on_cluster,
                 )?;
-                Ok(ModelarDbStatement::TruncateTable(table_names))
+
+                Ok(ModelarDbStatement::TruncateTable(table_names, cluster))
             }
             // DropSecret is used as a substitute for VACUUM since Statement does not have a
             // Vacuum enum variant.
@@ -567,6 +568,61 @@ impl ModelarDbDialect {
             _ => parser.expected("literal integer", token_with_location),
         }
     }
+
+    /// Return [`true`] if the token stream starts with TRUNCATE, otherwise [`false`] is returned.
+    /// The method does not consume tokens.
+    fn next_token_is_truncate(&self, parser: &Parser) -> bool {
+        // TRUNCATE.
+        if let Token::Word(word) = parser.peek_nth_token(0).token {
+            word.keyword == Keyword::TRUNCATE
+        } else {
+            false
+        }
+    }
+
+    /// Parse TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ to a [`Statement::Truncate`] with the
+    /// table names in the `table_names` field and the cluster flag in the `on_cluster` field.
+    /// A [`ParserError`] is returned if TRUNCATE is not the first word or the table names cannot be
+    /// extracted.
+    fn parse_truncate(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
+        // TRUNCATE.
+        parser.expect_keyword(Keyword::TRUNCATE)?;
+
+        // If the next token is CLUSTER, consume it and set the flag to truncate the entire cluster.
+        let truncate_cluster = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::CLUSTER
+        {
+            parser.expect_keyword(Keyword::CLUSTER)?;
+
+            // A boolean is not used since we reuse the `on_cluster` field in Statement::Truncate.
+            // Some() with any value signifies that the flag is set.
+            Some(Ident::new("cluster"))
+        } else {
+            None
+        };
+
+        // Parse the table names. At least one table name is required.
+        let table_names = self.parse_table_names(parser)?;
+
+        // Convert the table names to the type required by Statement::Truncate.
+        let truncate_table_targets = table_names
+            .iter()
+            .map(|table_name| TruncateTableTarget {
+                name: ObjectName(vec![ObjectNamePart::Identifier(Ident::new(table_name))]),
+                only: false,
+            })
+            .collect();
+
+        Ok(Statement::Truncate {
+            table_names: truncate_table_targets,
+            partitions: None,
+            table: true,
+            identity: None,
+            cascade: None,
+            on_cluster: truncate_cluster,
+        })
+    }
+
     /// Return a list of table names parsed from the token stream. It is assumed that the table
     /// names are separated by commas. A [`ParserError`] is returned if the table names cannot be
     /// extracted.
@@ -637,6 +693,8 @@ impl Dialect for ModelarDbDialect {
             Some(self.parse_include_query(parser))
         } else if self.next_token_is_vacuum(parser) {
             Some(self.parse_vacuum(parser))
+        } else if self.next_token_is_truncate(parser) {
+            Some(self.parse_truncate(parser))
         } else {
             None
         }
@@ -1217,9 +1275,10 @@ fn semantic_checks_for_truncate(
     identity: Option<TruncateIdentityOption>,
     cascade: Option<CascadeOption>,
     on_cluster: Option<Ident>,
-    {
+) -> StdResult<(Vec<String>, bool), ParserError> {
+    if partitions.is_some() || !table || identity.is_some() || cascade.is_some() {
         Err(ParserError::ParserError(
-            "Only TRUNCATE TABLE is supported.".to_owned(),
+            "Only TRUNCATE [CLUSTER] table_name[, table_name]+ is supported.".to_owned(),
         ))
     } else {
         let mut table_names = Vec::with_capacity(names.len());
@@ -1235,7 +1294,7 @@ fn semantic_checks_for_truncate(
             table_names.push(table_name);
         }
 
-        Ok(table_names)
+        Ok((table_names, on_cluster.is_some()))
     }
 }
 
