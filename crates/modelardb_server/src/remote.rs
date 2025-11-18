@@ -397,12 +397,12 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Truncate the table with the given `table_name`. If the node is running in a cluster and
-    /// `truncate_cluster` is `true`, the table is truncated in the remote data folder and locally
-    /// in each node in the cluster. If not, the table is only truncated locally.
-    async fn truncate_table(
+    /// Truncate the tables in `table_names`. If the node is running in a cluster and
+    /// `truncate_cluster` is `true`, the tables are truncated in the remote data folder and
+    /// locally in each node in the cluster. If not, the tables are only truncated locally.
+    async fn truncate_tables(
         &self,
-        table_name: &str,
+        table_names: &[String],
         truncate_cluster: bool,
     ) -> StdResult<(), Status> {
         let configuration_manager = self.context.configuration_manager.read().await;
@@ -410,7 +410,7 @@ impl FlightServiceHandler {
         if truncate_cluster {
             if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
                 cluster
-                    .truncate_cluster_table(table_name)
+                    .truncate_cluster_tables(table_names)
                     .await
                     .map_err(error_to_status_invalid_argument)?;
             } else {
@@ -418,10 +418,12 @@ impl FlightServiceHandler {
             }
         }
 
-        self.context
-            .truncate_table(table_name)
-            .await
-            .map_err(error_to_status_invalid_argument)?;
+        for table_name in table_names {
+            self.context
+                .truncate_table(table_name)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
 
         Ok(())
     }
@@ -682,9 +684,7 @@ impl FlightService for FlightServiceHandler {
                 .await
             }
             ModelarDbStatement::TruncateTable(table_names, cluster) => {
-                for table_name in table_names {
-                    self.truncate_table(&table_name, cluster).await?;
-                }
+                self.truncate_tables(&table_names, cluster).await?;
 
                 Ok(empty_record_batch_stream())
             }

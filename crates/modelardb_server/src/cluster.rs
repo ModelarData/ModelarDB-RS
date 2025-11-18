@@ -209,15 +209,18 @@ impl Cluster {
         Ok(())
     }
 
-    /// Truncate the table with the given `table_name` in the remote data folder and in each
-    /// peer node. If the table could not be truncated, return [`ModelarDbServerError`].
-    pub(crate) async fn truncate_cluster_table(&self, table_name: &str) -> Result<()> {
-        // Truncate the table in the remote data folder.
-        self.remote_data_folder.truncate_table(table_name).await?;
+    /// Truncate the tables in `table_names` in the remote data folder and in each peer node.
+    /// If the tables could not be truncated, return [`ModelarDbServerError`].
+    pub(crate) async fn truncate_cluster_tables(&self, table_names: &[String]) -> Result<()> {
+        let truncate_sql = format!("TRUNCATE {}", table_names.join(", "));
 
-        // Truncate the table in each peer node.
-        self.cluster_do_get(&format!("TRUNCATE {table_name}"))
-            .await?;
+        // Truncate the tables in the remote data folder.
+        for table_name in table_names {
+            self.remote_data_folder.truncate_table(table_name).await?;
+        }
+
+        // Truncate the tables in each peer node.
+        self.cluster_do_get(&truncate_sql).await?;
 
         Ok(())
     }
