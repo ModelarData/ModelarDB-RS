@@ -593,7 +593,7 @@ mod tests {
     use tempfile::TempDir;
     use tonic::transport::Channel;
 
-    use crate::operations::client::{Client, Node};
+    use crate::operations::client::Client;
     use crate::record_batch_stream_to_record_batch;
 
     const NORMAL_TABLE_NAME: &str = "normal_table";
@@ -2730,7 +2730,6 @@ mod tests {
 
     fn lazy_modelardb_client() -> Client {
         Client {
-            node: Node::Server("localhost".to_owned()),
             flight_client: FlightServiceClient::new(
                 Channel::from_static("localhost").connect_lazy(),
             ),

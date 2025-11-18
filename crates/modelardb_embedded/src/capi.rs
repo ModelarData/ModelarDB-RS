@@ -45,7 +45,7 @@ use tokio::runtime::Runtime;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::Operations;
-use crate::operations::client::{Client, Node};
+use crate::operations::client::Client;
 use crate::operations::data_folder::DataFolderDataSink;
 use crate::record_batch_stream_to_record_batch;
 use crate::{Aggregate, TableType};
@@ -197,29 +197,20 @@ unsafe fn open_azure(
     Ok(data_folder)
 }
 
-/// Creates a [`Client`] that is connected to the Apache Arrow Flight server URL in `node_url_ptr`
+/// Creates a [`Client`] that is connected to the Apache Arrow Flight server URL in `url_ptr`
 /// and returns a pointer to the [`Client`] or a zero-initialized pointer if an error occurs.
-/// Assumes `node_url_ptr` points to a valid C string.
+/// Assumes `url_ptr` points to a valid C string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn modelardb_embedded_connect(
-    node_url_ptr: *const c_char,
-    is_server_node: bool,
-) -> *const c_void {
-    let maybe_client = unsafe { connect(node_url_ptr, is_server_node) };
+pub unsafe extern "C" fn modelardb_embedded_connect(url_ptr: *const c_char) -> *const c_void {
+    let maybe_client = unsafe { connect(url_ptr) };
     set_error_and_return_value_ptr(maybe_client)
 }
 
 /// See documentation for [`modelardb_embedded_connect()`].
-unsafe fn connect(node_url_ptr: *const c_char, is_server_node: bool) -> Result<Client> {
-    let node_url_str = unsafe { c_char_ptr_to_str(node_url_ptr)? };
+unsafe fn connect(url_ptr: *const c_char) -> Result<Client> {
+    let url_str = unsafe { c_char_ptr_to_str(url_ptr)? };
 
-    let node = if is_server_node {
-        Node::Server(node_url_str.to_owned())
-    } else {
-        Node::Manager(node_url_str.to_owned())
-    };
-
-    TOKIO_RUNTIME.block_on(Client::connect(node))
+    TOKIO_RUNTIME.block_on(Client::connect(url_str))
 }
 
 /// Moves the value in `maybe_value` to a [`Box`] and returns a pointer to it if `maybe_value` is
