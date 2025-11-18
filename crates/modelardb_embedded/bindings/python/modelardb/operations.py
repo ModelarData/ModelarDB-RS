@@ -123,6 +123,11 @@ class Operations:
             int modelardb_embedded_close(void* maybe_operations_ptr,
                                          bool is_data_folder);
 
+            int modelardb_embedded_modelardb_type(void* maybe_operations_ptr,
+                                                  bool is_data_folder,
+                                                  struct ArrowArray* modelardb_type_array_ptr,
+                                                  struct ArrowSchema* modelardb_type_array_schema_ptr);
+
             int modelardb_embedded_create(void* maybe_operations_ptr,
                                           bool is_data_folder,
                                           char* table_name_ptr,
@@ -343,6 +348,24 @@ class Operations:
             self.__operations_ptr, self.__is_data_folder
         )
         self.__check_return_code_and_raise_error(return_code)
+
+    def modelardb_type(self) -> str:
+        """Returns the type of the ModelarDB instance that :obj:`Operations` is connected to.
+
+        :return: The type of the ModelarDB instance.
+        :rtype: str
+        """
+        modelardb_type_ffi = FFIArray.from_type(StringArray)
+
+        return_code = self.__library.modelardb_embedded_modelardb_type(
+            self.__operations_ptr,
+            self.__is_data_folder,
+            modelardb_type_ffi.array_ptr,
+            modelardb_type_ffi.schema_ptr,
+        )
+        self.__check_return_code_and_raise_error(return_code)
+
+        return modelardb_type_ffi.array().to_pylist()[0]
 
     def create(self, table_name: str, table_type: NormalTable | TimeSeriesTable):
         """Creates a table with `table_name`, `schema`, and `error_bounds`.

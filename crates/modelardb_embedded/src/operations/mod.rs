@@ -36,6 +36,7 @@ use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::{Aggregate, TableType};
 
 /// Different types of ModelarDB instances that the Operations API can interact with.
+#[derive(Debug)]
 pub enum ModelarDBType {
     SingleEdge,
     ClusterEdge,
