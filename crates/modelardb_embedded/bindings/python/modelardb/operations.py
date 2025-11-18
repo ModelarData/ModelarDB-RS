@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import sys
 import platform
 import warnings
@@ -26,7 +25,6 @@ import pyarrow
 from pyarrow import MapArray, RecordBatch, Schema, StringArray
 from pyarrow.cffi import ffi
 
-from .node import Server, Manager
 from .error_bound import AbsoluteErrorBound
 from .table import NormalTable, TimeSeriesTable
 from .ffi_array import FFIArray
@@ -120,8 +118,7 @@ class Operations:
                                                 char* access_key_ptr,
                                                 char* container_name_ptr);
 
-            void* modelardb_embedded_connect(char* node_url_ptr,
-                                             bool is_server_node);
+            void* modelardb_embedded_connect(char* url_ptr);
 
             int modelardb_embedded_close(void* maybe_operations_ptr,
                                          bool is_data_folder);
@@ -322,19 +319,17 @@ class Operations:
         return self
 
     @classmethod
-    def connect(cls, node: Server | Manager):
+    def connect(cls, url: str):
         """Create a connection to an :obj:`Operations` node.
 
-        :param node: The ModelarDB node to connect to.
-        :type node: Server | Manager
+        :param url: The URL of the ModelarDB node to connect to.
+        :type url: str
         """
         self: Operations = cls()
 
-        node_url_ptr = ffi.new("char[]", bytes(node.url, "UTF-8"))
+        url_ptr = ffi.new("char[]", bytes(url, "UTF-8"))
 
-        self.__operations_ptr = self.__library.modelardb_embedded_connect(
-            node_url_ptr, isinstance(node, Server)
-        )
+        self.__operations_ptr = self.__library.modelardb_embedded_connect(url_ptr)
         self.__is_data_folder = False
 
         if self.__operations_ptr == ffi.NULL:
@@ -847,10 +842,10 @@ def open_azure(account_name: str, access_key: str, container_name: str) -> Opera
     return Operations.open_azure(account_name, access_key, container_name)
 
 
-def connect(node: Server | Manager) -> Operations:
+def connect(url: str) -> Operations:
     """Create a connection to an :obj:`Operations` node.
 
-    :param node: The ModelarDB node to connect to.
-    :type node: Server | Manager
+    :param url: The URL of the ModelarDB node to connect to.
+    :type url: str
     """
-    return Operations.connect(node)
+    return Operations.connect(url)
