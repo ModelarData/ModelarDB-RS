@@ -175,8 +175,9 @@ pub fn tokenize_and_parse_sql_expression(
 }
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
-/// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements, and
-/// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements.
+/// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements,
+/// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements, and
+/// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -624,10 +625,11 @@ impl Dialect for ModelarDbDialect {
     /// as a CREATE TIME SERIES TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
     /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
     /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
-    /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If all
-    /// checks fail, [`None`] is returned so [`sqlparser`] uses its parsing methods for all other
-    /// statements. If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`]
-    /// is returned.
+    /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If not,
+    /// check if the next token is TRUNCATE, if so, attempt to parse the token stream as a
+    /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statement. If all checks fail, [`None`] is
+    /// returned so [`sqlparser`] uses its parsing methods for all other statements. If parsing
+    /// succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_time_series_table(parser) {
             Some(self.parse_create_time_series_table(parser))
@@ -1215,12 +1217,6 @@ fn semantic_checks_for_truncate(
     identity: Option<TruncateIdentityOption>,
     cascade: Option<CascadeOption>,
     on_cluster: Option<Ident>,
-) -> StdResult<Vec<String>, ParserError> {
-    if partitions.is_some()
-        || !table
-        || identity.is_some()
-        || cascade.is_some()
-        || on_cluster.is_some()
     {
         Err(ParserError::ParserError(
             "Only TRUNCATE TABLE is supported.".to_owned(),
