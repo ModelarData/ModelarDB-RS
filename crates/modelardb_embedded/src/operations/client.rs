@@ -42,106 +42,20 @@ use crate::operations::{
 };
 use crate::{Aggregate, TableType};
 
-/// Types of nodes that can be connected to by [`Client`].
-#[derive(Clone)]
-pub enum Node {
-    /// The Apache Arrow Flight server URL of a ModelarDB server node.
-    Server(String),
-    /// The Apache Arrow Flight server URL of a ModelarDB manager node.
-    Manager(String),
-}
-
-impl Node {
-    /// Returns the URL of the node.
-    pub fn url(&self) -> &str {
-        match self {
-            Node::Server(url) => url,
-            Node::Manager(url) => url,
-        }
-    }
-
-    /// Returns the type of the node.
-    pub fn node_type(&self) -> &str {
-        match self {
-            Node::Server(_) => "server",
-            Node::Manager(_) => "manager",
-        }
-    }
-}
-
 /// Client for connecting to ModelarDB Apache Arrow Flight servers.
 #[derive(Clone)]
 pub struct Client {
-    /// The node that the client is connected to.
-    pub(crate) node: Node,
     /// Apache Arrow Flight client connected to the Apache Arrow Flight server of the ModelarDB node.
     pub(crate) flight_client: FlightServiceClient<Channel>,
 }
 
 impl Client {
-    /// Create a new [`Client`] that is connected to the node with the URL in `node`. If a
-    /// connection to the node could not be established or if the actual type of the node does not
-    /// match `node`, [`ModelarDbEmbeddedError`] is returned.
-    pub async fn connect(node: Node) -> Result<Client> {
-        // Retrieve the actual type of the node to ensure it matches the expected type.
-        let mut flight_client = FlightServiceClient::connect(node.url().to_owned()).await?;
+    /// Create a new [`Client`] that is connected to the node with `url`. If a connection
+    /// to the node could not be established, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn connect(url: &str) -> Result<Client> {
+        let flight_client = FlightServiceClient::connect(url.to_owned()).await?;
 
-        let action = Action {
-            r#type: "NodeType".to_owned(),
-            body: vec![].into(),
-        };
-
-        let response = flight_client.do_action(action).await?;
-
-        if let Some(response_message) = response.into_inner().message().await? {
-            let actual_node_type = str::from_utf8(&response_message.body)?;
-            let expected_node_type = node.node_type();
-
-            if actual_node_type == expected_node_type {
-                Ok(Client {
-                    node,
-                    flight_client,
-                })
-            } else {
-                Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-                    "The actual node type '{actual_node_type}' does not match the expected node type '{expected_node_type}'."
-                )))
-            }
-        } else {
-            Err(ModelarDbEmbeddedError::from(Status::internal(
-                "Could not retrieve the node type from the node.",
-            )))
-        }
-    }
-
-    /// Returns the client that should be used to execute the given command. If the client is
-    /// connected to a server, this will be the same client. If the client is connected to a
-    /// manager, this will be a cloud node in the cluster. If the cluster does not have at least one
-    /// cloud node or if a cloud node could not be retrieved, [`ModelarDbEmbeddedError`] is
-    /// returned.
-    async fn client_for_command(&mut self, command: &str) -> Result<FlightServiceClient<Channel>> {
-        match self.node {
-            Node::Server(_) => Ok(self.flight_client.clone()),
-            Node::Manager(_) => {
-                let request = FlightDescriptor::new_cmd(command.to_owned());
-                let flight_info = self.flight_client.get_flight_info(request).await?;
-
-                // Retrieve the location in the endpoint from the returned flight info.
-                if let [endpoint] = flight_info.into_inner().endpoint.as_slice() {
-                    if let [location] = endpoint.location.as_slice() {
-                        Ok(FlightServiceClient::connect(location.uri.clone()).await?)
-                    } else {
-                        Err(ModelarDbEmbeddedError::from(Status::internal(
-                            "Endpoint did not contain exactly one location.",
-                        )))
-                    }
-                } else {
-                    Err(ModelarDbEmbeddedError::from(Status::internal(
-                        "Flight info did not contain exactly one endpoint.",
-                    )))
-                }
-            }
-        }
+        Ok(Client { flight_client })
     }
 }
 
@@ -226,8 +140,6 @@ impl Operations for Client {
     /// the schema of `uncompressed_data` does not match the schema of the table, or the data could
     /// not be written to the table, [`ModelarDbEmbeddedError`] is returned.
     async fn write(&mut self, table_name: &str, uncompressed_data: RecordBatch) -> Result<()> {
-        let mut write_client = self.client_for_command("WRITE").await?;
-
         // Include the table name in the flight descriptor.
         let flight_descriptor = FlightDescriptor::new_path(vec![table_name.to_owned()]);
 
@@ -239,7 +151,7 @@ impl Operations for Client {
             maybe_flight_data.expect("Flight data should be validated by FlightDataEncoderBuilder.")
         });
 
-        write_client.do_put(flight_data_stream).await?;
+        self.flight_client.do_put(flight_data_stream).await?;
 
         Ok(())
     }
@@ -247,10 +159,8 @@ impl Operations for Client {
     /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`]. If the SQL
     /// could not be executed, [`ModelarDbEmbeddedError`] is returned.
     async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
-        let mut sql_client = self.client_for_command(sql).await?;
-
         let ticket = Ticket::new(sql.to_owned());
-        let stream = sql_client.do_get(ticket).await?.into_inner();
+        let stream = self.flight_client.do_get(ticket).await?.into_inner();
 
         let record_batch_stream = FlightRecordBatchStream::new_from_flight_data(
             // Convert tonic::Status to FlightError.
