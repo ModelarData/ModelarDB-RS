@@ -2163,4 +2163,45 @@ mod tests {
             "Parser Error: sql parser error: Expected: literal integer, found: CLUSTER at Line: 1, Column: 15"
         );
     }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_single_table() {
+        let (table_names, cluster) = parse_truncate_and_extract_table_names("TRUNCATE table_name");
+
+        assert_eq!(table_names, vec!["table_name".to_owned()]);
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_multiple_tables() {
+        let (table_names, cluster) =
+            parse_truncate_and_extract_table_names("TRUNCATE table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_cluster_multiple_tables() {
+        let (table_names, cluster) =
+            parse_truncate_and_extract_table_names("TRUNCATE CLUSTER table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert!(cluster)
+    }
+
+    fn parse_truncate_and_extract_table_names(sql_statement: &str) -> (Vec<String>, bool) {
+        let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
+
+        match modelardb_statement {
+            ModelarDbStatement::TruncateTable(table_names, cluster) => (table_names, cluster),
+            _ => panic!("Expected ModelarDbStatement::TruncateTable."),
+        }
+    }
 }
