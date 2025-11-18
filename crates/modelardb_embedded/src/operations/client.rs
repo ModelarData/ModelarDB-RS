@@ -341,7 +341,7 @@ impl Operations for Client {
     /// Truncate the table with the name in `table_name`. If the table could not be truncated,
     /// [`ModelarDbEmbeddedError`] is returned.
     async fn truncate(&mut self, table_name: &str) -> Result<()> {
-        let ticket = Ticket::new(format!("TRUNCATE TABLE {table_name}"));
+        let ticket = Ticket::new(format!("TRUNCATE {table_name}"));
         self.flight_client.do_get(ticket).await?;
 
         Ok(())

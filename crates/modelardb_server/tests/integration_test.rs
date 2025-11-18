@@ -250,7 +250,7 @@ impl TestContext {
         &mut self,
         table_name: &str,
     ) -> Result<Response<Streaming<FlightData>>, Status> {
-        let ticket = Ticket::new(format!("TRUNCATE TABLE {table_name}"));
+        let ticket = Ticket::new(format!("TRUNCATE {table_name}"));
         self.client.do_get(ticket).await
     }
 

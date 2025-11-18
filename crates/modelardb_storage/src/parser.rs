@@ -66,7 +66,7 @@ pub enum ModelarDbStatement {
     IncludeSelect(Statement, Vec<String>),
     /// DROP TABLE.
     DropTable(Vec<String>),
-    /// TRUNCATE TABLE.
+    /// TRUNCATE.
     TruncateTable(Vec<String>, bool),
     /// VACUUM.
     Vacuum(Vec<String>, Option<u64>, bool),
@@ -75,7 +75,7 @@ pub enum ModelarDbStatement {
 /// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
 /// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contains
 /// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE TIME SERIES
-/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, DROP TABLE, and VACUUM are supported.
+/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE, DROP TABLE, and VACUUM are supported.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
 

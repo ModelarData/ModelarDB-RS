@@ -300,7 +300,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .cluster_do_get(&format!("TRUNCATE TABLE {table_name}"), &self.context.key)
+            .cluster_do_get(&format!("TRUNCATE {table_name}"), &self.context.key)
             .await
             .map_err(error_to_status_internal)?;
 
@@ -457,7 +457,7 @@ impl FlightService for FlightServiceHandler {
     }
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
-    /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, TRUNCATE TABLE,
+    /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, TRUNCATE,
     /// DROP TABLE, and VACUUM are supported.
     async fn do_get(
         &self,
@@ -491,7 +491,7 @@ impl FlightService for FlightServiceHandler {
                 self.save_and_create_cluster_time_series_table(time_series_table_metadata)
                     .await?;
             }
-            ModelarDbStatement::TruncateTable(table_names) => {
+            ModelarDbStatement::TruncateTable(table_names, ..) => {
                 for table_name in table_names {
                     self.truncate_cluster_table(&table_name).await?;
                 }
@@ -501,7 +501,7 @@ impl FlightService for FlightServiceHandler {
                     self.drop_cluster_table(&table_name).await?;
                 }
             }
-            ModelarDbStatement::Vacuum(mut table_names, maybe_retention_period_in_seconds) => {
+            ModelarDbStatement::Vacuum(mut table_names, maybe_retention_period_in_seconds, ..) => {
                 // Vacuum all tables if no table names are provided.
                 if table_names.is_empty() {
                     table_names = self
@@ -520,7 +520,7 @@ impl FlightService for FlightServiceHandler {
             // .. is not used so a compile error is raised if a new ModelarDbStatement is added.
             ModelarDbStatement::Statement(_) | ModelarDbStatement::IncludeSelect(..) => {
                 return Err(Status::invalid_argument(
-                    "Expected CREATE TABLE, CREATE TIME SERIES TABLE, TRUNCATE TABLE, or DROP TABLE.",
+                    "Expected CREATE TABLE, CREATE TIME SERIES TABLE, TRUNCATE, or DROP TABLE.",
                 ));
             }
         };
