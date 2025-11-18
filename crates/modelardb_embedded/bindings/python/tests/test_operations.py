@@ -20,6 +20,7 @@ from tempfile import TemporaryDirectory
 import pyarrow
 from modelardb import (
     Aggregate,
+    ModelarDBType,
     AbsoluteErrorBound,
     TimeSeriesTable,
     NormalTable,
@@ -45,7 +46,8 @@ class TestOperations(unittest.TestCase):
     def test_data_folder_modelardb_type(self):
         with TemporaryDirectory() as temp_dir:
             data_folder = Operations.open_local(temp_dir)
-            self.assertEqual(data_folder.modelardb_type(), "DataFolder")
+
+            self.assertEqual(data_folder.modelardb_type(), ModelarDBType.DataFolder)
 
     def test_data_folder_create_normal_table(self):
         with TemporaryDirectory() as temp_dir:

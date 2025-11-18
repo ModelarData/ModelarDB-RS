@@ -18,6 +18,7 @@ from .error_bound import AbsoluteErrorBound, RelativeErrorBound
 from .ffi_array import FFIArray
 from .operations import (
     Aggregate,
+    ModelarDBType,
     Operations,
     open_memory,
     open_local,

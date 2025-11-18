@@ -30,6 +30,15 @@ from .table import NormalTable, TimeSeriesTable
 from .ffi_array import FFIArray
 
 
+class ModelarDBType(Enum):
+    """Different types of ModelarDB instances that the Operations API can interact with."""
+
+    SingleEdge = 0
+    ClusterEdge = 1
+    ClusterCloud = 2
+    DataFolder = 3
+
+
 class Aggregate(Enum):
     """Aggregate operations supported by :meth:`Operations.read`."""
 
@@ -349,11 +358,11 @@ class Operations:
         )
         self.__check_return_code_and_raise_error(return_code)
 
-    def modelardb_type(self) -> str:
+    def modelardb_type(self) -> ModelarDBType:
         """Returns the type of the ModelarDB instance that :obj:`Operations` is connected to.
 
         :return: The type of the ModelarDB instance.
-        :rtype: str
+        :rtype: ModelarDBType
         """
         modelardb_type_ffi = FFIArray.from_type(StringArray)
 
@@ -365,7 +374,8 @@ class Operations:
         )
         self.__check_return_code_and_raise_error(return_code)
 
-        return modelardb_type_ffi.array().to_pylist()[0]
+        modelardb_type_str = modelardb_type_ffi.array().to_pylist()[0]
+        return ModelarDBType[modelardb_type_str]
 
     def create(self, table_name: str, table_type: NormalTable | TimeSeriesTable):
         """Creates a table with `table_name`, `schema`, and `error_bounds`.
