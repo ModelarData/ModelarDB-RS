@@ -515,26 +515,14 @@ impl ModelarDbDialect {
             false
         };
 
-        let mut table_names = vec![];
-
         // If the next token is a word that is not RETAIN, attempt to parse table names.
-        if let Token::Word(word) = parser.peek_nth_token(0).token
+        let table_names = if let Token::Word(word) = parser.peek_nth_token(0).token
             && word.keyword != Keyword::RETAIN
         {
-            loop {
-                match self.parse_word_value(parser) {
-                    Ok(table_name) => {
-                        table_names.push(table_name);
-                        if Token::Comma == parser.peek_nth_token(0).token {
-                            parser.next_token();
-                        } else {
-                            break;
-                        };
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-        }
+            self.parse_table_names(parser)?
+        } else {
+            vec![]
+        };
 
         // If the next token is RETAIN, attempt to parse the retention period in seconds.
         let maybe_retention_period_in_seconds = if let Token::Word(word) =
@@ -577,6 +565,28 @@ impl ModelarDbDialect {
             }),
             _ => parser.expected("literal integer", token_with_location),
         }
+    }
+    /// Return a list of table names parsed from the token stream. It is assumed that the table
+    /// names are separated by commas. A [`ParserError`] is returned if the table names cannot be
+    /// extracted.
+    fn parse_table_names(&self, parser: &mut Parser) -> StdResult<Vec<String>, ParserError> {
+        let mut table_names = vec![];
+
+        loop {
+            match self.parse_word_value(parser) {
+                Ok(table_name) => {
+                    table_names.push(table_name);
+                    if Token::Comma == parser.peek_nth_token(0).token {
+                        parser.next_token();
+                    } else {
+                        break;
+                    };
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Ok(table_names)
     }
 }
 
