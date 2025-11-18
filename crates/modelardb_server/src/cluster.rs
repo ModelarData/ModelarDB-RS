@@ -75,6 +75,11 @@ impl Cluster {
         })
     }
 
+    /// Return the node that represents the local system running `modelardbd`.
+    pub(crate) fn node(&self) -> &Node {
+        &self.node
+    }
+
     /// Return the key identifying the cluster.
     pub(crate) fn key(&self) -> &MetadataValue<Ascii> {
         &self.key

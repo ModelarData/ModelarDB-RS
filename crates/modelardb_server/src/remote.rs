@@ -44,7 +44,7 @@ use futures::stream::{self, BoxStream, SelectAll};
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::flight::protocol;
 use modelardb_types::functions;
-use modelardb_types::types::{Table, TimeSeriesTableMetadata};
+use modelardb_types::types::{ServerMode, Table, TimeSeriesTableMetadata};
 use prost::Message;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -814,8 +814,8 @@ impl FlightService for FlightServiceHandler {
     /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
     /// and the new value are provided in the [`UpdateConfiguration`](protocol::UpdateConfiguration)
     /// protobuf message in the action body.
-    /// * `NodeType`: Get the type of the node. The type is always `server`. The type of the node
-    /// is returned as a string.
+    /// * `NodeType`: Get the type of the node. The type is `SingleEdge`, `ClusterEdge`, or
+    /// `ClusterCloud`. The type of the node is returned as a string.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -958,8 +958,18 @@ impl FlightService for FlightServiceHandler {
             // Confirm the configuration was updated.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "NodeType" {
+            let configuration_manager = self.context.configuration_manager.read().await;
+
+            let node_type = match &configuration_manager.cluster_mode {
+                ClusterMode::SingleNode => "SingleEdge",
+                ClusterMode::MultiNode(cluster) => match cluster.node().mode {
+                    ServerMode::Edge => "ClusterEdge",
+                    ServerMode::Cloud => "ClusterCloud",
+                },
+            };
+
             let flight_result = FlightResult {
-                body: "server".bytes().collect(),
+                body: node_type.bytes().collect(),
             };
 
             Ok(Response::new(Box::pin(stream::once(async {
