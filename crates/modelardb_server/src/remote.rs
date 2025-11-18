@@ -428,12 +428,12 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Vacuum the table with the given `table_name`. If the node is running in a cluster and
-    /// `vacuum_cluster` is `true`, the table is vacuumed in the remote data folder and locally in
-    /// each node in the cluster. If not, the table is only vacuumed locally.
-    async fn vacuum_table(
+    /// Vacuum the tables in `table_names`. If the node is running in a cluster and `vacuum_cluster`
+    /// is `true`, the tables are vacuumed in the remote data folder and locally in each node in the
+    /// cluster. If not, the tables are only vacuumed locally.
+    async fn vacuum_tables(
         &self,
-        table_name: &str,
+        table_names: &[String],
         maybe_retention_period_in_seconds: Option<u64>,
         vacuum_cluster: bool,
     ) -> StdResult<(), Status> {
@@ -442,7 +442,7 @@ impl FlightServiceHandler {
         if vacuum_cluster {
             if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
                 cluster
-                    .vacuum_cluster_table(table_name, maybe_retention_period_in_seconds)
+                    .vacuum_cluster_tables(table_names, maybe_retention_period_in_seconds)
                     .await
                     .map_err(error_to_status_invalid_argument)?;
             } else {
@@ -450,10 +450,12 @@ impl FlightServiceHandler {
             }
         }
 
-        self.context
-            .vacuum_table(table_name, maybe_retention_period_in_seconds)
-            .await
-            .map_err(error_to_status_invalid_argument)?;
+        for table_name in table_names {
+            self.context
+                .vacuum_table(table_name, maybe_retention_period_in_seconds)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
 
         Ok(())
     }
@@ -709,10 +711,8 @@ impl FlightService for FlightServiceHandler {
                         .table_names();
                 };
 
-                for table_name in table_names {
-                    self.vacuum_table(&table_name, maybe_retention_period_in_seconds, cluster)
-                        .await?;
-                }
+                self.vacuum_tables(&table_names, maybe_retention_period_in_seconds, cluster)
+                    .await?;
 
                 Ok(empty_record_batch_stream())
             }

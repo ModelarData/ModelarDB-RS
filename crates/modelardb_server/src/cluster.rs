@@ -212,36 +212,40 @@ impl Cluster {
     /// Truncate the tables in `table_names` in the remote data folder and in each peer node.
     /// If the tables could not be truncated, return [`ModelarDbServerError`].
     pub(crate) async fn truncate_cluster_tables(&self, table_names: &[String]) -> Result<()> {
-        let truncate_sql = format!("TRUNCATE {}", table_names.join(", "));
-
         // Truncate the tables in the remote data folder.
         for table_name in table_names {
             self.remote_data_folder.truncate_table(table_name).await?;
         }
 
         // Truncate the tables in each peer node.
+        let truncate_sql = format!("TRUNCATE {}", table_names.join(", "));
         self.cluster_do_get(&truncate_sql).await?;
 
         Ok(())
     }
 
-    /// Vacuum the table with the given `table_name` in the remote data folder and in each peer
-    /// node. If the table could not be vacuumed, return [`ModelarDbServerError`].
-    pub(crate) async fn vacuum_cluster_table(
+    /// Vacuum the tables in `table_names` in the remote data folder and in each peer node. If the
+    /// tables could not be vacuumed, return [`ModelarDbServerError`].
+    pub(crate) async fn vacuum_cluster_tables(
         &self,
-        table_name: &str,
+        table_names: &[String],
         maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()> {
-        // Vacuum the table in the remote data folder.
-        self.remote_data_folder
-            .vacuum_table(table_name, maybe_retention_period_in_seconds)
-            .await?;
+        // Vacuum the tables in the remote data folder.
+        for table_name in table_names {
+            self.remote_data_folder
+                .vacuum_table(table_name, maybe_retention_period_in_seconds)
+                .await?;
+        }
 
-        // Vacuum the table in each peer node.
+        // Vacuum the tables in each peer node.
         let vacuum_sql = if let Some(retention_period) = maybe_retention_period_in_seconds {
-            format!("VACUUM {table_name} RETAIN {retention_period}")
+            format!(
+                "VACUUM {} RETAIN {retention_period}",
+                table_names.join(", ")
+            )
         } else {
-            format!("VACUUM {table_name}")
+            format!("VACUUM {}", table_names.join(", "))
         };
 
         self.cluster_do_get(&vacuum_sql).await?;
