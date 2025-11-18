@@ -426,6 +426,36 @@ impl FlightServiceHandler {
         Ok(())
     }
 
+    /// Vacuum the table with the given `table_name`. If the node is running in a cluster and
+    /// `vacuum_cluster` is `true`, the table is vacuumed in the remote data folder and locally in
+    /// each node in the cluster. If not, the table is only vacuumed locally.
+    async fn vacuum_table(
+        &self,
+        table_name: &str,
+        maybe_retention_period_in_seconds: Option<u64>,
+        vacuum_cluster: bool,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        if vacuum_cluster {
+            if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+                cluster
+                    .vacuum_cluster_table(table_name, maybe_retention_period_in_seconds)
+                    .await
+                    .map_err(error_to_status_invalid_argument)?;
+            } else {
+                return Err(Status::internal("The node is not running in a cluster."));
+            }
+        }
+
+        self.context
+            .vacuum_table(table_name, maybe_retention_period_in_seconds)
+            .await
+            .map_err(error_to_status_invalid_argument)?;
+
+        Ok(())
+    }
+
     /// While there is still more data to receive, ingest the data into the normal table.
     async fn ingest_into_normal_table(
         &self,
@@ -665,7 +695,11 @@ impl FlightService for FlightServiceHandler {
 
                 Ok(empty_record_batch_stream())
             }
-            ModelarDbStatement::Vacuum(mut table_names, maybe_retention_period_in_seconds) => {
+            ModelarDbStatement::Vacuum(
+                mut table_names,
+                maybe_retention_period_in_seconds,
+                cluster,
+            ) => {
                 // Vacuum all tables if no table names are provided.
                 if table_names.is_empty() {
                     table_names = self
@@ -676,10 +710,8 @@ impl FlightService for FlightServiceHandler {
                 };
 
                 for table_name in table_names {
-                    self.context
-                        .vacuum_table(&table_name, maybe_retention_period_in_seconds)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
+                    self.vacuum_table(&table_name, maybe_retention_period_in_seconds, cluster)
+                        .await?;
                 }
 
                 Ok(empty_record_batch_stream())
