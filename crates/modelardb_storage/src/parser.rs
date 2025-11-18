@@ -2204,4 +2204,84 @@ mod tests {
             _ => panic!("Expected ModelarDbStatement::TruncateTable."),
         }
     }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_no_tables() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_trailing_comma() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE table_name,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_leading_comma() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE ,table_name");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: , at Line: 1, Column: 10"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_only_comma() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: , at Line: 1, Column: 9"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_quoted_table_name() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE 'table_name'");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: 'table_name' at Line: 1, Column: 10"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_only_cluster() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE CLUSTER");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_cluster_after_tables() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE table_1, table_2 CLUSTER");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: CLUSTER at Line: 1, Column: 27"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_cluster_trailing_comma() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE CLUSTER, table_name");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: , at Line: 1, Column: 17"
+        );
+    }
 }
