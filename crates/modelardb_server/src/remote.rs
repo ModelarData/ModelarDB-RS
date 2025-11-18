@@ -397,6 +397,35 @@ impl FlightServiceHandler {
         Ok(())
     }
 
+    /// Truncate the table with the given `table_name`. If the node is running in a cluster and
+    /// `truncate_cluster` is `true`, the table is truncated in the remote data folder and locally
+    /// in each node in the cluster. If not, the table is only truncated locally.
+    async fn truncate_table(
+        &self,
+        table_name: &str,
+        truncate_cluster: bool,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        if truncate_cluster {
+            if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+                cluster
+                    .truncate_cluster_table(table_name)
+                    .await
+                    .map_err(error_to_status_invalid_argument)?;
+            } else {
+                return Err(Status::internal("The node is not running in a cluster."));
+            }
+        }
+
+        self.context
+            .truncate_table(table_name)
+            .await
+            .map_err(error_to_status_invalid_argument)?;
+
+        Ok(())
+    }
+
     /// While there is still more data to receive, ingest the data into the normal table.
     async fn ingest_into_normal_table(
         &self,
@@ -622,12 +651,9 @@ impl FlightService for FlightServiceHandler {
                 )
                 .await
             }
-            ModelarDbStatement::TruncateTable(table_names) => {
+            ModelarDbStatement::TruncateTable(table_names, cluster) => {
                 for table_name in table_names {
-                    self.context
-                        .truncate_table(&table_name)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
+                    self.truncate_table(&table_name, cluster).await?;
                 }
 
                 Ok(empty_record_batch_stream())
