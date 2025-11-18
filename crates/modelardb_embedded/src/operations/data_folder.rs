@@ -35,7 +35,8 @@ use modelardb_storage::data_folder::DataFolder;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
-    Operations, generate_read_time_series_table_sql, try_new_time_series_table_metadata,
+    ModelarDBType, Operations, generate_read_time_series_table_sql,
+    try_new_time_series_table_metadata,
 };
 use crate::{Aggregate, TableType};
 
@@ -110,6 +111,11 @@ impl Operations for DataFolder {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    /// Returns that the ModelarDB instance is a data folder.
+    async fn modelardb_type(&mut self) -> Result<ModelarDBType> {
+        Ok(ModelarDBType::DataFolder)
     }
 
     /// Creates a table with the name in `table_name` and the information in `table_type`. If the

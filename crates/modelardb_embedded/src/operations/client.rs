@@ -19,6 +19,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::str;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
@@ -38,7 +39,8 @@ use tonic::{Request, Status};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
-    Operations, generate_read_time_series_table_sql, try_new_time_series_table_metadata,
+    ModelarDBType, Operations, generate_read_time_series_table_sql,
+    try_new_time_series_table_metadata,
 };
 use crate::{Aggregate, TableType};
 
@@ -64,6 +66,25 @@ impl Operations for Client {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    /// Returns the type of the ModelarDB node that the client is connected to.
+    async fn modelardb_type(&mut self) -> Result<ModelarDBType> {
+        // Retrieve the node type from the ModelarDB node.
+        let action = Action {
+            r#type: "NodeType".to_owned(),
+            body: vec![].into(),
+        };
+
+        let response = self.flight_client.do_action(Request::new(action)).await?;
+
+        let message = response
+            .into_inner()
+            .message()
+            .await?
+            .expect("Flight message should exist.");
+
+        ModelarDBType::from_str(str::from_utf8(&message.body)?)
     }
 
     /// Creates a table with the name in `table_name` and the information in `table_type`. If the
