@@ -38,36 +38,32 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
    - Run Tests: `cargo test`
    - Run DBMS Server: `cargo run --bin modelardbd path_to_local_data_folder`
    - Run Client: `cargo run --bin modelardb [server_address] [query_file]`
-6. Move `modelardbd`, `modelardbm`,`modelardb`, and `modelardbb` from the `target` directory to any
-   directory.
+6. Move `modelardbd`, `modelardb`, and `modelardbb` from the `target` directory to any directory.
 7. Install and test the Python bindings for `modelardb_embedded` using Python:
    * Install: `python3 -m pip install .`
    * Run Tests: `python3 -m unittest`
 
 ## Usage
-ModelarDB consists of four binaries and a library with bindings: `modelardbd` is a DBMS server that manages data and
-executes SQL queries, `modelardbm` is a manager for one or more `modelardbd` instances deployed on the *edge* or in the
-*cloud*, `modelardb` is a command-line client for connecting to a `modelardbd` instance and executing commands and SQL
-queries, `modelardbb` is a command-line bulk loader that operates without `modelardbd` as it reads from and writes to
-`modelardbd`'s data folder directly, and `modelardb_embedded` is an embeddable library for executing queries against and
-writing to `modelardbd` or its data folder directly. `modelardbd` uses local storage on the edge and an Amazon
-S3-compatible or Azure Blob Storage object store in the cloud. `modelardbd` can be deployed alone or together with
-`modelardbm` depending on the use cases.
+ModelarDB consists of three binaries and a library with bindings: `modelardbd` is a DBMS server that manages data and
+executes SQL queries, `modelardb` is a command-line client for connecting to a `modelardbd` instance and executing 
+commands and SQL queries, `modelardbb` is a command-line bulk loader that operates without `modelardbd` as it reads 
+from and writes to `modelardbd`'s data folder directly, and `modelardb_embedded` is an embeddable library for executing 
+queries against and writing to `modelardbd` or its data folder directly. `modelardbd` uses local storage on the edge 
+and an Amazon S3-compatible or Azure Blob Storage object store in the cloud. `modelardbd` can be deployed alone or 
+together with other instances of `modelardbd` in a cluster architecture, depending on the use case.
 
-`modelardbd` can be deployed on a single node to manage data in a local folder. In this configuration `modelardbm` is
-not needed. `modelardbd` can also be deployed in a distributed configuration across edge and cloud. In this
-configuration, `modelardbm` must first be deployed in the cloud to manage the `modelardbd` instances on the edge and in
-the cloud. Specifically, `modelardbm` is responsible for keeping the database schema consistent across all `modelardbd`
-instances in the cluster. After deploying `modelardbm`, instances of `modelardbd` can be deployed on the edge and in
-cloud. While the `modelardbd` instances on the edge and in cloud provides the same functionality, the primary purpose of
-the instances on the edge is to collect data and transfer it to an object store in the cloud while the primary purpose
-of the instances in the cloud is to execute queries on the data in the object store.
+`modelardbd` can be deployed on a single node to manage data in a local folder. `modelardbd` can also be deployed in a 
+distributed configuration across edge and cloud. In this configuration, the shared remote object store is responsible 
+for keeping the database schema consistent across all `modelardbd` instances in the cluster. While the `modelardbd` 
+instances on the edge and in cloud provides the same functionality, the primary purpose of the instances on the edge is 
+to collect data and transfer it to an object store in the cloud while the primary purpose of the instances in the cloud 
+is to execute queries on the data in the object store.
 
 Thus, when `modelardbd` is deployed in edge mode, it executes queries against local storage for low latency queries on
 the latest data and when it is deployed in cloud mode, it executes queries against the object store for efficient
-analytics on all the data transferred to the cloud. `modelardbm` implements the [Apache Arrow Flight
+analytics on all the data transferred to the cloud. `modelardbd` implements the [Apache Arrow Flight
 protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for looking up the `modelardbd` instance in
-the cloud to use for executing each query, thus providing a single, workload-balanced, interface for querying the data
+the cloud to use for executing each query, thus providing a workload-balanced interface for querying the data
 in the object store using the `modelardbd` instances in the cloud.
 
 ### Start Server
@@ -87,17 +83,15 @@ modelardbd path_to_local_data_folder
 modelardbd edge path_to_local_data_folder
 ```
 
-2. Start `modelardbd` in edge mode with a manager - A running instance of `modelardbm` and an Amazon S3-compatible or
-Azure Blob Storage object store are required to start `modelardbd` in edge mode with a manager. This configuration
-supports ingesting data to a local folder on the edge, querying the data in the local folder on the edge, and
-transferring data in the local data folder to the object store.
-3. Start `modelardbd` in cloud mode with a manager - As above, a running instance of `modelardbm` and an Amazon
-S3-compatible or Azure Blob Storage object store are required to start `modelardbd` in cloud mode with a manager. This
-configuration supports ingesting data to a local folder in the cloud, transferring data in the local data folder to the
-object store, and querying the data in the object store in the cloud.
+2. Start `modelardbd` in edge mode in a cluster - An Amazon S3-compatible or Azure Blob Storage object store is required 
+to start `modelardbd` in a cluster. This configuration supports ingesting data to a local folder on the edge, querying 
+the data in the local folder on the edge, and transferring data in the local data folder to the object store.
+3. Start `modelardbd` in cloud mode in a cluster - As above, an Amazon S3-compatible or Azure Blob Storage object store 
+is required. This configuration supports ingesting data to a local folder in the cloud, transferring data in the local 
+data folder to the object store, and querying the data in the object store in the cloud.
 
 The following environment variables must be set to appropriate values if an Amazon S3-compatible object store is used so
-`modelardbm` and `modelardbd` know how to connect to it:
+`modelardbd` know how to connect to it:
 
 ```shell
 AWS_ENDPOINT
@@ -116,13 +110,14 @@ AWS_SECRET_ACCESS_KEY="sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p"
 ```
 
 Then, assuming a bucket named `wind-turbine` has been created through MinIO's command line tool or web interface,
-`modelardbm` can be started with the following command:
+`modelardbd` can be started in edge mode with transfer of the ingested data to the object store using the 
+following command:
 
 ```shell
-modelardbm s3://wind-turbine
+modelardbd edge path_to_local_data_folder s3://wind-turbine
 ```
 
-`modelardbm` also supports using [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/)
+`modelardbd` also supports using [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/)
 for the remote object store. To use Azure Blob Storage, set the following environment variables:
 
 ```shell
@@ -130,34 +125,24 @@ AZURE_STORAGE_ACCOUNT_NAME
 AZURE_STORAGE_ACCESS_KEY
 ```
 
-Then, assuming a container named `wind-turbine` has been created, `modelardbm` can be started with the following
+Then, assuming a container named `wind-turbine` has been created, `modelardbd` can be started with the following
 command:
 
 ```shell
-modelardbm azureblobstorage://wind-turbine
+modelardbd edge path_to_local_data_folder azureblobstorage://wind-turbine
 ```
-
-When a manager is running, `modelardbd` can be started in edge mode with transfer of the ingested data to the object
-store given to `modelardbm` using the following command:
-
-```shell
-modelardbd edge path_to_local_data_folder manager_url
-````
 
 To run `modelardbd` in cloud mode simply replace `edge` with `cloud` as shown below. Be aware that when running in cloud
-mode the `modelardbd` instance will execute queries against the object store given to `modelardbm` and not against local
-storage.
+mode the `modelardbd` instance will execute queries against the object store and not against local storage.
 
 ```shell
-modelardbd cloud path_to_local_data_folder manager_url
+modelardbd cloud path_to_local_data_folder s3://wind-turbine
 ```
 
-In both cases, access to the object store is automatically provided by the manager when `modelardbd` instances are
-connected to it. Note that the manager uses `9998` as the default port and that the DBMS server uses `9999` as the
-default port. The ports can be changed by specifying different ports with the following environment variables:
+Note that the DBMS server uses `9999` as the default port. The port can be changed by specifying a different port with 
+the following environment variable:
 
 ```shell
-MODELARDBM_PORT=8888  # By default modelardbm uses port 9998.
 MODELARDBD_PORT=8889  # By default modelardbd uses port 9999.
 ```
 
@@ -200,12 +185,10 @@ result = flight_client.do_get(ticket)
 print(list(result))
 ```
 
-When running a cluster of `modelardbd` instances, it is required to use `modelardbm` to create tables. This is a 
-necessity as `modelardbm` is responsible for keeping the database schema consistent across all `modelardbd` instances in 
-the cluster. The process for creating a table on the manager is the same as when creating the table directly on a 
-`modelardbd` instance, as shown above. The only difference is that the gRPC URL should be changed to connect to the 
-manager instead of the DBMS server. When the table is created through `modelardbm`, the table is automatically created 
-in all `modelardbd` instances managed by `modelardbm`.
+When running a cluster of `modelardbd` instances, any instance in the cluster can be used to create tables. The 
+process for creating a table in a cluster is the same as when creating the table directly on a single `modelardbd` 
+instance, as shown above. When the table is created through `modelardbd` in a cluster, the table is automatically 
+created in all peer `modelardbd` instances.
 
 After creating a table, data can be ingested into `modelardbd` with `INSERT` in `modelardb`. Be aware that `INSERT` 
 statements currently must contain values for all columns but that the values for generated columns will be dropped by 
@@ -248,8 +231,8 @@ sources](https://www.influxdata.com/time-series-platform/telegraf/telegraf-input
 [MQTT](https://mqtt.org/) and [OPC-UA](https://opcfoundation.org/about/opc-technologies/opc-ua/).
 
 It should be noted that the ingested data is only transferred to the remote object store when `modelardbd` is deployed
-in edge mode with a manager or in cloud mode with a manager. When `modelardbd` is deployed in edge mode without a
-manager, the ingested data is only stored in local storage.
+in edge mode in a cluster or in cloud mode in a cluster. When `modelardbd` is deployed in edge mode without a cluster, 
+the ingested data is only stored in local storage.
 
 ### Execute Queries
 ModelarDB includes a command-line client in the form of `modelardb`. To interactively execute SQL statements against a
@@ -332,23 +315,23 @@ for flight_stream_chunk in flight_stream_reader:
     print(pandas_data_frame)
 ```
 
-When running a cluster of `modelardbd` instances, it is recommended to use `modelardbm` to query the data in the remote
-object store. As mentioned above, `modelardbm` implements the [Apache Arrow Flight
-protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for querying data. This means that a
-request is made to the manager first to determine which `modelardbd` cloud instance in the cluster should be queried.
-The workload of the queries sent to the manager is balanced across all `modelardbd` cloud instances and at least one
-`modelardbd` cloud instance must be running for the manager to accept queries. The following Python example shows how to
-execute a simple SQL query using a `modelardbm` instance and how to process the resulting stream of data points using
+When running a cluster of `modelardbd` instances, it is recommended to use the 
+[Apache Arrow Flight protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) to query the data in 
+the remote object store. This means that a request is made to the `get_flight_info()` endpoint first to determine which 
+`modelardbd` cloud instance in the cluster should be queried. The workload of the queries sent to this endpoint is 
+balanced across all `modelardbd` cloud instances and at least one `modelardbd` cloud instance must be running for the 
+endpoint to accept queries. The following Python example shows how to execute a simple workload-balanced SQL query 
+using a `modelardbd` instance and how to process the resulting stream of data points using 
 [`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/). It should be noted that
-the manager is only responsible for workload balancing and that the query is sent directly to the `modelardbd` cloud
-instance chosen by the manager which then sends the result set directly back to the client.
+the endpoint is only responsible for workload balancing and that the query is sent directly to the `modelardbd` cloud
+instance chosen by the endpoint which then sends the result set directly back to the client.
 
 ```python
 from pyarrow import flight
 
-manager_client = flight.FlightClient("grpc://127.0.0.1:9998")
+modelardbd_client = flight.FlightClient("grpc://127.0.0.1:9999")
 query_descriptor = flight.FlightDescriptor.for_command("SELECT * FROM wind_turbine LIMIT 10")
-flight_info = manager_client.get_flight_info(query_descriptor)
+flight_info = modelardbd_client.get_flight_info(query_descriptor)
 
 endpoint = flight_info.endpoints[0]
 cloud_node_url = endpoint.locations[0]
@@ -364,10 +347,10 @@ for flight_stream_chunk in flight_stream_reader:
 
 ### Embed Library
 ModelarDB includes an embeddable library in the form of `modelardb_embedded`. It allows programming languages to execute
-queries against or write to `modelardbd`, `modelardbm`, or a data folder directly. A C-API allows other programming
+queries against or write to `modelardbd` or a data folder directly. A C-API allows other programming
 languages than Rust to also use `modelardb_embedded`. The location where queries and writes are executed is specified
 using the set of `open_*()` methods and the `connect()` method. The other methods in `modelardb_embedded` work for both
-local disk, object store, `modelardbd`, and `modelardbm` with a few exceptions. Thus, a program can be developed against
+local disk, object store, and `modelardbd` with a few exceptions. Thus, a program can be developed against
 a small data set in a local data folder and then scaled by switching to `modelardbd`.
 
 ```python
@@ -382,8 +365,8 @@ remote_data_folder = modelardb.open_s3(endpoint, bucket_name, access_key_id, sec
 # Execute queries and write to a data folder in Microsoft Azure Blob Storage.
 remote_data_folder = modelardb.open_azure(account_name, access_key, container_name)
 
-# Execute queries and write to a `modelardbd` or `modelardbm` instance.
-modelardb_node = modelardb.connect(node)
+# Execute queries and write to a `modelardbd` instance.
+modelardb_node = modelardb.connect(url)
 ```
 
 ## ModelarDB configuration
@@ -392,7 +375,6 @@ variables is provided here. If an environment variable is not set, the specified
 
 | **Variable**                                     | **Default** | **Description**                                                                                                                                                                                                                                                                                          |
 |--------------------------------------------------|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| MODELARDBM_PORT                                  | 9998        | The port of the manager Apache Arrow Flight Server.                                                                                                                                                                                                                                                      |
 | MODELARDBD_PORT                                  | 9999        | The port of the server Apache Arrow Flight Server.                                                                                                                                                                                                                                                       |
 | MODELARDBD_IP_ADDRESS                            | 127.0.0.1   | The IP address of the Apache Arrow Flight Server.                                                                                                                                                                                                                                                        |
 | MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES | 512 MB      | The amount of memory to reserve for storing multivariate time series.                                                                                                                                                                                                                                    |
