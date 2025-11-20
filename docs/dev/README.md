@@ -37,16 +37,11 @@ data folders from programming languages.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **C-API** - A C-API for using modelardb_embedded from other programming languages through a C-FFI.
   - **ModelarDB** - Module providing functionality for reading from and writing to ModelarDB instances and data folders.
-- [modelardb_manager](/crates/modelardb_manager) - ModelarDB's manager in the form of the binary `modelardbm`.
-  - **Cluster** - Manages edge and cloud nodes currently controlled by the ModelarDB manager and provides functionality
-  for balancing query workloads across multiple cloud nodes.
-  - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
-  - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the manager itself, the nodes
-  controlled by the manager, and the database schema and compressed data in the cluster.
-  - **Remote** - A public interface for interacting with the ModelarDB manager using Apache Arrow Flight.
 - [modelardb_server](/crates/modelardb_server) - ModelarDB's DBMS server in the form of the binary `modelardbd`.
   - **Storage** - Manages uncompressed data, compresses uncompressed data, manages compressed data, and writes
   compressed data to Delta Lake.
+  - **Cluster** - Manages edge and cloud nodes in the cluster and provides functionality for performing operations on 
+  all peer nodes and for balancing query workloads across multiple cloud nodes.
   - **Configuration** - Manages the configuration of the ModelarDB DBMS server and provides functionality for updating
   the configuration.
   - **Context** - A type that contains all of the components in the ModelarDB DBMS server and makes it easy to share and
@@ -54,22 +49,19 @@ data folders from programming languages.
   - **Data Folders** - A type for managing data and metadata in a local data folder, an Amazon S3 bucket, or an
   Microsoft Azure Blob Storage container.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
-  - **Manager** - Manages metadata related to the ModelarDB manager and provides functionality for interacting with the
-  ModelarDB manager.
   - **Remote** - A public interface to interact with the ModelarDB DBMS server using Apache Arrow Flight.
-- [modelardb_storage](/crates/modelardb_storage) - Library providing functionality for reading from and writing to
-storage.
-  - **Metadata** - Manages metadata stored in Delta Lake, e.g., information about the tables' schema and compressed
-  data.
+- [modelardb_storage](/crates/modelardb_storage) - Library providing functionality for reading from and writing to storage.
+  - **Data Folder** - Module providing functionality for interacting with local and remote storage through a Delta Lake.
   - **Optimizer** - Rules for rewriting Apache DataFusion's physical plans for time series tables so aggregates are 
   computed from compressed segments instead of from reconstructed data points.
   - **Query** - Types that implement traits provided by Apache DataFusion so SQL queries can be executed for ModelarDB
   tables.
-  - **Delta Lake** - Module providing functionality for reading from and writing to a delta lake.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **Parser** - Extensions to Apache DataFusion's SQL parser. The first extension adds support for creating time series
   tables with a timestamp, one or more fields, and zero or more tags. The second adds support for adding a `INCLUDE
-  address[, address+]` clause before `SELECT`.
+  address[, address+]` clause before `SELECT`. The third adds support for 
+  `VACUUM [CLUSTER] [table_name[, table_name]+] [RETAIN num_seconds]` statements. The final extension adds support for
+  `TRUNCATE [CLUSTER] table_name[, table_name]+` statements.
 - [modelardb_test](/crates/modelardb_test) - Library providing functionality for testing ModelarDB.
   - **Data Generation** - Functionality for generating data with a specific structure for use in tests.
   - **Table** - Constants and functionality for testing normal tables and time series tables.
