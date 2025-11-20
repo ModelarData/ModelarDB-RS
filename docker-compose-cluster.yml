@@ -46,9 +46,9 @@ services:
       "
 
   # ModelarDB services.
-  modelardb-edge-1: &modelardb-base
-    image: modelardb
+  modelardb-edge-1:
     build: .
+    image: modelardb
     container_name: modelardb-edge-1
     command: [ "target/debug/modelardbd", "edge", "data/edge", "s3://modelardb" ]
     ports:
@@ -65,8 +65,9 @@ services:
       interval: 2s
 
   modelardb-edge-2:
-    <<: *modelardb-base
+    image: modelardb
     container_name: modelardb-edge-2
+    command: [ "target/debug/modelardbd", "edge", "data/edge", "s3://modelardb" ]
     ports:
       - "9998:9998"
     environment:
@@ -76,9 +77,12 @@ services:
     depends_on:
       modelardb-edge-1:
         condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "echo", "ready" ]
+      interval: 2s
 
   modelardb-cloud-1:
-    <<: *modelardb-base
+    image: modelardb
     container_name: modelardb-cloud-1
     command: [ "target/debug/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
     ports:
@@ -90,9 +94,12 @@ services:
     depends_on:
       modelardb-edge-2:
         condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "echo", "ready" ]
+      interval: 2s
 
   modelardb-cloud-2:
-    <<: *modelardb-base
+    image: modelardb
     container_name: modelardb-cloud-2
     command: [ "target/debug/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
     ports:
