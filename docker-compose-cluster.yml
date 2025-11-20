@@ -46,16 +46,16 @@ services:
       "
 
   # ModelarDB services.
-  modelardb-edge:
+  modelardb-edge-1: &modelardb-base
     image: modelardb
     build: .
-    container_name: modelardb-edge
+    container_name: modelardb-edge-1
     command: [ "target/debug/modelardbd", "edge", "data/edge", "s3://modelardb" ]
     ports:
       - "9999:9999"
     environment:
       <<: *aws-variables
-      MODELARDBD_IP_ADDRESS: modelardb-edge
+      MODELARDBD_IP_ADDRESS: modelardb-edge-1
       MODELARDBD_PORT: 9999
     depends_on:
       create-bucket:
@@ -64,16 +64,43 @@ services:
       test: [ "CMD", "echo", "ready" ]
       interval: 2s
 
-  modelardb-cloud:
-    image: modelardb
-    container_name: modelardb-cloud
+  modelardb-edge-2:
+    <<: *modelardb-base
+    container_name: modelardb-edge-2
+    ports:
+      - "9998:9998"
+    environment:
+      <<: *aws-variables
+      MODELARDBD_PORT: 9998
+      MODELARDBD_IP_ADDRESS: modelardb-edge-2
+    depends_on:
+      modelardb-edge-1:
+        condition: service_healthy
+
+  modelardb-cloud-1:
+    <<: *modelardb-base
+    container_name: modelardb-cloud-1
     command: [ "target/debug/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
     ports:
       - "9997:9997"
     environment:
       <<: *aws-variables
       MODELARDBD_PORT: 9997
-      MODELARDBD_IP_ADDRESS: modelardb-cloud
+      MODELARDBD_IP_ADDRESS: modelardb-cloud-1
     depends_on:
-      modelardb-edge:
+      modelardb-edge-2:
+        condition: service_healthy
+
+  modelardb-cloud-2:
+    <<: *modelardb-base
+    container_name: modelardb-cloud-2
+    command: [ "target/debug/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
+    ports:
+      - "9996:9996"
+    environment:
+      <<: *aws-variables
+      MODELARDBD_PORT: 9996
+      MODELARDBD_IP_ADDRESS: modelardb-cloud-2
+    depends_on:
+      modelardb-cloud-1:
         condition: service_healthy
