@@ -407,14 +407,13 @@ Two different [Docker](https://docs.docker.com/) environments are included to ma
 different use cases of ModelarDB. The first environment sets up a single instance of `modelardbd` that only uses local
 storage. Data can be ingested into this instance, compressed, and saved to local storage. The compressed data in local
 storage can then be queried. The second environment covers the more complex use case of ModelarDB where multiple
-instances of `modelardbd` are deployed in a cluster with a manager that is responsible for managing the cluster. A
-single edge node and a single cloud node is set up in the cluster. Data can be ingested into the edge or cloud node,
-compressed, and transferred to a remote object store. The compressed data in the remote object store can then be queried
-through the cloud node or by directing the query through the manager node.
+instances of `modelardbd` are deployed in a cluster. Two edge nodes and two cloud nodes are set up in the cluster. Data
+can be ingested into the edge or cloud nodes, compressed, and transferred to a remote object store. The compressed data
+in the remote object store can then be queried through the cloud nodes.
 
 Note that since [Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic ModelarDB configuration
 might be needed, it is not recommended to use the [Docker](https://docs.docker.com/) environments during active
-development of ModelarDB. They are however ideal to use for experimenting with ModelarDB or when developing
+development of ModelarDB. They are, however, ideal to use for experimenting with ModelarDB or when developing
 software that utilizes ModelarDB. Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to
 make maintenance of the created containers easier.
 
@@ -459,8 +458,7 @@ The cluster deployment sets up a MinIO object store and a MinIO client is used t
 the object store. MinIO can be administered through its [web interface](http://127.0.0.1:9001). The default username and
 password, `minioadmin`, can be used to log in.
 
-The cluster itself consists of a manager node, an edge node, and a cloud node. The manager node can be accessed using
-the URL `grpc://127.0.0.1:9998`, the edge node using the URL `grpc://127.0.0.1:9999`, and the cloud node using the URL
-`grpc://127.0.0.1:9997`. Tables can be created through the manager node and data can be ingested, compressed, and
-transferred to the object store through the edge node or the cloud node. The compressed data in the MinIO object store
-can then be queried through the cloud node or by directing the query through the manager node.
+The cluster itself consists of two edge nodes and two cloud nodes. The edge nodes can be accessed using
+the URLs `grpc://127.0.0.1:9999` and `grpc://127.0.0.1:9998`, and the cloud nodes using the URLs `grpc://127.0.0.1:9997` 
+and `grpc://127.0.0.1:9996`. Tables can be created and data can be ingested, compressed, and transferred to the object 
+store through all four nodes. The compressed data in the MinIO object store can then be queried through the cloud nodes.
