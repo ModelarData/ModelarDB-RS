@@ -43,7 +43,6 @@ snmalloc-rs = { workspace = true, features = ["build_cc"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-stream.workspace = true
 tonic.workspace = true
-uuid.workspace = true
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same values.
 log = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }

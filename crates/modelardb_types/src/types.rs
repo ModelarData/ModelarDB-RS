@@ -357,8 +357,7 @@ impl GeneratedColumn {
     }
 }
 
-/// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
-/// or a cloud node. A node cannot be another manager.
+/// A single ModelarDB server. The node can either be an edge node or a cloud node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     /// Apache Arrow Flight URL for the node. This URL uniquely identifies the node.
