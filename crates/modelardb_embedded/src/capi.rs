@@ -257,26 +257,17 @@ pub unsafe extern "C" fn modelardb_embedded_close(
     }
 }
 
-/// Returns the ModelarDB type of the [`DataFolder`] or [`Client`] in `maybe_operations_ptr`. Assumes
-/// `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`]; `modelardb_type_array_ptr` is
-/// a valid pointer to enough memory for an Apache Arrow C Data Interface Array; and
-/// `modelardb_type_array_schema_ptr` is a valid pointer to enough memory for an Apache Arrow C
-/// Data Interface Schema. Note that only a single value is written to the C Data Interface Array.
+/// Returns the ModelarDB type of the [`DataFolder`] or [`Client`] in `maybe_operations_ptr`.
+/// Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`] and `modelardb_type_ptr`
+/// is a valid pointer to enough memory for a 32-bit signed integer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_modelardb_type(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
-    modelardb_type_array_ptr: *mut FFI_ArrowArray,
-    modelardb_type_array_schema_ptr: *mut FFI_ArrowSchema,
+    modelardb_type_ptr: *mut c_int,
 ) -> c_int {
-    let maybe_unit = unsafe {
-        modelardb_type(
-            maybe_operations_ptr,
-            is_data_folder,
-            modelardb_type_array_ptr,
-            modelardb_type_array_schema_ptr,
-        )
-    };
+    let maybe_unit =
+        unsafe { modelardb_type(maybe_operations_ptr, is_data_folder, modelardb_type_ptr) };
 
     set_error_and_return_code(maybe_unit)
 }
@@ -285,20 +276,14 @@ pub unsafe extern "C" fn modelardb_embedded_modelardb_type(
 unsafe fn modelardb_type(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
-    modelardb_type_array_ptr: *mut FFI_ArrowArray,
-    modelardb_type_array_schema_ptr: *mut FFI_ArrowSchema,
+    modelardb_type_ptr: *mut c_int,
 ) -> Result<()> {
     let modelardb = unsafe { c_void_to_operations(maybe_operations_ptr, is_data_folder)? };
 
     let modelardb_type = TOKIO_RUNTIME.block_on(modelardb.modelardb_type())?;
-    let modelardb_type_str = format!("{:?}", modelardb_type);
+    let modelardb_type_int = modelardb_type as i32;
 
-    let modelardb_type_array = StringArray::from(vec![modelardb_type_str]);
-    let modelardb_type_array_data = modelardb_type_array.into_data();
-    let (out_array, out_schema) = ffi::to_ffi(&modelardb_type_array_data)?;
-
-    unsafe { modelardb_type_array_ptr.write(out_array) };
-    unsafe { modelardb_type_array_schema_ptr.write(out_schema) };
+    unsafe { modelardb_type_ptr.write(modelardb_type_int) };
 
     Ok(())
 }
