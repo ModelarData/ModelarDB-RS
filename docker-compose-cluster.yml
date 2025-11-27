@@ -50,7 +50,7 @@ services:
     build: .
     image: modelardb
     container_name: modelardb-edge-1
-    command: [ "target/debug/modelardbd", "edge", "data/edge", "s3://modelardb" ]
+    command: [ "target/release/modelardbd", "edge", "data/edge", "s3://modelardb" ]
     ports:
       - "9999:9999"
     environment:
@@ -67,7 +67,7 @@ services:
   modelardb-edge-2:
     image: modelardb
     container_name: modelardb-edge-2
-    command: [ "target/debug/modelardbd", "edge", "data/edge", "s3://modelardb" ]
+    command: [ "target/release/modelardbd", "edge", "data/edge", "s3://modelardb" ]
     ports:
       - "9998:9998"
     environment:
@@ -84,7 +84,7 @@ services:
   modelardb-cloud-1:
     image: modelardb
     container_name: modelardb-cloud-1
-    command: [ "target/debug/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
+    command: [ "target/release/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
     ports:
       - "9997:9997"
     environment:
@@ -101,7 +101,7 @@ services:
   modelardb-cloud-2:
     image: modelardb
     container_name: modelardb-cloud-2
-    command: [ "target/debug/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
+    command: [ "target/release/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
     ports:
       - "9996:9996"
     environment:
