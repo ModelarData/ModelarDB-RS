@@ -36,8 +36,8 @@ use tonic::metadata::{Ascii, MetadataValue};
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 
-/// Stores the currently managed nodes in the cluster and allows for performing operations that need
-/// to be applied to every single node in the cluster.
+/// Stores the node that represents the local system and allows for performing operations that need
+/// to be applied to every peer node in the cluster.
 #[derive(Clone)]
 pub(crate) struct Cluster {
     /// Node that represents the local system running `modelardbd`.
@@ -263,7 +263,7 @@ impl Cluster {
     /// For each peer node in the cluster, execute the given `sql` statement with the cluster key
     /// as metadata. If the statement was successfully executed for each node, return [`Ok`],
     /// otherwise return [`ModelarDbServerError`].
-    pub(crate) async fn cluster_do_get(&self, sql: &str) -> Result<()> {
+    async fn cluster_do_get(&self, sql: &str) -> Result<()> {
         let nodes = self.peer_nodes().await?;
 
         let mut do_get_futures: FuturesUnordered<_> = nodes
@@ -301,7 +301,7 @@ impl Cluster {
     /// For each peer node in the cluster, execute the given `action` with the cluster key as
     /// metadata. If the action was successfully executed for each node, return [`Ok`], otherwise
     /// return [`ModelarDbServerError`].
-    pub(crate) async fn cluster_do_action(&self, action: Action) -> Result<()> {
+    async fn cluster_do_action(&self, action: Action) -> Result<()> {
         let nodes = self.peer_nodes().await?;
 
         let mut action_futures: FuturesUnordered<_> = nodes
