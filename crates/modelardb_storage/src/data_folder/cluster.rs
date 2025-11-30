@@ -1,4 +1,4 @@
-/* Copyright 2025 The ModelarDB Contributors
+/* Copyright 2023 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  */
 
 //! Management of the Delta Lake for the cluster. Metadata which is unique to the cluster, such as
-//! the key and the nodes, are handled here.
+//! the key and the nodes, is handled here.
 
 use std::str::FromStr;
 use std::sync::Arc;

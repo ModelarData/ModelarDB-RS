@@ -55,7 +55,7 @@ together with other instances of `modelardbd` in a cluster architecture, dependi
 `modelardbd` can be deployed on a single node to manage data in a local folder. `modelardbd` can also be deployed in a 
 distributed configuration across edge and cloud. In this configuration, the shared remote object store is responsible 
 for keeping the database schema consistent across all `modelardbd` instances in the cluster. While the `modelardbd` 
-instances on the edge and in cloud provides the same functionality, the primary purpose of the instances on the edge is 
+instances on the edge and in cloud provide the same functionality, the primary purpose of the instances on the edge is 
 to collect data and transfer it to an object store in the cloud while the primary purpose of the instances in the cloud 
 is to execute queries on the data in the object store.
 
