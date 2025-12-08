@@ -80,7 +80,7 @@ impl ConfigurationManager {
                 // from the file.
                 configuration_from_file.cluster_mode = cluster_mode;
 
-                Ok(configuration_from_file)
+                Self::validate_configuration(configuration_from_file)
             }
             Err(error) => match error {
                 Error::NotFound { .. } => {
@@ -112,10 +112,6 @@ impl ConfigurationManager {
                         compressed_reserved_memory_in_bytes,
                         transfer_batch_size_in_bytes,
                         transfer_time_in_seconds,
-                        // TODO: Add support for running multiple threads per component. The individual
-                        // components in the storage engine have not been validated with multiple threads, e.g.,
-                        // UncompressedDataManager may have race conditions finishing buffers if multiple
-                        // different data points are added by multiple different clients in parallel.
                         ingestion_threads: 1,
                         compression_threads: 1,
                         writer_threads: 1,
@@ -127,12 +123,31 @@ impl ConfigurationManager {
                         .put(conf_file_path, PutPayload::from(toml.into_bytes()))
                         .await?;
 
-                    Ok(configuration_manager)
+                    Self::validate_configuration(configuration_manager)
                 }
                 _ => Err(ModelarDbServerError::InvalidState(format!(
                     "Configuration file '{conf_file_path}' cannot be read."
                 ))),
             },
+        }
+    }
+
+    /// Validate the fields in `configuration` and return the [`ConfigurationManager`] if it is
+    /// valid. If the configuration is invalid, return [`ModelarDbServerError`].
+    fn validate_configuration(configuration: Self) -> Result<Self> {
+        // TODO: Add support for running multiple threads per component. The individual
+        //       components in the storage engine have not been validated with multiple threads, e.g.,
+        //       UncompressedDataManager may have race conditions finishing buffers if multiple
+        //       different data points are added by multiple different clients in parallel.
+        if configuration.ingestion_threads != 1
+            || configuration.compression_threads != 1
+            || configuration.writer_threads != 1
+        {
+            Err(ModelarDbServerError::InvalidState(
+                "Only one thread per component is currently supported.".to_string(),
+            ))
+        } else {
+            Ok(configuration)
         }
     }
 
