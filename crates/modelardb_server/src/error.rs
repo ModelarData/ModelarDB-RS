@@ -30,6 +30,7 @@ use modelardb_types::error::ModelarDbTypesError;
 use object_store::Error as ObjectStoreError;
 use object_store::path::Error as ObjectStorePathError;
 use prost::DecodeError;
+use toml::de::Error as TomlDeserializeError;
 use tonic::Status as TonicStatusError;
 use tonic::transport::Error as TonicTransportError;
 
@@ -65,6 +66,8 @@ pub enum ModelarDbServerError {
     ObjectStorePath(ObjectStorePathError),
     /// Error returned by Prost when decoding a message that is not valid.
     ProstDecode(DecodeError),
+    /// Error returned by TOML when deserializing a configuration file.
+    TomlDeserialize(TomlDeserializeError),
     /// Status returned by Tonic.
     TonicStatus(Box<TonicStatusError>),
     /// Error returned by Tonic.
@@ -87,6 +90,7 @@ impl Display for ModelarDbServerError {
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
             Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
+            Self::TomlDeserialize(reason) => write!(f, "TOML Deserialize Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
         }
@@ -110,6 +114,7 @@ impl Error for ModelarDbServerError {
             Self::ObjectStore(reason) => Some(reason),
             Self::ObjectStorePath(reason) => Some(reason),
             Self::ProstDecode(reason) => Some(reason),
+            Self::TomlDeserialize(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
         }
@@ -179,6 +184,12 @@ impl From<ObjectStorePathError> for ModelarDbServerError {
 impl From<DecodeError> for ModelarDbServerError {
     fn from(error: DecodeError) -> Self {
         Self::ProstDecode(error)
+    }
+}
+
+impl From<TomlDeserializeError> for ModelarDbServerError {
+    fn from(error: TomlDeserializeError) -> Self {
+        Self::TomlDeserialize(error)
     }
 }
 
