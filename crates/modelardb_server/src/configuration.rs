@@ -19,6 +19,7 @@
 use std::env;
 use std::sync::Arc;
 
+use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::flight::protocol;
 use prost::Message;
 use tokio::sync::RwLock;
@@ -55,7 +56,7 @@ pub struct ConfigurationManager {
 }
 
 impl ConfigurationManager {
-    pub fn new(cluster_mode: ClusterMode) -> Self {
+    pub fn new(local_data_folder: DataFolder, cluster_mode: ClusterMode) -> Self {
         let multivariate_reserved_memory_in_bytes =
             env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
                 .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
@@ -417,12 +418,13 @@ mod tests {
         let data_folders = DataFolders::new(
             local_data_folder.clone(),
             Some(remote_data_folder),
-            local_data_folder,
+            local_data_folder.clone(),
         );
 
         let manager = Manager::new(Uuid::new_v4().to_string());
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
+            local_data_folder,
             ClusterMode::MultiNode(manager),
         )));
 
