@@ -180,8 +180,8 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the amount of memory for uncompressed data in the storage
-    /// engine. Returns [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the memory
-    /// cannot be updated because a buffer cannot be spilled.
+    /// engine. Returns [`ModelarDbServerError`] if the memory cannot be updated because a buffer
+    /// cannot be spilled.
     pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: u64,
@@ -208,8 +208,7 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the amount of memory for compressed data in the storage engine.
-    /// If the value was updated, return [`Ok`], otherwise return
-    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    /// If the value was updated, return [`Ok`], otherwise return [`ModelarDbServerError`].
     pub(crate) async fn set_compressed_reserved_memory_in_bytes(
         &mut self,
         new_compressed_reserved_memory_in_bytes: u64,
@@ -236,8 +235,7 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the transfer batch size in the storage engine. If the value was
-    /// updated, return [`Ok`], otherwise return
-    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    /// updated, return [`Ok`], otherwise return [`ModelarDbServerError`].
     pub(crate) async fn set_transfer_batch_size_in_bytes(
         &mut self,
         new_transfer_batch_size_in_bytes: Option<u64>,
@@ -259,8 +257,7 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the transfer time in the storage engine. If the value was
-    /// updated, return [`Ok`], otherwise return
-    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    /// updated, return [`Ok`], otherwise return [`ModelarDbServerError`].
     pub(crate) async fn set_transfer_time_in_seconds(
         &mut self,
         new_transfer_time_in_seconds: Option<u64>,
