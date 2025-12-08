@@ -21,18 +21,22 @@ use std::sync::Arc;
 
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::flight::protocol;
+use object_store::path::Path;
+use object_store::{Error, ObjectStore, PutPayload};
 use prost::Message;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::ClusterMode;
-use crate::error::Result;
+use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
 
 /// Manages the system's configuration and provides functionality for updating the configuration.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ConfigurationManager {
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
+    #[serde(skip)]
     pub(crate) cluster_mode: ClusterMode,
     /// Amount of memory to reserve for storing multivariate time series.
     multivariate_reserved_memory_in_bytes: u64,
@@ -56,39 +60,79 @@ pub struct ConfigurationManager {
 }
 
 impl ConfigurationManager {
-    pub fn new(local_data_folder: DataFolder, cluster_mode: ClusterMode) -> Self {
-        let multivariate_reserved_memory_in_bytes =
-            env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
-                .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+    /// Create a new [`ConfigurationManager`] using the `modelardb.toml` configuration file in the
+    /// local data folder. If the file does not exist, a configuration file is created with the
+    /// values from the environment variables or default values. If the configuration file could
+    /// not be read or created, [`ModelarDbServerError`] is returned.
+    pub async fn try_new(local_data_folder: DataFolder, cluster_mode: ClusterMode) -> Result<Self> {
+        // Check if there is a configuration file in the local data folder.
+        let object_store = local_data_folder.object_store();
+        let conf_file_path = &Path::from("modelardb.toml");
+        let maybe_conf_file = object_store.get(conf_file_path).await;
 
-        let uncompressed_reserved_memory_in_bytes =
-            env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")
-                .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+        match maybe_conf_file {
+            Ok(conf_file) => {
+                // If the configuration file exists, load the configuration from the file.
+                let bytes = conf_file.bytes().await?;
+                let mut configuration_from_file = toml::from_slice::<Self>(&bytes)?;
 
-        let compressed_reserved_memory_in_bytes =
-            env::var("MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES")
-                .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+                // The cluster mode is always ClusterMode::SingleNode when loading the configuration
+                // from the file.
+                configuration_from_file.cluster_mode = cluster_mode;
 
-        let transfer_batch_size_in_bytes = env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")
-            .map_or(Some(64 * 1024 * 1024), |value| Some(value.parse().unwrap()));
+                Ok(configuration_from_file)
+            }
+            Err(error) => match error {
+                Error::NotFound { .. } => {
+                    // If the configuration file does not exist, create one with the configuration
+                    // from the environment variables and default.
+                    let multivariate_reserved_memory_in_bytes =
+                        env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
+                            .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
 
-        let transfer_time_in_seconds = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS")
-            .map_or(None, |value| Some(value.parse().unwrap()));
+                    let uncompressed_reserved_memory_in_bytes =
+                        env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")
+                            .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
 
-        Self {
-            cluster_mode,
-            multivariate_reserved_memory_in_bytes,
-            uncompressed_reserved_memory_in_bytes,
-            compressed_reserved_memory_in_bytes,
-            transfer_batch_size_in_bytes,
-            transfer_time_in_seconds,
-            // TODO: Add support for running multiple threads per component. The individual
-            // components in the storage engine have not been validated with multiple threads, e.g.,
-            // UncompressedDataManager may have race conditions finishing buffers if multiple
-            // different data points are added by multiple different clients in parallel.
-            ingestion_threads: 1,
-            compression_threads: 1,
-            writer_threads: 1,
+                    let compressed_reserved_memory_in_bytes =
+                        env::var("MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES")
+                            .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+
+                    let transfer_batch_size_in_bytes =
+                        env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")
+                            .map_or(Some(64 * 1024 * 1024), |value| Some(value.parse().unwrap()));
+
+                    let transfer_time_in_seconds = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS")
+                        .map_or(None, |value| Some(value.parse().unwrap()));
+
+                    let configuration_manager = Self {
+                        cluster_mode,
+                        multivariate_reserved_memory_in_bytes,
+                        uncompressed_reserved_memory_in_bytes,
+                        compressed_reserved_memory_in_bytes,
+                        transfer_batch_size_in_bytes,
+                        transfer_time_in_seconds,
+                        // TODO: Add support for running multiple threads per component. The individual
+                        // components in the storage engine have not been validated with multiple threads, e.g.,
+                        // UncompressedDataManager may have race conditions finishing buffers if multiple
+                        // different data points are added by multiple different clients in parallel.
+                        ingestion_threads: 1,
+                        compression_threads: 1,
+                        writer_threads: 1,
+                    };
+
+                    // Create the TOML file.
+                    let toml = toml::to_string(&configuration_manager)?;
+                    object_store
+                        .put(conf_file_path, PutPayload::from(toml.into_bytes()))
+                        .await?;
+
+                    Ok(configuration_manager)
+                }
+                _ => Err(ModelarDbServerError::InvalidState(format!(
+                    "Configuration file '{conf_file_path}' cannot be read."
+                ))),
+            },
         }
     }
 
@@ -423,10 +467,11 @@ mod tests {
 
         let manager = Manager::new(Uuid::new_v4().to_string());
 
-        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            local_data_folder,
-            ClusterMode::MultiNode(manager),
-        )));
+        let configuration_manager = Arc::new(RwLock::new(
+            ConfigurationManager::try_new(local_data_folder, ClusterMode::MultiNode(manager))
+                .await
+                .unwrap(),
+        ));
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(data_folders, &configuration_manager)
