@@ -441,6 +441,12 @@ mod tests {
                 .multivariate_reserved_memory_in_bytes(),
             new_value
         );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(
+            configuration_from_file.multivariate_reserved_memory_in_bytes,
+            new_value
+        );
     }
 
     #[tokio::test]
@@ -469,6 +475,12 @@ mod tests {
                 .read()
                 .await
                 .uncompressed_reserved_memory_in_bytes(),
+            new_value
+        );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(
+            configuration_from_file.uncompressed_reserved_memory_in_bytes,
             new_value
         );
     }
@@ -501,6 +513,12 @@ mod tests {
                 .compressed_reserved_memory_in_bytes(),
             new_value
         );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(
+            configuration_from_file.compressed_reserved_memory_in_bytes,
+            new_value
+        );
     }
 
     #[tokio::test]
@@ -529,6 +547,12 @@ mod tests {
                 .read()
                 .await
                 .transfer_batch_size_in_bytes(),
+            new_value
+        );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(
+            configuration_from_file.transfer_batch_size_in_bytes,
             new_value
         );
     }
@@ -561,6 +585,9 @@ mod tests {
                 .transfer_time_in_seconds(),
             new_value
         );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(configuration_from_file.transfer_time_in_seconds, new_value)
     }
 
     /// Return the configuration from the configuration file at the root of `temp_dir`.
