@@ -640,7 +640,8 @@ impl FlightService for FlightServiceHandler {
     /// configuration is returned in a [`Configuration`](protocol::Configuration) protobuf message.
     /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
     /// and the new value are provided in the [`UpdateConfiguration`](protocol::UpdateConfiguration)
-    /// protobuf message in the action body.
+    /// protobuf message in the action body. The setting is updated in the live server configuration
+    /// and the change is persisted in the `modelardb.toml` configuration file.
     /// * `NodeType`: Get the type of the node. The type is always `server`. The type of the node
     /// is returned as a string.
     async fn do_action(
