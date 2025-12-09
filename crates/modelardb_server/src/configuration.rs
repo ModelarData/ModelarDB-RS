@@ -171,8 +171,8 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the amount of memory for multivariate data in the storage
-    /// engine. Returns [`ModelarDbServerError`] if the new configuration cannot be saved to the
-    /// configuration file.
+    /// engine. If the new configuration could not be saved to the configuration file, return
+    /// [`ModelarDbServerError`].
     pub(crate) async fn set_multivariate_reserved_memory_in_bytes(
         &mut self,
         new_multivariate_reserved_memory_in_bytes: u64,
@@ -200,8 +200,9 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the amount of memory for uncompressed data in the storage
-    /// engine. Returns [`ModelarDbServerError`] if the memory cannot be updated because a buffer
-    /// cannot be spilled or if the new configuration cannot be saved to the configuration file.
+    /// engine. If the memory could not be updated because a buffer could not be spilled or if the
+    /// new configuration could not be saved to the configuration file, return
+    /// [`ModelarDbServerError`].
     pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: u64,
@@ -229,8 +230,8 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the amount of memory for compressed data in the storage engine.
-    /// Returns [`ModelarDbServerError`] if the memory cannot be updated because a buffer cannot be
-    /// saved to disk or if the new configuration cannot be saved to the configuration file.
+    /// If the memory could not be updated because a buffer could not be saved to disk or if the new
+    /// configuration could not be saved to the configuration file, return [`ModelarDbServerError`].
     pub(crate) async fn set_compressed_reserved_memory_in_bytes(
         &mut self,
         new_compressed_reserved_memory_in_bytes: u64,
@@ -257,9 +258,9 @@ impl ConfigurationManager {
         self.configuration.transfer_batch_size_in_bytes
     }
 
-    /// Set the new value and update the transfer batch size in the storage engine. Returns
-    /// [`ModelarDbServerError`] if the value cannot be updated or if the new configuration cannot
-    /// be saved to the configuration file.
+    /// Set the new value and update the transfer batch size in the storage engine. If the batch
+    /// size could not be updated or if the new configuration could not be saved to the
+    /// configuration file, return [`ModelarDbServerError`].
     pub(crate) async fn set_transfer_batch_size_in_bytes(
         &mut self,
         new_transfer_batch_size_in_bytes: Option<u64>,
@@ -280,9 +281,9 @@ impl ConfigurationManager {
         self.configuration.transfer_time_in_seconds
     }
 
-    /// Set the new value and update the transfer time in the storage engine. Returns
-    /// [`ModelarDbServerError`] if the value cannot be updated or if the new configuration cannot
-    /// be saved to the configuration file.
+    /// Set the new value and update the transfer time in the storage engine. If the transfer time
+    /// could not be updated or if the new configuration could not be saved to the configuration
+    /// file, return [`ModelarDbServerError`].
     pub(crate) async fn set_transfer_time_in_seconds(
         &mut self,
         new_transfer_time_in_seconds: Option<u64>,
