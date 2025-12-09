@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_configuration_file() {
+    async fn test_invalid_configuration_in_configuration_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
@@ -445,7 +445,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_toml_configuration_file() {
+    async fn test_invalid_toml_in_configuration_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
