@@ -451,14 +451,8 @@ mod tests {
         let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
 
         // Write invalid TOML to the configuration file.
-        let object_store = local_data_folder.object_store();
-        object_store
-            .put(
-                &Path::from(CONFIGURATION_FILE_NAME),
-                PutPayload::from("invalid toml".as_bytes()),
-            )
-            .await
-            .unwrap();
+        let path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
+        std::fs::write(path, "invalid_toml").unwrap();
 
         let result =
             ConfigurationManager::try_new(local_data_folder, ClusterMode::SingleNode).await;
