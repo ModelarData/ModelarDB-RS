@@ -414,6 +414,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_invalid_configuration_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let local_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
+
+        // Multiple threads per component are not supported.
+        let invalid_configuration = Configuration {
+            multivariate_reserved_memory_in_bytes: 1,
+            uncompressed_reserved_memory_in_bytes: 1,
+            compressed_reserved_memory_in_bytes: 1,
+            transfer_batch_size_in_bytes: None,
+            transfer_time_in_seconds: None,
+            ingestion_threads: 2,
+            compression_threads: 2,
+            writer_threads: 2,
+        };
+
+        save_configuration(&local_data_folder, &invalid_configuration)
+            .await
+            .unwrap();
+
+        let result =
+            ConfigurationManager::try_new(local_data_folder, ClusterMode::SingleNode).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "Invalid State Error: Only one thread per component is currently supported.".to_owned()
+        );
+    }
+
+    #[tokio::test]
     async fn test_set_multivariate_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
