@@ -745,9 +745,8 @@ impl FlightService for FlightServiceHandler {
 
                     configuration_manager
                         .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
-                        .await;
-
-                    Ok(())
+                        .await
+                        .map_err(error_to_status_internal)
                 }
                 Ok(protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes) => {
                     let new_value = maybe_new_value.ok_or(invalid_null_error)?;

@@ -31,6 +31,8 @@ use crate::ClusterMode;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
 
+const CONFIGURATION_FILE_NAME: &str = "modelardb.toml";
+
 /// The system's configuration. The configuration can be serialized into a `modelardb.toml`
 /// configuration file and deserialized from it. Accessing and modifying the configuration should
 /// only be done through the [`ConfigurationManager`].
@@ -78,8 +80,7 @@ impl ConfigurationManager {
     pub async fn try_new(local_data_folder: DataFolder, cluster_mode: ClusterMode) -> Result<Self> {
         // Check if there is a configuration file in the local data folder.
         let object_store = local_data_folder.object_store();
-        let conf_file_path = &Path::from("modelardb.toml");
-        let maybe_conf_file = object_store.get(conf_file_path).await;
+        let maybe_conf_file = object_store.get(&Path::from(CONFIGURATION_FILE_NAME)).await;
 
         match maybe_conf_file {
             Ok(conf_file) => {
@@ -127,16 +128,12 @@ impl ConfigurationManager {
                         writer_threads: 1,
                     };
 
-                    // Create the TOML file.
-                    let toml = toml::to_string(&configuration)?;
-                    object_store
-                        .put(conf_file_path, PutPayload::from(toml.into_bytes()))
-                        .await?;
+                    save_configuration(&local_data_folder, &configuration).await?;
 
                     Self::validate_configuration(local_data_folder, cluster_mode, configuration)
                 }
                 _ => Err(ModelarDbServerError::InvalidState(format!(
-                    "Configuration file '{conf_file_path}' cannot be read."
+                    "Configuration file '{CONFIGURATION_FILE_NAME}' cannot be read."
                 ))),
             },
         }
@@ -173,12 +170,14 @@ impl ConfigurationManager {
         self.configuration.multivariate_reserved_memory_in_bytes
     }
 
-    /// Set the new value and update the amount of memory for multivariate data in the storage engine.
+    /// Set the new value and update the amount of memory for multivariate data in the storage
+    /// engine. Returns [`ModelarDbServerError`] if the new configuration cannot be saved to the
+    /// configuration file.
     pub(crate) async fn set_multivariate_reserved_memory_in_bytes(
         &mut self,
         new_multivariate_reserved_memory_in_bytes: u64,
         storage_engine: Arc<RwLock<StorageEngine>>,
-    ) {
+    ) -> Result<()> {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
         let value_change = new_multivariate_reserved_memory_in_bytes as i64
@@ -192,6 +191,8 @@ impl ConfigurationManager {
 
         self.configuration.multivariate_reserved_memory_in_bytes =
             new_multivariate_reserved_memory_in_bytes;
+
+        save_configuration(&self.local_data_folder, &self.configuration).await
     }
 
     pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> u64 {
@@ -200,7 +201,7 @@ impl ConfigurationManager {
 
     /// Set the new value and update the amount of memory for uncompressed data in the storage
     /// engine. Returns [`ModelarDbServerError`] if the memory cannot be updated because a buffer
-    /// cannot be spilled.
+    /// cannot be spilled or if the new configuration cannot be saved to the configuration file.
     pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: u64,
@@ -220,7 +221,7 @@ impl ConfigurationManager {
         self.configuration.uncompressed_reserved_memory_in_bytes =
             new_uncompressed_reserved_memory_in_bytes;
 
-        Ok(())
+        save_configuration(&self.local_data_folder, &self.configuration).await
     }
 
     pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> u64 {
@@ -228,7 +229,8 @@ impl ConfigurationManager {
     }
 
     /// Set the new value and update the amount of memory for compressed data in the storage engine.
-    /// If the value was updated, return [`Ok`], otherwise return [`ModelarDbServerError`].
+    /// Returns [`ModelarDbServerError`] if the memory cannot be updated because a buffer cannot be
+    /// saved to disk or if the new configuration cannot be saved to the configuration file.
     pub(crate) async fn set_compressed_reserved_memory_in_bytes(
         &mut self,
         new_compressed_reserved_memory_in_bytes: u64,
@@ -248,15 +250,16 @@ impl ConfigurationManager {
         self.configuration.compressed_reserved_memory_in_bytes =
             new_compressed_reserved_memory_in_bytes;
 
-        Ok(())
+        save_configuration(&self.local_data_folder, &self.configuration).await
     }
 
     pub(crate) fn transfer_batch_size_in_bytes(&self) -> Option<u64> {
         self.configuration.transfer_batch_size_in_bytes
     }
 
-    /// Set the new value and update the transfer batch size in the storage engine. If the value was
-    /// updated, return [`Ok`], otherwise return [`ModelarDbServerError`].
+    /// Set the new value and update the transfer batch size in the storage engine. Returns
+    /// [`ModelarDbServerError`] if the value cannot be updated or if the new configuration cannot
+    /// be saved to the configuration file.
     pub(crate) async fn set_transfer_batch_size_in_bytes(
         &mut self,
         new_transfer_batch_size_in_bytes: Option<u64>,
@@ -270,15 +273,16 @@ impl ConfigurationManager {
 
         self.configuration.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
 
-        Ok(())
+        save_configuration(&self.local_data_folder, &self.configuration).await
     }
 
     pub(crate) fn transfer_time_in_seconds(&self) -> Option<u64> {
         self.configuration.transfer_time_in_seconds
     }
 
-    /// Set the new value and update the transfer time in the storage engine. If the value was
-    /// updated, return [`Ok`], otherwise return [`ModelarDbServerError`].
+    /// Set the new value and update the transfer time in the storage engine. Returns
+    /// [`ModelarDbServerError`] if the value cannot be updated or if the new configuration cannot
+    /// be saved to the configuration file.
     pub(crate) async fn set_transfer_time_in_seconds(
         &mut self,
         new_transfer_time_in_seconds: Option<u64>,
@@ -292,7 +296,7 @@ impl ConfigurationManager {
 
         self.configuration.transfer_time_in_seconds = new_transfer_time_in_seconds;
 
-        Ok(())
+        save_configuration(&self.local_data_folder, &self.configuration).await
     }
 
     pub(crate) fn ingestion_threads(&self) -> u8 {
@@ -331,6 +335,26 @@ impl ConfigurationManager {
     }
 }
 
+/// Save `configuration` to the configuration file at the root of `local_data_folder`. If the file
+/// does not exist, it is created. If the configuration file could not be updated or created, return
+/// [`ModelarDbServerError`].
+async fn save_configuration(
+    local_data_folder: &DataFolder,
+    configuration: &Configuration,
+) -> Result<()> {
+    let toml = toml::to_string(configuration)?;
+    let object_store = local_data_folder.object_store();
+
+    object_store
+        .put(
+            &Path::from(CONFIGURATION_FILE_NAME),
+            PutPayload::from(toml.into_bytes()),
+        )
+        .await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,7 +389,8 @@ mod tests {
             .write()
             .await
             .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!(
             configuration_manager
