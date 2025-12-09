@@ -373,6 +373,35 @@ mod tests {
 
     // Tests for ConfigurationManager.
     #[tokio::test]
+    async fn test_configuration_file_is_created_if_it_does_not_exist() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_storage_engine, _configuration_manager) = create_components(&temp_dir).await;
+
+        let configuration = configuration_from_file(&temp_dir).await;
+
+        assert_eq!(
+            configuration.multivariate_reserved_memory_in_bytes,
+            512 * 1024 * 1024
+        );
+        assert_eq!(
+            configuration.uncompressed_reserved_memory_in_bytes,
+            512 * 1024 * 1024
+        );
+        assert_eq!(
+            configuration.compressed_reserved_memory_in_bytes,
+            512 * 1024 * 1024
+        );
+        assert_eq!(
+            configuration.transfer_batch_size_in_bytes,
+            Some(64 * 1024 * 1024)
+        );
+        assert_eq!(configuration.transfer_time_in_seconds, None);
+        assert_eq!(configuration.ingestion_threads, 1);
+        assert_eq!(configuration.compression_threads, 1);
+        assert_eq!(configuration.writer_threads, 1);
+    }
+
+    #[tokio::test]
     async fn test_set_multivariate_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
@@ -520,6 +549,14 @@ mod tests {
                 .transfer_time_in_seconds(),
             new_value
         );
+    }
+
+    /// Return the configuration from the configuration file at the root of `temp_dir`.
+    async fn configuration_from_file(temp_dir: &TempDir) -> Configuration {
+        let configuration_file_path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
+        let file_content = std::fs::read_to_string(&configuration_file_path).unwrap();
+
+        toml::from_str::<Configuration>(&file_content).unwrap()
     }
 
     /// Create a [`StorageEngine`] and a [`ConfigurationManager`].
