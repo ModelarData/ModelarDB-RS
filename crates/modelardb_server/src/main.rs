@@ -42,9 +42,8 @@ pub static PORT: LazyLock<u16> =
 
 /// The different possible modes that a ModelarDB server can be deployed in, assigned when the
 /// server is started.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ClusterMode {
-    #[default]
     SingleNode,
     MultiNode(Manager),
 }
