@@ -97,7 +97,7 @@ impl ConfigurationManager {
             Err(error) => match error {
                 Error::NotFound { .. } => {
                     // If the configuration file does not exist, create one with the configuration
-                    // from the environment variables and default.
+                    // from the environment variables or default values.
                     let multivariate_reserved_memory_in_bytes =
                         env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
                             .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
@@ -132,14 +132,14 @@ impl ConfigurationManager {
 
                     Self::validate_configuration(local_data_folder, cluster_mode, configuration)
                 }
-                _ => Err(ModelarDbServerError::InvalidState(format!(
-                    "Configuration file '{CONFIGURATION_FILE_NAME}' cannot be read."
+                error => Err(ModelarDbServerError::InvalidState(format!(
+                    "Configuration file '{CONFIGURATION_FILE_NAME}' could not be read: {error}"
                 ))),
             },
         }
     }
 
-    /// Validate the fields in `configuration` and return the [`ConfigurationManager`] if it is
+    /// Validate the fields in `configuration` and return the [`ConfigurationManager`] if they are
     /// valid. If the configuration is invalid, return [`ModelarDbServerError`].
     fn validate_configuration(
         local_data_folder: DataFolder,
