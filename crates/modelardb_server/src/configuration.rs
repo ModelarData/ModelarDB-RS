@@ -445,6 +445,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_invalid_toml_configuration_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let local_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
+
+        // Write invalid TOML to the configuration file.
+        let object_store = local_data_folder.object_store();
+        object_store
+            .put(
+                &Path::from(CONFIGURATION_FILE_NAME),
+                PutPayload::from("invalid toml".as_bytes()),
+            )
+            .await
+            .unwrap();
+
+        let result =
+            ConfigurationManager::try_new(local_data_folder, ClusterMode::SingleNode).await;
+
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("TOML Deserialize Error: TOML parse error at line 1")
+        );
+    }
+
+    #[tokio::test]
     async fn test_set_multivariate_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
