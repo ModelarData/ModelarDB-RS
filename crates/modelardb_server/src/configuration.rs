@@ -36,7 +36,7 @@ const CONFIGURATION_FILE_NAME: &str = "modelardb.toml";
 /// The system's configuration. The configuration can be serialized into a `modelardb.toml`
 /// configuration file and deserialized from it. Accessing and modifying the configuration should
 /// only be done through the [`ConfigurationManager`].
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Configuration {
     /// Amount of memory to reserve for storing multivariate time series.
     multivariate_reserved_memory_in_bytes: u64,
@@ -375,30 +375,42 @@ mod tests {
     #[tokio::test]
     async fn test_configuration_file_is_created_if_it_does_not_exist() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_storage_engine, _configuration_manager) = create_components(&temp_dir).await;
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        let configuration = configuration_from_file(&temp_dir).await;
+        let configuration_from_manager = configuration_manager.read().await.configuration.clone();
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
 
-        assert_eq!(
-            configuration.multivariate_reserved_memory_in_bytes,
-            512 * 1024 * 1024
-        );
-        assert_eq!(
-            configuration.uncompressed_reserved_memory_in_bytes,
-            512 * 1024 * 1024
-        );
-        assert_eq!(
-            configuration.compressed_reserved_memory_in_bytes,
-            512 * 1024 * 1024
-        );
-        assert_eq!(
-            configuration.transfer_batch_size_in_bytes,
-            Some(64 * 1024 * 1024)
-        );
-        assert_eq!(configuration.transfer_time_in_seconds, None);
-        assert_eq!(configuration.ingestion_threads, 1);
-        assert_eq!(configuration.compression_threads, 1);
-        assert_eq!(configuration.writer_threads, 1);
+        assert_eq!(configuration_from_manager, configuration_from_file);
+    }
+
+    #[tokio::test]
+    async fn test_configuration_file_is_read_if_it_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let local_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
+
+        let existing_configuration = Configuration {
+            multivariate_reserved_memory_in_bytes: 1,
+            uncompressed_reserved_memory_in_bytes: 1,
+            compressed_reserved_memory_in_bytes: 1,
+            transfer_batch_size_in_bytes: Some(1),
+            transfer_time_in_seconds: Some(1),
+            ingestion_threads: 1,
+            compression_threads: 1,
+            writer_threads: 1,
+        };
+
+        save_configuration(&local_data_folder, &existing_configuration)
+            .await
+            .unwrap();
+
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
+
+        let configuration_from_manager = configuration_manager.read().await.configuration.clone();
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+
+        assert_eq!(existing_configuration, configuration_from_manager);
+        assert_eq!(existing_configuration, configuration_from_file);
     }
 
     #[tokio::test]
