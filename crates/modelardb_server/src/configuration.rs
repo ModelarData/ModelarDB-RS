@@ -59,6 +59,32 @@ struct Configuration {
     pub(crate) writer_threads: u8,
 }
 
+impl Configuration {
+    /// If the corresponding environment variable is set, update the configuration with the value
+    /// from the environment variable.
+    fn update_from_env(&mut self) {
+        if let Ok(value) = env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES") {
+            self.multivariate_reserved_memory_in_bytes = value.parse().unwrap();
+        };
+
+        if let Ok(value) = env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES") {
+            self.uncompressed_reserved_memory_in_bytes = value.parse().unwrap();
+        };
+
+        if let Ok(value) = env::var("MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES") {
+            self.compressed_reserved_memory_in_bytes = value.parse().unwrap();
+        };
+
+        if let Ok(value) = env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES") {
+            self.transfer_batch_size_in_bytes = Some(value.parse().unwrap());
+        }
+
+        if let Ok(value) = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS") {
+            self.transfer_time_in_seconds = Some(value.parse().unwrap());
+        }
+    }
+}
+
 impl Default for Configuration {
     fn default() -> Self {
         Self {
@@ -102,7 +128,8 @@ impl ConfigurationManager {
             Ok(conf_file) => {
                 // If the configuration file exists, load the configuration from the file.
                 let bytes = conf_file.bytes().await?;
-                let configuration_from_file = toml::from_slice::<Configuration>(&bytes)?;
+                let mut configuration_from_file = toml::from_slice::<Configuration>(&bytes)?;
+                configuration_from_file.update_from_env();
 
                 Self::validate_configuration(
                     local_data_folder,
@@ -112,37 +139,9 @@ impl ConfigurationManager {
             }
             Err(error) => match error {
                 Error::NotFound { .. } => {
-                    // If the configuration file does not exist, create one with the configuration
-                    // from the environment variables or default values.
-                    let multivariate_reserved_memory_in_bytes =
-                        env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
-                            .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
-
-                    let uncompressed_reserved_memory_in_bytes =
-                        env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")
-                            .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
-
-                    let compressed_reserved_memory_in_bytes =
-                        env::var("MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES")
-                            .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
-
-                    let transfer_batch_size_in_bytes =
-                        env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")
-                            .map_or(Some(64 * 1024 * 1024), |value| Some(value.parse().unwrap()));
-
-                    let transfer_time_in_seconds = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS")
-                        .map_or(None, |value| Some(value.parse().unwrap()));
-
-                    let configuration = Configuration {
-                        multivariate_reserved_memory_in_bytes,
-                        uncompressed_reserved_memory_in_bytes,
-                        compressed_reserved_memory_in_bytes,
-                        transfer_batch_size_in_bytes,
-                        transfer_time_in_seconds,
-                        ingestion_threads: 1,
-                        compression_threads: 1,
-                        writer_threads: 1,
-                    };
+                    // If the configuration file does not exist, create one with the default values.
+                    let mut configuration = Configuration::default();
+                    configuration.update_from_env();
 
                     save_configuration(&local_data_folder, &configuration).await?;
 
@@ -411,7 +410,7 @@ mod tests {
             compressed_reserved_memory_in_bytes: 1,
             transfer_batch_size_in_bytes: Some(1),
             transfer_time_in_seconds: Some(1),
-            ..Default::default()
+            ..Configuration::default()
         };
 
         save_configuration(&local_data_folder, &existing_configuration)
@@ -436,7 +435,7 @@ mod tests {
         // Multiple threads per component are not supported.
         let invalid_configuration = Configuration {
             ingestion_threads: 2,
-            ..Default::default()
+            ..Configuration::default()
         };
 
         save_configuration(&local_data_folder, &invalid_configuration)
