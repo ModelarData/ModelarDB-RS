@@ -387,8 +387,13 @@ modelardb_node = modelardb.connect(node)
 ```
 
 ## ModelarDB configuration
+When the server is started for the first time, a configuration file is created in the root of the data folder named
+`modelardb.toml`. This file is used to persist updates to the configuration made using the `UpdateConfiguration`
+action. If the file is changed manually, the changes are only applied when the server is restarted.
+
 `ModelarDB` can be configured before the server is started using environment variables. A full list of the environment
-variables is provided here. If an environment variable is not set, the specified default value will be used.
+variables is provided here. If an environment variable is not set, the configuration file will be used. If neither the
+environment variable nor the configuration file contains the variable, the specified default value will be used.
 
 | **Variable**                                     | **Default** | **Description**                                                                                                                                                                                                                                                                                          |
 |--------------------------------------------------|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -401,10 +406,6 @@ variables is provided here. If an environment variable is not set, the specified
 | MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES          | 64 MB       | The amount of data that must be collected before transferring a batch of data to the remote object store.                                                                                                                                                                                                |
 | MODELARDBD_TRANSFER_TIME_IN_SECONDS              | Disabled    | The number of seconds between each transfer of data to the remote object store.                                                                                                                                                                                                                          |
 | MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY     | 65536       | The capacity of each uncompressed data buffer as the number of elements in the buffer where each element is a timestamp and a value. Note that the resulting size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger than the requested due to internal alignment. |
-
-When the server is started for the first time, a configuration file is created in the root of the data folder named 
-`modelardb.toml`. This file is used to persist updates to the configuration made using the `UpdateConfiguration` 
-action. If the file is changed manually, the changes are only applied when the server is restarted.
 
 ## Docker
 Two different [Docker](https://docs.docker.com/) environments are included to make it easy to experiment with the

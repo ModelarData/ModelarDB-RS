@@ -90,8 +90,9 @@ pub struct ConfigurationManager {
 impl ConfigurationManager {
     /// Create a new [`ConfigurationManager`] using the `modelardb.toml` configuration file in the
     /// local data folder. If the file does not exist, a configuration file is created with the
-    /// values from the environment variables or default values. If the configuration file could
-    /// not be read or created, [`ModelarDbServerError`] is returned.
+    /// default values. Note that the configuration file and default values are overwritten if the
+    /// corresponding environment variables are set. If the configuration file could not be read or
+    /// created, [`ModelarDbServerError`] is returned.
     pub async fn try_new(local_data_folder: DataFolder, cluster_mode: ClusterMode) -> Result<Self> {
         // Check if there is a configuration file in the local data folder.
         let object_store = local_data_folder.object_store();
