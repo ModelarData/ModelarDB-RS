@@ -61,27 +61,30 @@ struct Configuration {
 
 impl Configuration {
     /// If the corresponding environment variable is set, update the configuration with the value
-    /// from the environment variable.
-    fn update_from_env(&mut self) {
+    /// from the environment variable. If the value could not be parsed, return
+    /// [`ModelarDbServerError`].
+    fn update_from_env(&mut self) -> Result<()> {
         if let Ok(value) = env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES") {
-            self.multivariate_reserved_memory_in_bytes = value.parse().unwrap();
+            self.multivariate_reserved_memory_in_bytes = value.parse()?;
         };
 
         if let Ok(value) = env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES") {
-            self.uncompressed_reserved_memory_in_bytes = value.parse().unwrap();
+            self.uncompressed_reserved_memory_in_bytes = value.parse()?;
         };
 
         if let Ok(value) = env::var("MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES") {
-            self.compressed_reserved_memory_in_bytes = value.parse().unwrap();
+            self.compressed_reserved_memory_in_bytes = value.parse()?;
         };
 
         if let Ok(value) = env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES") {
-            self.transfer_batch_size_in_bytes = Some(value.parse().unwrap());
+            self.transfer_batch_size_in_bytes = Some(value.parse()?);
         }
 
         if let Ok(value) = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS") {
-            self.transfer_time_in_seconds = Some(value.parse().unwrap());
+            self.transfer_time_in_seconds = Some(value.parse()?);
         }
+
+        Ok(())
     }
 
     /// Validate the fields in the configuration and return [`Ok`] if they are valid. If the
@@ -177,7 +180,7 @@ impl ConfigurationManager {
             },
         };
 
-        configuration.update_from_env();
+        configuration.update_from_env()?;
         configuration.validate()?;
         configuration.save_to_toml(&local_data_folder).await?;
 
