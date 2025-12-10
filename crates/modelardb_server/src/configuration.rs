@@ -60,23 +60,6 @@ struct Configuration {
 }
 
 impl Configuration {
-    /// Validate the fields in the configuration and return [`Ok`] if they are valid. If the
-    /// configuration is invalid, return [`ModelarDbServerError`].
-    fn validate(&self) -> Result<()> {
-        // TODO: Add support for running multiple threads per component. The individual
-        //       components in the storage engine have not been validated with multiple threads, e.g.,
-        //       UncompressedDataManager may have race conditions finishing buffers if multiple
-        //       different data points are added by multiple different clients in parallel.
-        if self.ingestion_threads != 1 || self.compression_threads != 1 || self.writer_threads != 1
-        {
-            return Err(ModelarDbServerError::InvalidState(
-                "Only one thread per component is currently supported.".to_string(),
-            ));
-        };
-
-        Ok(())
-    }
-
     /// If the corresponding environment variable is set, update the configuration with the value
     /// from the environment variable.
     fn update_from_env(&mut self) {
@@ -99,6 +82,23 @@ impl Configuration {
         if let Ok(value) = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS") {
             self.transfer_time_in_seconds = Some(value.parse().unwrap());
         }
+    }
+
+    /// Validate the fields in the configuration and return [`Ok`] if they are valid. If the
+    /// configuration is invalid, return [`ModelarDbServerError`].
+    fn validate(&self) -> Result<()> {
+        // TODO: Add support for running multiple threads per component. The individual
+        //       components in the storage engine have not been validated with multiple threads, e.g.,
+        //       UncompressedDataManager may have race conditions finishing buffers if multiple
+        //       different data points are added by multiple different clients in parallel.
+        if self.ingestion_threads != 1 || self.compression_threads != 1 || self.writer_threads != 1
+        {
+            return Err(ModelarDbServerError::InvalidState(
+                "Only one thread per component is currently supported.".to_string(),
+            ));
+        };
+
+        Ok(())
     }
 
     /// Save the configuration to the configuration file at the root of `local_data_folder`. If the
@@ -158,30 +158,16 @@ impl ConfigurationManager {
         let object_store = local_data_folder.object_store();
         let maybe_conf_file = object_store.get(&Path::from(CONFIGURATION_FILE_NAME)).await;
 
-        let configuration = match maybe_conf_file {
+        let mut configuration = match maybe_conf_file {
             Ok(conf_file) => {
                 // If the configuration file exists, load the configuration from the file.
                 let bytes = conf_file.bytes().await?;
-                let mut configuration_from_file = toml::from_slice::<Configuration>(&bytes)?;
-
-                configuration_from_file.update_from_env();
-                configuration_from_file.validate()?;
-                configuration_from_file
-                    .save_to_toml(&local_data_folder)
-                    .await?;
-
-                configuration_from_file
+                toml::from_slice::<Configuration>(&bytes)?
             }
             Err(error) => match error {
                 Error::NotFound { .. } => {
                     // If the configuration file does not exist, create one with the default values.
-                    let mut configuration = Configuration::default();
-
-                    configuration.update_from_env();
-                    configuration.validate()?;
-                    configuration.save_to_toml(&local_data_folder).await?;
-
-                    configuration
+                    Configuration::default()
                 }
                 error => {
                     return Err(ModelarDbServerError::InvalidState(format!(
@@ -190,6 +176,10 @@ impl ConfigurationManager {
                 }
             },
         };
+
+        configuration.update_from_env();
+        configuration.validate()?;
+        configuration.save_to_toml(&local_data_folder).await?;
 
         Ok(Self {
             cluster_mode,
