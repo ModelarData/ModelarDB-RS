@@ -83,6 +83,23 @@ impl Configuration {
             self.transfer_time_in_seconds = Some(value.parse().unwrap());
         }
     }
+
+    /// Save the configuration to the configuration file at the root of `local_data_folder`. If the
+    /// file does not exist, it is created. If the configuration file could not be updated or
+    /// created, return [`ModelarDbServerError`].
+    async fn save_to_toml(&self, local_data_folder: &DataFolder) -> Result<()> {
+        let toml = toml::to_string(self)?;
+        let object_store = local_data_folder.object_store();
+
+        object_store
+            .put(
+                &Path::from(CONFIGURATION_FILE_NAME),
+                PutPayload::from(toml.into_bytes()),
+            )
+            .await?;
+
+        Ok(())
+    }
 }
 
 impl Default for Configuration {
@@ -143,7 +160,7 @@ impl ConfigurationManager {
                     let mut configuration = Configuration::default();
                     configuration.update_from_env();
 
-                    save_configuration(&local_data_folder, &configuration).await?;
+                    configuration.save_to_toml(&local_data_folder).await?;
 
                     Self::validate_configuration(local_data_folder, cluster_mode, configuration)
                 }
@@ -207,7 +224,9 @@ impl ConfigurationManager {
         self.configuration.multivariate_reserved_memory_in_bytes =
             new_multivariate_reserved_memory_in_bytes;
 
-        save_configuration(&self.local_data_folder, &self.configuration).await
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
     }
 
     pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> u64 {
@@ -237,7 +256,9 @@ impl ConfigurationManager {
         self.configuration.uncompressed_reserved_memory_in_bytes =
             new_uncompressed_reserved_memory_in_bytes;
 
-        save_configuration(&self.local_data_folder, &self.configuration).await
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
     }
 
     pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> u64 {
@@ -266,7 +287,9 @@ impl ConfigurationManager {
         self.configuration.compressed_reserved_memory_in_bytes =
             new_compressed_reserved_memory_in_bytes;
 
-        save_configuration(&self.local_data_folder, &self.configuration).await
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
     }
 
     pub(crate) fn transfer_batch_size_in_bytes(&self) -> Option<u64> {
@@ -289,7 +312,9 @@ impl ConfigurationManager {
 
         self.configuration.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
 
-        save_configuration(&self.local_data_folder, &self.configuration).await
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
     }
 
     pub(crate) fn transfer_time_in_seconds(&self) -> Option<u64> {
@@ -312,7 +337,9 @@ impl ConfigurationManager {
 
         self.configuration.transfer_time_in_seconds = new_transfer_time_in_seconds;
 
-        save_configuration(&self.local_data_folder, &self.configuration).await
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
     }
 
     pub(crate) fn ingestion_threads(&self) -> u8 {
@@ -349,26 +376,6 @@ impl ConfigurationManager {
 
         configuration.encode_to_vec()
     }
-}
-
-/// Save `configuration` to the configuration file at the root of `local_data_folder`. If the file
-/// does not exist, it is created. If the configuration file could not be updated or created, return
-/// [`ModelarDbServerError`].
-async fn save_configuration(
-    local_data_folder: &DataFolder,
-    configuration: &Configuration,
-) -> Result<()> {
-    let toml = toml::to_string(configuration)?;
-    let object_store = local_data_folder.object_store();
-
-    object_store
-        .put(
-            &Path::from(CONFIGURATION_FILE_NAME),
-            PutPayload::from(toml.into_bytes()),
-        )
-        .await?;
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -413,7 +420,8 @@ mod tests {
             ..Configuration::default()
         };
 
-        save_configuration(&local_data_folder, &existing_configuration)
+        existing_configuration
+            .save_to_toml(&local_data_folder)
             .await
             .unwrap();
 
@@ -438,7 +446,8 @@ mod tests {
             ..Configuration::default()
         };
 
-        save_configuration(&local_data_folder, &invalid_configuration)
+        invalid_configuration
+            .save_to_toml(&local_data_folder)
             .await
             .unwrap();
 
