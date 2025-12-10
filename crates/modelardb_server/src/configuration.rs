@@ -59,6 +59,21 @@ struct Configuration {
     pub(crate) writer_threads: u8,
 }
 
+impl Default for Configuration {
+    fn default() -> Self {
+        Self {
+            multivariate_reserved_memory_in_bytes: 512 * 1024 * 1024,
+            uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
+            compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
+            transfer_batch_size_in_bytes: Some(64 * 1024 * 1024),
+            transfer_time_in_seconds: None,
+            ingestion_threads: 1,
+            compression_threads: 1,
+            writer_threads: 1,
+        }
+    }
+}
+
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
 pub struct ConfigurationManager {
@@ -395,9 +410,7 @@ mod tests {
             compressed_reserved_memory_in_bytes: 1,
             transfer_batch_size_in_bytes: Some(1),
             transfer_time_in_seconds: Some(1),
-            ingestion_threads: 1,
-            compression_threads: 1,
-            writer_threads: 1,
+            ..Default::default()
         };
 
         save_configuration(&local_data_folder, &existing_configuration)
@@ -421,14 +434,8 @@ mod tests {
 
         // Multiple threads per component are not supported.
         let invalid_configuration = Configuration {
-            multivariate_reserved_memory_in_bytes: 1,
-            uncompressed_reserved_memory_in_bytes: 1,
-            compressed_reserved_memory_in_bytes: 1,
-            transfer_batch_size_in_bytes: None,
-            transfer_time_in_seconds: None,
             ingestion_threads: 2,
-            compression_threads: 2,
-            writer_threads: 2,
+            ..Default::default()
         };
 
         save_configuration(&local_data_folder, &invalid_configuration)
