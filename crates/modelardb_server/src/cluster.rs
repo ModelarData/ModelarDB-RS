@@ -702,7 +702,7 @@ mod test {
     /// [`ClusterMode::MultiNode`] and panic if not.
     async fn retrieve_and_create_tables(context: &Arc<Context>) -> Result<()> {
         if let ClusterMode::MultiNode(cluster) =
-            &context.configuration_manager.read().await.cluster_mode
+            context.configuration_manager.read().await.cluster_mode()
         {
             cluster.retrieve_and_create_tables(context).await
         } else {

@@ -680,7 +680,7 @@ mod tests {
 
         let data_folders = DataFolders::new(
             local_data_folder.clone(),
-            Some(remote_data_folder),
+            Some(remote_data_folder.clone()),
             local_data_folder.clone(),
         );
 

@@ -322,7 +322,7 @@ impl FlightServiceHandler {
 
         // If the cluster key is in the request, the request is from a peer node, which means the
         // table has already been created in the remote data folder and propagated to all nodes.
-        if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode
+        if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
             && !cluster_key_in_request(cluster, request_metadata)?
         {
             cluster
@@ -351,7 +351,7 @@ impl FlightServiceHandler {
 
         // If the cluster key is in the request, the request is from a peer node, which means the
         // table has already been created in the remote data folder and propagated to all nodes.
-        if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode
+        if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
             && !cluster_key_in_request(cluster, request_metadata)?
         {
             cluster
@@ -380,7 +380,7 @@ impl FlightServiceHandler {
 
         // If the cluster key is in the request, the request is from a peer node, which means the
         // tables have already been dropped in the remote data folder and propagated to all nodes.
-        if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode
+        if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
             && !cluster_key_in_request(cluster, request_metadata)?
         {
             cluster
@@ -410,7 +410,7 @@ impl FlightServiceHandler {
         let configuration_manager = self.context.configuration_manager.read().await;
 
         if truncate_cluster {
-            if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+            if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
                 cluster
                     .truncate_cluster_tables(table_names)
                     .await
@@ -442,7 +442,7 @@ impl FlightServiceHandler {
         let configuration_manager = self.context.configuration_manager.read().await;
 
         if vacuum_cluster {
-            if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+            if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
                 cluster
                     .vacuum_cluster_tables(table_names, maybe_retention_period_in_seconds)
                     .await
@@ -563,7 +563,7 @@ impl FlightService for FlightServiceHandler {
         // Retrieve the cloud node that should execute the given query.
         let configuration_manager = self.context.configuration_manager.read().await;
         let cloud_node =
-            if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+            if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
                 cluster.query_node().await.map_err(error_to_status_internal)
             } else {
                 Err(Status::internal("The node is not running in a cluster."))
@@ -879,7 +879,7 @@ impl FlightService for FlightServiceHandler {
 
             // If running in a cluster, remove the node from the remote data folder.
             let configuration_manager = self.context.configuration_manager.read().await;
-            if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+            if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
                 cluster
                     .remove_node()
                     .await
@@ -960,7 +960,7 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "NodeType" {
             let configuration_manager = self.context.configuration_manager.read().await;
 
-            let node_type = match &configuration_manager.cluster_mode {
+            let node_type = match configuration_manager.cluster_mode() {
                 ClusterMode::SingleNode => "SingleEdge",
                 ClusterMode::MultiNode(cluster) => match cluster.node().mode {
                     ServerMode::Edge => "ClusterEdge",

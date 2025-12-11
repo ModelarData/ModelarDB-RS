@@ -139,7 +139,7 @@ fn setup_ctrl_c_handler(context: &Arc<Context>) {
 
         // If running in a cluster, remove the node from the remote data folder.
         let configuration_manager = ctrl_c_context.configuration_manager.read().await;
-        if let ClusterMode::MultiNode(cluster) = &configuration_manager.cluster_mode {
+        if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
             cluster.remove_node().await.unwrap();
         }
 
