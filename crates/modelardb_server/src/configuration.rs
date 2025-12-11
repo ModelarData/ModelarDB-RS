@@ -33,7 +33,7 @@ use crate::storage::StorageEngine;
 
 const CONFIGURATION_FILE_NAME: &str = "modelardbd.toml";
 
-/// The system's configuration. The configuration can be serialized into a `modelardbd.toml`
+/// The system's configuration. The configuration can be serialized into a [`CONFIGURATION_FILE_NAME`]
 /// configuration file and deserialized from it. Accessing and modifying the configuration should
 /// only be done through the [`ConfigurationManager`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -151,11 +151,11 @@ pub struct ConfigurationManager {
 }
 
 impl ConfigurationManager {
-    /// Create a new [`ConfigurationManager`] using the `modelardbd.toml` configuration file in the
-    /// local data folder. If the file does not exist, a configuration file is created with the
-    /// default values. Note that the configuration file and default values are overwritten if the
-    /// corresponding environment variables are set. If the configuration file could not be read or
-    /// created, [`ModelarDbServerError`] is returned.
+    /// Create a new [`ConfigurationManager`] using the [`CONFIGURATION_FILE_NAME`] configuration
+    /// file in the local data folder. If the file does not exist, a configuration file is created
+    /// with the default values. Note that the configuration file and default values are overwritten
+    /// if the corresponding environment variables are set. If the configuration file could not be
+    /// read or created, [`ModelarDbServerError`] is returned.
     pub async fn try_new(local_data_folder: DataFolder, cluster_mode: ClusterMode) -> Result<Self> {
         // Check if there is a configuration file in the local data folder.
         let object_store = local_data_folder.object_store();
