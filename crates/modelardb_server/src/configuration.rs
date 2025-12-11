@@ -142,7 +142,7 @@ impl Default for Configuration {
 pub struct ConfigurationManager {
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
-    pub(crate) cluster_mode: ClusterMode,
+    cluster_mode: ClusterMode,
     /// The local data folder that stores the configuration file at the root.
     local_data_folder: DataFolder,
     /// The configuration of the system. This is stored in a separate type to allow for easier
@@ -189,6 +189,10 @@ impl ConfigurationManager {
             local_data_folder,
             configuration,
         })
+    }
+
+    pub(crate) fn cluster_mode(&self) -> &ClusterMode {
+        &self.cluster_mode
     }
 
     pub(crate) fn multivariate_reserved_memory_in_bytes(&self) -> u64 {

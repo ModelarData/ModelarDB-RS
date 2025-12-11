@@ -349,7 +349,7 @@ impl FlightServiceHandler {
     async fn validate_request(&self, request_metadata: &MetadataMap) -> StdResult<(), Status> {
         let configuration_manager = self.context.configuration_manager.read().await;
 
-        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
+        if let ClusterMode::MultiNode(manager) = configuration_manager.cluster_mode() {
             manager
                 .validate_request(request_metadata)
                 .map_err(|error| Status::unauthenticated(error.to_string()))
