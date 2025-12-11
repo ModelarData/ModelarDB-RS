@@ -18,6 +18,7 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::Error as IoError;
+use std::num::ParseIntError;
 use std::result::Result as StdResult;
 
 use crossbeam_channel::RecvError as CrossbeamRecvError;
@@ -30,6 +31,8 @@ use modelardb_types::error::ModelarDbTypesError;
 use object_store::Error as ObjectStoreError;
 use object_store::path::Error as ObjectStorePathError;
 use prost::DecodeError;
+use toml::de::Error as TomlDeserializeError;
+use toml::ser::Error as TomlSerializeError;
 use tonic::Status as TonicStatusError;
 use tonic::transport::Error as TonicTransportError;
 
@@ -63,8 +66,14 @@ pub enum ModelarDbServerError {
     ObjectStore(ObjectStoreError),
     /// Error returned by ObjectStorePath.
     ObjectStorePath(ObjectStorePathError),
+    /// Error returned when failing to parse a string to an integer.
+    ParseInt(ParseIntError),
     /// Error returned by Prost when decoding a message that is not valid.
     ProstDecode(DecodeError),
+    /// Error returned by TOML when deserializing a configuration file.
+    TomlDeserialize(TomlDeserializeError),
+    /// Error returned by TOML when serializing a configuration file.
+    TomlSerialize(TomlSerializeError),
     /// Status returned by Tonic.
     TonicStatus(Box<TonicStatusError>),
     /// Error returned by Tonic.
@@ -86,7 +95,10 @@ impl Display for ModelarDbServerError {
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
+            Self::ParseInt(reason) => write!(f, "Parse Int Error: {reason}"),
             Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
+            Self::TomlDeserialize(reason) => write!(f, "TOML Deserialize Error: {reason}"),
+            Self::TomlSerialize(reason) => write!(f, "TOML Serialize Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
         }
@@ -109,7 +121,10 @@ impl Error for ModelarDbServerError {
             Self::ModelarDbTypes(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
             Self::ObjectStorePath(reason) => Some(reason),
+            Self::ParseInt(reason) => Some(reason),
             Self::ProstDecode(reason) => Some(reason),
+            Self::TomlDeserialize(reason) => Some(reason),
+            Self::TomlSerialize(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
         }
@@ -176,9 +191,27 @@ impl From<ObjectStorePathError> for ModelarDbServerError {
     }
 }
 
+impl From<ParseIntError> for ModelarDbServerError {
+    fn from(error: ParseIntError) -> Self {
+        Self::ParseInt(error)
+    }
+}
+
 impl From<DecodeError> for ModelarDbServerError {
     fn from(error: DecodeError) -> Self {
         Self::ProstDecode(error)
+    }
+}
+
+impl From<TomlDeserializeError> for ModelarDbServerError {
+    fn from(error: TomlDeserializeError) -> Self {
+        Self::TomlDeserialize(error)
+    }
+}
+
+impl From<TomlSerializeError> for ModelarDbServerError {
+    fn from(error: TomlSerializeError) -> Self {
+        Self::TomlSerialize(error)
     }
 }
 

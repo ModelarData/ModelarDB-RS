@@ -45,7 +45,10 @@ impl Context {
     /// configuration manager or storage engine could not be created, [`ModelarDbServerError`] is
     /// returned.
     pub async fn try_new(data_folders: DataFolders, cluster_mode: ClusterMode) -> Result<Self> {
-        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(cluster_mode)));
+        let configuration_manager = Arc::new(RwLock::new(
+            ConfigurationManager::try_new(data_folders.local_data_folder.clone(), cluster_mode)
+                .await?,
+        ));
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(data_folders.clone(), &configuration_manager).await?,

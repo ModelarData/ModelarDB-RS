@@ -813,7 +813,8 @@ impl FlightService for FlightServiceHandler {
     /// configuration is returned in a [`Configuration`](protocol::Configuration) protobuf message.
     /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
     /// and the new value are provided in the [`UpdateConfiguration`](protocol::UpdateConfiguration)
-    /// protobuf message in the action body.
+    /// protobuf message in the action body. The setting is updated in the live server configuration
+    /// and the change is persisted in the configuration file.
     /// * `NodeType`: Get the type of the node. The type is `SingleEdge`, `ClusterEdge`, or
     /// `ClusterCloud`. The type of the node is returned as a string.
     async fn do_action(
@@ -918,9 +919,8 @@ impl FlightService for FlightServiceHandler {
 
                     configuration_manager
                         .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
-                        .await;
-
-                    Ok(())
+                        .await
+                        .map_err(error_to_status_internal)
                 }
                 Ok(protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes) => {
                     let new_value = maybe_new_value.ok_or(invalid_null_error)?;

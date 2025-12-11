@@ -120,7 +120,7 @@ impl StorageEngine {
             let uncompressed_data_manager = uncompressed_data_manager.clone();
 
             Self::start_threads(
-                configuration_manager.ingestion_threads,
+                configuration_manager.ingestion_threads(),
                 "Ingestion",
                 move || {
                     if let Err(error) =
@@ -138,7 +138,7 @@ impl StorageEngine {
             let uncompressed_data_manager = uncompressed_data_manager.clone();
 
             Self::start_threads(
-                configuration_manager.compression_threads,
+                configuration_manager.compression_threads(),
                 "Compression",
                 move || {
                     if let Err(error) =
@@ -179,7 +179,7 @@ impl StorageEngine {
             let compressed_data_manager = compressed_data_manager.clone();
 
             Self::start_threads(
-                configuration_manager.writer_threads,
+                configuration_manager.writer_threads(),
                 "Writer",
                 move || {
                     if let Err(error) =
