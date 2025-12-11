@@ -388,7 +388,7 @@ modelardb_node = modelardb.connect(node)
 
 ## ModelarDB configuration
 When the server is started for the first time, a configuration file is created in the root of the data folder named
-`modelardb.toml`. This file is used to persist updates to the configuration made using the `UpdateConfiguration`
+`modelardbd.toml`. This file is used to persist updates to the configuration made using the `UpdateConfiguration`
 action. If the file is changed manually, the changes are only applied when the server is restarted.
 
 `ModelarDB` can be configured before the server is started using environment variables. A full list of the environment
