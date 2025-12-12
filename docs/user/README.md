@@ -139,7 +139,7 @@ mode the `modelardbd` instance will execute queries against the object store and
 modelardbd cloud path_to_local_data_folder s3://wind-turbine
 ```
 
-Note that the DBMS server uses `9999` as the default port. The port can be changed by specifying a different port with 
+Note that `modelardbd` uses `9999` as the default port. The port can be changed by specifying a different port with 
 the following environment variable:
 
 ```shell

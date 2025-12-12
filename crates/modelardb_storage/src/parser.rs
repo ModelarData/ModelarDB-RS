@@ -636,14 +636,12 @@ impl ModelarDbDialect {
                     if Token::Comma == parser.peek_nth_token(0).token {
                         parser.next_token();
                     } else {
-                        break;
+                        return Ok(table_names);
                     };
                 }
                 Err(error) => return Err(error),
             }
         }
-
-        Ok(table_names)
     }
 }
 
