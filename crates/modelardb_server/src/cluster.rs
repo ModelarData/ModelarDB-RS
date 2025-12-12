@@ -87,8 +87,8 @@ impl Cluster {
 
     /// Initialize the local database schema with the normal tables and time series tables from the
     /// cluster's database schema using the remote data folder. If the tables to create could not be
-    /// retrieved from the remote data folder, or the tables could not be created,
-    /// return [`ModelarDbServerError`].
+    /// retrieved from the remote data folder, or the tables could not be created, return
+    /// [`ModelarDbServerError`].
     pub(crate) async fn retrieve_and_create_tables(&self, context: &Arc<Context>) -> Result<()> {
         let local_data_folder = &context.data_folders.local_data_folder;
 
@@ -726,7 +726,7 @@ mod test {
                     Some(cluster.remote_data_folder.clone()),
                     local_data_folder,
                 ),
-                ClusterMode::MultiNode(cluster),
+                ClusterMode::MultiNode(Box::new(cluster)),
             )
             .await
             .unwrap(),

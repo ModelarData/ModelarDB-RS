@@ -690,9 +690,12 @@ mod tests {
             .unwrap();
 
         let configuration_manager = Arc::new(RwLock::new(
-            ConfigurationManager::try_new(local_data_folder, ClusterMode::MultiNode(cluster))
-                .await
-                .unwrap(),
+            ConfigurationManager::try_new(
+                local_data_folder,
+                ClusterMode::MultiNode(Box::new(cluster)),
+            )
+            .await
+            .unwrap(),
         ));
 
         let storage_engine = Arc::new(RwLock::new(
