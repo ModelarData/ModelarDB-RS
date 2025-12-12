@@ -45,7 +45,7 @@ use tokio::runtime::Runtime;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::Operations;
-use crate::operations::client::{Client, Node};
+use crate::operations::client::Client;
 use crate::operations::data_folder::DataFolderDataSink;
 use crate::record_batch_stream_to_record_batch;
 use crate::{Aggregate, TableType};
@@ -197,29 +197,20 @@ unsafe fn open_azure(
     Ok(data_folder)
 }
 
-/// Creates a [`Client`] that is connected to the Apache Arrow Flight server URL in `node_url_ptr`
+/// Creates a [`Client`] that is connected to the Apache Arrow Flight server URL in `url_ptr`
 /// and returns a pointer to the [`Client`] or a zero-initialized pointer if an error occurs.
-/// Assumes `node_url_ptr` points to a valid C string.
+/// Assumes `url_ptr` points to a valid C string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn modelardb_embedded_connect(
-    node_url_ptr: *const c_char,
-    is_server_node: bool,
-) -> *const c_void {
-    let maybe_client = unsafe { connect(node_url_ptr, is_server_node) };
+pub unsafe extern "C" fn modelardb_embedded_connect(url_ptr: *const c_char) -> *const c_void {
+    let maybe_client = unsafe { connect(url_ptr) };
     set_error_and_return_value_ptr(maybe_client)
 }
 
 /// See documentation for [`modelardb_embedded_connect()`].
-unsafe fn connect(node_url_ptr: *const c_char, is_server_node: bool) -> Result<Client> {
-    let node_url_str = unsafe { c_char_ptr_to_str(node_url_ptr)? };
+unsafe fn connect(url_ptr: *const c_char) -> Result<Client> {
+    let url_str = unsafe { c_char_ptr_to_str(url_ptr)? };
 
-    let node = if is_server_node {
-        Node::Server(node_url_str.to_owned())
-    } else {
-        Node::Manager(node_url_str.to_owned())
-    };
-
-    TOKIO_RUNTIME.block_on(Client::connect(node))
+    TOKIO_RUNTIME.block_on(Client::connect(url_str))
 }
 
 /// Moves the value in `maybe_value` to a [`Box`] and returns a pointer to it if `maybe_value` is
@@ -264,6 +255,37 @@ pub unsafe extern "C" fn modelardb_embedded_close(
             RETURN_FAILURE
         }
     }
+}
+
+/// Returns the ModelarDB type of the [`DataFolder`] or [`Client`] in `maybe_operations_ptr`.
+/// Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`] and `modelardb_type_ptr`
+/// is a valid pointer to enough memory for a 32-bit signed integer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn modelardb_embedded_modelardb_type(
+    maybe_operations_ptr: *mut c_void,
+    is_data_folder: bool,
+    modelardb_type_ptr: *mut c_int,
+) -> c_int {
+    let maybe_unit =
+        unsafe { modelardb_type(maybe_operations_ptr, is_data_folder, modelardb_type_ptr) };
+
+    set_error_and_return_code(maybe_unit)
+}
+
+/// See documentation for [`modelardb_embedded_modelardb_type()`].
+unsafe fn modelardb_type(
+    maybe_operations_ptr: *mut c_void,
+    is_data_folder: bool,
+    modelardb_type_ptr: *mut c_int,
+) -> Result<()> {
+    let modelardb = unsafe { c_void_to_operations(maybe_operations_ptr, is_data_folder)? };
+
+    let modelardb_type = TOKIO_RUNTIME.block_on(modelardb.modelardb_type())?;
+    let modelardb_type_int = modelardb_type as i32;
+
+    unsafe { modelardb_type_ptr.write(modelardb_type_int) };
+
+    Ok(())
 }
 
 /// Creates a table with the name in `table_name_ptr`, the schema in `schema_ptr`, and the error

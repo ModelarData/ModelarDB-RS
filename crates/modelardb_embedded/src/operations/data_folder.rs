@@ -35,7 +35,8 @@ use modelardb_storage::data_folder::DataFolder;
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
-    Operations, generate_read_time_series_table_sql, try_new_time_series_table_metadata,
+    ModelarDBType, Operations, generate_read_time_series_table_sql,
+    try_new_time_series_table_metadata,
 };
 use crate::{Aggregate, TableType};
 
@@ -110,6 +111,11 @@ impl Operations for DataFolder {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    /// Returns that the ModelarDB instance is a data folder.
+    async fn modelardb_type(&mut self) -> Result<ModelarDBType> {
+        Ok(ModelarDBType::DataFolder)
     }
 
     /// Creates a table with the name in `table_name` and the information in `table_type`. If the
@@ -593,7 +599,7 @@ mod tests {
     use tempfile::TempDir;
     use tonic::transport::Channel;
 
-    use crate::operations::client::{Client, Node};
+    use crate::operations::client::Client;
     use crate::record_batch_stream_to_record_batch;
 
     const NORMAL_TABLE_NAME: &str = "normal_table";
@@ -2730,7 +2736,6 @@ mod tests {
 
     fn lazy_modelardb_client() -> Client {
         Client {
-            node: Node::Server("localhost".to_owned()),
             flight_client: FlightServiceClient::new(
                 Channel::from_static("localhost").connect_lazy(),
             ),

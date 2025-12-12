@@ -250,7 +250,7 @@ impl TestContext {
         &mut self,
         table_name: &str,
     ) -> Result<Response<Streaming<FlightData>>, Status> {
-        let ticket = Ticket::new(format!("TRUNCATE TABLE {table_name}"));
+        let ticket = Ticket::new(format!("TRUNCATE {table_name}"));
         self.client.do_get(ticket).await
     }
 
@@ -1396,7 +1396,7 @@ async fn test_can_get_node_type() {
     let mut test_context = TestContext::new().await;
     let response_bytes = test_context.retrieve_action_bytes("NodeType").await;
 
-    assert_eq!(str::from_utf8(&response_bytes).unwrap(), "server");
+    assert_eq!(str::from_utf8(&response_bytes).unwrap(), "SingleEdge");
 }
 
 #[tokio::test]

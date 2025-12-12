@@ -3298,26 +3298,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "modelardb_manager"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "arrow-flight",
- "deltalake",
- "futures",
- "log",
- "modelardb_storage",
- "modelardb_types",
- "prost",
- "tempfile",
- "tokio",
- "tonic",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "modelardb_server"
 version = "0.1.0"
 dependencies = [
@@ -3338,6 +3318,7 @@ dependencies = [
  "object_store",
  "proptest",
  "prost",
+ "rand 0.9.2",
  "serde",
  "snmalloc-rs",
  "tempfile",
@@ -3347,7 +3328,6 @@ dependencies = [
  "tonic",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

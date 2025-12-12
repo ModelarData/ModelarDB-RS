@@ -38,13 +38,13 @@ modelardb_storage = { path = "../modelardb_storage" }
 modelardb_types = { path = "../modelardb_types" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 prost.workspace = true
+rand.workspace = true
 serde.workspace = true
 snmalloc-rs = { workspace = true, features = ["build_cc"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-stream.workspace = true
 toml.workspace = true
 tonic.workspace = true
-uuid.workspace = true
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same values.
 log = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }

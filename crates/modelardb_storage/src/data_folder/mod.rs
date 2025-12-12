@@ -15,10 +15,12 @@
 
 //! Implementation of the type used to interact with local and remote storage through a Delta Lake.
 
+pub mod cluster;
+
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path as StdPath;
 use std::sync::Arc;
+use std::{env, fs};
 
 use arrow::array::{
     ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, Float32Array, Int16Array, RecordBatch,
@@ -45,7 +47,6 @@ use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
 use deltalake::protocol::{DeltaOperation, SaveMode};
 use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
-use modelardb_types::flight::protocol;
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use modelardb_types::types::{
@@ -151,13 +152,17 @@ impl DataFolder {
     }
 
     /// Create a new [`DataFolder`] that manages Delta tables in the remote object store given by
-    /// `storage_configuration`. Returns [`ModelarDbStorageError`] if a connection to the specified
-    /// object store could not be created.
-    pub async fn open_object_store(
-        storage_configuration: protocol::manager_metadata::StorageConfiguration,
-    ) -> Result<Self> {
-        match storage_configuration {
-            protocol::manager_metadata::StorageConfiguration::S3Configuration(s3_configuration) => {
+    /// `remote_url`. If `remote_url` has the schema `s3`, the object store is an Amazon S3 bucket.
+    /// If `remote_url` has the schema `azureblobstorage`, the object store is an Azure Blob Storage
+    /// container. The remaining parameters are retrieved from environment variables. Returns
+    /// [`ModelarDbStorageError`] if a connection to the specified object store could not be created.
+    pub async fn open_remote_url(remote_url: &str) -> Result<Self> {
+        match remote_url.split_once("://") {
+            Some(("s3", bucket_name)) => {
+                let endpoint = env::var("AWS_ENDPOINT")?;
+                let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
+                let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
+
                 // Register the S3 storage handlers to allow the use of Amazon S3 object stores. This is
                 // required at runtime to initialize the S3 storage implementation in the deltalake_aws
                 // storage subcrate. It is safe to call this function multiple times as the handlers are
@@ -165,23 +170,23 @@ impl DataFolder {
                 deltalake::aws::register_handlers(None);
 
                 Self::open_s3(
-                    s3_configuration.endpoint,
-                    s3_configuration.bucket_name,
-                    s3_configuration.access_key_id,
-                    s3_configuration.secret_access_key,
+                    endpoint,
+                    bucket_name.to_owned(),
+                    access_key_id,
+                    secret_access_key,
                 )
                 .await
             }
-            protocol::manager_metadata::StorageConfiguration::AzureConfiguration(
-                azure_configuration,
-            ) => {
-                Self::open_azure(
-                    azure_configuration.account_name,
-                    azure_configuration.access_key,
-                    azure_configuration.container_name,
-                )
-                .await
+            Some(("azureblobstorage", container_name)) => {
+                let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
+                let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
+
+                Self::open_azure(account_name, access_key, container_name.to_owned()).await
             }
+            _ => Err(ModelarDbStorageError::InvalidArgument(
+                "Remote data folder URL must be s3://bucket-name or azureblobstorage://container-name."
+                    .to_owned(),
+            )),
         }
     }
 

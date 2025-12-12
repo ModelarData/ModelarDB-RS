@@ -15,11 +15,11 @@
 
 //! Implementation of ModelarDB's main function.
 
+mod cluster;
 mod configuration;
 mod context;
 mod data_folders;
 mod error;
-mod manager;
 mod remote;
 mod storage;
 
@@ -28,10 +28,10 @@ use std::{env, process};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::cluster::Cluster;
 use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::Result;
-use crate::manager::Manager;
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
@@ -42,10 +42,10 @@ pub static PORT: LazyLock<u16> =
 
 /// The different possible modes that a ModelarDB server can be deployed in, assigned when the
 /// server is started.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ClusterMode {
+#[derive(Clone)]
+pub(crate) enum ClusterMode {
     SingleNode,
-    MultiNode(Manager),
+    MultiNode(Box<Cluster>),
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to extract
@@ -68,7 +68,9 @@ async fn main() -> Result<()> {
     {
         cluster_mode_and_data_folders
     } else {
-        print_usage_and_exit_with_error("[server_mode] local_data_folder_url [manager_url]");
+        print_usage_and_exit_with_error(
+            "[server_mode] local_data_folder_url [remote_data_folder_url]",
+        );
     };
 
     let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone()).await?);
@@ -77,8 +79,8 @@ async fn main() -> Result<()> {
     context.register_normal_tables().await?;
     context.register_time_series_tables().await?;
 
-    if let ClusterMode::MultiNode(manager) = &cluster_mode {
-        manager.retrieve_and_create_tables(&context).await?;
+    if let ClusterMode::MultiNode(cluster) = &cluster_mode {
+        cluster.retrieve_and_create_tables(&context).await?;
     }
 
     // Setup CTRL+C handler.
@@ -122,8 +124,8 @@ pub fn print_usage_and_exit_with_error(parameters: &str) -> ! {
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for
-/// the storage engine, flushes the data the storage engine currently buffers, and terminates the
-/// system without releasing the lock.
+/// the storage engine, flushes the data the storage engine currently buffers, removes the node
+/// from the cluster if necessary, and terminates the system without releasing the lock.
 fn setup_ctrl_c_handler(context: &Arc<Context>) {
     let ctrl_c_context = context.clone();
     tokio::spawn(async move {
@@ -133,6 +135,12 @@ fn setup_ctrl_c_handler(context: &Arc<Context>) {
 
         // Stop the threads in the storage engine and close it.
         ctrl_c_context.storage_engine.write().await.close().unwrap();
+
+        // If running in a cluster, remove the node from the remote data folder.
+        let configuration_manager = ctrl_c_context.configuration_manager.read().await;
+        if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
+            cluster.remove_node().await.unwrap();
+        }
 
         std::process::exit(0)
     });

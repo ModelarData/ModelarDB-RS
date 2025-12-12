@@ -41,8 +41,8 @@ pub struct Context {
 }
 
 impl Context {
-    /// Create the components needed in the [`Context`] and use them to create the [`Context`]. If a
-    /// metadata manager or storage engine could not be created, [`ModelarDbServerError`] is
+    /// Create the components needed in the [`Context`] and use them to create the [`Context`]. If the
+    /// configuration manager or storage engine could not be created, [`ModelarDbServerError`] is
     /// returned.
     pub async fn try_new(data_folders: DataFolders, cluster_mode: ClusterMode) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(

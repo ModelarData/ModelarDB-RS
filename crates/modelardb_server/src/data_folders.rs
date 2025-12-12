@@ -15,13 +15,15 @@
 
 //! Implementation of a struct that provides access to the local and remote data storage components.
 
-use modelardb_storage::data_folder::DataFolder;
-use modelardb_types::types::ServerMode;
+use std::env;
 
-use crate::ClusterMode;
+use modelardb_storage::data_folder::DataFolder;
+use modelardb_types::types::{Node, ServerMode};
+
 use crate::Result;
+use crate::cluster::Cluster;
 use crate::error::ModelarDbServerError;
-use crate::manager::Manager;
+use crate::{ClusterMode, PORT};
 
 /// Folders for storing metadata and data in Apache Parquet files locally and remotely.
 #[derive(Clone)]
@@ -56,8 +58,12 @@ impl DataFolders {
     pub async fn try_from_command_line_arguments(
         arguments: &[&str],
     ) -> Result<(ClusterMode, Self)> {
+        let ip_address = env::var("MODELARDBD_IP_ADDRESS").unwrap_or("127.0.0.1".to_string());
+        let url_with_port = format!("grpc://{ip_address}:{}", &PORT.to_string());
+
         // Match the provided command line arguments to the supported inputs.
         match arguments {
+            // Single edge without a cluster.
             &["edge", local_data_folder_url] | &[local_data_folder_url] => {
                 let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
@@ -66,40 +72,42 @@ impl DataFolders {
                     Self::new(local_data_folder.clone(), None, local_data_folder),
                 ))
             }
-            &["cloud", local_data_folder_url, manager_url] => {
-                let (manager, storage_configuration) =
-                    Manager::register_node(manager_url, ServerMode::Cloud).await?;
+            // Edge node in a cluster.
+            &["edge", local_data_folder_url, remote_data_folder_url]
+            | &[local_data_folder_url, remote_data_folder_url] => {
+                let remote_data_folder =
+                    DataFolder::open_remote_url(remote_data_folder_url).await?;
 
                 let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
 
-                let remote_data_folder =
-                    DataFolder::open_object_store(storage_configuration).await?;
+                let node = Node::new(url_with_port, ServerMode::Edge);
+                let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
 
                 Ok((
-                    ClusterMode::MultiNode(manager),
-                    Self::new(
-                        local_data_folder,
-                        Some(remote_data_folder.clone()),
-                        remote_data_folder,
-                    ),
-                ))
-            }
-            &["edge", local_data_folder_url, manager_url]
-            | &[local_data_folder_url, manager_url] => {
-                let (manager, storage_configuration) =
-                    Manager::register_node(manager_url, ServerMode::Edge).await?;
-
-                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
-
-                let remote_data_folder =
-                    DataFolder::open_object_store(storage_configuration).await?;
-
-                Ok((
-                    ClusterMode::MultiNode(manager),
+                    ClusterMode::MultiNode(Box::new(cluster)),
                     Self::new(
                         local_data_folder.clone(),
                         Some(remote_data_folder),
                         local_data_folder,
+                    ),
+                ))
+            }
+            // Cloud node in a cluster.
+            &["cloud", local_data_folder_url, remote_data_folder_url] => {
+                let remote_data_folder =
+                    DataFolder::open_remote_url(remote_data_folder_url).await?;
+
+                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
+
+                let node = Node::new(url_with_port, ServerMode::Cloud);
+                let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
+
+                Ok((
+                    ClusterMode::MultiNode(Box::new(cluster)),
+                    Self::new(
+                        local_data_folder,
+                        Some(remote_data_folder.clone()),
+                        remote_data_folder,
                     ),
                 ))
             }
@@ -126,7 +134,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_try_from_edge_command_line_arguments_without_manager() {
+    async fn test_try_from_edge_command_line_arguments_without_remote_url() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
@@ -134,7 +142,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_try_from_edge_command_line_arguments_without_server_mode_and_manager() {
+    async fn test_try_from_edge_command_line_arguments_without_server_mode_and_remote_url() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
@@ -146,7 +154,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(cluster_mode, ClusterMode::SingleNode);
+        assert!(matches!(cluster_mode, ClusterMode::SingleNode));
         assert!(data_folders.maybe_remote_data_folder.is_none());
     }
 
@@ -159,9 +167,8 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!(
-                "Invalid Argument Error: Could not connect to manager at '{temp_dir_str}': transport error",
-            )
+            "ModelarDB Storage Error: Invalid Argument Error: Remote data folder URL must be \
+             s3://bucket-name or azureblobstorage://container-name.",
         );
     }
 }

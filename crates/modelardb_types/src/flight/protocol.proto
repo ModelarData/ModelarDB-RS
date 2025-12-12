@@ -17,47 +17,6 @@ syntax = "proto3";
 
 package modelardb.flight.protocol;
 
-// Metadata for the ModelarDB cluster manager, including its unique key and storage configuration.
-message ManagerMetadata {
-  // Key used to uniquely identify the cluster manager.
-  string key = 1;
-
-  // Storage configuration used to connect to an S3 object store.
-  message S3Configuration {
-    string endpoint = 1;
-    string bucket_name = 2;
-    string access_key_id = 3;
-    string secret_access_key = 4;
-  }
-
-  // Storage configuration used to connect to an Azure Blob Storage object store.
-  message AzureConfiguration {
-    string account_name = 1;
-    string access_key = 2;
-    string container_name = 3;
-  }
-
-  // Storage configuration used by the cluster manager.
-  oneof storage_configuration {
-    S3Configuration s3_configuration = 2;
-    AzureConfiguration azure_configuration = 3;
-  }
-}
-
-// Metadata for a node in the ModelarDB cluster, including its URL and server mode.
-message NodeMetadata {
-  enum ServerMode {
-    CLOUD = 0;
-    EDGE = 1;
-  }
-
-  // gRPC URL of the node.
-  string url = 1;
-
-  // Mode indicating whether the node is a cloud or edge server.
-  ServerMode server_mode = 2;
-}
-
 // Metadata for a normal table or a time series table.
 message TableMetadata {
   // Metadata for a normal table, including its name and schema.

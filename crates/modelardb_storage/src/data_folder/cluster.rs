@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! Management of the Delta Lake for the manager. Metadata which is unique to the manager, such as
-//! metadata about registered edges, is handled here.
+//! Management of the Delta Lake for the cluster. Metadata which is unique to the cluster, such as
+//! the key and the nodes, is handled here.
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -23,42 +23,42 @@ use arrow::array::{Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use deltalake::DeltaTableError;
 use deltalake::datafusion::logical_expr::{col, lit};
-use modelardb_storage::data_folder::DataFolder;
-use modelardb_storage::{register_metadata_table, sql_and_concat};
 use modelardb_types::types::{Node, ServerMode};
 use uuid::Uuid;
 
+use crate::data_folder::DataFolder;
 use crate::error::Result;
+use crate::{register_metadata_table, sql_and_concat};
 
-/// Stores the metadata required for reading from and writing to the normal tables and time series
-/// tables and persisting edges. The data that needs to be persisted is stored in the Delta Lake.
-pub trait ManagerMetadata {
-    async fn create_and_register_manager_metadata_data_folder_tables(&self) -> Result<()>;
-    async fn manager_key(&self) -> Result<Uuid>;
+/// Trait that extends [`DataFolder`] to provide management of the Delta Lake for the cluster.
+#[allow(async_fn_in_trait)]
+pub trait ClusterMetadata {
+    async fn create_and_register_cluster_metadata_tables(&self) -> Result<()>;
+    async fn cluster_key(&self) -> Result<Uuid>;
     async fn save_node(&self, node: Node) -> Result<()>;
     async fn remove_node(&self, url: &str) -> Result<()>;
     async fn nodes(&self) -> Result<Vec<Node>>;
 }
 
-impl ManagerMetadata for DataFolder {
-    /// If they do not already exist, create the tables that are specific to the manager metadata
-    /// Delta Lake and register them with the Apache DataFusion session context.
-    /// * The `manager_metadata` table contains metadata for the manager itself. It is assumed that
-    ///   this table will only have a single row since there can only be a single manager.
-    /// * The `nodes` table contains metadata for each node that is controlled by the manager.
+impl ClusterMetadata for DataFolder {
+    /// If they do not already exist, create the tables that are specific to the cluster and
+    /// register them with the Apache DataFusion session context.
+    /// * The `cluster_metadata` table contains metadata for the cluster itself. It is assumed that
+    ///   this table will only have a single row since there can only be a single cluster.
+    /// * The `nodes` table contains metadata for each node that is in the cluster.
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return
-    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
-    async fn create_and_register_manager_metadata_data_folder_tables(&self) -> Result<()> {
-        // Create and register the manager_metadata table if it does not exist.
+    /// [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
+    async fn create_and_register_cluster_metadata_tables(&self) -> Result<()> {
+        // Create and register the cluster_metadata table if it does not exist.
         let delta_table = self
             .create_metadata_table(
-                "manager_metadata",
+                "cluster_metadata",
                 &Schema::new(vec![Field::new("key", DataType::Utf8, false)]),
             )
             .await?;
 
-        register_metadata_table(self.session_context(), "manager_metadata", delta_table)?;
+        register_metadata_table(self.session_context(), "cluster_metadata", delta_table)?;
 
         // Create and register the nodes table if it does not exist.
         let delta_table = self
@@ -76,36 +76,36 @@ impl ManagerMetadata for DataFolder {
         Ok(())
     }
 
-    /// Retrieve the key for the manager from the `manager_metadata` table. If a key does not
+    /// Retrieve the key for the cluster from the `cluster_metadata` table. If a key does not
     /// already exist, create one and save it to the Delta Lake. If a key could not be retrieved
-    /// or created, return [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
-    async fn manager_key(&self) -> Result<Uuid> {
-        let sql = "SELECT key FROM metadata.manager_metadata";
+    /// or created, return [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
+    async fn cluster_key(&self) -> Result<Uuid> {
+        let sql = "SELECT key FROM metadata.cluster_metadata";
         let batch = sql_and_concat(self.session_context(), sql).await?;
 
         let keys = modelardb_types::array!(batch, 0, StringArray);
         if keys.is_empty() {
-            let manager_key = Uuid::new_v4();
+            let cluster_key = Uuid::new_v4();
 
-            // Add a new row to the manager_metadata table to persist the key.
+            // Add a new row to the cluster_metadata table to persist the key.
             self.write_columns_to_metadata_table(
-                "manager_metadata",
-                vec![Arc::new(StringArray::from(vec![manager_key.to_string()]))],
+                "cluster_metadata",
+                vec![Arc::new(StringArray::from(vec![cluster_key.to_string()]))],
             )
             .await?;
 
-            Ok(manager_key)
+            Ok(cluster_key)
         } else {
-            let manager_key: String = keys.value(0).to_owned();
+            let cluster_key: String = keys.value(0).to_owned();
 
-            Ok(manager_key
+            Ok(cluster_key
                 .parse()
                 .map_err(|error: uuid::Error| DeltaTableError::Generic(error.to_string()))?)
         }
     }
 
     /// Save the node to the Delta Lake and return [`Ok`]. If the node could not be saved, return
-    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
+    /// [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
     async fn save_node(&self, node: Node) -> Result<()> {
         self.write_columns_to_metadata_table(
             "nodes",
@@ -121,7 +121,7 @@ impl ManagerMetadata for DataFolder {
 
     /// Remove the row in the `nodes` table that corresponds to the node with `url` and return
     /// [`Ok`]. If the row could not be removed, return
-    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError).
+    /// [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
     async fn remove_node(&self, url: &str) -> Result<()> {
         let delta_ops = self.metadata_delta_ops("nodes").await?;
 
@@ -133,9 +133,9 @@ impl ManagerMetadata for DataFolder {
         Ok(())
     }
 
-    /// Return the nodes currently controlled by the manager that have been persisted to the Delta
-    /// Lake. If the nodes could not be retrieved,
-    /// [`ModelarDbManagerError`](crate::error::ModelarDbManagerError) is returned.
+    /// Return the nodes currently in the cluster that have been persisted to the Delta Lake. If the
+    /// nodes could not be retrieved, [`ModelarDbStorageError`](crate::error::ModelarDbStorageError)
+    /// is returned.
     async fn nodes(&self) -> Result<Vec<Node>> {
         let mut nodes: Vec<Node> = vec![];
 
@@ -165,16 +165,16 @@ mod tests {
 
     use tempfile::TempDir;
 
-    // Tests for MetadataManager.
+    // Tests for ClusterMetadata.
     #[tokio::test]
-    async fn test_create_manager_metadata_data_folder_tables() {
+    async fn test_create_cluster_metadata_tables() {
         let (_temp_dir, data_folder) = create_data_folder().await;
 
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(
             data_folder
                 .session_context()
-                .sql("SELECT key FROM metadata.manager_metadata")
+                .sql("SELECT key FROM metadata.cluster_metadata")
                 .await
                 .is_ok()
         );
@@ -189,37 +189,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_new_manager_key() {
+    async fn test_new_cluster_key() {
         let (_temp_dir, data_folder) = create_data_folder().await;
 
-        // Verify that the manager key is created and saved correctly.
-        let manager_key = data_folder.manager_key().await.unwrap();
+        // Verify that the cluster key is created and saved correctly.
+        let cluster_key = data_folder.cluster_key().await.unwrap();
 
-        let sql = "SELECT key FROM metadata.manager_metadata";
+        let sql = "SELECT key FROM metadata.cluster_metadata";
         let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![manager_key.to_string()])
+            StringArray::from(vec![cluster_key.to_string()])
         );
     }
 
     #[tokio::test]
-    async fn test_existing_manager_key() {
+    async fn test_existing_cluster_key() {
         let (_temp_dir, data_folder) = create_data_folder().await;
 
         // Verify that only a single key is created and saved when retrieving multiple times.
-        let manager_key_1 = data_folder.manager_key().await.unwrap();
-        let manager_key_2 = data_folder.manager_key().await.unwrap();
+        let cluster_key_1 = data_folder.cluster_key().await.unwrap();
+        let cluster_key_2 = data_folder.cluster_key().await.unwrap();
 
-        let sql = "SELECT key FROM metadata.manager_metadata";
+        let sql = "SELECT key FROM metadata.cluster_metadata";
         let batch = sql_and_concat(data_folder.session_context(), sql)
             .await
             .unwrap();
 
-        assert_eq!(manager_key_1, manager_key_2);
+        assert_eq!(cluster_key_1, cluster_key_2);
         assert_eq!(batch.column(0).len(), 1);
     }
 
@@ -298,7 +298,7 @@ mod tests {
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         data_folder
-            .create_and_register_manager_metadata_data_folder_tables()
+            .create_and_register_cluster_metadata_tables()
             .await
             .unwrap();
 

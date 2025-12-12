@@ -26,7 +26,6 @@ API
    api/modelardb
    api/error_bound
    api/ffi_array
-   api/node
    api/operations
    api/table
 

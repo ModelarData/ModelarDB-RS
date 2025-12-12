@@ -21,6 +21,7 @@ pub mod data_folder;
 use std::any::Any;
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
@@ -31,8 +32,33 @@ use datafusion::execution::RecordBatchStream;
 use modelardb_storage::parser::tokenize_and_parse_sql_expression;
 use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
 
-use crate::error::Result;
+use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::{Aggregate, TableType};
+
+/// Different types of ModelarDB instances that the Operations API can interact with.
+#[derive(Debug)]
+pub enum ModelarDBType {
+    SingleEdge,
+    ClusterEdge,
+    ClusterCloud,
+    DataFolder,
+}
+
+impl FromStr for ModelarDBType {
+    type Err = ModelarDbEmbeddedError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "SingleEdge" => Ok(ModelarDBType::SingleEdge),
+            "ClusterEdge" => Ok(ModelarDBType::ClusterEdge),
+            "ClusterCloud" => Ok(ModelarDBType::ClusterCloud),
+            "DataFolder" => Ok(ModelarDBType::DataFolder),
+            _ => Err(ModelarDbEmbeddedError::InvalidArgument(format!(
+                "'{value}' is not a valid value for ModelarDBType."
+            ))),
+        }
+    }
+}
 
 /// Trait for interacting with ModelarDB, either through an Apache Arrow Flight server or a data
 /// folder.
@@ -41,6 +67,9 @@ pub trait Operations: Sync + Send {
     /// Returns the [`Operations`] instance as [`Any`] so that it can be downcast to a specific
     /// implementation.
     fn as_any(&self) -> &dyn Any;
+
+    /// Returns the type of the ModelarDB instance that this [`Operations`] instance interacts with.
+    async fn modelardb_type(&mut self) -> Result<ModelarDBType>;
 
     /// Creates a table with the name in `table_name` and the information in `table_type`.
     async fn create(&mut self, table_name: &str, table_type: TableType) -> Result<()>;

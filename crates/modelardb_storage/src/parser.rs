@@ -66,16 +66,16 @@ pub enum ModelarDbStatement {
     IncludeSelect(Statement, Vec<String>),
     /// DROP TABLE.
     DropTable(Vec<String>),
-    /// TRUNCATE TABLE.
-    TruncateTable(Vec<String>),
+    /// TRUNCATE.
+    TruncateTable(Vec<String>, bool),
     /// VACUUM.
-    Vacuum(Vec<String>, Option<u64>),
+    Vacuum(Vec<String>, Option<u64>, bool),
 }
 
 /// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
 /// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contains
 /// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE TIME SERIES
-/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE TABLE, DROP TABLE, and VACUUM are supported.
+/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE, DROP TABLE, and VACUUM are supported.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
 
@@ -122,7 +122,7 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 cascade,
                 on_cluster,
             } => {
-                let table_names = semantic_checks_for_truncate(
+                let (table_names, cluster) = semantic_checks_for_truncate(
                     table_names,
                     partitions,
                     table,
@@ -130,13 +130,15 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                     cascade,
                     on_cluster,
                 )?;
-                Ok(ModelarDbStatement::TruncateTable(table_names))
+
+                Ok(ModelarDbStatement::TruncateTable(table_names, cluster))
             }
-            // NOTIFY is used as a substitute for VACUUM since Statement does not have a
+            // DropSecret is used as a substitute for VACUUM since Statement does not have a
             // Vacuum enum variant.
-            Statement::NOTIFY { channel, payload } => Ok(ModelarDbStatement::Vacuum(
-                channel.value.split_terminator(';').map(|s| s.to_owned()).collect(),
-                payload.and_then(|p| p.parse::<u64>().ok()),
+            Statement::DropSecret { name, storage_specifier, if_exists, .. } => Ok(ModelarDbStatement::Vacuum(
+                name.value.split_terminator(';').map(|s| s.to_owned()).collect(),
+                storage_specifier.and_then(|p| p.value.parse::<u64>().ok()),
+                if_exists,
             )),
             Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
             Statement::Query(ref boxed_query) => {
@@ -174,8 +176,9 @@ pub fn tokenize_and_parse_sql_expression(
 }
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
-/// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements, and
-/// VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements.
+/// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements,
+/// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements, and
+/// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -493,9 +496,10 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Parse VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a [`Statement::NOTIFY`]
-    /// with the table names in the `channel` field and the optional retention period in the `payload`
-    /// field. Note that [`Statement::NOTIFY`] is used since [`Statement`] does not have a `Vacuum`
+    /// Parse VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a
+    /// [`Statement::DropSecret`] with the table names in the `name` field, the cluster flag in
+    /// the `if_exists` field, and the optional retention period in the `storage_specifier` field.
+    /// Note that [`Statement::DropSecret`] is used since [`Statement`] does not have a `Vacuum`
     /// variant. A [`ParserError`] is returned if VACUUM is not the first word, the table names
     /// cannot be extracted, or the retention period is not a valid positive integer that is at
     /// most [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds.
@@ -503,26 +507,24 @@ impl ModelarDbDialect {
         // VACUUM.
         parser.expect_keyword(Keyword::VACUUM)?;
 
-        let mut table_names = vec![];
+        // If the next token is CLUSTER, consume it and set the flag to vacuum the entire cluster.
+        let vacuum_cluster = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::CLUSTER
+        {
+            parser.expect_keyword(Keyword::CLUSTER)?;
+            true
+        } else {
+            false
+        };
 
         // If the next token is a word that is not RETAIN, attempt to parse table names.
-        if let Token::Word(word) = parser.peek_nth_token(0).token
+        let table_names = if let Token::Word(word) = parser.peek_nth_token(0).token
             && word.keyword != Keyword::RETAIN
         {
-            loop {
-                match self.parse_word_value(parser) {
-                    Ok(table_name) => {
-                        table_names.push(table_name);
-                        if Token::Comma == parser.peek_nth_token(0).token {
-                            parser.next_token();
-                        } else {
-                            break;
-                        };
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-        }
+            self.parse_table_names(parser)?
+        } else {
+            vec![]
+        };
 
         // If the next token is RETAIN, attempt to parse the retention period in seconds.
         let maybe_retention_period_in_seconds = if let Token::Word(word) =
@@ -543,10 +545,13 @@ impl ModelarDbDialect {
             None
         };
 
-        // Return Statement::NOTIFY as a substitute for Vacuum.
-        Ok(Statement::NOTIFY {
-            channel: Ident::new(table_names.join(";")),
-            payload: maybe_retention_period_in_seconds.map(|period| period.to_string()),
+        // Return Statement::DropSecret as a substitute for Vacuum.
+        Ok(Statement::DropSecret {
+            if_exists: vacuum_cluster,
+            temporary: None,
+            name: Ident::new(table_names.join(";")),
+            storage_specifier: maybe_retention_period_in_seconds
+                .map(|period| Ident::new(period.to_string())),
         })
     }
 
@@ -561,6 +566,81 @@ impl ModelarDbDialect {
                 ))
             }),
             _ => parser.expected("literal integer", token_with_location),
+        }
+    }
+
+    /// Return [`true`] if the token stream starts with TRUNCATE, otherwise [`false`] is returned.
+    /// The method does not consume tokens.
+    fn next_token_is_truncate(&self, parser: &Parser) -> bool {
+        // TRUNCATE.
+        if let Token::Word(word) = parser.peek_nth_token(0).token {
+            word.keyword == Keyword::TRUNCATE
+        } else {
+            false
+        }
+    }
+
+    /// Parse TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ to a [`Statement::Truncate`] with the
+    /// table names in the `table_names` field and the cluster flag in the `on_cluster` field.
+    /// A [`ParserError`] is returned if TRUNCATE is not the first word or the table names cannot be
+    /// extracted.
+    fn parse_truncate(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
+        // TRUNCATE.
+        parser.expect_keyword(Keyword::TRUNCATE)?;
+
+        // If the next token is CLUSTER, consume it and set the flag to truncate the entire cluster.
+        let truncate_cluster = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::CLUSTER
+        {
+            parser.expect_keyword(Keyword::CLUSTER)?;
+
+            // A boolean is not used since we reuse the `on_cluster` field in Statement::Truncate.
+            // Some() with any value signifies that the flag is set.
+            Some(Ident::new("cluster"))
+        } else {
+            None
+        };
+
+        // Parse the table names. At least one table name is required.
+        let table_names = self.parse_table_names(parser)?;
+
+        // Convert the table names to the type required by Statement::Truncate.
+        let truncate_table_targets = table_names
+            .iter()
+            .map(|table_name| TruncateTableTarget {
+                name: ObjectName(vec![ObjectNamePart::Identifier(Ident::new(table_name))]),
+                only: false,
+            })
+            .collect();
+
+        Ok(Statement::Truncate {
+            table_names: truncate_table_targets,
+            partitions: None,
+            table: true,
+            identity: None,
+            cascade: None,
+            on_cluster: truncate_cluster,
+        })
+    }
+
+    /// Return a list of table names parsed from the token stream. It is assumed that the table
+    /// names are separated by commas. A [`ParserError`] is returned if the table names cannot be
+    /// extracted.
+    fn parse_table_names(&self, parser: &mut Parser) -> StdResult<Vec<String>, ParserError> {
+        let mut table_names = vec![];
+
+        loop {
+            match self.parse_word_value(parser) {
+                Ok(table_name) => {
+                    table_names.push(table_name);
+                    if Token::Comma == parser.peek_nth_token(0).token {
+                        parser.next_token();
+                    } else {
+                        return Ok(table_names);
+                    };
+                }
+                Err(error) => return Err(error),
+            }
         }
     }
 }
@@ -599,9 +679,11 @@ impl Dialect for ModelarDbDialect {
     /// as a CREATE TIME SERIES TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
     /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
     /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
-    /// VACUUM \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If all checks fail,
-    /// [`None`] is returned so [`sqlparser`] uses its parsing methods for all other statements.
-    /// If parsing succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is returned.
+    /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If not,
+    /// check if the next token is TRUNCATE, if so, attempt to parse the token stream as a
+    /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statement. If all checks fail, [`None`] is
+    /// returned so [`sqlparser`] uses its parsing methods for all other statements. If parsing
+    /// succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if self.next_tokens_are_create_time_series_table(parser) {
             Some(self.parse_create_time_series_table(parser))
@@ -609,6 +691,8 @@ impl Dialect for ModelarDbDialect {
             Some(self.parse_include_query(parser))
         } else if self.next_token_is_vacuum(parser) {
             Some(self.parse_vacuum(parser))
+        } else if self.next_token_is_truncate(parser) {
+            Some(self.parse_truncate(parser))
         } else {
             None
         }
@@ -1189,15 +1273,10 @@ fn semantic_checks_for_truncate(
     identity: Option<TruncateIdentityOption>,
     cascade: Option<CascadeOption>,
     on_cluster: Option<Ident>,
-) -> StdResult<Vec<String>, ParserError> {
-    if partitions.is_some()
-        || !table
-        || identity.is_some()
-        || cascade.is_some()
-        || on_cluster.is_some()
-    {
+) -> StdResult<(Vec<String>, bool), ParserError> {
+    if partitions.is_some() || !table || identity.is_some() || cascade.is_some() {
         Err(ParserError::ParserError(
-            "Only TRUNCATE TABLE is supported.".to_owned(),
+            "Only TRUNCATE [CLUSTER] table_name[, table_name]+ is supported.".to_owned(),
         ))
     } else {
         let mut table_names = Vec::with_capacity(names.len());
@@ -1213,7 +1292,7 @@ fn semantic_checks_for_truncate(
             table_names.push(table_name);
         }
 
-        Ok(table_names)
+        Ok((table_names, on_cluster.is_some()))
     }
 }
 
@@ -1783,25 +1862,27 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_vacuum_all_tables() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM");
 
         assert!(table_names.is_empty());
         assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(!cluster)
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_single_table() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM table_name");
 
         assert_eq!(table_names, vec!["table_name".to_owned()]);
         assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(!cluster)
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2");
 
         assert_eq!(
@@ -1809,20 +1890,22 @@ mod tests {
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
         assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(!cluster)
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_with_retention_period() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM RETAIN 30");
 
         assert!(table_names.is_empty());
         assert_eq!(maybe_retention_period_in_seconds, Some(30));
+        assert!(!cluster)
     }
 
     #[test]
     fn test_tokenize_and_parse_vacuum_multiple_tables_with_retention_period() {
-        let (table_names, maybe_retention_period_in_seconds) =
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
             parse_vacuum_and_extract_table_names("VACUUM table_name_1, table_name_2 RETAIN 30");
 
         assert_eq!(
@@ -1830,14 +1913,65 @@ mod tests {
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
         assert_eq!(maybe_retention_period_in_seconds, Some(30));
+        assert!(!cluster)
     }
 
-    fn parse_vacuum_and_extract_table_names(sql_statement: &str) -> (Vec<String>, Option<u64>) {
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster() {
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
+            parse_vacuum_and_extract_table_names("VACUUM CLUSTER");
+
+        assert!(table_names.is_empty());
+        assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_with_multiple_tables() {
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
+            parse_vacuum_and_extract_table_names("VACUUM CLUSTER table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert!(maybe_retention_period_in_seconds.is_none());
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_with_retention_period() {
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
+            parse_vacuum_and_extract_table_names("VACUUM CLUSTER RETAIN 30");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_retention_period_in_seconds, Some(30));
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_with_multiple_tables_and_retention_period() {
+        let (table_names, maybe_retention_period_in_seconds, cluster) =
+            parse_vacuum_and_extract_table_names(
+                "VACUUM CLUSTER table_name_1, table_name_2 RETAIN 30",
+            );
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert_eq!(maybe_retention_period_in_seconds, Some(30));
+        assert!(cluster)
+    }
+
+    fn parse_vacuum_and_extract_table_names(
+        sql_statement: &str,
+    ) -> (Vec<String>, Option<u64>, bool) {
         let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
 
         match modelardb_statement {
-            ModelarDbStatement::Vacuum(table_names, maybe_retention_period_in_seconds) => {
-                (table_names, maybe_retention_period_in_seconds)
+            ModelarDbStatement::Vacuum(table_names, maybe_retention_period_in_seconds, cluster) => {
+                (table_names, maybe_retention_period_in_seconds, cluster)
             }
             _ => panic!("Expected ModelarDbStatement::Vacuum."),
         }
@@ -1985,6 +2119,167 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "Parser Error: sql parser error: Expected: end of statement, found: table_1 at Line: 1, Column: 18"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_last() {
+        let result = tokenize_and_parse_sql_statement("VACUUM table_1, table_2 RETAIN 30 CLUSTER");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: CLUSTER at Line: 1, Column: 35"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_after_tables_before_retain() {
+        let result = tokenize_and_parse_sql_statement("VACUUM table_1, table_2 CLUSTER RETAIN 30");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: CLUSTER at Line: 1, Column: 25"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_cluster_trailing_comma() {
+        let result = tokenize_and_parse_sql_statement("VACUUM CLUSTER, table_1");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: , at Line: 1, Column: 15"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_vacuum_retain_and_cluster_mixed() {
+        let result = tokenize_and_parse_sql_statement("VACUUM RETAIN CLUSTER 30");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: CLUSTER at Line: 1, Column: 15"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_single_table() {
+        let (table_names, cluster) = parse_truncate_and_extract_table_names("TRUNCATE table_name");
+
+        assert_eq!(table_names, vec!["table_name".to_owned()]);
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_multiple_tables() {
+        let (table_names, cluster) =
+            parse_truncate_and_extract_table_names("TRUNCATE table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_cluster_multiple_tables() {
+        let (table_names, cluster) =
+            parse_truncate_and_extract_table_names("TRUNCATE CLUSTER table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert!(cluster)
+    }
+
+    fn parse_truncate_and_extract_table_names(sql_statement: &str) -> (Vec<String>, bool) {
+        let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
+
+        match modelardb_statement {
+            ModelarDbStatement::TruncateTable(table_names, cluster) => (table_names, cluster),
+            _ => panic!("Expected ModelarDbStatement::TruncateTable."),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_no_tables() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_trailing_comma() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE table_name,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_leading_comma() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE ,table_name");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: , at Line: 1, Column: 10"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_only_comma() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: , at Line: 1, Column: 9"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_quoted_table_name() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE 'table_name'");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: 'table_name' at Line: 1, Column: 10"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_only_cluster() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE CLUSTER");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_cluster_after_tables() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE table_1, table_2 CLUSTER");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: CLUSTER at Line: 1, Column: 27"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_truncate_cluster_trailing_comma() {
+        let result = tokenize_and_parse_sql_statement("TRUNCATE CLUSTER, table_name");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: , at Line: 1, Column: 17"
         );
     }
 }

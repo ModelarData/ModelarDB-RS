@@ -186,7 +186,6 @@ jobs:
         mv target/release/modelardb$SUFFIX modelardb_$RUST_TRIPLE/modelardb$SUFFIX
         mv target/release/modelardbb$SUFFIX modelardb_$RUST_TRIPLE/modelardbb$SUFFIX
         mv target/release/modelardbd$SUFFIX modelardb_$RUST_TRIPLE/modelardbd$SUFFIX
-        mv target/release/modelardbm$SUFFIX modelardb_$RUST_TRIPLE/modelardbm$SUFFIX
 
     # Upload Binaries.
     - name: Artifact Upload

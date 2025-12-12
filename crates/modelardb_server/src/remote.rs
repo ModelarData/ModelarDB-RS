@@ -28,7 +28,7 @@ use std::sync::Arc;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightEndpoint, FlightInfo,
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket, utils,
 };
@@ -44,7 +44,7 @@ use futures::stream::{self, BoxStream, SelectAll};
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::flight::protocol;
 use modelardb_types::functions;
-use modelardb_types::types::{Table, TimeSeriesTableMetadata};
+use modelardb_types::types::{ServerMode, Table, TimeSeriesTableMetadata};
 use prost::Message;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -55,6 +55,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::ClusterMode;
+use crate::cluster::Cluster;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 
@@ -244,6 +245,26 @@ pub fn table_name_from_flight_descriptor(
         .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
 }
 
+/// Return `true` if the request contains the cluster key and `false` if not. If the request
+/// contains a key that does not match the cluster key, return [`Status`].
+#[allow(clippy::result_large_err)]
+fn cluster_key_in_request(
+    cluster: &Cluster,
+    request_metadata: &MetadataMap,
+) -> StdResult<bool, Status> {
+    if let Some(request_key) = request_metadata.get("x-cluster-key") {
+        if cluster.key() == request_key {
+            Ok(true)
+        } else {
+            Err(Status::invalid_argument(
+                "The cluster key in the request does not match the cluster key in the configuration.",
+            ))
+        }
+    } else {
+        Ok(false)
+    }
+}
+
 /// Return an empty stream of [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) that
 /// can be returned when a SQL command has been successfully executed but did not produce any rows
 /// to return.
@@ -286,6 +307,159 @@ impl FlightServiceHandler {
             context,
             dictionaries_by_id: HashMap::new(),
         }
+    }
+
+    /// Create a normal table with the given `table_name` and `schema`. If the node is running in a
+    /// cluster, the table is created in the remote data folder and locally in each node in the
+    /// cluster. If not, the table is only created locally.
+    async fn create_normal_table(
+        &self,
+        table_name: &str,
+        schema: &Schema,
+        request_metadata: &MetadataMap,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        // If the cluster key is in the request, the request is from a peer node, which means the
+        // table has already been created in the remote data folder and propagated to all nodes.
+        if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
+            && !cluster_key_in_request(cluster, request_metadata)?
+        {
+            cluster
+                .create_cluster_normal_table(table_name, schema)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        self.context
+            .create_normal_table(table_name, schema)
+            .await
+            .map_err(error_to_status_invalid_argument)?;
+
+        Ok(())
+    }
+
+    /// Create a time series table with the given `time_series_table_metadata`. If the node is
+    /// running in a cluster, the table is created in the remote data folder and locally in each
+    /// node in the cluster. If not, the table is only created locally.
+    async fn create_time_series_table(
+        &self,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
+        request_metadata: &MetadataMap,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        // If the cluster key is in the request, the request is from a peer node, which means the
+        // table has already been created in the remote data folder and propagated to all nodes.
+        if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
+            && !cluster_key_in_request(cluster, request_metadata)?
+        {
+            cluster
+                .create_cluster_time_series_table(time_series_table_metadata)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        self.context
+            .create_time_series_table(time_series_table_metadata)
+            .await
+            .map_err(error_to_status_invalid_argument)?;
+
+        Ok(())
+    }
+
+    /// Drop the tables in `table_names`. If the node is running in a cluster, the tables are
+    /// dropped in the remote data folder and locally in each node in the cluster. If not, the
+    /// tables are only dropped locally.
+    async fn drop_tables(
+        &self,
+        table_names: &[String],
+        request_metadata: &MetadataMap,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        // If the cluster key is in the request, the request is from a peer node, which means the
+        // tables have already been dropped in the remote data folder and propagated to all nodes.
+        if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
+            && !cluster_key_in_request(cluster, request_metadata)?
+        {
+            cluster
+                .drop_cluster_tables(table_names)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        for table_name in table_names {
+            self.context
+                .drop_table(table_name)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        Ok(())
+    }
+
+    /// Truncate the tables in `table_names`. If the node is running in a cluster and
+    /// `truncate_cluster` is `true`, the tables are truncated in the remote data folder and
+    /// locally in each node in the cluster. If not, the tables are only truncated locally.
+    async fn truncate_tables(
+        &self,
+        table_names: &[String],
+        truncate_cluster: bool,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        if truncate_cluster {
+            if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
+                cluster
+                    .truncate_cluster_tables(table_names)
+                    .await
+                    .map_err(error_to_status_invalid_argument)?;
+            } else {
+                return Err(Status::internal("The node is not running in a cluster."));
+            }
+        }
+
+        for table_name in table_names {
+            self.context
+                .truncate_table(table_name)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        Ok(())
+    }
+
+    /// Vacuum the tables in `table_names`. If the node is running in a cluster and `vacuum_cluster`
+    /// is `true`, the tables are vacuumed in the remote data folder and locally in each node in the
+    /// cluster. If not, the tables are only vacuumed locally.
+    async fn vacuum_tables(
+        &self,
+        table_names: &[String],
+        maybe_retention_period_in_seconds: Option<u64>,
+        vacuum_cluster: bool,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        if vacuum_cluster {
+            if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
+                cluster
+                    .vacuum_cluster_tables(table_names, maybe_retention_period_in_seconds)
+                    .await
+                    .map_err(error_to_status_invalid_argument)?;
+            } else {
+                return Err(Status::internal("The node is not running in a cluster."));
+            }
+        }
+
+        for table_name in table_names {
+            self.context
+                .vacuum_table(table_name, maybe_retention_period_in_seconds)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        Ok(())
     }
 
     /// While there is still more data to receive, ingest the data into the normal table.
@@ -342,21 +516,6 @@ impl FlightServiceHandler {
 
         Ok(())
     }
-
-    /// If the server was started with a manager, validate the request by checking that the key in
-    /// the request metadata matches the key of the manager. If the request is invalid, return a
-    /// [`Status`] with the code [`tonic::Code::Unauthenticated`].
-    async fn validate_request(&self, request_metadata: &MetadataMap) -> StdResult<(), Status> {
-        let configuration_manager = self.context.configuration_manager.read().await;
-
-        if let ClusterMode::MultiNode(manager) = configuration_manager.cluster_mode() {
-            manager
-                .validate_request(request_metadata)
-                .map_err(|error| Status::unauthenticated(error.to_string()))
-        } else {
-            Ok(())
-        }
-    }
 }
 
 #[tonic::async_trait]
@@ -394,12 +553,46 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(Box::pin(output)))
     }
 
-    /// Not implemented.
+    /// Given a query, return [`FlightInfo`] containing [`FlightEndpoints`](FlightEndpoint)
+    /// describing which cloud nodes should be used to execute the query. The query must be
+    /// provided in `FlightDescriptor.cmd`.
     async fn get_flight_info(
         &self,
-        _request: Request<FlightDescriptor>,
+        request: Request<FlightDescriptor>,
     ) -> StdResult<Response<FlightInfo>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        // Retrieve the cloud node that should execute the given query.
+        let configuration_manager = self.context.configuration_manager.read().await;
+        let cloud_node =
+            if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
+                cluster.query_node().await.map_err(error_to_status_internal)
+            } else {
+                Err(Status::internal("The node is not running in a cluster."))
+            }?;
+
+        // Extract the query.
+        let flight_descriptor = request.into_inner();
+        let query = str::from_utf8(&flight_descriptor.cmd)
+            .map_err(error_to_status_invalid_argument)?
+            .to_owned();
+
+        info!(
+            "Assigning query '{query}' to cloud node with url '{}'.",
+            cloud_node.url
+        );
+
+        // All data in the query result should be retrieved using a single endpoint.
+        let endpoint = FlightEndpoint::new()
+            .with_ticket(Ticket::new(query))
+            .with_location(cloud_node.url);
+
+        // schema is empty and total_records and total_bytes are -1 since we do not know
+        // anything about the result of the query at this point.
+        let flight_info = FlightInfo::new()
+            .with_descriptor(flight_descriptor)
+            .with_endpoint(endpoint)
+            .with_ordered(true);
+
+        Ok(Response::new(flight_info))
     }
 
     /// Not implemented.
@@ -432,7 +625,7 @@ impl FlightService for FlightServiceHandler {
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
     /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, EXPLAIN, INCLUDE,
-    /// SELECT, INSERT, TRUNCATE TABLE, DROP TABLE, and VACUUM are supported.
+    /// SELECT, INSERT, TRUNCATE, DROP TABLE, and VACUUM are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -455,22 +648,14 @@ impl FlightService for FlightServiceHandler {
 
         let sendable_record_batch_stream = match modelardb_statement {
             ModelarDbStatement::CreateNormalTable { name, schema } => {
-                self.validate_request(request.metadata()).await?;
-
-                self.context
-                    .create_normal_table(&name, &schema)
-                    .await
-                    .map_err(error_to_status_invalid_argument)?;
+                self.create_normal_table(&name, &schema, request.metadata())
+                    .await?;
 
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::CreateTimeSeriesTable(time_series_table_metadata) => {
-                self.validate_request(request.metadata()).await?;
-
-                self.context
-                    .create_time_series_table(&time_series_table_metadata)
-                    .await
-                    .map_err(error_to_status_invalid_argument)?;
+                self.create_time_series_table(&time_series_table_metadata, request.metadata())
+                    .await?;
 
                 Ok(empty_record_batch_stream())
             }
@@ -502,29 +687,21 @@ impl FlightService for FlightServiceHandler {
                 )
                 .await
             }
-            ModelarDbStatement::TruncateTable(table_names) => {
-                for table_name in table_names {
-                    self.context
-                        .truncate_table(&table_name)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
-                }
+            ModelarDbStatement::TruncateTable(table_names, cluster) => {
+                self.truncate_tables(&table_names, cluster).await?;
 
                 Ok(empty_record_batch_stream())
             }
             ModelarDbStatement::DropTable(table_names) => {
-                self.validate_request(request.metadata()).await?;
-
-                for table_name in table_names {
-                    self.context
-                        .drop_table(&table_name)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
-                }
+                self.drop_tables(&table_names, request.metadata()).await?;
 
                 Ok(empty_record_batch_stream())
             }
-            ModelarDbStatement::Vacuum(mut table_names, maybe_retention_period_in_seconds) => {
+            ModelarDbStatement::Vacuum(
+                mut table_names,
+                maybe_retention_period_in_seconds,
+                cluster,
+            ) => {
                 // Vacuum all tables if no table names are provided.
                 if table_names.is_empty() {
                     table_names = self
@@ -534,12 +711,8 @@ impl FlightService for FlightServiceHandler {
                         .table_names();
                 };
 
-                for table_name in table_names {
-                    self.context
-                        .vacuum_table(&table_name, maybe_retention_period_in_seconds)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
-                }
+                self.vacuum_tables(&table_names, maybe_retention_period_in_seconds, cluster)
+                    .await?;
 
                 Ok(empty_record_batch_stream())
             }
@@ -633,17 +806,17 @@ impl FlightService for FlightServiceHandler {
     /// object store. Note that data is only transferred to the remote object store if one was
     /// provided when starting the server.
     /// * `KillNode`: An extension of the `FlushNode` action that first flushes all data to disk,
-    /// then flushes all compressed data to the remote object store, and finally kills the process
-    /// that is running the server. Note that since the process is killed, a conventional response
-    /// cannot be returned.
+    /// then flushes all compressed data to the remote object store, then removes the node
+    /// from the cluster if necessary, and finally kills the process that is running the server.
+    /// Note that since the process is killed, a conventional response cannot be returned.
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
     /// configuration is returned in a [`Configuration`](protocol::Configuration) protobuf message.
     /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
     /// and the new value are provided in the [`UpdateConfiguration`](protocol::UpdateConfiguration)
     /// protobuf message in the action body. The setting is updated in the live server configuration
     /// and the change is persisted in the configuration file.
-    /// * `NodeType`: Get the type of the node. The type is always `server`. The type of the node
-    /// is returned as a string.
+    /// * `NodeType`: Get the type of the node. The type is `SingleEdge`, `ClusterEdge`, or
+    /// `ClusterCloud`. The type of the node is returned as a string.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -652,24 +825,18 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTable" {
-            self.validate_request(request.metadata()).await?;
-
             let table_metadata =
                 modelardb_types::flight::deserialize_and_extract_table_metadata(&action.body)
                     .map_err(error_to_status_invalid_argument)?;
 
             match table_metadata {
                 Table::NormalTable(table_name, schema) => {
-                    self.context
-                        .create_normal_table(&table_name, &schema)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
+                    self.create_normal_table(&table_name, &schema, request.metadata())
+                        .await?;
                 }
                 Table::TimeSeriesTable(metadata) => {
-                    self.context
-                        .create_time_series_table(&metadata)
-                        .await
-                        .map_err(error_to_status_invalid_argument)?;
+                    self.create_time_series_table(&metadata, request.metadata())
+                        .await?;
                 }
             }
 
@@ -700,8 +867,6 @@ impl FlightService for FlightServiceHandler {
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "KillNode" {
-            self.validate_request(request.metadata()).await?;
-
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine
                 .flush()
@@ -711,6 +876,15 @@ impl FlightService for FlightServiceHandler {
                 .transfer()
                 .await
                 .map_err(error_to_status_internal)?;
+
+            // If running in a cluster, remove the node from the remote data folder.
+            let configuration_manager = self.context.configuration_manager.read().await;
+            if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
+                cluster
+                    .remove_node()
+                    .await
+                    .map_err(error_to_status_internal)?;
+            }
 
             // Since the process is killed, a conventional response cannot be given. If the action
             // returns a "Stream removed" message, the edge was successfully flushed and killed.
@@ -784,8 +958,18 @@ impl FlightService for FlightServiceHandler {
             // Confirm the configuration was updated.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "NodeType" {
+            let configuration_manager = self.context.configuration_manager.read().await;
+
+            let node_type = match configuration_manager.cluster_mode() {
+                ClusterMode::SingleNode => "SingleEdge",
+                ClusterMode::MultiNode(cluster) => match cluster.node().mode {
+                    ServerMode::Edge => "ClusterEdge",
+                    ServerMode::Cloud => "ClusterCloud",
+                },
+            };
+
             let flight_result = FlightResult {
-                body: "server".bytes().collect(),
+                body: node_type.bytes().collect(),
             };
 
             Ok(Response::new(Box::pin(stream::once(async {

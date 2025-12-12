@@ -14,7 +14,7 @@
 
 FROM rust:latest
 
-ARG BUILD_PROFILE=dev
+ARG BUILD_PROFILE=release
 
 WORKDIR /usr/src/app
 
@@ -24,4 +24,4 @@ RUN apt-get update && apt-get install -y protobuf-compiler
 
 RUN cargo build --profile $BUILD_PROFILE
 
-CMD ["target/debug/modelardbd", "edge", "data"]
+CMD ["target/release/modelardbd", "edge", "data"]
