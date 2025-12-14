@@ -22,7 +22,7 @@ use std::path::PathBuf;
 
 use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
-use crate::error::Result;
+use crate::error::{ModelarDbStorageError, Result};
 
 
 /// Write-ahead log that logs data on a per-table level and operations separately.
@@ -35,7 +35,7 @@ pub struct WriteAheadLog {
 impl WriteAheadLog {
     /// Create a new [`WriteAheadLog`] that stores the log in the root of `local_data_folder` in
     /// the [`WRITE_AHEAD_LOG_FOLDER`] folder. If the folder does not exist, it is created. If the
-    /// log could not be created, return [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
+    /// log could not be created, return [`ModelarDbStorageError`].
     pub fn try_new(local_data_folder: &DataFolder) -> Result<Self> {
         // Create the folder for the write-ahead log if it does not exist.
         let location = local_data_folder.location();
@@ -49,6 +49,25 @@ impl WriteAheadLog {
             operation_log: WriteAheadLogFile::try_new(log_folder_path.join("operations.wal"))?,
         })
     }
+
+    /// Create a new [`WriteAheadLogFile`] for the table with the given name. If a log already
+    /// exists or the log file could not be created, return [`ModelarDbStorageError`].
+    pub fn create_table_log(&mut self, table_name: &str) -> Result<()> {
+        if !self.table_logs.contains_key(table_name) {
+            let table_log_path = self.log_folder_path.join(format!("{}.wal", table_name));
+
+            self.table_logs.insert(
+                table_name.to_owned(),
+                WriteAheadLogFile::try_new(table_log_path)?,
+            );
+
+            Ok(())
+        } else {
+            Err(ModelarDbStorageError::InvalidState(format!(
+                "Table log for table '{table_name}' already exists",
+            )))
+        }
+    }
 }
 
 /// Wrapper around a [`File`] that enforces that [`sync_all()`](File::sync_all) is called
@@ -60,8 +79,7 @@ struct WriteAheadLogFile {
 
 impl WriteAheadLogFile {
     /// Create a new [`WriteAheadLogFile`] that appends to the file at `file_path`. If the file does
-    /// not exist, it is created. If the file could not be created, return
-    /// [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
+    /// not exist, it is created. If the file could not be created, return [`ModelarDbStorageError`].
     fn try_new(file_path: PathBuf) -> Result<Self> {
         let file = OpenOptions::new()
             .create(true)
