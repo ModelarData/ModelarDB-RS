@@ -17,7 +17,7 @@
 //! efficiently persist data and operations on disk to avoid data loss and enable crash recovery.
 
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 
 use crate::WRITE_AHEAD_LOG_FOLDER;
@@ -41,7 +41,7 @@ impl WriteAheadLog {
         let location = local_data_folder.location();
         let log_folder_path = PathBuf::from(format!("{location}/{WRITE_AHEAD_LOG_FOLDER}"));
 
-        std::fs::create_dir(log_folder_path.clone())?;
+        std::fs::create_dir_all(log_folder_path.clone())?;
 
         Ok(Self {
             log_folder_path: log_folder_path.clone(),
@@ -59,10 +59,15 @@ struct WriteAheadLogFile {
 }
 
 impl WriteAheadLogFile {
-    /// Create a new [`WriteAheadLogFile`] that writes to the file at `file_path`. If the file could
-    /// not be created, return [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
+    /// Create a new [`WriteAheadLogFile`] that appends to the file at `file_path`. If the file does
+    /// not exist, it is created. If the file could not be created, return
+    /// [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
     fn try_new(file_path: PathBuf) -> Result<Self> {
-        let file = File::create(file_path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file_path)?;
+
         Ok(Self { file })
     }
 }
