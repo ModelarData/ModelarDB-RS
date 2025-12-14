@@ -373,6 +373,14 @@ impl DataFolder {
         &self.session_context
     }
 
+    /// Return the location of the Delta Lake. This is `memory:///modelardb` if the Delta Lake is
+    /// in memory, the local path if the Delta Lake is stored on disk, `az://container-name`
+    /// if the Delta Lake is stored in Azure Blob Storage, or `s3://bucket-name` if the Delta Lake
+    /// is stored in Amazon S3.
+    pub fn location(&self) -> &str {
+        &self.location
+    }
+
     /// Return an [`ObjectStore`] to access the root of the Delta Lake.
     pub fn object_store(&self) -> Arc<dyn ObjectStore> {
         self.object_store.clone()
