@@ -21,6 +21,7 @@ pub mod error;
 mod optimizer;
 pub mod parser;
 mod query;
+mod write_ahead_log;
 
 use std::result::Result as StdResult;
 use std::sync::Arc;
