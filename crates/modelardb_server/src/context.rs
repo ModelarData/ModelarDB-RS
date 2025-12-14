@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
+use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -38,6 +39,8 @@ pub struct Context {
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
+    /// Write-ahead log for persisting data and operations.
+    pub write_ahead_log: WriteAheadLog,
 }
 
 impl Context {
@@ -54,10 +57,13 @@ impl Context {
             StorageEngine::try_new(data_folders.clone(), &configuration_manager).await?,
         ));
 
+        let write_ahead_log = WriteAheadLog::try_new(&data_folders.local_data_folder)?;
+
         Ok(Context {
             data_folders,
             configuration_manager,
             storage_engine,
+            write_ahead_log,
         })
     }
 
