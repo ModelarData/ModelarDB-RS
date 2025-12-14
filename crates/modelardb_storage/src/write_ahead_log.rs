@@ -27,8 +27,11 @@ use crate::error::{ModelarDbStorageError, Result};
 
 /// Write-ahead log that logs data on a per-table level and operations separately.
 pub struct WriteAheadLog {
-    log_folder_path: PathBuf,
+    /// Path to the folder that contains the write-ahead log.
+    folder_path: PathBuf,
+    /// Logs for each table. The key is the table name, and the value is the log file for that table.
     table_logs: HashMap<String, WriteAheadLogFile>,
+    /// Log file for operations that are not associated with a specific table.
     operation_log: WriteAheadLogFile,
 }
 
@@ -44,7 +47,7 @@ impl WriteAheadLog {
         std::fs::create_dir_all(log_folder_path.clone())?;
 
         let mut write_ahead_log = Self {
-            log_folder_path: log_folder_path.clone(),
+            folder_path: log_folder_path.clone(),
             table_logs: HashMap::new(),
             operation_log: WriteAheadLogFile::try_new(log_folder_path.join("operations.wal"))?,
         };
@@ -63,7 +66,7 @@ impl WriteAheadLog {
     /// log file will be added to the map.
     pub fn create_table_log(&mut self, table_name: &str) -> Result<()> {
         if !self.table_logs.contains_key(table_name) {
-            let table_log_path = self.log_folder_path.join(format!("{}.wal", table_name));
+            let table_log_path = self.folder_path.join(format!("{}.wal", table_name));
 
             self.table_logs.insert(
                 table_name.to_owned(),
@@ -83,6 +86,9 @@ impl WriteAheadLog {
 /// immediately after writing to ensure that all data is on disk before returning. Note that
 /// an exclusive lock is held on the file while it is being written to.
 struct WriteAheadLogFile {
+    /// Path to the file that the log is written to.
+    path: PathBuf,
+    /// File that the log is written to.
     file: File,
 }
 
@@ -93,8 +99,11 @@ impl WriteAheadLogFile {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(file_path)?;
+            .open(file_path.clone())?;
 
-        Ok(Self { file })
+        Ok(Self {
+            path: file_path,
+            file,
+        })
     }
 }
