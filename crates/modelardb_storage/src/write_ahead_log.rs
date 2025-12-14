@@ -80,6 +80,27 @@ impl WriteAheadLog {
             )))
         }
     }
+
+    /// Remove the log file for the table with the given name. If the log file does not exist or
+    /// could not be removed, return [`ModelarDbStorageError`].
+    pub fn remove_table_log(&mut self, table_name: &str) -> Result<()> {
+        let log_path;
+
+        if let Some(log_file) = self.table_logs.remove(table_name) {
+            log_path = log_file.path;
+            // log_file is dropped here as it goes out of scope which automatically closes its
+            // internal file handle.
+        } else {
+            return Err(ModelarDbStorageError::InvalidState(format!(
+                "Table log for table '{table_name}' does not exist",
+            )));
+        }
+
+        // Now that the file handle is closed, the file can be removed.
+        std::fs::remove_file(log_path)?;
+
+        Ok(())
+    }
 }
 
 /// Wrapper around a [`File`] that enforces that [`sync_all()`](File::sync_all) is called
