@@ -26,7 +26,17 @@ struct WriteAheadLog {
 }
 
 /// Wrapper around a [`File`] that enforces that [`sync_all()`](File::sync_all) is called
-/// immediately after writing to ensure that all data is on disk before returning.
-struct WriteAheadLogFile {
+/// immediately after writing to ensure that all data is on disk before returning. Note that
+/// an exclusive lock is held on the file while it is being written to.
+pub struct WriteAheadLogFile {
     file: File,
+}
+
+impl WriteAheadLogFile {
+    /// Create a new [`WriteAheadLogFile`] that writes to the file at `file_path`. If the file could
+    /// not be created, return [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
+    pub fn try_new(file_path: PathBuf) -> Result<Self> {
+        let file = File::create(file_path)?;
+        Ok(Self { file })
+    }
 }
