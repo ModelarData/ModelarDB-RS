@@ -57,7 +57,7 @@ impl Context {
             StorageEngine::try_new(data_folders.clone(), &configuration_manager).await?,
         ));
 
-        let write_ahead_log = WriteAheadLog::try_new(&data_folders.local_data_folder)?;
+        let write_ahead_log = WriteAheadLog::try_new(&data_folders.local_data_folder).await?;
 
         Ok(Context {
             data_folders,
