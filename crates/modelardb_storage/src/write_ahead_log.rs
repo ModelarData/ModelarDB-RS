@@ -36,7 +36,7 @@ impl WriteAheadLog {
     /// Create a new [`WriteAheadLog`] that stores the log in the root of `local_data_folder` in
     /// the [`WRITE_AHEAD_LOG_FOLDER`] folder. If the folder does not exist, it is created. If the
     /// log could not be created, return [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
-    pub fn try_new(local_data_folder: DataFolder) -> Result<Self> {
+    pub fn try_new(local_data_folder: &DataFolder) -> Result<Self> {
         // Create the folder for the write-ahead log if it does not exist.
         let location = local_data_folder.location();
         let log_folder_path = PathBuf::from(format!("{location}/{WRITE_AHEAD_LOG_FOLDER}"));
@@ -54,14 +54,14 @@ impl WriteAheadLog {
 /// Wrapper around a [`File`] that enforces that [`sync_all()`](File::sync_all) is called
 /// immediately after writing to ensure that all data is on disk before returning. Note that
 /// an exclusive lock is held on the file while it is being written to.
-pub struct WriteAheadLogFile {
+struct WriteAheadLogFile {
     file: File,
 }
 
 impl WriteAheadLogFile {
     /// Create a new [`WriteAheadLogFile`] that writes to the file at `file_path`. If the file could
     /// not be created, return [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
-    pub fn try_new(file_path: PathBuf) -> Result<Self> {
+    fn try_new(file_path: PathBuf) -> Result<Self> {
         let file = File::create(file_path)?;
         Ok(Self { file })
     }
