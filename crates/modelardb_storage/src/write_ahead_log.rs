@@ -36,22 +36,31 @@ impl WriteAheadLog {
     /// Create a new [`WriteAheadLog`] that stores the log in the root of `local_data_folder` in
     /// the [`WRITE_AHEAD_LOG_FOLDER`] folder. If the folder does not exist, it is created. If the
     /// log could not be created, return [`ModelarDbStorageError`].
-    pub fn try_new(local_data_folder: &DataFolder) -> Result<Self> {
+    pub async fn try_new(local_data_folder: &DataFolder) -> Result<Self> {
         // Create the folder for the write-ahead log if it does not exist.
         let location = local_data_folder.location();
         let log_folder_path = PathBuf::from(format!("{location}/{WRITE_AHEAD_LOG_FOLDER}"));
 
         std::fs::create_dir_all(log_folder_path.clone())?;
 
-        Ok(Self {
+        let mut write_ahead_log = Self {
             log_folder_path: log_folder_path.clone(),
             table_logs: HashMap::new(),
             operation_log: WriteAheadLogFile::try_new(log_folder_path.join("operations.wal"))?,
-        })
+        };
+
+        // For each time series table, create a log file if it does not already exist.
+        for table_name in local_data_folder.time_series_table_names().await? {
+            write_ahead_log.create_table_log(&table_name)?;
+        }
+
+        Ok(write_ahead_log)
     }
 
     /// Create a new [`WriteAheadLogFile`] for the table with the given name. If a log already
-    /// exists or the log file could not be created, return [`ModelarDbStorageError`].
+    /// exists in the map or the log file could not be created, return [`ModelarDbStorageError`].
+    /// Note that if the log file already exists, but it is not present in the map, the existing
+    /// log file will be added to the map.
     pub fn create_table_log(&mut self, table_name: &str) -> Result<()> {
         if !self.table_logs.contains_key(table_name) {
             let table_log_path = self.log_folder_path.join(format!("{}.wal", table_name));
