@@ -22,6 +22,7 @@ use std::path::PathBuf;
 
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::StreamWriter;
+use arrow::record_batch::RecordBatch;
 use modelardb_types::types::TimeSeriesTableMetadata;
 
 use crate::WRITE_AHEAD_LOG_FOLDER;
@@ -54,7 +55,6 @@ impl WriteAheadLog {
         let mut write_ahead_log = Self {
             folder_path: log_folder_path.clone(),
             table_logs: HashMap::new(),
-            operation_log: WriteAheadLogFile::try_new(log_folder_path.join("operations.wal"))?,
             operation_log: WriteAheadLogFile::try_new(
                 log_folder_path.join(OPERATIONS_LOG_FILE),
                 &operations_log_schema(),
@@ -143,6 +143,21 @@ impl WriteAheadLogFile {
             path: file_path,
             writer,
         })
+    }
+
+    /// Append the given data to the log file and sync the file to ensure that all data is on disk.
+    /// If the data could not be appended or the file could not be synced, return
+    /// [`ModelarDbStorageError`].
+    fn append_and_sync(&mut self, data: &RecordBatch) -> Result<()> {
+        self.writer.write(data)?;
+
+        // Flush the writer's internal buffers to the file.
+        self.writer.flush()?;
+
+        // Get a reference to the underlying file handle and sync to disk.
+        self.writer.get_ref().sync_all()?;
+
+        Ok(())
     }
 }
 
