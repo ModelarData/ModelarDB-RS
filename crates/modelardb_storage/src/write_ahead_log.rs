@@ -21,6 +21,7 @@ use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 
 use arrow::datatypes::{DataType, Field, Schema};
+use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use modelardb_types::types::TimeSeriesTableMetadata;
@@ -158,6 +159,26 @@ impl WriteAheadLogFile {
         self.writer.get_ref().sync_all()?;
 
         Ok(())
+    }
+
+    /// Read all data from the log file. This can be called even if the [`StreamWriter`] has not
+    /// been finished, meaning the log file is missing the end-of-stream bytes. If the file
+    /// could not be read, return [`ModelarDbStorageError`].
+    fn read_all(file_path: &PathBuf) -> Result<Vec<RecordBatch>> {
+        // TODO: Maybe reuse the file handle instead of opening a new one.
+        let file = File::open(file_path)?;
+        let reader = StreamReader::try_new(file, None)?;
+
+        let mut batches = Vec::new();
+        for maybe_batch in reader {
+            match maybe_batch {
+                Ok(batch) => batches.push(batch),
+                // TODO: Maybe handle the specific error for end of file.
+                Err(_) => break,
+            }
+        }
+
+        Ok(batches)
     }
 }
 
