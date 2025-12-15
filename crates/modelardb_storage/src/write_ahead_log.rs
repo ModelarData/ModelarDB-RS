@@ -135,6 +135,7 @@ impl WriteAheadLogFile {
     fn try_new(file_path: PathBuf, schema: &Schema) -> Result<Self> {
         let file = OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(file_path.clone())?;
 
@@ -150,6 +151,9 @@ impl WriteAheadLogFile {
     /// If the data could not be appended or the file could not be synced, return
     /// [`ModelarDbStorageError`].
     fn append_and_sync(&mut self, data: &RecordBatch) -> Result<()> {
+        // Lock the file handle so that no other process can write to it while we are writing.
+        let _lock = self.writer.get_mut().lock()?;
+
         self.writer.write(data)?;
 
         // Flush the writer's internal buffers to the file.
@@ -157,6 +161,10 @@ impl WriteAheadLogFile {
 
         // Get a reference to the underlying file handle and sync to disk.
         self.writer.get_ref().sync_all()?;
+
+        // Unlock the file manually since the lock is only dropped when the file handle goes out of
+        // scope.
+        self.writer.get_mut().unlock()?;
 
         Ok(())
     }
