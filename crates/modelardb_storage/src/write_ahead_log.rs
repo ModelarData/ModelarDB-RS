@@ -20,10 +20,15 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::ipc::writer::StreamWriter;
+use modelardb_types::types::TimeSeriesTableMetadata;
+
 use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
 use crate::error::{ModelarDbStorageError, Result};
 
+const OPERATIONS_LOG_FILE: &str = "operations.wal";
 
 /// Write-ahead log that logs data on a per-table level and operations separately.
 pub struct WriteAheadLog {
@@ -50,27 +55,36 @@ impl WriteAheadLog {
             folder_path: log_folder_path.clone(),
             table_logs: HashMap::new(),
             operation_log: WriteAheadLogFile::try_new(log_folder_path.join("operations.wal"))?,
+            operation_log: WriteAheadLogFile::try_new(
+                log_folder_path.join(OPERATIONS_LOG_FILE),
+                &operations_log_schema(),
+            )?,
         };
 
         // For each time series table, create a log file if it does not already exist.
-        for table_name in local_data_folder.time_series_table_names().await? {
-            write_ahead_log.create_table_log(&table_name)?;
+        for metadata in local_data_folder.time_series_table_metadata().await? {
+            write_ahead_log.create_table_log(&metadata)?;
         }
 
         Ok(write_ahead_log)
     }
 
-    /// Create a new [`WriteAheadLogFile`] for the table with the given name. If a log already
+    /// Create a new [`WriteAheadLogFile`] for the table with the given metadata. If a log already
     /// exists in the map or the log file could not be created, return [`ModelarDbStorageError`].
     /// Note that if the log file already exists, but it is not present in the map, the existing
     /// log file will be added to the map.
-    pub fn create_table_log(&mut self, table_name: &str) -> Result<()> {
-        if !self.table_logs.contains_key(table_name) {
+    pub fn create_table_log(
+        &mut self,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
+    ) -> Result<()> {
+        let table_name = time_series_table_metadata.name.clone();
+
+        if !self.table_logs.contains_key(&table_name) {
             let table_log_path = self.folder_path.join(format!("{}.wal", table_name));
 
             self.table_logs.insert(
-                table_name.to_owned(),
-                WriteAheadLogFile::try_new(table_log_path)?,
+                table_name,
+                WriteAheadLogFile::try_new(table_log_path, &time_series_table_metadata.schema)?,
             );
 
             Ok(())
@@ -109,22 +123,30 @@ impl WriteAheadLog {
 struct WriteAheadLogFile {
     /// Path to the file that the log is written to.
     path: PathBuf,
-    /// File that the log is written to.
-    file: File,
+    /// Writer to write data in IPC streaming format to the log file.
+    writer: StreamWriter<File>,
 }
 
 impl WriteAheadLogFile {
-    /// Create a new [`WriteAheadLogFile`] that appends to the file at `file_path`. If the file does
-    /// not exist, it is created. If the file could not be created, return [`ModelarDbStorageError`].
-    fn try_new(file_path: PathBuf) -> Result<Self> {
+    /// Create a new [`WriteAheadLogFile`] that appends data with `schema` to the file at
+    /// `file_path`. If the file does not exist, it is created. If the file could not be created,
+    /// return [`ModelarDbStorageError`].
+    fn try_new(file_path: PathBuf, schema: &Schema) -> Result<Self> {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(file_path.clone())?;
 
+        let writer = StreamWriter::try_new(file, schema)?;
+
         Ok(Self {
             path: file_path,
-            file,
+            writer,
         })
     }
+}
+
+/// Return the schema for the operations log that is stored in [`OPERATIONS_LOG_FILE`].
+fn operations_log_schema() -> Schema {
+    Schema::new(vec![Field::new("operation", DataType::Utf8, false)])
 }
