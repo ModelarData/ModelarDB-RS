@@ -456,8 +456,8 @@ impl Operations for DataFolder {
                 return Err(schema_mismatch_error);
             }
 
-            let delta_ops = self.delta_ops(source_table_name).await?;
-            let (_table, stream) = delta_ops.load().await?;
+            let delta_table = self.delta_table(source_table_name).await?;
+            let (_table, stream) = delta_table.scan_table().await?;
             let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
             target_data_folder
@@ -475,8 +475,8 @@ impl Operations for DataFolder {
                 return Err(schema_mismatch_error);
             }
 
-            let delta_ops = self.delta_ops(source_table_name).await?;
-            let (_table, stream) = delta_ops.load().await?;
+            let delta_table = self.delta_table(source_table_name).await?;
+            let (_table, stream) = delta_table.scan_table().await?;
             let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
             target_data_folder
@@ -1328,8 +1328,8 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "DataFusion Error: Arrow error: Parser error: \
-                Error parsing timestamp from '{invalid_start_time}': error parsing date"
+                "DataFusion Error: Optimizer rule 'simplify_expressions' failed\ncaused by\nArrow error: \
+                 Parser error: Error parsing timestamp from '{invalid_start_time}': error parsing date"
             )
         );
     }
@@ -1696,8 +1696,8 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "DataFusion Error: Arrow error: Parser error: \
-                Error parsing timestamp from '{invalid_start_time}': error parsing date"
+                "DataFusion Error: Optimizer rule 'simplify_expressions' failed\ncaused by\nArrow error: \
+                 Parser error: Error parsing timestamp from '{invalid_start_time}': error parsing date"
             )
         );
     }

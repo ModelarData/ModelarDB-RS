@@ -33,7 +33,9 @@ use arrow_flight::{
     SchemaResult, Ticket, utils,
 };
 use datafusion::arrow::array::{ArrayRef, RecordBatch};
-use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
+use datafusion::arrow::ipc::writer::{
+    CompressionContext, DictionaryTracker, IpcDataGenerator, IpcWriteOptions,
+};
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
@@ -50,7 +52,7 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::metadata::MetadataMap;
-use tonic::transport::Server;
+use tonic::transport::{self, Server};
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
@@ -123,9 +125,8 @@ async fn execute_query_at_address(
     address: String,
 ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
     // Connect and execute query.
-    let mut flight_client = FlightServiceClient::connect(address.clone())
-        .await
-        .map_err(error_to_status_invalid_argument)?;
+    let connection = transport::Endpoint::new(address.clone())?.connect().await?;
+    let mut flight_client = FlightServiceClient::new(connection);
 
     let ticket = Ticket { ticket: sql.into() };
     let mut stream = flight_client.do_get(ticket).await?.into_inner();
@@ -177,8 +178,9 @@ async fn send_query_result(
 
     // Serialize and send the query result.
     let data_generator = IpcDataGenerator::default();
-    let writer_options = IpcWriteOptions::default();
     let mut dictionary_tracker = DictionaryTracker::new(false);
+    let writer_options = IpcWriteOptions::default();
+    let mut compression_context = CompressionContext::default();
 
     while let Some(maybe_record_batch) = query_result_stream.next().await {
         // If a record batch is not returned the client is informed about the error.
@@ -191,7 +193,12 @@ async fn send_query_result(
         };
 
         let (encoded_dictionaries, encoded_batch) = data_generator
-            .encoded_batch(&record_batch, &mut dictionary_tracker, &writer_options)
+            .encode(
+                &record_batch,
+                &mut dictionary_tracker,
+                &writer_options,
+                &mut compression_context,
+            )
             .map_err(error_to_status_internal)?;
 
         for encoded_dictionary in encoded_dictionaries {
