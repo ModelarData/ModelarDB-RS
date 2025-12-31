@@ -123,9 +123,9 @@ impl ClusterMetadata for DataFolder {
     /// [`Ok`]. If the row could not be removed, return
     /// [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
     async fn remove_node(&self, url: &str) -> Result<()> {
-        let delta_ops = self.metadata_delta_ops("nodes").await?;
+        let delta_table = self.metadata_delta_table("nodes").await?;
 
-        delta_ops
+        delta_table
             .delete()
             .with_predicate(col("url").eq(lit(url)))
             .await?;

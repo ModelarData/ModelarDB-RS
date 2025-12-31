@@ -25,7 +25,7 @@ use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType};
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
 use datafusion::datasource::memory::DataSourceExec;
-use datafusion::datasource::physical_plan::{FileScanConfig, ParquetSource};
+use datafusion::datasource::physical_plan::{FileScanConfig, FileSource, ParquetSource};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{self, Volatility};
 use datafusion::physical_expr::aggregate::AggregateExprBuilder;
@@ -291,7 +291,7 @@ fn can_rewrite_aggregate(grid_exec_child: &Arc<dyn ExecutionPlan>) -> DataFusion
             .file_source
             .as_any()
             .downcast_ref::<ParquetSource>()
-        && parquet_source.predicate().is_none()
+        && parquet_source.filter().is_none()
     {
         return Ok(());
     }

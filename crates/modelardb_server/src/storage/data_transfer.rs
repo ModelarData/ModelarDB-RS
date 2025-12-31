@@ -235,10 +235,10 @@ impl DataTransfer {
             .expect("table_size_in_bytes should contain table_name since the table contains data.")
             .value();
 
-        let local_delta_ops = self.local_data_folder.delta_ops(table_name).await?;
+        let local_delta_table = self.local_data_folder.delta_table(table_name).await?;
 
         // Read the data that is currently stored for the table with table_name.
-        let (_table, stream) = local_delta_ops.load().await?;
+        let (_table, stream) = local_delta_table.scan_table().await?;
         let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
         debug!("Transferring {current_size_in_bytes} bytes for the table '{table_name}'.",);
