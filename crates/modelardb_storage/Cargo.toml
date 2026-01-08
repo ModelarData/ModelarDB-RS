@@ -34,7 +34,7 @@ modelardb_compression = { path = "../modelardb_compression" }
 modelardb_types = { path = "../modelardb_types" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 sqlparser.workspace = true
-tokio = { workspace = true }
+tokio.workspace = true
 tonic.workspace = true
 url.workspace = true
 uuid.workspace = true
