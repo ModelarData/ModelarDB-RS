@@ -42,6 +42,5 @@ uuid.workspace = true
 [dev-dependencies]
 futures.workspace = true
 modelardb_test = { path = "../modelardb_test" }
-modelardb_macros = { path = "../modelardb_macros" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }

@@ -3230,7 +3230,6 @@ dependencies = [
  "deltalake",
  "futures",
  "modelardb_compression",
- "modelardb_macros",
  "modelardb_test",
  "modelardb_types",
  "object_store",
