@@ -15,16 +15,19 @@
 
 //! The procedural macros used throughout ModelarDB.
 
+use proc_macro2::Ident as IdentStruct;
 use proc_macro2::TokenStream;
 use proc_macro2::TokenTree::Ident;
-use proc_macro2::Ident as IdentStruct;
 use quote::quote;
 
 /// Bucket and container name used by Minio and Azurite
 const BUCKET_AND_CONTAINER_NAME: &str = "modelardb";
 
 #[proc_macro_attribute]
-pub fn object_store_test(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn object_store_test(
+    args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     // Convert args and input to proc_macro2 so they can be used with quote!.
     let _args: TokenStream = args.into();
     let mut input: TokenStream = input.into();
@@ -98,6 +101,7 @@ pub fn object_store_test(args: proc_macro::TokenStream, input: proc_macro::Token
                 ("azure_storage_account_name".to_owned(), "devstoreaccount1".to_owned()),
                 ("azure_storage_account_key".to_owned(), "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==".to_owned()),
                 ("azure_container_name".to_owned(), #BUCKET_AND_CONTAINER_NAME.to_owned()),
+                ("azure_storage_use_emulator".to_owned(), "true".to_owned()),
             ]);
             let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options).unwrap();
 
