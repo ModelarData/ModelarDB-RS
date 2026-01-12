@@ -37,7 +37,7 @@ use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, Ticket, utils
 use bytes::Bytes;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
-use tonic::transport::{self, Channel};
+use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Streaming};
 
 use crate::error::{ModelarDbClientError, Result};
@@ -119,7 +119,7 @@ fn parse_host_port(maybe_host_port: &str) -> Result<(&str, u16)> {
 /// server cannot be established.
 async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>> {
     let address = format!("grpc://{host}:{port}");
-    let connection = transport::Endpoint::new(address)?.connect().await?;
+    let connection = Endpoint::new(address)?.connect().await?;
     Ok(FlightServiceClient::new(connection))
 }
 

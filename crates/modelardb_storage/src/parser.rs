@@ -1490,7 +1490,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_table_table_name_space() {
+    fn test_tokenize_and_parse_create_time_series_table_without_table_name_space() {
         let result = tokenize_and_parse_sql_statement(
             "CREATE TIME SERIES TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         );

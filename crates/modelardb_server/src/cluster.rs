@@ -30,8 +30,9 @@ use modelardb_storage::data_folder::cluster::ClusterMetadata;
 use modelardb_types::types::{Node, TimeSeriesTableMetadata};
 use rand::rng;
 use rand::seq::IteratorRandom;
+use tonic::Request;
 use tonic::metadata::{Ascii, MetadataValue};
-use tonic::{Request, transport};
+use tonic::transport::Endpoint;
 
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
@@ -285,7 +286,7 @@ impl Cluster {
     /// statement with the cluster key as metadata. If the statement was successfully executed,
     /// return the url of the node to simplify logging, otherwise return [`ModelarDbServerError`].
     async fn connect_and_do_get(&self, url: &str, sql: &str) -> Result<String> {
-        let connection = transport::Endpoint::new(url.to_owned())?.connect().await?;
+        let connection = Endpoint::new(url.to_owned())?.connect().await?;
         let mut flight_client = FlightServiceClient::new(connection);
 
         // Add the key to the request metadata to indicate that the request is a cluster operation.
@@ -325,7 +326,7 @@ impl Cluster {
     /// with the cluster key as metadata. If the action was successfully executed, return the url
     /// of the node to simplify logging, otherwise return [`ModelarDbServerError`].
     async fn connect_and_do_action(&self, url: &str, action: Action) -> Result<String> {
-        let connection = transport::Endpoint::new(url.to_owned())?.connect().await?;
+        let connection = Endpoint::new(url.to_owned())?.connect().await?;
         let mut flight_client = FlightServiceClient::new(connection);
 
         // Add the key to the request metadata to indicate that the request is a cluster operation.

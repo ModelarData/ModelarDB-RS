@@ -46,7 +46,7 @@ use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time;
-use tonic::transport::{self, Channel};
+use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Response, Status, Streaming};
 
 const HOST: &str = "127.0.0.1";
@@ -172,7 +172,7 @@ impl TestContext {
         port: u16,
     ) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
         let address = format!("grpc://{host}:{port}");
-        let connection = transport::Endpoint::new(address)?.connect().await?;
+        let connection = Endpoint::new(address)?.connect().await?;
         let flight_client = FlightServiceClient::new(connection);
         Ok(flight_client)
     }

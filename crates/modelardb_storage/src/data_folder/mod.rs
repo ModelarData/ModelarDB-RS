@@ -708,8 +708,8 @@ impl DataFolder {
     /// Truncate the Delta Lake table with `table_name` by deleting all rows in the table. If the
     /// rows could not be deleted, a [`ModelarDbStorageError`] is returned.
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
-        let delta_table_table = self.delta_table(table_name).await?;
-        delta_table_table.delete().await?;
+        let delta_table = self.delta_table(table_name).await?;
+        delta_table.delete().await?;
 
         Ok(())
     }
@@ -724,7 +724,7 @@ impl DataFolder {
         table_name: &str,
         maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()> {
-        let delta_table_table = self.delta_table(table_name).await?;
+        let delta_table = self.delta_table(table_name).await?;
 
         let retention_period_in_seconds =
             maybe_retention_period_in_seconds.unwrap_or(60 * 60 * 24 * 7);
@@ -735,7 +735,7 @@ impl DataFolder {
             )),
         )?;
 
-        delta_table_table
+        delta_table
             .vacuum()
             .with_retention_period(retention_period)
             .with_enforce_retention_duration(false)

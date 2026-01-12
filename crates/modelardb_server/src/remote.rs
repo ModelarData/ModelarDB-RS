@@ -52,7 +52,7 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::metadata::MetadataMap;
-use tonic::transport::{self, Server};
+use tonic::transport::{Endpoint, Server};
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
@@ -125,7 +125,7 @@ async fn execute_query_at_address(
     address: String,
 ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
     // Connect and execute query.
-    let connection = transport::Endpoint::new(address.clone())?.connect().await?;
+    let connection = Endpoint::new(address.clone())?.connect().await?;
     let mut flight_client = FlightServiceClient::new(connection);
 
     let ticket = Ticket { ticket: sql.into() };
