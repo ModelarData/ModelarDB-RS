@@ -1071,8 +1071,7 @@ async fn test_cannot_ingest_invalid_time_series() {
 
     assert_eq!(
         response.err().unwrap().message(),
-        "Schema error: Invalid data for schema. Field { name: \"tag\", data_type: Utf8, nullable: \
-        false, dict_id: 0, dict_is_ordered: false, metadata: {} } refers to node not found in schema"
+        "Schema error: Invalid data for schema. Field { \"tag\": Utf8 } refers to node not found in schema"
     );
 
     test_context.flush_data_to_disk().await;
