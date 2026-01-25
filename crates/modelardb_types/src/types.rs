@@ -440,7 +440,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid Argument Error: The data type 'Timestamp(Millisecond, None)' of column 'timestamp' is not supported in a time series table."
+            "Invalid Argument Error: The data type 'Timestamp(ms)' of column 'timestamp' is not supported in a time series table."
         );
     }
 
