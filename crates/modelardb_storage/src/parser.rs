@@ -394,6 +394,7 @@ impl ModelarDbDialect {
             or_replace: false,
             temporary: false,
             external: false,
+            dynamic: false,
             global: None,
             if_not_exists: false,
             transient: false,
@@ -416,6 +417,7 @@ impl ModelarDbDialect {
             without_rowid: false,
             like: None,
             clone: None,
+            version: None,
             comment: None,
             on_commit: None,
             on_cluster: None,
@@ -440,6 +442,11 @@ impl ModelarDbDialect {
             catalog: None,
             catalog_sync: None,
             storage_serialization_policy: None,
+            target_lag: None,
+            warehouse: None,
+            refresh_mode: None,
+            initialize: None,
+            require_user: false,
         })
     }
 
@@ -898,6 +905,7 @@ fn check_unsupported_features_are_disabled(
         or_replace,
         temporary,
         external,
+        dynamic,
         global,
         if_not_exists,
         transient,
@@ -915,6 +923,7 @@ fn check_unsupported_features_are_disabled(
         without_rowid,
         like,
         clone,
+        version,
         comment,
         on_commit,
         on_cluster,
@@ -939,11 +948,17 @@ fn check_unsupported_features_are_disabled(
         catalog,
         catalog_sync,
         storage_serialization_policy,
+        target_lag,
+        warehouse,
+        refresh_mode,
+        initialize,
+        require_user,
     } = create_table;
 
     check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
     check_unsupported_feature_is_disabled(*temporary, "TEMPORARY")?;
     check_unsupported_feature_is_disabled(*external, "EXTERNAL")?;
+    check_unsupported_feature_is_disabled(*dynamic, "DYNAMIC")?;
     check_unsupported_feature_is_disabled(global.is_some(), "GLOBAL")?;
     check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
     check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
@@ -973,6 +988,7 @@ fn check_unsupported_features_are_disabled(
     check_unsupported_feature_is_disabled(*without_rowid, "Without ROWID")?;
     check_unsupported_feature_is_disabled(like.is_some(), "LIKE")?;
     check_unsupported_feature_is_disabled(clone.is_some(), "CLONE")?;
+    check_unsupported_feature_is_disabled(version.is_some(), "VERSION")?;
     check_unsupported_feature_is_disabled(comment.is_some(), "Comment")?;
     check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
     check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
@@ -1018,6 +1034,11 @@ fn check_unsupported_features_are_disabled(
         storage_serialization_policy.is_some(),
         "STORAGE_SERIALIZATION_POLICY",
     )?;
+    check_unsupported_feature_is_disabled(target_lag.is_some(), "TARGET_LAG")?;
+    check_unsupported_feature_is_disabled(warehouse.is_some(), "WAREHOUSE")?;
+    check_unsupported_feature_is_disabled(refresh_mode.is_some(), "REFRESH_MODE")?;
+    check_unsupported_feature_is_disabled(initialize.is_some(), "INITIALIZE")?;
+    check_unsupported_feature_is_disabled(*require_user, "REQUIRE_USER")?;
     Ok(())
 }
 
@@ -1469,7 +1490,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_table_table_name_space() {
+    fn test_tokenize_and_parse_create_time_series_table_without_table_name_space() {
         let result = tokenize_and_parse_sql_statement(
             "CREATE TIME SERIES TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         );

@@ -35,6 +35,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecon
 use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
+use deltalake::arrow::ipc::writer::CompressionContext;
 use futures::{StreamExt, stream};
 use modelardb_test::data_generation;
 use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
@@ -45,7 +46,7 @@ use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time;
-use tonic::transport::Channel;
+use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Response, Status, Streaming};
 
 const HOST: &str = "127.0.0.1";
@@ -171,9 +172,9 @@ impl TestContext {
         port: u16,
     ) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
         let address = format!("grpc://{host}:{port}");
-
-        let client = FlightServiceClient::connect(address).await?;
-        Ok(client)
+        let connection = Endpoint::new(address)?.connect().await?;
+        let flight_client = FlightServiceClient::new(connection);
+        Ok(flight_client)
     }
 
     /// Create a normal table or time series table with or without tags in the server through the
@@ -337,12 +338,18 @@ impl TestContext {
         }];
 
         let data_generator = IpcDataGenerator::default();
-        let writer_options = IpcWriteOptions::default();
         let mut dictionary_tracker = DictionaryTracker::new(false);
+        let writer_options = IpcWriteOptions::default();
+        let mut compression_context = CompressionContext::default();
 
         for data_point in time_series {
             let (_encoded_dictionaries, encoded_batch) = data_generator
-                .encoded_batch(data_point, &mut dictionary_tracker, &writer_options)
+                .encode(
+                    data_point,
+                    &mut dictionary_tracker,
+                    &writer_options,
+                    &mut compression_context,
+                )
                 .unwrap();
             flight_data.push(encoded_batch.into());
         }
@@ -1064,8 +1071,7 @@ async fn test_cannot_ingest_invalid_time_series() {
 
     assert_eq!(
         response.err().unwrap().message(),
-        "Schema error: Invalid data for schema. Field { name: \"tag\", data_type: Utf8, nullable: \
-        false, dict_id: 0, dict_is_ordered: false, metadata: {} } refers to node not found in schema"
+        "Schema error: Invalid data for schema. Field { \"tag\": Utf8 } refers to node not found in schema"
     );
 
     test_context.flush_data_to_disk().await;

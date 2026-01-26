@@ -34,7 +34,7 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt, stream};
-use tonic::transport::Channel;
+use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Status};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
@@ -55,7 +55,8 @@ impl Client {
     /// Create a new [`Client`] that is connected to the node with `url`. If a connection
     /// to the node could not be established, [`ModelarDbEmbeddedError`] is returned.
     pub async fn connect(url: &str) -> Result<Client> {
-        let flight_client = FlightServiceClient::connect(url.to_owned()).await?;
+        let connection = Endpoint::new(url.to_owned())?.connect().await?;
+        let flight_client = FlightServiceClient::new(connection);
 
         Ok(Client { flight_client })
     }

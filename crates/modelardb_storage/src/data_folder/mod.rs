@@ -34,7 +34,6 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::datasource::sink::DataSink;
 use datafusion::logical_expr::{Expr, lit};
 use datafusion::parquet::file::properties::WriterProperties;
-use datafusion::parquet::format::SortingColumn;
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
 use delta_kernel::engine::arrow_conversion::TryIntoKernel;
@@ -44,8 +43,9 @@ use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
+use deltalake::parquet::file::metadata::SortingColumn;
 use deltalake::protocol::{DeltaOperation, SaveMode};
-use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
+use deltalake::{DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
@@ -394,26 +394,6 @@ impl DataFolder {
         self.delta_table_from_path(&table_path).await
     }
 
-    /// Return a [`DeltaOps`] for manipulating the metadata table with `table_name` in the Delta
-    /// Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established
-    /// or the table does not exist.
-    pub async fn metadata_delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
-        let table_path = self.location_of_metadata_table(table_name);
-        self.delta_table_from_path(&table_path)
-            .await
-            .map(Into::into)
-    }
-
-    /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
-    /// table does not exist.
-    pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps> {
-        let table_path = self.location_of_table(table_name);
-        self.delta_table_from_path(&table_path)
-            .await
-            .map(Into::into)
-    }
-
     /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
     /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
@@ -546,11 +526,19 @@ impl DataFolder {
 
         // Compressed segments have the tag columns at the end of the schema.
         for tag_column_index in base_compressed_schema_len..compressed_schema_len {
-            sorting_columns.push(SortingColumn::new(tag_column_index as i32, false, false));
+            sorting_columns.push(SortingColumn {
+                column_idx: tag_column_index as i32,
+                descending: false,
+                nulls_first: false,
+            });
         }
 
         // Compressed segments store the first timestamp in the second column.
-        sorting_columns.push(SortingColumn::new(1, false, false));
+        sorting_columns.push(SortingColumn {
+            column_idx: 1,
+            descending: false,
+            nulls_first: false,
+        });
 
         let writer_properties = apache_parquet_writer_properties(Some(sorting_columns));
         DeltaTableWriter::try_new(delta_table, partition_columns, writer_properties)
@@ -720,8 +708,8 @@ impl DataFolder {
     /// Truncate the Delta Lake table with `table_name` by deleting all rows in the table. If the
     /// rows could not be deleted, a [`ModelarDbStorageError`] is returned.
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
-        let delta_table_ops = self.delta_ops(table_name).await?;
-        delta_table_ops.delete().await?;
+        let delta_table = self.delta_table(table_name).await?;
+        delta_table.delete().await?;
 
         Ok(())
     }
@@ -736,7 +724,7 @@ impl DataFolder {
         table_name: &str,
         maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()> {
-        let delta_table_ops = self.delta_ops(table_name).await?;
+        let delta_table = self.delta_table(table_name).await?;
 
         let retention_period_in_seconds =
             maybe_retention_period_in_seconds.unwrap_or(60 * 60 * 24 * 7);
@@ -747,7 +735,7 @@ impl DataFolder {
             )),
         )?;
 
-        delta_table_ops
+        delta_table
             .vacuum()
             .with_retention_period(retention_period)
             .with_enforce_retention_duration(false)
@@ -926,9 +914,9 @@ impl DataFolder {
     /// table in the Delta Lake. If the metadata could not be dropped, [`ModelarDbStorageError`] is
     /// returned.
     async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<()> {
-        let delta_ops = self.metadata_delta_ops("normal_table_metadata").await?;
+        let delta_table = self.metadata_delta_table("normal_table_metadata").await?;
 
-        delta_ops
+        delta_table
             .delete()
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
@@ -942,14 +930,14 @@ impl DataFolder {
     /// be dropped, [`ModelarDbStorageError`] is returned.
     async fn drop_time_series_table_metadata(&self, table_name: &str) -> Result<()> {
         // Delete the table metadata from the time_series_table_metadata table.
-        self.metadata_delta_ops("time_series_table_metadata")
+        self.metadata_delta_table("time_series_table_metadata")
             .await?
             .delete()
             .with_predicate(col("table_name").eq(lit(table_name)))
             .await?;
 
         // Delete the column metadata from the time_series_table_field_columns table.
-        self.metadata_delta_ops("time_series_table_field_columns")
+        self.metadata_delta_table("time_series_table_field_columns")
             .await?
             .delete()
             .with_predicate(col("table_name").eq(lit(table_name)))

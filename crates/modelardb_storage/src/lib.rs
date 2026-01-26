@@ -28,7 +28,6 @@ use std::sync::Arc;
 use arrow::array::RecordBatch;
 use arrow::compute;
 use arrow::compute::concat_batches;
-use arrow::datatypes::Schema;
 use bytes::Bytes;
 use datafusion::catalog::{MemorySchemaProvider, TableProvider};
 use datafusion::datasource::sink::DataSink;
@@ -41,11 +40,11 @@ use datafusion::parquet::arrow::{AsyncArrowWriter, ParquetRecordBatchStreamBuild
 use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
-use datafusion::parquet::format::SortingColumn;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::TableReference;
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
+use deltalake::parquet::file::metadata::SortingColumn;
 use futures::StreamExt;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use object_store::ObjectStore;
@@ -169,10 +168,10 @@ pub async fn execute_statement(
 /// [`ModelarDbStorageError`](error::ModelarDbStorageError).
 pub async fn sql_and_concat(session_context: &SessionContext, sql: &str) -> Result<RecordBatch> {
     let dataframe = session_context.sql(sql).await?;
-    let schema = Schema::from(dataframe.schema());
+    let schema = dataframe.schema().inner().clone();
 
     let record_batches = dataframe.collect().await?;
-    let record_batch = concat_batches(&schema.into(), &record_batches)?;
+    let record_batch = concat_batches(&schema, &record_batches)?;
 
     Ok(record_batch)
 }
