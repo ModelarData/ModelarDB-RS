@@ -180,9 +180,9 @@ impl WriteAheadLogFile {
     /// Read all data from the log file. This can be called even if the [`StreamWriter`] has not
     /// been finished, meaning the log file is missing the end-of-stream bytes. If the file
     /// could not be read, return [`ModelarDbStorageError`].
-    fn read_all(file_path: &PathBuf) -> Result<Vec<RecordBatch>> {
+    fn read_all(&self) -> Result<Vec<RecordBatch>> {
         // TODO: Maybe reuse the file handle instead of opening a new one.
-        let file = File::open(file_path)?;
+        let file = File::open(&self.path)?;
         let reader = StreamReader::try_new(file, None)?;
 
         let mut batches = Vec::new();
