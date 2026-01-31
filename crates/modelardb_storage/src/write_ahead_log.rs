@@ -49,6 +49,14 @@ impl WriteAheadLog {
     pub async fn try_new(local_data_folder: &DataFolder) -> Result<Self> {
         // Create the folder for the write-ahead log if it does not exist.
         let location = local_data_folder.location();
+
+        // Since the std:fs API is used, the location must be a local path.
+        if location.contains("://") {
+            return Err(ModelarDbStorageError::InvalidState(format!(
+                "Write-ahead log location '{location}' is not a local path."
+            )));
+        }
+
         let log_folder_path = PathBuf::from(format!("{location}/{WRITE_AHEAD_LOG_FOLDER}"));
 
         std::fs::create_dir_all(log_folder_path.clone())?;
