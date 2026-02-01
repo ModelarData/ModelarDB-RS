@@ -40,7 +40,7 @@ pub struct Context {
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
     /// Write-ahead log for persisting data and operations.
-    pub write_ahead_log: WriteAheadLog,
+    pub write_ahead_log: RwLock<WriteAheadLog>,
 }
 
 impl Context {
@@ -57,7 +57,8 @@ impl Context {
             StorageEngine::try_new(data_folders.clone(), &configuration_manager).await?,
         ));
 
-        let write_ahead_log = WriteAheadLog::try_new(&data_folders.local_data_folder).await?;
+        let write_ahead_log =
+            RwLock::new(WriteAheadLog::try_new(&data_folders.local_data_folder).await?);
 
         Ok(Context {
             data_folders,
@@ -114,6 +115,10 @@ impl Context {
             .await?;
         self.register_and_save_time_series_table(time_series_table_metadata)
             .await?;
+
+        // Create a file in the write-ahead log to log uncompressed data for the table.
+        let mut write_ahead_log = self.write_ahead_log.write().await;
+        write_ahead_log.create_table_log(time_series_table_metadata)?;
 
         Ok(())
     }
