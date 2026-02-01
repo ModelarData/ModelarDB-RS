@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use arrow::datatypes::{DataType, Field, Schema};
+use arrow::error::ArrowError::IpcError;
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
@@ -183,7 +184,6 @@ impl WriteAheadLogFile {
         // However, since performance is not critical during recovery, the mutex is held anyway.
         let _writer = self.writer.lock().unwrap();
 
-        // TODO: Maybe reuse the file handle instead of opening a new one.
         let file = File::open(&self.path)?;
         let reader = StreamReader::try_new(file, None)?;
 
@@ -191,8 +191,15 @@ impl WriteAheadLogFile {
         for maybe_batch in reader {
             match maybe_batch {
                 Ok(batch) => batches.push(batch),
-                // TODO: Maybe handle the specific error for end of file.
-                Err(_) => break,
+                Err(IpcError(msg)) => {
+                    // Check if it is an UnexpectedEof error, which is expected when reading
+                    // an incomplete stream without the end-of-stream marker.
+                    if msg.contains("UnexpectedEof") || msg.contains("unexpected end of file") {
+                        break;
+                    }
+                    return Err(IpcError(msg).into());
+                }
+                Err(e) => return Err(e.into()),
             }
         }
 
