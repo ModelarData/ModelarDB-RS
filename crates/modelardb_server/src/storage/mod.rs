@@ -83,6 +83,8 @@ pub struct StorageEngine {
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
     channels: Arc<Channels>,
+    /// Write-ahead log for persisting data and operations.
+    write_ahead_log: Arc<RwLock<WriteAheadLog>>,
 }
 
 impl StorageEngine {
@@ -200,6 +202,7 @@ impl StorageEngine {
             memory_pool,
             join_handles,
             channels,
+            write_ahead_log,
         };
 
         // Start the task that transfers data periodically if a remote data folder is given and
@@ -261,7 +264,12 @@ impl StorageEngine {
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         multivariate_data_points: RecordBatch,
     ) -> Result<()> {
-        // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
+        // Write to the write-ahead log to ensure termination never duplicates or loses data. We use
+        // a read lock since the specific log file is locked internally before writing.
+        let write_ahead_log = self.write_ahead_log.read().await;
+        write_ahead_log
+            .append_to_table_log(&time_series_table_metadata.name, &multivariate_data_points)?;
+
         self.memory_pool
             .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size() as u64);
 

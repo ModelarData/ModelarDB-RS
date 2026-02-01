@@ -117,7 +117,7 @@ impl WriteAheadLog {
             // internal file handle.
         } else {
             return Err(ModelarDbStorageError::InvalidState(format!(
-                "Table log for table '{table_name}' does not exist",
+                "Table log for table '{table_name}' does not exist.",
             )));
         }
 
@@ -125,6 +125,20 @@ impl WriteAheadLog {
         std::fs::remove_file(log_path)?;
 
         Ok(())
+    }
+
+    /// Append data to the log for the given table and sync the file to ensure that all data is on
+    /// disk. Only requires read access to the log since the internal Mutex handles write
+    /// synchronization. If a table log does not exist or the data could not be appended, return
+    /// [`ModelarDbStorageError`].
+    pub fn append_to_table_log(&self, table_name: &str, data: &RecordBatch) -> Result<()> {
+        let log_file = self.table_logs.get(table_name).ok_or_else(|| {
+            ModelarDbStorageError::InvalidState(format!(
+                "Table log for table '{table_name}' does not exist."
+            ))
+        })?;
+
+        log_file.append_and_sync(data)
     }
 }
 

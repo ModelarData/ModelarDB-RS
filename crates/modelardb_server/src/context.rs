@@ -40,7 +40,7 @@ pub struct Context {
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
     /// Write-ahead log for persisting data and operations.
-    pub write_ahead_log: Arc<RwLock<WriteAheadLog>>,
+    write_ahead_log: Arc<RwLock<WriteAheadLog>>,
 }
 
 impl Context {
