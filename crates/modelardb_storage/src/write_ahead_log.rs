@@ -19,6 +19,7 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
@@ -133,7 +134,7 @@ struct WriteAheadLogFile {
     /// Path to the file that the log is written to.
     path: PathBuf,
     /// Writer to write data in IPC streaming format to the log file.
-    writer: StreamWriter<File>,
+    writer: Mutex<StreamWriter<File>>,
 }
 
 impl WriteAheadLogFile {
@@ -151,28 +152,24 @@ impl WriteAheadLogFile {
 
         Ok(Self {
             path: file_path,
-            writer,
+            writer: Mutex::new(writer),
         })
     }
 
     /// Append the given data to the log file and sync the file to ensure that all data is on disk.
     /// If the data could not be appended or the file could not be synced, return
     /// [`ModelarDbStorageError`].
-    fn append_and_sync(&mut self, data: &RecordBatch) -> Result<()> {
-        // Lock the file handle so that no other process can write to it while we are writing.
-        let _lock = self.writer.get_mut().lock()?;
+    fn append_and_sync(&self, data: &RecordBatch) -> Result<()> {
+        // Acquire the mutex to ensure only one thread can write at a time.
+        let mut writer = self.writer.lock().expect("Mutex should not be poisoned.");
 
-        self.writer.write(data)?;
+        writer.write(data)?;
 
         // Flush the writer's internal buffers to the file.
-        self.writer.flush()?;
+        writer.flush()?;
 
         // Get a reference to the underlying file handle and sync to disk.
-        self.writer.get_ref().sync_all()?;
-
-        // Unlock the file manually since the lock is only dropped when the file handle goes out of
-        // scope.
-        self.writer.get_mut().unlock()?;
+        writer.get_ref().sync_all()?;
 
         Ok(())
     }
