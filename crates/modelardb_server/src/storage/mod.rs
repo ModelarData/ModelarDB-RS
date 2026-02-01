@@ -34,6 +34,7 @@ use std::sync::{Arc, LazyLock};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::record_batch::RecordBatch;
+use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
@@ -91,6 +92,7 @@ impl StorageEngine {
     /// created.
     pub(super) async fn try_new(
         data_folders: DataFolders,
+        write_ahead_log: Arc<RwLock<WriteAheadLog>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
     ) -> Result<Self> {
         // Create shared memory pool.
