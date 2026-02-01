@@ -178,6 +178,11 @@ impl WriteAheadLogFile {
     /// been finished, meaning the log file is missing the end-of-stream bytes. If the file
     /// could not be read, return [`ModelarDbStorageError`].
     fn read_all(&self) -> Result<Vec<RecordBatch>> {
+        // Acquire the mutex to ensure data is not being written while reading. Note that reading
+        // should only occur during recovery, which should make concurrent writes improbable.
+        // However, since performance is not critical during recovery, the mutex is held anyway.
+        let _writer = self.writer.lock().unwrap();
+
         // TODO: Maybe reuse the file handle instead of opening a new one.
         let file = File::open(&self.path)?;
         let reader = StreamReader::try_new(file, None)?;
