@@ -277,17 +277,19 @@ impl Context {
 
         self.drop_table_from_storage_engine(table_name).await?;
 
+        let local_data_folder = &self.data_folders.local_data_folder;
+
+        // If the table is a time series table, delete the table log file from the write-ahead log.
+        if local_data_folder.is_time_series_table(table_name).await? {
+            let mut write_ahead_log = self.write_ahead_log.write().await;
+            write_ahead_log.remove_table_log(table_name)?;
+        }
+
         // Drop the table metadata from the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .drop_table_metadata(table_name)
-            .await?;
+        local_data_folder.drop_table_metadata(table_name).await?;
 
         // Drop the table from the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .drop_table(table_name)
-            .await?;
+        local_data_folder.drop_table(table_name).await?;
 
         Ok(())
     }
