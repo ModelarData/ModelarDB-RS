@@ -183,8 +183,9 @@ impl WriteAheadLogFile {
         // Flush the writer's internal buffers to the file.
         writer.flush()?;
 
-        // Get a reference to the underlying file handle and sync to disk.
-        writer.get_ref().sync_all()?;
+        // Get a reference to the underlying file handle and sync to disk. Note that file metadata
+        // such as modification timestamps and permissions are not updated since we only sync data.
+        writer.get_ref().sync_data()?;
 
         Ok(())
     }
