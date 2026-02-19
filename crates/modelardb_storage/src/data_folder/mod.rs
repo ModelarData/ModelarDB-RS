@@ -319,7 +319,7 @@ impl DataFolder {
             .await?;
 
         let table_reference = TableReference::partial("metadata", table_name);
-        let metadata_table = Arc::new(NormalTable::new(delta_table, None));
+        let metadata_table = Arc::new(NormalTable::try_new(delta_table, None).await?);
         self.session_context
             .register_table(table_reference, metadata_table)?;
 
@@ -357,7 +357,8 @@ impl DataFolder {
                 &normal_table_name,
                 delta_table,
                 data_sink.clone(),
-            )?;
+            )
+            .await?;
         }
 
         // Register time series tables.
@@ -674,9 +675,9 @@ impl DataFolder {
         let delta_table = self.delta_table(table_name).await?;
 
         if is_time_series_delta_table(&delta_table)? {
-            DeltaTableWriter::try_new_for_time_series_table(delta_table)
+            DeltaTableWriter::try_new_for_time_series_table(delta_table).await
         } else {
-            DeltaTableWriter::try_new_for_normal_table(delta_table)
+            DeltaTableWriter::try_new_for_normal_table(delta_table).await
         }
     }
 
@@ -725,8 +726,9 @@ impl DataFolder {
         columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable> {
         let delta_table = self.metadata_delta_table(table_name).await?;
-        let record_batch = RecordBatch::try_new(TableProvider::schema(&delta_table), columns)?;
-        let delta_table_writer = DeltaTableWriter::try_new_for_normal_table(delta_table)?;
+        let schema = delta_table.table_provider().await?.schema();
+        let record_batch = RecordBatch::try_new(schema, columns)?;
+        let delta_table_writer = DeltaTableWriter::try_new_for_normal_table(delta_table).await?;
 
         delta_table_writer
             .write_all_and_commit(&[record_batch])
@@ -747,6 +749,17 @@ impl DataFolder {
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_table(table_name);
         self.delta_table_from_path(&table_path).await
+    }
+
+    /// Return a [`TableProvider`] for manipulating the table with `table_name` in the Delta Lake,
+    /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
+    /// the table does not exist.
+    pub async fn table_provider(&self, table_name: &str) -> Result<Arc<dyn TableProvider>> {
+        self.delta_table(table_name)
+            .await?
+            .table_provider()
+            .await
+            .map_err(|error| error.into())
     }
 
     /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
@@ -847,7 +860,7 @@ impl DataFolder {
             .is_ok_and(|is_normal_table| is_normal_table)
         {
             let schema = self
-                .delta_table(table_name)
+                .table_provider(table_name)
                 .await
                 .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
                 .schema();
@@ -1530,9 +1543,10 @@ mod tests {
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
 
         // Read the data back and verify the content.
+        let table_provider = delta_table.table_provider().build().await.unwrap();
         data_folder
             .session_context
-            .register_table("normal_table_1", Arc::new(delta_table))
+            .register_table("normal_table_1", Arc::new(table_provider))
             .unwrap();
 
         let read_batch =
@@ -1561,9 +1575,10 @@ mod tests {
         let schema = test::time_series_table_metadata().compressed_schema.clone();
         let column_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
 
+        let table_provider = delta_table.table_provider().build().await.unwrap();
         data_folder
             .session_context
-            .register_table(TIME_SERIES_TABLE_NAME, Arc::new(delta_table))
+            .register_table(TIME_SERIES_TABLE_NAME, Arc::new(table_provider))
             .unwrap();
 
         let read_batch = sql_and_concat(

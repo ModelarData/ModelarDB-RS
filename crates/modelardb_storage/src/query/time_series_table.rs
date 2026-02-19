@@ -438,16 +438,15 @@ async fn new_data_source_exec(
     table_parquet_options.global.pushdown_filters = true;
     table_parquet_options.global.reorder_filters = true;
     let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
-        Arc::new(ParquetSource::default().with_predicate(parquet_filters.to_owned()))
+        Arc::new(ParquetSource::new(file_schema).with_predicate(parquet_filters.to_owned()))
     } else {
-        Arc::new(ParquetSource::default())
+        Arc::new(ParquetSource::new(file_schema))
     };
 
-    let file_scan_config =
-        FileScanConfigBuilder::new(log_store.object_store_url(), file_schema, file_source)
-            .with_file_group(file_group)
-            .with_limit(maybe_limit)
-            .with_output_ordering(output_ordering);
+    let file_scan_config = FileScanConfigBuilder::new(log_store.object_store_url(), file_source)
+        .with_file_group(file_group)
+        .with_limit(maybe_limit)
+        .with_output_ordering(output_ordering);
 
     Ok(DataSourceExec::from_data_source(file_scan_config.build()))
 }
