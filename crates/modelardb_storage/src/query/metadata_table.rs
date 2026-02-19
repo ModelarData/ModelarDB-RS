@@ -14,8 +14,9 @@
  */
 
 //! Implementation of [`MetadataTable`] which allows metadata tables to be queried through Apache
-//! DataFusion. It wraps a [`DeltaTable`] and forwards most method calls to it. However, for
-//! [`TableProvider::scan()`] it updates the [`DeltaTable`] to the latest version.
+//! DataFusion. It wraps a [`DeltaTable`] and forwards most method calls to a [`TableProvider`]
+//! created from it. However, for [`TableProvider::scan()`] it updates the [`DeltaTable`] to the
+//! latest version.
 
 use std::{any::Any, sync::Arc};
 
@@ -28,19 +29,28 @@ use datafusion::physical_plan::ExecutionPlan;
 use deltalake::DeltaTable;
 use tonic::async_trait;
 
-/// A queryable representation of a metadata table. [`MetadataTable`] wraps the [`TableProvider`] of
-/// [`DeltaTable`] and passes most methods calls directly to it. Thus, it can be registered with
-/// Apache DataFusion. The only difference from [`DeltaTable`] is that `delta_table` is updated to
-/// the latest snapshot when accessed.
+use crate::error::Result;
+
+/// A queryable representation of a metadata table. [`MetadataTable`] wraps the [`DeltaTable`] and
+/// passes most methods calls directly to a [`TableProvider`] created from it. Thus, it can be
+/// registered with Apache DataFusion. The only difference from [`DeltaTable`] is that `delta_table`
+/// is updated to the latest snapshot when accessed.
 #[derive(Debug)]
 pub(crate) struct MetadataTable {
-    /// Access to the Delta Lake table.
+    /// Access to the Delta Lake table as a [`DeltaTable].
     delta_table: DeltaTable,
+    /// Access to the Delta Lake table as a [`TableProvider].
+    table_provider: Arc<dyn TableProvider>,
 }
 
 impl MetadataTable {
-    pub(crate) fn new(delta_table: DeltaTable) -> Self {
-        Self { delta_table }
+    pub(crate) async fn new(delta_table: DeltaTable) -> Result<Self> {
+        let table_provider = delta_table.table_provider().await?;
+
+        Ok(Self {
+            delta_table,
+            table_provider,
+        })
     }
 }
 
@@ -48,17 +58,17 @@ impl MetadataTable {
 impl TableProvider for MetadataTable {
     /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
-        self.delta_table.as_any()
+        self
     }
 
     /// Return the query schema of the metadata table registered with Apache DataFusion.
     fn schema(&self) -> Arc<Schema> {
-        TableProvider::schema(&self.delta_table)
+        self.table_provider.schema().clone()
     }
 
     /// Specify that metadata tables are base tables and not views or temporary tables.
     fn table_type(&self) -> TableType {
-        self.delta_table.table_type()
+        self.table_provider.table_type()
     }
 
     /// Create an [`ExecutionPlan`] that will scan the metadata table. Returns a
@@ -75,11 +85,16 @@ impl TableProvider for MetadataTable {
         // in a Mutex and RwLock is also not an option since most of the methods in TypeProvider
         // return a reference and the locks will be dropped at the end of the method.
         let mut delta_table = self.delta_table.clone();
+
         delta_table
             .load()
             .await
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
-        delta_table.scan(state, projection, filters, limit).await
+        delta_table
+            .table_provider()
+            .await?
+            .scan(state, projection, filters, limit)
+            .await
     }
 }

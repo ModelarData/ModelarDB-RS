@@ -58,7 +58,7 @@ impl ClusterMetadata for DataFolder {
             )
             .await?;
 
-        register_metadata_table(self.session_context(), "cluster_metadata", delta_table)?;
+        register_metadata_table(self.session_context(), "cluster_metadata", delta_table).await?;
 
         // Create and register the nodes table if it does not exist.
         let delta_table = self
@@ -71,7 +71,7 @@ impl ClusterMetadata for DataFolder {
             )
             .await?;
 
-        register_metadata_table(self.session_context(), "nodes", delta_table)?;
+        register_metadata_table(self.session_context(), "nodes", delta_table).await?;
 
         Ok(())
     }

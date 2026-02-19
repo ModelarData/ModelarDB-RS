@@ -21,7 +21,6 @@ use std::sync::Arc;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Ticket};
 use datafusion::arrow::datatypes::Schema;
-use datafusion::catalog::TableProvider;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use log::info;
@@ -420,8 +419,7 @@ async fn validate_normal_tables(
 /// Retrieve the schema of a normal table from the Delta Lake in the data folder. If the table does
 /// not exist, or the schema could not be retrieved, return [`ModelarDbServerError`].
 async fn normal_table_schema(data_folder: &DataFolder, table_name: &str) -> Result<Arc<Schema>> {
-    let delta_table = data_folder.delta_table(table_name).await?;
-    Ok(TableProvider::schema(&delta_table))
+    Ok(data_folder.table_provider(table_name).await?.schema())
 }
 
 /// For each time series table in the remote data folder, if the table also exists in the local

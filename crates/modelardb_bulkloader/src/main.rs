@@ -463,7 +463,7 @@ async fn export(
     let mut record_batch_stream = data_folder.read(&sql).await?;
 
     let mut delta_table_writer =
-        DeltaTableWriter::try_new(delta_table, partition_by, WriterProperties::default())?;
+        DeltaTableWriter::try_new(delta_table, partition_by, WriterProperties::default()).await?;
 
     while let Some(record_batch) = record_batch_stream.next().await {
         let record_batch = record_batch?;

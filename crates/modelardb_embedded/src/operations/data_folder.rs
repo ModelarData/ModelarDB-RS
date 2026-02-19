@@ -135,7 +135,8 @@ impl Operations for DataFolder {
                     table_name,
                     delta_table,
                     data_sink.clone(),
-                )?;
+                )
+                .await?;
             }
             TableType::TimeSeriesTable(schema, error_bounds, generated_columns) => {
                 let time_series_table_metadata = Arc::new(try_new_time_series_table_metadata(
@@ -403,7 +404,7 @@ impl Operations for DataFolder {
         let sql = format!("SELECT * FROM {source_table_name} {where_clause}");
 
         // Read data to copy from source_table_name in source.
-        let source_table = Arc::new(self.delta_table(source_table_name).await?);
+        let source_table = self.table_provider(source_table_name).await?;
 
         let session_context = modelardb_storage::create_session_context();
         session_context.register_table(source_table_name, source_table)?;
@@ -587,7 +588,6 @@ mod tests {
     use arrow::compute::SortOptions;
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
-    use datafusion::datasource::TableProvider;
     use datafusion::logical_expr::col;
     use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
     use datafusion::physical_plan::expressions::Column;
@@ -2307,10 +2307,10 @@ mod tests {
         expected_schema: Schema,
     ) {
         // Verify that the normal table exists in the Delta Lake.
-        let delta_table = data_folder.delta_table(table_name).await.unwrap();
+        let table_provider = data_folder.table_provider(table_name).await.unwrap();
 
-        let actual_schema = TableProvider::schema(&delta_table);
-        assert_eq!(actual_schema, Arc::new(expected_schema));
+        let actual_schema = table_provider.schema();
+        assert_eq!(*actual_schema, expected_schema);
 
         // Verify that the normal table exists in the Delta Lake.
         assert!(data_folder.is_normal_table(table_name).await.unwrap());
@@ -2730,6 +2730,14 @@ mod tests {
             )
             .await
             .unwrap();
+
+        dbg!(
+            data_folder
+                .table_provider(NORMAL_TABLE_NAME)
+                .await
+                .unwrap()
+                .schema()
+        );
 
         (temp_dir, data_folder)
     }

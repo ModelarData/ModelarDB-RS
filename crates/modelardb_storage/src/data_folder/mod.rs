@@ -38,7 +38,6 @@ use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
 use delta_kernel::engine::arrow_conversion::TryIntoKernel;
 use delta_kernel::table_properties::DataSkippingNumIndexedCols;
-use deltalake::delta_datafusion::DeltaDataChecker;
 use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add, StructField};
 use deltalake::operations::create::CreateBuilder;
@@ -292,7 +291,8 @@ impl DataFolder {
             )
             .await?;
 
-        register_metadata_table(&self.session_context, "normal_table_metadata", delta_table)?;
+        register_metadata_table(&self.session_context, "normal_table_metadata", delta_table)
+            .await?;
 
         // Create and register the time_series_table_metadata table if it does not exist.
         let delta_table = self
@@ -309,7 +309,8 @@ impl DataFolder {
             &self.session_context,
             "time_series_table_metadata",
             delta_table,
-        )?;
+        )
+        .await?;
 
         // Create and register the time_series_table_field_columns table if it does not exist. Note
         // that column_index will only use a maximum of 10 bits. generated_column_expr is NULL if
@@ -332,7 +333,8 @@ impl DataFolder {
             &self.session_context,
             "time_series_table_field_columns",
             delta_table,
-        )?;
+        )
+        .await?;
 
         Ok(())
     }
@@ -350,7 +352,8 @@ impl DataFolder {
                 &normal_table_name,
                 delta_table,
                 data_sink.clone(),
-            )?;
+            )
+            .await?;
         }
 
         // Register time series tables.
@@ -392,6 +395,17 @@ impl DataFolder {
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_table(table_name);
         self.delta_table_from_path(&table_path).await
+    }
+
+    /// Return a [`TableProvider`] for manipulating the table with `table_name` in the Delta Lake,
+    /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
+    /// the table does not exist.
+    pub async fn table_provider(&self, table_name: &str) -> Result<Arc<dyn TableProvider>> {
+        self.delta_table(table_name)
+            .await?
+            .table_provider()
+            .await
+            .map_err(|error| error.into())
     }
 
     /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
@@ -460,7 +474,7 @@ impl DataFolder {
             .is_ok_and(|is_normal_table| is_normal_table)
         {
             let schema = self
-                .delta_table(table_name)
+                .table_provider(table_name)
                 .await
                 .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
                 .schema();
@@ -520,7 +534,7 @@ impl DataFolder {
 
         // Specify that the file must be sorted by the tag columns and then by start_time.
         let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
-        let compressed_schema_len = TableProvider::schema(&delta_table).fields().len();
+        let compressed_schema_len = delta_table.table_provider().await?.schema().fields().len();
         let sorting_columns_len = (compressed_schema_len - base_compressed_schema_len) + 1;
         let mut sorting_columns = Vec::with_capacity(sorting_columns_len);
 
@@ -541,7 +555,7 @@ impl DataFolder {
         });
 
         let writer_properties = apache_parquet_writer_properties(Some(sorting_columns));
-        DeltaTableWriter::try_new(delta_table, partition_columns, writer_properties)
+        DeltaTableWriter::try_new(delta_table, partition_columns, writer_properties).await
     }
 
     /// Return a [`DeltaTableWriter`] for writing to the table corresponding to `delta_table` in the
@@ -552,7 +566,7 @@ impl DataFolder {
         delta_table: DeltaTable,
     ) -> Result<DeltaTableWriter> {
         let writer_properties = apache_parquet_writer_properties(None);
-        DeltaTableWriter::try_new(delta_table, vec![], writer_properties)
+        DeltaTableWriter::try_new(delta_table, vec![], writer_properties).await
     }
 
     /// Create a Delta Lake table for a metadata table with `table_name` and `schema` if it does not
@@ -708,9 +722,7 @@ impl DataFolder {
     /// Truncate the Delta Lake table with `table_name` by deleting all rows in the table. If the
     /// rows could not be deleted, a [`ModelarDbStorageError`] is returned.
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
-        let delta_table = self.delta_table(table_name).await?;
-        delta_table.delete().await?;
-
+        self.delta_table(table_name).await?.delete().await?;
         Ok(())
     }
 
@@ -775,7 +787,7 @@ impl DataFolder {
                 Arc::new(StringArray::from(vec![
                     time_series_table_metadata.name.clone(),
                 ])),
-                Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+                Arc::new(BinaryArray::from_iter_values(&[query_schema_bytes])),
             ],
         )
         .await?;
@@ -793,10 +805,8 @@ impl DataFolder {
                     .generated_columns
                     .get(query_schema_index)
                 {
-                    Some(Some(generated_column)) => {
-                        Some(generated_column.expr.to_bytes()?.to_vec())
-                    }
-                    _ => None,
+                    Some(Some(generated_column)) => generated_column.expr.to_bytes()?.to_vec(),
+                    _ => vec![],
                 };
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
@@ -824,8 +834,8 @@ impl DataFolder {
                         Arc::new(Int16Array::from(vec![query_schema_index as i16])),
                         Arc::new(Float32Array::from(vec![error_bound_value])),
                         Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                        Arc::new(BinaryArray::from_opt_vec(vec![
-                            maybe_generated_column_expr.as_deref(),
+                        Arc::new(BinaryArray::from_iter_values(&[
+                            maybe_generated_column_expr.as_slice(),
                         ])),
                     ],
                 )
@@ -844,7 +854,8 @@ impl DataFolder {
         columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable> {
         let delta_table = self.metadata_delta_table(table_name).await?;
-        let record_batch = RecordBatch::try_new(TableProvider::schema(&delta_table), columns)?;
+        let schema = delta_table.table_provider().await?.schema();
+        let record_batch = RecordBatch::try_new(schema, columns)?;
         let delta_table_writer = self.normal_or_metadata_table_writer(delta_table).await?;
         self.write_record_batches_to_table(delta_table_writer, vec![record_batch])
             .await
@@ -873,6 +884,9 @@ impl DataFolder {
         compressed_segments: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
         let delta_table = self.delta_table(table_name).await?;
+        let schema = delta_table.table_provider().await?.schema();
+        dbg!(schema);
+        dbg!(&compressed_segments[0].schema());
         let delta_table_writer = self.time_series_table_writer(delta_table).await?;
         self.write_record_batches_to_table(delta_table_writer, compressed_segments)
             .await
@@ -1123,8 +1137,6 @@ impl DataFolder {
 pub struct DeltaTableWriter {
     /// Delta table that all of the record batches will be written to.
     delta_table: DeltaTable,
-    /// Checker that ensures all of the record batches match the table.
-    delta_data_checker: DeltaDataChecker,
     /// Write operation that will be committed to the Delta table.
     delta_operation: DeltaOperation,
     /// Unique identifier for this write operation to the Delta table.
@@ -1136,16 +1148,11 @@ pub struct DeltaTableWriter {
 impl DeltaTableWriter {
     /// Create a new [`DeltaTableWriter`]. Returns a [`ModelarDbStorageError`] if the state of the
     /// Delta table cannot be loaded from `delta_table`.
-    pub fn try_new(
+    pub async fn try_new(
         delta_table: DeltaTable,
         partition_columns: Vec<String>,
         writer_properties: WriterProperties,
     ) -> Result<Self> {
-        // Checker for if record batches match the table’s invariants, constraints, and nullability.
-        let delta_table_state = delta_table.snapshot()?;
-        let snapshot = delta_table_state.snapshot();
-        let delta_data_checker = DeltaDataChecker::new(snapshot);
-
         // Operation that will be committed.
         let delta_operation = DeltaOperation::Write {
             mode: SaveMode::Append,
@@ -1163,11 +1170,10 @@ impl DeltaTableWriter {
 
         // Writer that will write the record batches.
         let object_store = delta_table.log_store().object_store(Some(operation_id));
-        let table_schema: Arc<Schema> = TableProvider::schema(&delta_table);
-        let num_indexed_cols =
-            DataSkippingNumIndexedCols::NumColumns(table_schema.fields.len() as u64);
+        let schema = delta_table.table_provider().await?.schema();
+        let num_indexed_cols = DataSkippingNumIndexedCols::NumColumns(schema.fields.len() as u64);
         let writer_config = WriterConfig::new(
-            table_schema,
+            schema,
             partition_columns,
             Some(writer_properties),
             None,
@@ -1179,7 +1185,6 @@ impl DeltaTableWriter {
 
         Ok(Self {
             delta_table,
-            delta_data_checker,
             delta_operation,
             operation_id,
             delta_writer,
@@ -1190,7 +1195,6 @@ impl DeltaTableWriter {
     /// [`RecordBatches`](RecordBatch) does not match the schema of the Delta table or if the
     /// writing fails.
     pub async fn write(&mut self, record_batch: &RecordBatch) -> Result<()> {
-        self.delta_data_checker.check_batch(record_batch).await?;
         self.delta_writer.write(record_batch).await?;
         Ok(())
     }
@@ -1426,7 +1430,7 @@ mod tests {
         );
         assert_eq!(
             **batch.column(1),
-            BinaryArray::from_vec(vec![
+            BinaryArray::from_iter_values(vec![
                 &try_convert_schema_to_bytes(&test::time_series_table_metadata().query_schema)
                     .unwrap()
             ])
@@ -1455,7 +1459,7 @@ mod tests {
         assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
         assert_eq!(
             **batch.column(5),
-            BinaryArray::from_opt_vec(vec![None, None])
+            BinaryArray::from_iter_values(vec![&[], &[]])
         );
     }
 
