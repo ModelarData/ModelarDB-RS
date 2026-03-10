@@ -33,7 +33,7 @@ use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
 use crate::error::{ModelarDbStorageError, Result};
 
-const OPERATIONS_LOG_FILE: &str = "operations.wal";
+const OPERATIONS_LOG_FOLDER: &str = "operations";
 
 /// Write-ahead log that logs data on a per-table level and operations separately.
 pub struct WriteAheadLog {
@@ -68,7 +68,7 @@ impl WriteAheadLog {
             folder_path: log_folder_path.clone(),
             table_logs: HashMap::new(),
             operation_log: WriteAheadLogFile::try_new(
-                log_folder_path.join(OPERATIONS_LOG_FILE),
+                log_folder_path.join(OPERATIONS_LOG_FOLDER),
                 &operations_log_schema(),
             )?,
         };
@@ -92,7 +92,7 @@ impl WriteAheadLog {
         let table_name = time_series_table_metadata.name.clone();
 
         if !self.table_logs.contains_key(&table_name) {
-            let table_log_path = self.folder_path.join(format!("{}.wal", table_name));
+            let table_log_path = self.folder_path.join(&table_name);
 
             self.table_logs.insert(
                 table_name,
@@ -157,10 +157,13 @@ struct WriteAheadLogFile {
 }
 
 impl WriteAheadLogFile {
-    /// Create a new [`WriteAheadLogFile`] that appends data with `schema` to the file at
-    /// `file_path`. If the file does not exist, it is created. If the file could not be created,
+    /// Create a new [`WriteAheadLogFile`] that appends data with `schema` to a file in
+    /// `folder_path`. If the file does not exist, it is created. If the file could not be created,
     /// return [`ModelarDbStorageError`].
-    fn try_new(file_path: PathBuf, schema: &Schema) -> Result<Self> {
+    fn try_new(folder_path: PathBuf, schema: &Schema) -> Result<Self> {
+        std::fs::create_dir_all(folder_path.clone())?;
+        let file_path = folder_path.join("0.wal");
+
         let file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -242,7 +245,7 @@ impl WriteAheadLogFile {
     }
 }
 
-/// Return the schema for the operations log that is stored in [`OPERATIONS_LOG_FILE`].
+/// Return the schema for the operations log that is stored in [`OPERATIONS_LOG_FOLDER`].
 fn operations_log_schema() -> Schema {
     Schema::new(vec![Field::new("operation", DataType::Utf8, false)])
 }
@@ -257,26 +260,21 @@ mod tests {
     #[test]
     fn test_try_new_creates_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir
-            .path()
-            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
 
         let metadata = table::time_series_table_metadata();
-        let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
+        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
-        assert!(file_path.exists());
-        assert_eq!(wal_file.path, file_path);
+        assert!(wal_file.path.exists());
     }
 
     #[test]
     fn test_read_all_empty_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir
-            .path()
-            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
 
         let metadata = table::time_series_table_metadata();
-        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
 
         let batches = wal_file.read_all().unwrap();
         assert!(batches.is_empty());
@@ -285,12 +283,10 @@ mod tests {
     #[test]
     fn test_append_and_read_single_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir
-            .path()
-            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
 
         let metadata = table::time_series_table_metadata();
-        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
         wal_file.append_and_sync(&batch).unwrap();
@@ -303,12 +299,10 @@ mod tests {
     #[test]
     fn test_append_and_read_multiple_batches() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir
-            .path()
-            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
 
         let metadata = table::time_series_table_metadata();
-        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
 
         let batch_1 = table::uncompressed_time_series_table_record_batch(10);
         let batch_2 = table::uncompressed_time_series_table_record_batch(20);
@@ -328,19 +322,18 @@ mod tests {
     #[test]
     fn test_reopen_existing_file_and_append() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir
-            .path()
-            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
 
         let metadata = table::time_series_table_metadata();
         let batch_1 = table::uncompressed_time_series_table_record_batch(10);
         {
-            let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
+            let wal_file =
+                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
             wal_file.append_and_sync(&batch_1).unwrap();
         }
 
         let batch_2 = table::uncompressed_time_series_table_record_batch(20);
-        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
         wal_file.append_and_sync(&batch_2).unwrap();
 
         let batches = wal_file.read_all().unwrap();
@@ -352,18 +345,17 @@ mod tests {
     #[test]
     fn test_reopen_existing_file_and_read_without_append() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir
-            .path()
-            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
 
         let metadata = table::time_series_table_metadata();
         let batch = table::uncompressed_time_series_table_record_batch(10);
         {
-            let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
+            let wal_file =
+                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
             wal_file.append_and_sync(&batch).unwrap();
         }
 
-        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
         let batches = wal_file.read_all().unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0], batch);
@@ -372,25 +364,29 @@ mod tests {
     #[test]
     fn test_file_size_not_changed_on_reopen() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir
-            .path()
-            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
 
         let metadata = table::time_series_table_metadata();
         let batch = table::uncompressed_time_series_table_record_batch(10);
-        {
-            let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
+
+        let wal_file_path = {
+            let wal_file =
+                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
             wal_file.append_and_sync(&batch).unwrap();
-        }
 
-        let size_before = std::fs::metadata(&file_path).unwrap().len();
+            wal_file.path.clone()
+        };
 
-        {
-            let _wal_file =
-                WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
-        }
+        let size_before = std::fs::metadata(&wal_file_path).unwrap().len();
 
-        let size_after = std::fs::metadata(&file_path).unwrap().len();
+        let wal_file_path = {
+            let wal_file =
+                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+
+            wal_file.path.clone()
+        };
+
+        let size_after = std::fs::metadata(&wal_file_path).unwrap().len();
         assert_eq!(size_before, size_after);
     }
 }
