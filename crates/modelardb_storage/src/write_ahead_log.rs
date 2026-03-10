@@ -153,7 +153,7 @@ struct WriteAheadLogFile {
     writer: Mutex<StreamWriter<File>>,
     /// The batch id to give to the next batch of data appended to the log file. This is incremented
     /// after each append, so the batch id given to data is monotonically increasing.
-    batch_id: Mutex<u64>,
+    next_batch_id: Mutex<u64>,
 }
 
 impl WriteAheadLogFile {
@@ -196,7 +196,7 @@ impl WriteAheadLogFile {
         Ok(Self {
             path: file_path,
             writer: Mutex::new(writer),
-            batch_id: Mutex::new(offset + batch_count),
+            next_batch_id: Mutex::new(offset + batch_count),
         })
     }
 
@@ -206,7 +206,10 @@ impl WriteAheadLogFile {
     fn append_and_sync(&self, data: &RecordBatch) -> Result<u64> {
         // Acquire the mutex to ensure only one thread can write at a time.
         let mut writer = self.writer.lock().expect("Mutex should not be poisoned.");
-        let mut batch_id = self.batch_id.lock().expect("Mutex should not be poisoned.");
+        let mut next_batch_id = self
+            .next_batch_id
+            .lock()
+            .expect("Mutex should not be poisoned.");
 
         writer.write(data)?;
 
@@ -218,8 +221,8 @@ impl WriteAheadLogFile {
         writer.get_ref().sync_data()?;
 
         // Increment the batch id for the next batch of data.
-        let current_batch_id = *batch_id;
-        *batch_id += 1;
+        let current_batch_id = *next_batch_id;
+        *next_batch_id += 1;
 
         Ok(current_batch_id)
     }
@@ -290,6 +293,7 @@ mod tests {
         let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
         assert!(wal_file.path.exists());
+        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 0);
     }
 
     #[test]
@@ -302,6 +306,7 @@ mod tests {
 
         let batches = wal_file.read_all().unwrap();
         assert!(batches.is_empty());
+        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 0);
     }
 
     #[test]
@@ -318,6 +323,7 @@ mod tests {
         let batches = wal_file.read_all().unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0], batch);
+        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 1);
     }
 
     #[test]
@@ -341,6 +347,7 @@ mod tests {
         assert_eq!(batches[0], batch_1);
         assert_eq!(batches[1], batch_2);
         assert_eq!(batches[2], batch_3);
+        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 3);
     }
 
     #[test]
@@ -364,6 +371,7 @@ mod tests {
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0], batch_1);
         assert_eq!(batches[1], batch_2);
+        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 2);
     }
 
     #[test]
@@ -383,6 +391,7 @@ mod tests {
         let batches = wal_file.read_all().unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0], batch);
+        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 1);
     }
 
     #[test]
