@@ -162,7 +162,9 @@ impl WriteAheadLogFile {
     /// return [`ModelarDbStorageError`].
     fn try_new(folder_path: PathBuf, schema: &Schema) -> Result<Self> {
         std::fs::create_dir_all(folder_path.clone())?;
-        let file_path = folder_path.join("0.wal");
+
+        let (file_path, offset) =
+            find_existing_wal_file(&folder_path)?.unwrap_or_else(|| (folder_path.join("0.wal"), 0));
 
         let file = OpenOptions::new()
             .create(true)
@@ -182,10 +184,19 @@ impl WriteAheadLogFile {
             writer.get_ref().seek(SeekFrom::End(0))?;
         }
 
+        // Count existing batches to reconstruct the next batch ID.
+        let batch_count = if file_len > 0 {
+            let file = File::open(&file_path)?;
+            let reader = StreamReader::try_new(file, None)?;
+            reader.take_while(|r| r.is_ok()).count() as u64
+        } else {
+            0
+        };
+
         Ok(Self {
             path: file_path,
             writer: Mutex::new(writer),
-            batch_id: Mutex::new(0),
+            batch_id: Mutex::new(offset + batch_count),
         })
     }
 
@@ -243,6 +254,19 @@ impl WriteAheadLogFile {
 
         Ok(batches)
     }
+}
+
+/// Find an existing WAL file in `folder_path` and return its path and the offset parsed from its
+/// name if it exists, otherwise return `Ok(None)`.
+fn find_existing_wal_file(folder_path: &PathBuf) -> Result<Option<(PathBuf, u64)>> {
+    Ok(std::fs::read_dir(folder_path)?
+        .filter_map(|maybe_file| maybe_file.ok())
+        .filter_map(|file| {
+            let path = file.path();
+            let offset = path.file_stem()?.to_str()?.parse::<u64>().ok()?;
+            Some((path, offset))
+        })
+        .next())
 }
 
 /// Return the schema for the operations log that is stored in [`OPERATIONS_LOG_FOLDER`].
