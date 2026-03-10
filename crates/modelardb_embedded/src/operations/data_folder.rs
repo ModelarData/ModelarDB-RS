@@ -221,8 +221,12 @@ impl Operations for DataFolder {
                 &uncompressed_data,
             )?;
 
-            self.write_compressed_segments_to_time_series_table(table_name, compressed_data)
-                .await?;
+            self.write_compressed_segments_to_time_series_table(
+                table_name,
+                compressed_data,
+                vec![],
+            )
+            .await?;
         } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
             // Normal table.
             if !schemas_are_compatible(&uncompressed_data.schema(), &normal_table_schema) {
@@ -413,7 +417,11 @@ impl Operations for DataFolder {
 
         // Write read data to target_table_name in target.
         target_data_folder
-            .write_compressed_segments_to_time_series_table(target_table_name, record_batches)
+            .write_compressed_segments_to_time_series_table(
+                target_table_name,
+                record_batches,
+                vec![],
+            )
             .await?;
 
         Ok(())
@@ -461,7 +469,11 @@ impl Operations for DataFolder {
             let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
 
             target_data_folder
-                .write_compressed_segments_to_time_series_table(target_table_name, record_batches)
+                .write_compressed_segments_to_time_series_table(
+                    target_table_name,
+                    record_batches,
+                    vec![],
+                )
                 .await?;
         } else if let (Some(source_normal_table_schema), Some(target_normal_table_schema)) = (
             self.normal_table_schema(source_table_name).await,

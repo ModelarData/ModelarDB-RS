@@ -246,7 +246,7 @@ impl CompressedDataManager {
         let compressed_data_buffer_size_in_bytes = compressed_data_buffer.size_in_bytes;
         let compressed_segments = compressed_data_buffer.record_batches();
         self.local_data_folder
-            .write_compressed_segments_to_time_series_table(table_name, compressed_segments)
+            .write_compressed_segments_to_time_series_table(table_name, compressed_segments, vec![])
             .await?;
 
         // Inform the data transfer component about the new data if a remote data folder was

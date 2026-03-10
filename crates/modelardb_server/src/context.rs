@@ -858,6 +858,7 @@ mod tests {
             .write_compressed_segments_to_time_series_table(
                 TIME_SERIES_TABLE_NAME,
                 vec![table::compressed_segments_record_batch()],
+                vec![],
             )
             .await
             .unwrap();
