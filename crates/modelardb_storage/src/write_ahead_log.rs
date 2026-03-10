@@ -242,10 +242,8 @@ fn operations_log_schema() -> Schema {
 mod tests {
     use super::*;
 
-    use modelardb_test::table::{
-        TIME_SERIES_TABLE_NAME, time_series_table_metadata,
-        uncompressed_time_series_table_record_batch,
-    };
+    use modelardb_test::table;
+    use modelardb_test::table::TIME_SERIES_TABLE_NAME;
 
     #[test]
     fn test_try_new_creates_file() {
@@ -254,7 +252,7 @@ mod tests {
             .path()
             .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
 
-        let metadata = time_series_table_metadata();
+        let metadata = table::time_series_table_metadata();
         let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
 
         assert!(file_path.exists());
@@ -268,7 +266,7 @@ mod tests {
             .path()
             .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
 
-        let metadata = time_series_table_metadata();
+        let metadata = table::time_series_table_metadata();
         let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
 
         let batches = wal_file.read_all().unwrap();
@@ -282,9 +280,9 @@ mod tests {
             .path()
             .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
 
-        let metadata = time_series_table_metadata();
+        let metadata = table::time_series_table_metadata();
         let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
-        let batch = uncompressed_time_series_table_record_batch(5);
+        let batch = table::uncompressed_time_series_table_record_batch(5);
 
         wal_file.append_and_sync(&batch).unwrap();
 
@@ -300,12 +298,12 @@ mod tests {
             .path()
             .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
 
-        let metadata = time_series_table_metadata();
+        let metadata = table::time_series_table_metadata();
         let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
 
-        let batch_1 = uncompressed_time_series_table_record_batch(10);
-        let batch_2 = uncompressed_time_series_table_record_batch(20);
-        let batch_3 = uncompressed_time_series_table_record_batch(30);
+        let batch_1 = table::uncompressed_time_series_table_record_batch(10);
+        let batch_2 = table::uncompressed_time_series_table_record_batch(20);
+        let batch_3 = table::uncompressed_time_series_table_record_batch(30);
 
         wal_file.append_and_sync(&batch_1).unwrap();
         wal_file.append_and_sync(&batch_2).unwrap();
@@ -325,14 +323,14 @@ mod tests {
             .path()
             .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
 
-        let metadata = time_series_table_metadata();
-        let batch_1 = uncompressed_time_series_table_record_batch(10);
+        let metadata = table::time_series_table_metadata();
+        let batch_1 = table::uncompressed_time_series_table_record_batch(10);
         {
             let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
             wal_file.append_and_sync(&batch_1).unwrap();
         }
 
-        let batch_2 = uncompressed_time_series_table_record_batch(20);
+        let batch_2 = table::uncompressed_time_series_table_record_batch(20);
         let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
         wal_file.append_and_sync(&batch_2).unwrap();
 
@@ -349,8 +347,8 @@ mod tests {
             .path()
             .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
 
-        let metadata = time_series_table_metadata();
-        let batch = uncompressed_time_series_table_record_batch(10);
+        let metadata = table::time_series_table_metadata();
+        let batch = table::uncompressed_time_series_table_record_batch(10);
         {
             let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
             wal_file.append_and_sync(&batch).unwrap();
@@ -369,8 +367,8 @@ mod tests {
             .path()
             .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
 
-        let metadata = time_series_table_metadata();
-        let batch = uncompressed_time_series_table_record_batch(10);
+        let metadata = table::time_series_table_metadata();
+        let batch = table::uncompressed_time_series_table_record_batch(10);
         {
             let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
             wal_file.append_and_sync(&batch).unwrap();
