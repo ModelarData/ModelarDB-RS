@@ -16,6 +16,7 @@
 //! Support for managing all uncompressed data that is ingested into the
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
+use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hasher};
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::mem;
@@ -26,7 +27,7 @@ use dashmap::DashMap;
 use futures::{StreamExt, TryStreamExt};
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::types::{TimeSeriesTableMetadata, Timestamp, Value};
-use object_store::path::{Path, PathPart};
+use object_store::path::Path;
 use tokio::runtime::Handle;
 use tracing::{debug, error, warn};
 
@@ -166,6 +167,7 @@ impl UncompressedDataManager {
                     &mut values,
                     time_series_table_metadata.clone(),
                     current_batch_index,
+                    ingested_data_buffer.batch_id,
                 )
                 .await?;
         }
@@ -200,6 +202,7 @@ impl UncompressedDataManager {
         values: &mut dyn Iterator<Item = Value>,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         current_batch_index: u64,
+        batch_id: u64,
     ) -> Result<bool> {
         let tag_hash = calculate_tag_hash(&time_series_table_metadata.name, &tag_values);
 
@@ -224,6 +227,9 @@ impl UncompressedDataManager {
                 timestamp,
                 values,
             );
+
+            uncompressed_in_memory_data_buffer.insert_batch_id(batch_id);
+
             buffer_is_full = uncompressed_in_memory_data_buffer.is_full();
             true
         } else {
@@ -257,6 +263,8 @@ impl UncompressedDataManager {
                     values,
                 );
 
+                uncompressed_in_memory_data_buffer.insert_batch_id(batch_id);
+
                 buffer_is_full = uncompressed_in_memory_data_buffer.is_full();
 
                 // The read-only reference must be dropped before the map can be modified.
@@ -272,6 +280,7 @@ impl UncompressedDataManager {
                     tag_values,
                     time_series_table_metadata,
                     current_batch_index,
+                    HashSet::from_iter(vec![batch_id]),
                 );
 
                 debug!(
@@ -622,6 +631,7 @@ fn calculate_tag_hash(table_name: &str, tag_values: &[String]) -> u64 {
 mod tests {
     use super::*;
 
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     use datafusion::arrow::array::StringBuilder;
@@ -640,6 +650,7 @@ mod tests {
 
     const TAG_VALUE: &str = "tag";
     const TAG_HASH: u64 = 14957893031159457585;
+    const BATCH_ID: u64 = 0;
 
     // Tests for UncompressedDataManager.
     #[tokio::test]
@@ -648,7 +659,8 @@ mod tests {
         let (data_manager, time_series_table_metadata) = create_managers(&temp_dir).await;
 
         let data = table::uncompressed_time_series_table_record_batch(1);
-        let ingested_data_buffer = IngestedDataBuffer::new(time_series_table_metadata, data);
+        let ingested_data_buffer =
+            IngestedDataBuffer::new(time_series_table_metadata, data, BATCH_ID);
 
         data_manager
             .insert_data_points(ingested_data_buffer)
@@ -665,7 +677,8 @@ mod tests {
         let (data_manager, time_series_table_metadata) = create_managers(&temp_dir).await;
 
         let data = table::uncompressed_time_series_table_record_batch(2);
-        let ingested_data_buffer = IngestedDataBuffer::new(time_series_table_metadata, data);
+        let ingested_data_buffer =
+            IngestedDataBuffer::new(time_series_table_metadata, data, BATCH_ID);
 
         data_manager
             .insert_data_points(ingested_data_buffer)
@@ -689,7 +702,8 @@ mod tests {
             .memory_pool
             .remaining_ingested_memory_in_bytes();
 
-        let ingested_data_buffer = IngestedDataBuffer::new(time_series_table_metadata, data);
+        let ingested_data_buffer =
+            IngestedDataBuffer::new(time_series_table_metadata, data, BATCH_ID);
 
         data_manager
             .insert_data_points(ingested_data_buffer)
@@ -818,7 +832,7 @@ mod tests {
         .unwrap();
 
         let ingested_data_buffer =
-            IngestedDataBuffer::new(time_series_table_metadata.clone(), data);
+            IngestedDataBuffer::new(time_series_table_metadata.clone(), data, BATCH_ID);
         data_manager
             .insert_data_points(ingested_data_buffer)
             .await
@@ -838,7 +852,7 @@ mod tests {
         // Insert using insert_data_points() to finish unused buffers.
         let empty_record_batch = RecordBatch::new_empty(time_series_table_metadata.schema.clone());
         let ingested_data_buffer =
-            IngestedDataBuffer::new(time_series_table_metadata, empty_record_batch);
+            IngestedDataBuffer::new(time_series_table_metadata, empty_record_batch, BATCH_ID);
 
         data_manager
             .insert_data_points(ingested_data_buffer)
@@ -1050,6 +1064,7 @@ mod tests {
                 0,
                 object_store,
                 uncompressed_data,
+                HashSet::new(),
             ))
             .unwrap();
 
@@ -1166,6 +1181,7 @@ mod tests {
                     &mut values.iter().copied(),
                     time_series_table_metadata.clone(),
                     current_batch_index,
+                    BATCH_ID,
                 )
                 .await
                 .unwrap();

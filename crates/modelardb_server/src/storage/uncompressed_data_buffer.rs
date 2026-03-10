@@ -18,6 +18,7 @@
 //! supports inserting and storing data in-memory, while [`UncompressedOnDiskDataBuffer`] provides
 //! support for storing uncompressed data points in Apache Parquet files on disk.
 
+use std::collections::HashSet;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 use std::{iter, mem};
@@ -45,7 +46,7 @@ pub(super) struct IngestedDataBuffer {
     pub(super) time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Uncompressed data points to insert.
     pub(super) data_points: RecordBatch,
-    /// The id given to the [`RecordBatch`] by the WAL.
+    /// The id given to the data by the WAL.
     pub(super) batch_id: u64,
 }
 
@@ -87,6 +88,8 @@ pub(super) struct UncompressedInMemoryDataBuffer {
     values: Vec<ValueBuilder>,
     /// The tag values for the time series the buffer stores data points for.
     tag_values: Vec<String>,
+    /// The ids given to the data by the WAL.
+    batch_ids: HashSet<u64>,
 }
 
 impl UncompressedInMemoryDataBuffer {
@@ -95,6 +98,7 @@ impl UncompressedInMemoryDataBuffer {
         tag_values: Vec<String>,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         current_batch_index: u64,
+        batch_ids: HashSet<u64>,
     ) -> Self {
         let timestamps = TimestampBuilder::with_capacity(*UNCOMPRESSED_DATA_BUFFER_CAPACITY);
         let values = (0..time_series_table_metadata.field_column_indices.len())
@@ -108,6 +112,7 @@ impl UncompressedInMemoryDataBuffer {
             timestamps,
             values,
             tag_values,
+            batch_ids,
         }
     }
 
@@ -150,6 +155,11 @@ impl UncompressedInMemoryDataBuffer {
         }
 
         debug!("Inserted data point into {:?}.", self)
+    }
+
+    /// Add `batch_id` to the batch ids given to the data by the WAL.
+    pub(super) fn insert_batch_id(&mut self, batch_id: u64) {
+        self.batch_ids.insert(batch_id);
     }
 
     /// Return how many data points the [`UncompressedInMemoryDataBuffer`] can contain.
@@ -219,6 +229,7 @@ impl UncompressedInMemoryDataBuffer {
             self.updated_by_batch_index,
             local_data_folder,
             data_points,
+            self.batch_ids.clone(),
         )
         .await
     }
@@ -258,6 +269,8 @@ pub(super) struct UncompressedOnDiskDataBuffer {
     /// Path to the Apache Parquet file containing the uncompressed data in the
     /// [`UncompressedOnDiskDataBuffer`].
     file_path: Path,
+    /// The ids given to the data by the WAL.
+    batch_ids: HashSet<u64>,
 }
 
 impl UncompressedOnDiskDataBuffer {
@@ -271,6 +284,7 @@ impl UncompressedOnDiskDataBuffer {
         updated_by_batch_index: u64,
         local_data_folder: Arc<dyn ObjectStore>,
         data_points: RecordBatch,
+        batch_ids: HashSet<u64>,
     ) -> Result<Self> {
         // Create a path that uses the first timestamp as the filename.
         let timestamp_index = time_series_table_metadata.timestamp_column_index;
@@ -295,6 +309,7 @@ impl UncompressedOnDiskDataBuffer {
             updated_by_batch_index,
             local_data_folder,
             file_path,
+            batch_ids,
         })
     }
 
@@ -350,6 +365,7 @@ impl UncompressedOnDiskDataBuffer {
             tag_values,
             self.time_series_table_metadata.clone(),
             current_batch_index,
+            self.batch_ids.clone(),
         );
 
         for index in 0..data_points.num_rows() {
@@ -398,6 +414,7 @@ mod tests {
     use tokio::runtime::Runtime;
 
     const CURRENT_BATCH_INDEX: u64 = 1;
+    const BATCH_ID: u64 = 0;
     const TAG_VALUE: &str = "tag";
     const TAG_HASH: u64 = 15537859409877038916;
 
@@ -409,6 +426,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
 
         assert_eq!(
@@ -438,6 +456,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
 
         assert_eq!(uncompressed_buffer.len(), 0);
@@ -450,6 +469,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
         insert_data_points(1, &mut uncompressed_buffer);
 
@@ -463,6 +483,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX - 1,
+            HashSet::new(),
         );
 
         assert!(!uncompressed_buffer.is_unused(CURRENT_BATCH_INDEX - 1));
@@ -482,6 +503,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
 
@@ -495,6 +517,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
 
         assert!(!uncompressed_buffer.is_full());
@@ -509,6 +532,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
 
         insert_data_points(uncompressed_buffer.capacity() + 1, &mut uncompressed_buffer);
@@ -522,6 +546,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             time_series_table_metadata.clone(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
 
@@ -544,6 +569,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             time_series_table_metadata.clone(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
 
         // u64 is generated and then cast to i64 to ensure only positive values are generated.
@@ -566,6 +592,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
         insert_data_points(1, &mut uncompressed_buffer);
         assert!(!uncompressed_buffer.is_full());
@@ -591,6 +618,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
         assert!(uncompressed_buffer.is_full());
@@ -642,6 +670,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             time_series_table_metadata.clone(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
 
         // u64 is generated and then cast to i64 to ensure only positive values are generated.
@@ -695,6 +724,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
 
         insert_data_points(
@@ -731,6 +761,7 @@ mod tests {
             vec![TAG_VALUE.to_owned()],
             table::time_series_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
+            HashSet::new(),
         );
 
         insert_data_points(
@@ -756,5 +787,7 @@ mod tests {
                 &mut values.iter().copied(),
             );
         }
+
+        uncompressed_buffer.insert_batch_id(BATCH_ID);
     }
 }
