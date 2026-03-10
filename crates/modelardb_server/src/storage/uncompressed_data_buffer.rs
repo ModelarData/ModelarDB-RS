@@ -298,28 +298,6 @@ impl UncompressedOnDiskDataBuffer {
         })
     }
 
-    /// Return an [`UncompressedOnDiskDataBuffer`] with the data points for `tag_hash` in
-    /// `file_path` if a file at `file_path` exists, otherwise
-    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) is returned.
-    pub(super) fn try_new(
-        tag_hash: u64,
-        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
-        updated_by_batch_index: u64,
-        local_data_folder: Arc<dyn ObjectStore>,
-        file_name: &str,
-    ) -> Result<Self> {
-        let file_path =
-            spilled_buffer_file_path(&time_series_table_metadata.name, tag_hash, file_name);
-
-        Ok(Self {
-            tag_hash,
-            time_series_table_metadata,
-            updated_by_batch_index,
-            local_data_folder,
-            file_path,
-        })
-    }
-
     /// Read the data from the Apache Parquet file, delete the Apache Parquet file, and return the
     /// data as a [`RecordBatch`] sorted by time. Return
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError) if the Apache Parquet file

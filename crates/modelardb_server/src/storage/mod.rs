@@ -41,7 +41,6 @@ use tokio::sync::RwLock;
 use tracing::error;
 
 use crate::configuration::ConfigurationManager;
-use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_manager::CompressedDataManager;
@@ -113,11 +112,14 @@ impl StorageEngine {
         let channels = Arc::new(Channels::new());
 
         // Create the uncompressed data manager.
-        let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
-            data_folders.local_data_folder.clone(),
-            memory_pool.clone(),
-            channels.clone(),
-        ));
+        let uncompressed_data_manager = Arc::new(
+            UncompressedDataManager::try_new(
+                data_folders.local_data_folder.clone(),
+                memory_pool.clone(),
+                channels.clone(),
+            )
+            .await?,
+        );
 
         {
             let runtime_handle = runtime_handle.clone();
@@ -236,13 +238,6 @@ impl StorageEngine {
         }
 
         Ok(())
-    }
-
-    /// Add references to the
-    /// [`UncompressedDataBuffers`](uncompressed_data_buffer::UncompressedDataBuffer) currently on
-    /// disk to [`UncompressedDataManager`] which immediately will start compressing them.
-    pub(super) async fn initialize(&self, context: &Context) -> Result<()> {
-        self.uncompressed_data_manager.initialize(context).await
     }
 
     /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if `record_batch` was
