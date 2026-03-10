@@ -215,6 +215,11 @@ impl UncompressedInMemoryDataBuffer {
         compute_memory_size(self.values.len())
     }
 
+    /// Return the ids given to the data by the WAL.
+    pub(super) fn batch_ids(&self) -> &HashSet<u64> {
+        &self.batch_ids
+    }
+
     /// Spill the in-memory [`UncompressedInMemoryDataBuffer`] to an Apache Parquet file and return
     /// an [`UncompressedOnDiskDataBuffer`] when finished.
     pub(super) async fn spill_to_apache_parquet(
@@ -332,6 +337,11 @@ impl UncompressedOnDiskDataBuffer {
     /// Return the metadata for the time series table the buffer stores data points for.
     pub(super) fn time_series_table_metadata(&self) -> &Arc<TimeSeriesTableMetadata> {
         &self.time_series_table_metadata
+    }
+
+    /// Return the ids given to the data by the WAL.
+    pub(super) fn batch_ids(&self) -> &HashSet<u64> {
+        &self.batch_ids
     }
 
     /// Return [`true`] if all the data points in the [`UncompressedOnDiskDataBuffer`] are from

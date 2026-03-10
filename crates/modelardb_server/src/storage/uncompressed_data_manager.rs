@@ -280,7 +280,7 @@ impl UncompressedDataManager {
                     tag_values,
                     time_series_table_metadata,
                     current_batch_index,
-                    HashSet::from_iter(vec![batch_id]),
+                    HashSet::from([batch_id]),
                 );
 
                 debug!(
@@ -532,7 +532,7 @@ impl UncompressedDataManager {
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<()> {
-        let (memory_use, maybe_data_points, time_series_table_metadata) =
+        let (memory_use, maybe_data_points, time_series_table_metadata, batch_ids) =
             match uncompressed_data_buffer {
                 UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
                     uncompressed_in_memory_data_buffer.memory_size(),
@@ -540,6 +540,7 @@ impl UncompressedDataManager {
                     uncompressed_in_memory_data_buffer
                         .time_series_table_metadata()
                         .clone(),
+                    uncompressed_in_memory_data_buffer.batch_ids().clone(),
                 ),
                 UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
                     0,
@@ -547,6 +548,7 @@ impl UncompressedDataManager {
                     uncompressed_on_disk_data_buffer
                         .time_series_table_metadata()
                         .clone(),
+                    uncompressed_on_disk_data_buffer.batch_ids().clone(),
                 ),
             };
 
@@ -584,6 +586,7 @@ impl UncompressedDataManager {
             .send(Message::Data(CompressedSegmentBatch::new(
                 time_series_table_metadata.clone(),
                 compressed_segments,
+                batch_ids,
             )))?;
 
         // Add the size of the uncompressed buffer back to the remaining reserved bytes.

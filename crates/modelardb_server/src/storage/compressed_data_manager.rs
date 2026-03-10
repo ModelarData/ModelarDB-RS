@@ -147,8 +147,10 @@ impl CompressedDataManager {
         {
             debug!("Found existing compressed data buffer for table '{time_series_table_name}'.",);
 
-            compressed_data_buffer
-                .append_compressed_segments(compressed_segment_batch.compressed_segments)
+            compressed_data_buffer.append_compressed_segments(
+                compressed_segment_batch.compressed_segments,
+                compressed_segment_batch.batch_ids,
+            )
         } else {
             // A String is created as two copies are required for compressed_data_buffer and
             // compressed_queue anyway and compressed_segments cannot be moved out of
@@ -160,8 +162,10 @@ impl CompressedDataManager {
 
             let mut compressed_data_buffer =
                 CompressedDataBuffer::new(compressed_segment_batch.time_series_table_metadata);
-            let segment_size = compressed_data_buffer
-                .append_compressed_segments(compressed_segment_batch.compressed_segments);
+            let segment_size = compressed_data_buffer.append_compressed_segments(
+                compressed_segment_batch.compressed_segments,
+                compressed_segment_batch.batch_ids,
+            );
 
             self.compressed_data_buffers
                 .insert(time_series_table_name.clone(), compressed_data_buffer);
@@ -289,6 +293,8 @@ impl CompressedDataManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::HashSet;
 
     use datafusion::arrow::array::{Array, Int8Array};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -594,6 +600,7 @@ mod tests {
                     offset,
                 ),
             ],
+            HashSet::from([0, 1]),
         )
     }
 }
