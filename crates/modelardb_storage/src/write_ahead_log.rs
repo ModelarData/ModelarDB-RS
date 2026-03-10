@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
+use std::io::{Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -160,7 +161,7 @@ impl WriteAheadLogFile {
         let file = OpenOptions::new()
             .create(true)
             .read(true)
-            .append(true)
+            .write(true)
             .open(file_path.clone())?;
 
         let file_len = file.metadata()?.len();
@@ -168,9 +169,11 @@ impl WriteAheadLogFile {
         let writer = StreamWriter::try_new(file, schema)?;
 
         // If the file already had data, the StreamWriter wrote a duplicate schema header.
-        // Truncate back to the original length to remove it.
+        // Truncate back to the original length to remove it, then seek to the end so
+        // subsequent writes append correctly.
         if file_len > 0 {
             writer.get_ref().set_len(file_len)?;
+            writer.get_ref().seek(SeekFrom::End(0))?;
         }
 
         Ok(Self {
