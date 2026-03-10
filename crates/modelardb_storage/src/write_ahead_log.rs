@@ -237,3 +237,153 @@ impl WriteAheadLogFile {
 fn operations_log_schema() -> Schema {
     Schema::new(vec![Field::new("operation", DataType::Utf8, false)])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use modelardb_test::table::{
+        TIME_SERIES_TABLE_NAME, time_series_table_metadata,
+        uncompressed_time_series_table_record_batch,
+    };
+
+    #[test]
+    fn test_try_new_creates_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir
+            .path()
+            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+
+        let metadata = time_series_table_metadata();
+        let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
+
+        assert!(file_path.exists());
+        assert_eq!(wal_file.path, file_path);
+    }
+
+    #[test]
+    fn test_read_all_empty_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir
+            .path()
+            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+
+        let metadata = time_series_table_metadata();
+        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+
+        let batches = wal_file.read_all().unwrap();
+        assert!(batches.is_empty());
+    }
+
+    #[test]
+    fn test_append_and_read_single_batch() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir
+            .path()
+            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+
+        let metadata = time_series_table_metadata();
+        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+        let batch = uncompressed_time_series_table_record_batch(5);
+
+        wal_file.append_and_sync(&batch).unwrap();
+
+        let batches = wal_file.read_all().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0], batch);
+    }
+
+    #[test]
+    fn test_append_and_read_multiple_batches() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir
+            .path()
+            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+
+        let metadata = time_series_table_metadata();
+        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+
+        let batch_1 = uncompressed_time_series_table_record_batch(10);
+        let batch_2 = uncompressed_time_series_table_record_batch(20);
+        let batch_3 = uncompressed_time_series_table_record_batch(30);
+
+        wal_file.append_and_sync(&batch_1).unwrap();
+        wal_file.append_and_sync(&batch_2).unwrap();
+        wal_file.append_and_sync(&batch_3).unwrap();
+
+        let batches = wal_file.read_all().unwrap();
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0], batch_1);
+        assert_eq!(batches[1], batch_2);
+        assert_eq!(batches[2], batch_3);
+    }
+
+    #[test]
+    fn test_reopen_existing_file_and_append() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir
+            .path()
+            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+
+        let metadata = time_series_table_metadata();
+        let batch_1 = uncompressed_time_series_table_record_batch(10);
+        {
+            let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
+            wal_file.append_and_sync(&batch_1).unwrap();
+        }
+
+        let batch_2 = uncompressed_time_series_table_record_batch(20);
+        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+        wal_file.append_and_sync(&batch_2).unwrap();
+
+        let batches = wal_file.read_all().unwrap();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0], batch_1);
+        assert_eq!(batches[1], batch_2);
+    }
+
+    #[test]
+    fn test_reopen_existing_file_and_read_without_append() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir
+            .path()
+            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+
+        let metadata = time_series_table_metadata();
+        let batch = uncompressed_time_series_table_record_batch(10);
+        {
+            let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
+            wal_file.append_and_sync(&batch).unwrap();
+        }
+
+        let wal_file = WriteAheadLogFile::try_new(file_path, &metadata.schema).unwrap();
+        let batches = wal_file.read_all().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0], batch);
+    }
+
+    #[test]
+    fn test_file_size_not_changed_on_reopen() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir
+            .path()
+            .join(format!("{}.wal", TIME_SERIES_TABLE_NAME));
+
+        let metadata = time_series_table_metadata();
+        let batch = uncompressed_time_series_table_record_batch(10);
+        {
+            let wal_file = WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
+            wal_file.append_and_sync(&batch).unwrap();
+        }
+
+        let size_before = std::fs::metadata(&file_path).unwrap().len();
+
+        {
+            let _wal_file =
+                WriteAheadLogFile::try_new(file_path.clone(), &metadata.schema).unwrap();
+        }
+
+        let size_after = std::fs::metadata(&file_path).unwrap().len();
+        assert_eq!(size_before, size_after);
+    }
+}
