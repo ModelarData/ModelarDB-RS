@@ -1147,7 +1147,7 @@ pub struct DeltaTableWriter {
     operation_id: Uuid,
     /// Writes record batches to the Delta table as Apache Parquet files.
     delta_writer: DeltaWriter,
-    /// Batch IDs from the WAL to include in the commit metadata for checkpointing.
+    /// Batch ids from the WAL to include in the commit metadata for checkpointing.
     batch_ids: Vec<u64>,
 }
 
@@ -1205,7 +1205,7 @@ impl DeltaTableWriter {
         })
     }
 
-    /// Add batch IDs from the WAL that are included in the commit metadata for checkpointing.
+    /// Add batch ids from the WAL that are included in the commit metadata for checkpointing.
     pub fn with_batch_ids(mut self, batch_ids: Vec<u64>) -> Self {
         self.batch_ids = batch_ids;
         self

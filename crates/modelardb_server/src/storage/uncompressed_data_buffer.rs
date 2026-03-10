@@ -45,16 +45,20 @@ pub(super) struct IngestedDataBuffer {
     pub(super) time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Uncompressed data points to insert.
     pub(super) data_points: RecordBatch,
+    /// The id given to the [`RecordBatch`] by the WAL.
+    pub(super) batch_id: u64,
 }
 
 impl IngestedDataBuffer {
     pub(super) fn new(
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         data_points: RecordBatch,
+        batch_id: u64,
     ) -> Self {
         Self {
             time_series_table_metadata,
             data_points,
+            batch_id,
         }
     }
 }

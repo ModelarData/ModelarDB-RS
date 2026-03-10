@@ -130,9 +130,9 @@ impl WriteAheadLog {
 
     /// Append data to the log for the given table and sync the file to ensure that all data is on
     /// disk. Only requires read access to the log since the internal Mutex handles write
-    /// synchronization. If a table log does not exist or the data could not be appended, return
-    /// [`ModelarDbStorageError`].
-    pub fn append_to_table_log(&self, table_name: &str, data: &RecordBatch) -> Result<()> {
+    /// synchronization. Return the batch id given to the appended data. If a table log does not
+    /// exist or the data could not be appended, return [`ModelarDbStorageError`].
+    pub fn append_to_table_log(&self, table_name: &str, data: &RecordBatch) -> Result<u64> {
         let log_file = self.table_logs.get(table_name).ok_or_else(|| {
             ModelarDbStorageError::InvalidState(format!(
                 "Table log for table '{table_name}' does not exist."
@@ -183,9 +183,9 @@ impl WriteAheadLogFile {
     }
 
     /// Append the given data to the log file and sync the file to ensure that all data is on disk.
-    /// If the data could not be appended or the file could not be synced, return
-    /// [`ModelarDbStorageError`].
-    fn append_and_sync(&self, data: &RecordBatch) -> Result<()> {
+    /// Return the batch id given to the appended data. If the data could not be appended or the
+    /// file could not be synced, return [`ModelarDbStorageError`].
+    fn append_and_sync(&self, data: &RecordBatch) -> Result<u64> {
         // Acquire the mutex to ensure only one thread can write at a time.
         let mut writer = self.writer.lock().expect("Mutex should not be poisoned.");
 
@@ -198,7 +198,7 @@ impl WriteAheadLogFile {
         // such as modification timestamps and permissions are not updated since we only sync data.
         writer.get_ref().sync_data()?;
 
-        Ok(())
+        Ok(0)
     }
 
     /// Read all data from the log file. This can be called even if the [`StreamWriter`] has not

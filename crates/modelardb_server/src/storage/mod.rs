@@ -267,7 +267,7 @@ impl StorageEngine {
         // Write to the write-ahead log to ensure termination never duplicates or loses data. We use
         // a read lock since the specific log file is locked internally before writing.
         let write_ahead_log = self.write_ahead_log.read().await;
-        write_ahead_log
+        let batch_id = write_ahead_log
             .append_to_table_log(&time_series_table_metadata.name, &multivariate_data_points)?;
 
         self.memory_pool
@@ -278,6 +278,7 @@ impl StorageEngine {
             .send(Message::Data(IngestedDataBuffer::new(
                 time_series_table_metadata,
                 multivariate_data_points,
+                batch_id,
             )))
             .map_err(|error| error.into())
     }
