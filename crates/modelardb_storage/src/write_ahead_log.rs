@@ -151,6 +151,9 @@ struct WriteAheadLogFile {
     path: PathBuf,
     /// Writer to write data in IPC streaming format to the log file.
     writer: Mutex<StreamWriter<File>>,
+    /// The batch id to give to the next batch of data appended to the log file. This is incremented
+    /// after each append, so the batch id given to data is monotonically increasing.
+    batch_id: Mutex<u64>,
 }
 
 impl WriteAheadLogFile {
@@ -179,6 +182,7 @@ impl WriteAheadLogFile {
         Ok(Self {
             path: file_path,
             writer: Mutex::new(writer),
+            batch_id: Mutex::new(0),
         })
     }
 
@@ -188,6 +192,7 @@ impl WriteAheadLogFile {
     fn append_and_sync(&self, data: &RecordBatch) -> Result<u64> {
         // Acquire the mutex to ensure only one thread can write at a time.
         let mut writer = self.writer.lock().expect("Mutex should not be poisoned.");
+        let mut batch_id = self.batch_id.lock().expect("Mutex should not be poisoned.");
 
         writer.write(data)?;
 
@@ -198,7 +203,11 @@ impl WriteAheadLogFile {
         // such as modification timestamps and permissions are not updated since we only sync data.
         writer.get_ref().sync_data()?;
 
-        Ok(0)
+        // Increment the batch id for the next batch of data.
+        let current_batch_id = *batch_id;
+        *batch_id += 1;
+
+        Ok(current_batch_id)
     }
 
     /// Read all data from the log file. This can be called even if the [`StreamWriter`] has not
