@@ -16,7 +16,7 @@
 //! Operations for reading from and writing to ModelarDB data folders.
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::result::Result as StdResult;
@@ -224,7 +224,7 @@ impl Operations for DataFolder {
             self.write_compressed_segments_to_time_series_table(
                 table_name,
                 compressed_data,
-                vec![],
+                HashSet::new(),
             )
             .await?;
         } else if let Some(normal_table_schema) = self.normal_table_schema(table_name).await {
@@ -420,7 +420,7 @@ impl Operations for DataFolder {
             .write_compressed_segments_to_time_series_table(
                 target_table_name,
                 record_batches,
-                vec![],
+                HashSet::new(),
             )
             .await?;
 
@@ -472,7 +472,7 @@ impl Operations for DataFolder {
                 .write_compressed_segments_to_time_series_table(
                     target_table_name,
                     record_batches,
-                    vec![],
+                    HashSet::new(),
                 )
                 .await?;
         } else if let (Some(source_normal_table_schema), Some(target_normal_table_schema)) = (

@@ -17,7 +17,7 @@
 
 pub mod cluster;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path as StdPath;
 use std::sync::Arc;
 use std::{env, fs};
@@ -881,7 +881,7 @@ impl DataFolder {
         &self,
         table_name: &str,
         compressed_segments: Vec<RecordBatch>,
-        batch_ids: Vec<u64>,
+        batch_ids: HashSet<u64>,
     ) -> Result<DeltaTable> {
         let delta_table = self.delta_table(table_name).await?;
 
@@ -1148,7 +1148,7 @@ pub struct DeltaTableWriter {
     /// Writes record batches to the Delta table as Apache Parquet files.
     delta_writer: DeltaWriter,
     /// Batch ids from the WAL to include in the commit metadata for checkpointing.
-    batch_ids: Vec<u64>,
+    batch_ids: HashSet<u64>,
 }
 
 impl DeltaTableWriter {
@@ -1201,12 +1201,12 @@ impl DeltaTableWriter {
             delta_operation,
             operation_id,
             delta_writer,
-            batch_ids: vec![],
+            batch_ids: HashSet::new(),
         })
     }
 
     /// Add batch ids from the WAL that are included in the commit metadata for checkpointing.
-    pub fn with_batch_ids(mut self, batch_ids: Vec<u64>) -> Self {
+    pub fn with_batch_ids(mut self, batch_ids: HashSet<u64>) -> Self {
         self.batch_ids = batch_ids;
         self
     }

@@ -113,6 +113,11 @@ impl CompressedDataBuffer {
         self.compressed_segments
     }
 
+    /// Return the ids given to the data by the WAL.
+    pub(super) fn batch_ids(&self) -> HashSet<u64> {
+        self.batch_ids.clone()
+    }
+
     /// Return the size in bytes of `compressed_segments`.
     fn size_of_compressed_segments(compressed_segments: &RecordBatch) -> u64 {
         let mut total_size: u64 = 0;

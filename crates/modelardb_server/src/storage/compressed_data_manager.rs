@@ -248,9 +248,15 @@ impl CompressedDataManager {
         // actual size is not computed as DeltaTable seems to have no support for listing the files
         // added in a version without iterating through all of the Add actions from file_actions().
         let compressed_data_buffer_size_in_bytes = compressed_data_buffer.size_in_bytes;
+        let batch_ids = compressed_data_buffer.batch_ids();
         let compressed_segments = compressed_data_buffer.record_batches();
+
         self.local_data_folder
-            .write_compressed_segments_to_time_series_table(table_name, compressed_segments, vec![])
+            .write_compressed_segments_to_time_series_table(
+                table_name,
+                compressed_segments,
+                batch_ids,
+            )
             .await?;
 
         // Inform the data transfer component about the new data if a remote data folder was
