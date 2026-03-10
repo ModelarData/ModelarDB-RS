@@ -163,7 +163,15 @@ impl WriteAheadLogFile {
             .append(true)
             .open(file_path.clone())?;
 
+        let file_len = file.metadata()?.len();
+
         let writer = StreamWriter::try_new(file, schema)?;
+
+        // If the file already had data, the StreamWriter wrote a duplicate schema header.
+        // Truncate back to the original length to remove it.
+        if file_len > 0 {
+            writer.get_ref().set_len(file_len)?;
+        }
 
         Ok(Self {
             path: file_path,
