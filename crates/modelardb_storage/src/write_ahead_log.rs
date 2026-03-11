@@ -199,18 +199,19 @@ struct ActiveSegment {
 
 /// Wrapper around a [`File`] that enforces that [`sync_data()`](File::sync_data) is called
 /// immediately after writing to ensure that all data is on disk before returning. Note that
-/// an exclusive lock is held on the file while it is being written to.
+/// an exclusive lock is held on the file while it is being written to. At any point in time there
+/// is exactly one active segment being written to plus zero or more closed segments that are
+/// read-only. The active segment is rotated into the closed list once [`SEGMENT_ROTATION_THRESHOLD`]
+/// batches have been written to it.
 struct WriteAheadLogFile {
-    /// Path to the file that the log is written to.
-    path: PathBuf,
-    /// Writer to write data in IPC streaming format to the log file.
-    writer: Mutex<StreamWriter<File>>,
-    /// The offset encoded in the WAL file name. This represents the number of batches that have
-    /// been removed from the start of the file across all previous truncations.
-    batch_offset: u64,
-    /// The batch id to give to the next batch of data appended to the log file. This is incremented
-    /// after each append, so the batch id given to data is monotonically increasing.
-    next_batch_id: AtomicU64,
+    /// Folder that contains all segment files for this log.
+    folder_path: PathBuf,
+    /// Arrow schema shared by every segment in this log.
+    schema: Schema,
+    /// The active segment currently being written to.
+    active_segment: Mutex<ActiveSegment>,
+    /// Closed, read-only segment files ordered by `start_id`.
+    closed_segments: Mutex<Vec<ClosedSegment>>,
     /// Batch ids that have been confirmed as saved to disk. Used to determine whether a
     /// contiguous prefix of batches can be trimmed from the start of the log file.
     persisted_batch_ids: Mutex<BTreeSet<u64>>,
