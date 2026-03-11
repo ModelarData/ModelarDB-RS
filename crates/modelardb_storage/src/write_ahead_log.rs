@@ -133,12 +133,7 @@ impl WriteAheadLog {
     /// synchronization. Return the batch id given to the appended data. If a table log does not
     /// exist or the data could not be appended, return [`ModelarDbStorageError`].
     pub fn append_to_table_log(&self, table_name: &str, data: &RecordBatch) -> Result<u64> {
-        let log_file = self.table_logs.get(table_name).ok_or_else(|| {
-            ModelarDbStorageError::InvalidState(format!(
-                "Table log for table '{table_name}' does not exist."
-            ))
-        })?;
-
+        let log_file = self.table_log(table_name)?;
         log_file.append_and_sync(data)
     }
 
@@ -151,13 +146,18 @@ impl WriteAheadLog {
         table_name: &str,
         batch_ids: HashSet<u64>,
     ) -> Result<()> {
-        let log_file = self.table_logs.get(table_name).ok_or_else(|| {
+        let log_file = self.table_log(table_name)?;
+        log_file.mark_batches_as_persisted(batch_ids)
+    }
+
+    /// Get the log file for the table with the given name. If the log file does not exist, return
+    /// [`ModelarDbStorageError`].
+    fn table_log(&self, table_name: &str) -> Result<&WriteAheadLogFile> {
+        self.table_logs.get(table_name).ok_or_else(|| {
             ModelarDbStorageError::InvalidState(format!(
                 "Table log for table '{table_name}' does not exist."
             ))
-        })?;
-
-        log_file.mark_batches_as_persisted(batch_ids)
+        })
     }
 }
 
