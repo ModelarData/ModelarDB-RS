@@ -197,6 +197,29 @@ struct ActiveSegment {
     next_batch_id: u64,
 }
 
+impl ActiveSegment {
+    /// Create a new [`ActiveSegment`] in `folder_path` with the given `start_id` and `schema`.
+    /// If the file could not be created, return [`ModelarDbStorageError`].
+    fn try_new(folder_path: PathBuf, schema: &Schema, start_id: u64) -> Result<Self> {
+        let path = folder_path.join(format!("{start_id}-.wal"));
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)?;
+
+        let writer = StreamWriter::try_new(file, schema)?;
+
+        Ok(Self {
+            path,
+            start_id,
+            writer,
+            next_batch_id: start_id,
+        })
+    }
+}
+
 /// Wrapper around a [`File`] that enforces that [`sync_data()`](File::sync_data) is called
 /// immediately after writing to ensure that all data is on disk before returning. Note that
 /// an exclusive lock is held on the file while it is being written to. At any point in time there
@@ -236,25 +259,12 @@ impl WriteAheadLogFile {
 
         // Always create a fresh active segment on startup to avoid writing into the middle of
         // an existing IPC stream.
-        let active_path = folder_path.join(format!("{next_id}-.wal"));
-        let active_file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(true)
-            .open(&active_path)?;
-
-        let writer = StreamWriter::try_new(active_file, schema)?;
+        let active_file = ActiveSegment::try_new(folder_path.clone(), schema, next_id)?;
 
         Ok(Self {
             folder_path,
             schema: schema.clone(),
-            active_segment: Mutex::new(ActiveSegment {
-                path: active_path,
-                start_id: next_id,
-                writer,
-                next_batch_id: next_id,
-            }),
+            active_segment: Mutex::new(active_file),
             closed_segments: Mutex::new(closed_segments),
             // TODO: This needs to be initialized with persisted batch ids from Delta Lake.
             persisted_batch_ids: Mutex::new(BTreeSet::new()),
@@ -324,17 +334,8 @@ impl WriteAheadLogFile {
 
         // Open a fresh active segment.
         let next_id = end_id + 1;
-        let new_active_path = self.folder_path.join(format!("{next_id}-.wal"));
-        let new_file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(true)
-            .open(&new_active_path)?;
-
-        active.writer = StreamWriter::try_new(new_file, &self.schema)?;
-        active.path = new_active_path;
-        active.start_id = next_id;
+        let new_file = ActiveSegment::try_new(self.folder_path.clone(), &self.schema, next_id)?;
+        *active = new_file;
 
         Ok(())
     }
