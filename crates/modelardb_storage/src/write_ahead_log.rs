@@ -299,6 +299,46 @@ impl WriteAheadLogFile {
     /// Mark the given batch ids as saved to disk. If a large enough contiguous prefix of batches
     /// is marked as persisted, the log file is trimmed to remove the persisted data. If the
     /// file could not be trimmed, return [`ModelarDbStorageError`].
+    /// Close the current active segment by renaming it to its final `{start_id}-{end_id}.wal`
+    /// name and open a fresh active segment. The caller must hold the `active_segment` lock.
+    fn rotate_active_segment(&self, active: &mut ActiveSegment) -> Result<()> {
+        let end_id = active.next_batch_id - 1;
+
+        // Finish the current writer so the IPC end-of-stream marker is written.
+        active.writer.finish()?;
+
+        // Rename the active file to its permanent name.
+        let closed_path = self
+            .folder_path
+            .join(format!("{}-{end_id}.wal", active.start_id));
+        std::fs::rename(&active.path, &closed_path)?;
+
+        self.closed_segments
+            .lock()
+            .expect("Mutex should not be poisoned.")
+            .push(ClosedSegment {
+                path: closed_path,
+                start_id: active.start_id,
+                end_id,
+            });
+
+        // Open a fresh active segment.
+        let next_id = end_id + 1;
+        let new_active_path = self.folder_path.join(format!("{next_id}-.wal"));
+        let new_file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(&new_active_path)?;
+
+        active.writer = StreamWriter::try_new(new_file, &self.schema)?;
+        active.path = new_active_path;
+        active.start_id = next_id;
+
+        Ok(())
+    }
+
     fn mark_batches_as_persisted(&self, batch_ids: HashSet<u64>) -> Result<()> {
         let mut persisted = self
             .persisted_batch_ids
