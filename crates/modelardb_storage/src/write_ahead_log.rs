@@ -261,24 +261,37 @@ impl WriteAheadLogFile {
         })
     }
 
-    /// Append the given data to the log file and sync the file to ensure that all data is on disk.
-    /// Return the batch id given to the appended data. If the data could not be appended or the
-    /// file could not be synced, return [`ModelarDbStorageError`].
+    /// Append the given data to the active segment and sync the file to ensure that all data is on
+    /// disk. Return the batch id given to the appended data. Rotates to a new segment file if
+    /// [`SEGMENT_ROTATION_THRESHOLD`] is reached. If the data could not be appended or the file
+    /// could not be synced, return [`ModelarDbStorageError`].
     fn append_and_sync(&self, data: &RecordBatch) -> Result<u64> {
         // Acquire the mutex to ensure only one thread can write at a time.
-        let mut writer = self.writer.lock().expect("Mutex should not be poisoned.");
+        let mut active = self
+            .active_segment
+            .lock()
+            .expect("Mutex should not be poisoned.");
 
-        writer.write(data)?;
+        active.writer.write(data)?;
 
         // Flush the writer's internal buffers to the file.
-        writer.flush()?;
+        active.writer.flush()?;
 
         // Get a reference to the underlying file handle and sync to disk. Note that file metadata
         // such as modification timestamps and permissions are not updated since we only sync data.
-        writer.get_ref().sync_data()?;
+        active.writer.get_ref().sync_data()?;
 
         // Increment the batch id for the next batch of data.
-        let current_batch_id = self.next_batch_id.fetch_add(1, Ordering::Relaxed);
+        let current_batch_id = active.next_batch_id;
+        active.next_batch_id += 1;
+
+        // Rotate to a new segment if the threshold has been reached. The number of batches in the
+        // active segment is the difference between the next batch id (post-increment) and the
+        // active start id.
+        let active_batch_count = active.next_batch_id - active.start_id;
+        if active_batch_count >= SEGMENT_ROTATION_THRESHOLD {
+            self.rotate_active_segment(&mut active)?;
+        }
 
         Ok(current_batch_id)
     }
