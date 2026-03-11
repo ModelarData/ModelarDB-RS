@@ -168,7 +168,7 @@ impl WriteAheadLog {
 
 /// A closed WAL segment file. The file contains all batches with ids in `[start_id, end_id]`
 /// and will not be written to again.
-struct WriteAheadLogSegment {
+struct ClosedSegment {
     /// Path to the segment file on disk.
     path: PathBuf,
     /// Batch id of the first batch in this segment.
@@ -177,11 +177,24 @@ struct WriteAheadLogSegment {
     end_id: u64,
 }
 
-impl WriteAheadLogSegment {
+impl ClosedSegment {
     /// Return `true` if every batch id in this segment is present in `persisted`.
     fn is_fully_persisted(&self, persisted: &BTreeSet<u64>) -> bool {
         (self.start_id..=self.end_id).all(|id| persisted.contains(&id))
     }
+}
+
+/// The currently active WAL segment being written to. All fields are mutated together
+/// during rotation and are protected by the mutex in [`WriteAheadLogFile`].
+struct ActiveSegment {
+    /// Path to the active segment file.
+    path: PathBuf,
+    /// Batch id of the first batch written to this segment.
+    start_id: u64,
+    /// Writer to write data in IPC streaming format to this segment file.
+    writer: StreamWriter<File>,
+    /// The batch id to give to the next batch of data. Monotonically increasing across rotations.
+    next_batch_id: u64,
 }
 
 /// Wrapper around a [`File`] that enforces that [`sync_data()`](File::sync_data) is called
