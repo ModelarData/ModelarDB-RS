@@ -143,7 +143,7 @@ impl WriteAheadLog {
     }
 }
 
-/// Wrapper around a [`File`] that enforces that [`sync_all()`](File::sync_all) is called
+/// Wrapper around a [`File`] that enforces that [`sync_data()`](File::sync_data) is called
 /// immediately after writing to ensure that all data is on disk before returning. Note that
 /// an exclusive lock is held on the file while it is being written to.
 struct WriteAheadLogFile {
@@ -151,6 +151,9 @@ struct WriteAheadLogFile {
     path: PathBuf,
     /// Writer to write data in IPC streaming format to the log file.
     writer: Mutex<StreamWriter<File>>,
+    /// The offset encoded in the WAL file name. This represents the number of batches that have
+    /// been removed from the start of the file across all previous truncations.
+    batch_offset: u64,
     /// The batch id to give to the next batch of data appended to the log file. This is incremented
     /// after each append, so the batch id given to data is monotonically increasing.
     next_batch_id: Mutex<u64>,
@@ -163,7 +166,7 @@ impl WriteAheadLogFile {
     fn try_new(folder_path: PathBuf, schema: &Schema) -> Result<Self> {
         std::fs::create_dir_all(folder_path.clone())?;
 
-        let (file_path, offset) =
+        let (file_path, batch_offset) =
             find_existing_wal_file(&folder_path)?.unwrap_or_else(|| (folder_path.join("0.wal"), 0));
 
         let file = OpenOptions::new()
@@ -196,7 +199,8 @@ impl WriteAheadLogFile {
         Ok(Self {
             path: file_path,
             writer: Mutex::new(writer),
-            next_batch_id: Mutex::new(offset + batch_count),
+            batch_offset,
+            next_batch_id: Mutex::new(batch_offset + batch_count),
         })
     }
 
