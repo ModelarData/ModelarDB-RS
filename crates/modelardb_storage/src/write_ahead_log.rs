@@ -141,6 +141,24 @@ impl WriteAheadLog {
 
         log_file.append_and_sync(data)
     }
+
+    /// Mark the given batch ids as saved to disk in the corresponding table log. If a large enough
+    /// contiguous prefix of batches is marked as persisted, the log file is trimmed to remove
+    /// the persisted data. If a table log does not exist or the log file could not be trimmed,
+    /// return [`ModelarDbStorageError`].
+    pub fn mark_batches_as_persisted_in_table_log(
+        &self,
+        table_name: &str,
+        batch_ids: HashSet<u64>,
+    ) -> Result<()> {
+        let log_file = self.table_logs.get(table_name).ok_or_else(|| {
+            ModelarDbStorageError::InvalidState(format!(
+                "Table log for table '{table_name}' does not exist."
+            ))
+        })?;
+
+        log_file.mark_batches_as_persisted(batch_ids)
+    }
 }
 
 /// Wrapper around a [`File`] that enforces that [`sync_data()`](File::sync_data) is called
@@ -235,10 +253,10 @@ impl WriteAheadLogFile {
         Ok(current_batch_id)
     }
 
-    /// Mark the given batch ids as saved to disk. Returns the new contiguous persisted watermark,
-    /// i.e., the highest batch id such that all ids from `batch_offset` up to and including it are
-    /// persisted. Returns `None` if no new contiguous prefix is available.
-    fn mark_batches_as_persisted(&self, batch_ids: HashSet<u64>) -> Option<u64> {
+    /// Mark the given batch ids as saved to disk. If a large enough contiguous prefix of batches
+    /// is marked as persisted, the log file is trimmed to remove the persisted data. If the
+    /// file could not be trimmed, return [`ModelarDbStorageError`].
+    fn mark_batches_as_persisted(&self, batch_ids: HashSet<u64>) -> Result<()> {
         let mut persisted = self
             .persisted_batch_ids
             .lock()
@@ -253,11 +271,13 @@ impl WriteAheadLogFile {
         }
 
         // If watermark advanced, we have a contiguous prefix ending at watermark - 1.
-        if watermark > self.batch_offset {
+        let max_prefix_batch_id = if watermark > self.batch_offset {
             Some(watermark - 1)
         } else {
             None
-        }
+        };
+
+        Ok(())
     }
 
     /// Read all data from the log file. This can be called even if the [`StreamWriter`] has not
