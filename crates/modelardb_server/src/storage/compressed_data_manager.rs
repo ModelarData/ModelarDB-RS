@@ -260,9 +260,14 @@ impl CompressedDataManager {
             .write_compressed_segments_to_time_series_table(
                 table_name,
                 compressed_segments,
-                batch_ids,
+                batch_ids.clone(),
             )
             .await?;
+
+        // Inform the write-ahead-log that data has been written to disk. We use a read lock since
+        // the specific log file is locked internally before being updated.
+        let write_ahead_log = self.write_ahead_log.read().await;
+        write_ahead_log.mark_batches_as_persisted_in_table_log(table_name, batch_ids)?;
 
         // Inform the data transfer component about the new data if a remote data folder was
         // provided. If the total size of the data related to table_name has reached the transfer
