@@ -353,8 +353,47 @@ fn find_existing_wal_file(folder_path: &PathBuf) -> Result<Option<(PathBuf, u64)
             let path = file.path();
             let offset = path.file_stem()?.to_str()?.parse::<u64>().ok()?;
             Some((path, offset))
+/// If a leftover active segment (`{start_id}-.wal`) exists in `folder_path`, rename it to
+/// its final `{start_id}-{end_id}.wal` name so it is picked up as a closed segment. If the
+/// file contains no batches, it is removed instead. If the file could not be renamed or
+/// removed, return [`ModelarDbStorageError`].
+fn close_leftover_active_segment(folder_path: &PathBuf) -> Result<()> {
+    let Some(active_path) = std::fs::read_dir(folder_path)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|stem| stem.ends_with('-'))
         })
-        .next())
+    else {
+        return Ok(());
+    };
+
+    let stem = active_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .expect("Active WAL segment stem should be '{start_id}-'.");
+
+    let start_id: u64 = stem[..stem.len() - 1]
+        .parse()
+        .expect("Active WAL segment stem should start with a valid u64.");
+
+    let batches = read_batches_from_path(&active_path)?;
+
+    if batches.is_empty() {
+        std::fs::remove_file(&active_path)?;
+    } else {
+        let end_id = start_id + batches.len() as u64 - 1;
+        std::fs::rename(
+            &active_path,
+            folder_path.join(format!("{start_id}-{end_id}.wal")),
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Collect all closed segment files in `folder_path`. Closed segments have names of the form
 /// `{start_id}-{end_id}.wal` where both `start_id` and `end_id` are valid `u64` values.
 fn find_closed_segments(folder_path: &PathBuf) -> Result<Vec<ClosedSegment>> {
