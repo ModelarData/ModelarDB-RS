@@ -166,6 +166,24 @@ impl WriteAheadLog {
     }
 }
 
+/// A closed WAL segment file. The file contains all batches with ids in `[start_id, end_id]`
+/// and will not be written to again.
+struct WriteAheadLogSegment {
+    /// Path to the segment file on disk.
+    path: PathBuf,
+    /// Batch id of the first batch in this segment.
+    start_id: u64,
+    /// Batch id of the last batch in this segment (inclusive).
+    end_id: u64,
+}
+
+impl WriteAheadLogSegment {
+    /// Return `true` if every batch id in this segment is present in `persisted`.
+    fn is_fully_persisted(&self, persisted: &BTreeSet<u64>) -> bool {
+        (self.start_id..=self.end_id).all(|id| persisted.contains(&id))
+    }
+}
+
 /// Wrapper around a [`File`] that enforces that [`sync_data()`](File::sync_data) is called
 /// immediately after writing to ensure that all data is on disk before returning. Note that
 /// an exclusive lock is held on the file while it is being written to.
