@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::io::{Seek, SeekFrom};
+use std::io::Seek;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -112,13 +112,13 @@ impl WriteAheadLog {
         }
     }
 
-    /// Remove the log file for the table with the given name. If the log file does not exist or
+    /// Remove the log files for the table with the given name. If the log files do not exist or
     /// could not be removed, return [`ModelarDbStorageError`].
     pub fn remove_table_log(&mut self, table_name: &str) -> Result<()> {
         let log_path;
 
         if let Some(log_file) = self.table_logs.remove(table_name) {
-            log_path = log_file.path;
+            log_path = log_file.folder_path;
             // log_file is dropped here as it goes out of scope which automatically closes its
             // internal file handle.
         } else {
@@ -127,8 +127,8 @@ impl WriteAheadLog {
             )));
         }
 
-        // Now that the file handle is closed, the file can be removed.
-        std::fs::remove_file(log_path)?;
+        // Now that the file handle is closed, the files can be removed.
+        std::fs::remove_dir_all(log_path)?;
 
         Ok(())
     }
