@@ -21,6 +21,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError::IpcError;
@@ -174,7 +175,7 @@ struct WriteAheadLogFile {
     batch_offset: u64,
     /// The batch id to give to the next batch of data appended to the log file. This is incremented
     /// after each append, so the batch id given to data is monotonically increasing.
-    next_batch_id: Mutex<u64>,
+    next_batch_id: AtomicU64,
     /// Batch ids that have been confirmed as saved to disk. Used to determine whether a
     /// contiguous prefix of batches can be trimmed from the start of the log file.
     persisted_batch_ids: Mutex<BTreeSet<u64>>,
@@ -221,7 +222,7 @@ impl WriteAheadLogFile {
             path: file_path,
             writer: Mutex::new(writer),
             batch_offset,
-            next_batch_id: Mutex::new(batch_offset + batch_count),
+            next_batch_id: AtomicU64::new(batch_offset + batch_count),
             persisted_batch_ids: Mutex::new(BTreeSet::new()),
         })
     }
@@ -232,10 +233,6 @@ impl WriteAheadLogFile {
     fn append_and_sync(&self, data: &RecordBatch) -> Result<u64> {
         // Acquire the mutex to ensure only one thread can write at a time.
         let mut writer = self.writer.lock().expect("Mutex should not be poisoned.");
-        let mut next_batch_id = self
-            .next_batch_id
-            .lock()
-            .expect("Mutex should not be poisoned.");
 
         writer.write(data)?;
 
@@ -247,8 +244,7 @@ impl WriteAheadLogFile {
         writer.get_ref().sync_data()?;
 
         // Increment the batch id for the next batch of data.
-        let current_batch_id = *next_batch_id;
-        *next_batch_id += 1;
+        let current_batch_id = self.next_batch_id.fetch_add(1, Ordering::Relaxed);
 
         Ok(current_batch_id)
     }
@@ -346,7 +342,7 @@ mod tests {
         let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
         assert!(wal_file.path.exists());
-        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 0);
+        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -359,7 +355,7 @@ mod tests {
 
         let batches = wal_file.read_all().unwrap();
         assert!(batches.is_empty());
-        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 0);
+        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -376,7 +372,7 @@ mod tests {
         let batches = wal_file.read_all().unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0], batch);
-        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 1);
+        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -400,7 +396,7 @@ mod tests {
         assert_eq!(batches[0], batch_1);
         assert_eq!(batches[1], batch_2);
         assert_eq!(batches[2], batch_3);
-        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 3);
+        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 3);
     }
 
     #[test]
@@ -424,7 +420,7 @@ mod tests {
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0], batch_1);
         assert_eq!(batches[1], batch_2);
-        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 2);
+        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 2);
     }
 
     #[test]
@@ -444,7 +440,7 @@ mod tests {
         let batches = wal_file.read_all().unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0], batch);
-        assert_eq!(*wal_file.next_batch_id.lock().unwrap(), 1);
+        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 1);
     }
 
     #[test]
