@@ -420,6 +420,29 @@ fn find_closed_segments(folder_path: &PathBuf) -> Result<Vec<ClosedSegment>> {
 
     Ok(segments)
 }
+
+/// Read all [`RecordBatches`] from the file at `path`. Tolerates a missing end-of-stream
+/// marker, which is normal for the active segment. If the file could not be read, return
+/// [`ModelarDbStorageError`].
+fn read_batches_from_path(path: &PathBuf) -> Result<Vec<RecordBatch>> {
+    let file = File::open(path)?;
+    let reader = StreamReader::try_new(file, None)?;
+
+    let mut batches = Vec::new();
+    for maybe_batch in reader {
+        match maybe_batch {
+            Ok(batch) => batches.push(batch),
+            Err(IpcError(msg)) => {
+                if msg.contains("UnexpectedEof") || msg.contains("unexpected end of file") {
+                    break;
+                }
+                return Err(IpcError(msg).into());
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    Ok(batches)
 }
 
 /// Return the schema for the operations log that is stored in [`OPERATIONS_LOG_FOLDER`].
