@@ -142,10 +142,9 @@ impl WriteAheadLog {
         log_file.append_and_sync(data)
     }
 
-    /// Mark the given batch ids as saved to disk in the corresponding table log. If a large enough
-    /// contiguous prefix of batches is marked as persisted, the log file is trimmed to remove
-    /// the persisted data. If a table log does not exist or the log file could not be trimmed,
-    /// return [`ModelarDbStorageError`].
+    /// Mark the given batch ids as saved to disk in the corresponding table log. Fully persisted
+    /// segment files are deleted. If a table log does not exist or a segment file could not be
+    /// deleted, return [`ModelarDbStorageError`].
     pub fn mark_batches_as_persisted_in_table_log(
         &self,
         table_name: &str,
@@ -306,9 +305,6 @@ impl WriteAheadLogFile {
         Ok(current_batch_id)
     }
 
-    /// Mark the given batch ids as saved to disk. If a large enough contiguous prefix of batches
-    /// is marked as persisted, the log file is trimmed to remove the persisted data. If the
-    /// file could not be trimmed, return [`ModelarDbStorageError`].
     /// Close the current active segment by renaming it to its final `{start_id}-{end_id}.wal`
     /// name and open a fresh active segment. The caller must hold the `active_segment` lock.
     fn rotate_active_segment(&self, active: &mut ActiveSegment) -> Result<()> {
@@ -334,12 +330,14 @@ impl WriteAheadLogFile {
 
         // Open a fresh active segment.
         let next_id = end_id + 1;
-        let new_file = ActiveSegment::try_new(self.folder_path.clone(), &self.schema, next_id)?;
-        *active = new_file;
+        *active = ActiveSegment::try_new(self.folder_path.clone(), &self.schema, next_id)?;
 
         Ok(())
     }
 
+    /// Mark the given batch ids as saved to disk. Any closed segment whose entire batch-id range
+    /// is now persisted is deleted from disk and removed from the in-memory list. If a segment file
+    /// could not be deleted, return [`ModelarDbStorageError`].
     fn mark_batches_as_persisted(&self, batch_ids: HashSet<u64>) -> Result<()> {
         let mut persisted = self
             .persisted_batch_ids
@@ -348,18 +346,25 @@ impl WriteAheadLogFile {
 
         persisted.extend(batch_ids);
 
-        // Walk forward from batch_offset to find the contiguous prefix watermark.
-        let mut watermark = self.batch_offset;
-        while persisted.contains(&watermark) {
-            watermark += 1;
+        let mut closed_segments = self
+            .closed_segments
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
+        // Identify and delete fully persisted segments.
+        let mut to_retain = Vec::new();
+        for segment in closed_segments.drain(..) {
+            if segment.is_fully_persisted(&persisted) {
+                std::fs::remove_file(&segment.path)?;
+
+                // Remove the persisted ids for this segment as they are no longer needed.
+                for id in segment.start_id..=segment.end_id {
+                    persisted.remove(&id);
+                }
+            } else {
+                to_retain.push(segment);
         }
 
-        // If watermark advanced, we have a contiguous prefix ending at watermark - 1.
-        let max_prefix_batch_id = if watermark > self.batch_offset {
-            Some(watermark - 1)
-        } else {
-            None
-        };
 
         Ok(())
     }
