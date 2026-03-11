@@ -34,7 +34,11 @@ use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
 use crate::error::{ModelarDbStorageError, Result};
 
+/// Folder containing the WAL files for the operations log.
 const OPERATIONS_LOG_FOLDER: &str = "operations";
+
+/// Number of batches to write to a single WAL segment file before rotating to a new one.
+const SEGMENT_ROTATION_THRESHOLD: u64 = 100;
 
 /// Write-ahead log that logs data on a per-table level and operations separately.
 pub struct WriteAheadLog {
