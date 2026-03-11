@@ -363,53 +363,39 @@ impl WriteAheadLogFile {
                 }
             } else {
                 to_retain.push(segment);
+            }
         }
 
+        *closed_segments = to_retain;
 
         Ok(())
     }
 
-    /// Read all data from the log file. This can be called even if the [`StreamWriter`] has not
-    /// been finished, meaning the log file is missing the end-of-stream bytes. If the file
-    /// could not be read, return [`ModelarDbStorageError`].
+    /// Read all data from all segment files (closed and active) in order. If any file could not
+    /// be read, return [`ModelarDbStorageError`].
     fn read_all(&self) -> Result<Vec<RecordBatch>> {
-        // Acquire the mutex to ensure data is not being written while reading. Note that reading
-        // should only occur during recovery, which should make concurrent writes improbable.
-        // However, since performance is not critical during recovery, the mutex is held anyway.
-        let _writer = self.writer.lock().unwrap();
+        // Acquire the mutex to ensure data is not being written while reading.
+        let active = self
+            .active_segment
+            .lock()
+            .expect("Mutex should not be poisoned.");
 
-        let file = File::open(&self.path)?;
-        let reader = StreamReader::try_new(file, None)?;
+        let closed_segments = self
+            .closed_segments
+            .lock()
+            .expect("Mutex should not be poisoned.");
 
-        let mut batches = Vec::new();
-        for maybe_batch in reader {
-            match maybe_batch {
-                Ok(batch) => batches.push(batch),
-                Err(IpcError(msg)) => {
-                    // Check if it is an UnexpectedEof error, which is expected when reading
-                    // an incomplete stream without the end-of-stream marker.
-                    if msg.contains("UnexpectedEof") || msg.contains("unexpected end of file") {
-                        break;
-                    }
-                    return Err(IpcError(msg).into());
-                }
-                Err(e) => return Err(e.into()),
-            }
+        let mut all_batches = Vec::new();
+        for segment in closed_segments.iter() {
+            all_batches.extend(read_batches_from_path(&segment.path)?);
         }
 
-        Ok(batches)
+        all_batches.extend(read_batches_from_path(&active.path)?);
+
+        Ok(all_batches)
     }
 }
 
-/// Find an existing WAL file in `folder_path` and return its path and the offset parsed from its
-/// name if it exists, otherwise return `Ok(None)`.
-fn find_existing_wal_file(folder_path: &PathBuf) -> Result<Option<(PathBuf, u64)>> {
-    Ok(std::fs::read_dir(folder_path)?
-        .filter_map(|maybe_file| maybe_file.ok())
-        .filter_map(|file| {
-            let path = file.path();
-            let offset = path.file_stem()?.to_str()?.parse::<u64>().ok()?;
-            Some((path, offset))
 /// If a leftover active segment (`{start_id}-.wal`) exists in `folder_path`, rename it to
 /// its final `{start_id}-{end_id}.wal` name so it is picked up as a closed segment. If the
 /// file contains no batches, it is removed instead. If the file could not be renamed or
