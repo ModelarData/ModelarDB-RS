@@ -178,6 +178,7 @@ impl StorageEngine {
             data_folders.local_data_folder,
             channels.clone(),
             memory_pool.clone(),
+            write_ahead_log.clone(),
         ));
 
         {

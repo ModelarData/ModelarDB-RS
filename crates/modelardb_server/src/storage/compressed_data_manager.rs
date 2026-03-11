@@ -22,6 +22,7 @@ use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_storage::data_folder::DataFolder;
+use modelardb_storage::write_ahead_log::WriteAheadLog;
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
@@ -50,6 +51,8 @@ pub(super) struct CompressedDataManager {
     channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
+    /// Write-ahead log for persisting data and operations.
+    write_ahead_log: Arc<RwLock<WriteAheadLog>>,
 }
 
 impl CompressedDataManager {
@@ -58,6 +61,7 @@ impl CompressedDataManager {
         local_data_folder: DataFolder,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
+        write_ahead_log: Arc<RwLock<WriteAheadLog>>,
     ) -> Self {
         Self {
             data_transfer,
@@ -66,6 +70,7 @@ impl CompressedDataManager {
             compressed_queue: SegQueue::new(),
             channels,
             memory_pool,
+            write_ahead_log,
         }
     }
 
@@ -575,6 +580,10 @@ mod tests {
             .await
             .unwrap();
 
+        let write_ahead_log = Arc::new(RwLock::new(
+            WriteAheadLog::try_new(&local_data_folder).await.unwrap(),
+        ));
+
         (
             temp_dir,
             CompressedDataManager::new(
@@ -582,6 +591,7 @@ mod tests {
                 local_data_folder,
                 channels,
                 memory_pool,
+                write_ahead_log,
             ),
         )
     }
