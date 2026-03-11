@@ -355,6 +355,32 @@ fn find_existing_wal_file(folder_path: &PathBuf) -> Result<Option<(PathBuf, u64)
             Some((path, offset))
         })
         .next())
+/// Collect all closed segment files in `folder_path`. Closed segments have names of the form
+/// `{start_id}-{end_id}.wal` where both `start_id` and `end_id` are valid `u64` values.
+fn find_closed_segments(folder_path: &PathBuf) -> Result<Vec<ClosedSegment>> {
+    let mut segments = Vec::new();
+
+    for entry in std::fs::read_dir(folder_path)? {
+        let path = entry?.path();
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .expect("WAL file should have a valid UTF-8 stem.");
+
+        if let Some((start_id, end_id)) = stem
+            .split_once('-')
+            .and_then(|(s, e)| Some((s.parse::<u64>().ok()?, e.parse::<u64>().ok()?)))
+        {
+            segments.push(ClosedSegment {
+                path,
+                start_id,
+                end_id,
+            });
+        }
+    }
+
+    Ok(segments)
+}
 }
 
 /// Return the schema for the operations log that is stored in [`OPERATIONS_LOG_FOLDER`].
