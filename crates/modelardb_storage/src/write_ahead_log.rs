@@ -218,47 +218,45 @@ struct WriteAheadLogFile {
 }
 
 impl WriteAheadLogFile {
-    /// Create a new [`WriteAheadLogFile`] that appends data with `schema` to a file in
-    /// `folder_path`. If the file does not exist, it is created. If the file could not be created,
-    /// return [`ModelarDbStorageError`].
+    /// Create a new [`WriteAheadLogFile`] that appends data with `schema` to segment files in
+    /// `folder_path`. Existing closed segment files are loaded into the closed-segment list.
+    /// A fresh active segment is always created on start-up. If the folder or file could not be
+    /// created, return [`ModelarDbStorageError`].
     fn try_new(folder_path: PathBuf, schema: &Schema) -> Result<Self> {
         std::fs::create_dir_all(folder_path.clone())?;
 
-        let (file_path, batch_offset) =
-            find_existing_wal_file(&folder_path)?.unwrap_or_else(|| (folder_path.join("0.wal"), 0));
+        close_leftover_active_segment(&folder_path)?;
 
-        let file = OpenOptions::new()
+        // Collect all closed segment files already on disk and sort them by start_id.
+        let mut closed_segments = find_closed_segments(&folder_path)?;
+        closed_segments.sort_by_key(|s| s.start_id);
+
+        // The next batch id is one past the end of the last closed segment, or 0 if there are none.
+        let next_id = closed_segments.last().map(|s| s.end_id + 1).unwrap_or(0);
+
+        // Always create a fresh active segment on startup to avoid writing into the middle of
+        // an existing IPC stream.
+        let active_path = folder_path.join(format!("{next_id}-.wal"));
+        let active_file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
-            .open(file_path.clone())?;
+            .truncate(true)
+            .open(&active_path)?;
 
-        let file_len = file.metadata()?.len();
-
-        let writer = StreamWriter::try_new(file, schema)?;
-
-        // If the file already had data, the StreamWriter wrote a duplicate schema header.
-        // Truncate back to the original length to remove it, then seek to the end so
-        // subsequent writes append correctly.
-        if file_len > 0 {
-            writer.get_ref().set_len(file_len)?;
-            writer.get_ref().seek(SeekFrom::End(0))?;
-        }
-
-        // Count existing batches to reconstruct the next batch ID.
-        let batch_count = if file_len > 0 {
-            let file = File::open(&file_path)?;
-            let reader = StreamReader::try_new(file, None)?;
-            reader.take_while(|r| r.is_ok()).count() as u64
-        } else {
-            0
-        };
+        let writer = StreamWriter::try_new(active_file, schema)?;
 
         Ok(Self {
-            path: file_path,
-            writer: Mutex::new(writer),
-            batch_offset,
-            next_batch_id: AtomicU64::new(batch_offset + batch_count),
+            folder_path,
+            schema: schema.clone(),
+            active_segment: Mutex::new(ActiveSegment {
+                path: active_path,
+                start_id: next_id,
+                writer,
+                next_batch_id: next_id,
+            }),
+            closed_segments: Mutex::new(closed_segments),
+            // TODO: This needs to be initialized with persisted batch ids from Delta Lake.
             persisted_batch_ids: Mutex::new(BTreeSet::new()),
         })
     }
