@@ -18,10 +18,8 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::io::Seek;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError::IpcError;
@@ -37,6 +35,7 @@ use crate::error::{ModelarDbStorageError, Result};
 /// Folder containing the WAL files for the operations log.
 const OPERATIONS_LOG_FOLDER: &str = "operations";
 
+// TODO: Look into using a byte size based threshold instead of a number of batches.
 /// Number of batches to write to a single WAL segment file before rotating to a new one.
 const SEGMENT_ROTATION_THRESHOLD: u64 = 100;
 
@@ -499,56 +498,48 @@ mod tests {
 
     use modelardb_test::table;
     use modelardb_test::table::TIME_SERIES_TABLE_NAME;
+    use tempfile::TempDir;
 
     #[test]
-    fn test_try_new_creates_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+    fn test_try_new_creates_active_segment() {
+        let (_temp_dir, wal_file) = new_wal_file();
 
-        let metadata = table::time_series_table_metadata();
-        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        let active = wal_file.active_segment.lock().unwrap();
+        assert!(active.path.exists());
+        assert_eq!(active.next_batch_id, 0);
 
-        assert!(wal_file.path.exists());
-        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 0);
+        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
     }
 
     #[test]
     fn test_read_all_empty_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
-
-        let metadata = table::time_series_table_metadata();
-        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
+        let (_temp_dir, wal_file) = new_wal_file();
 
         let batches = wal_file.read_all().unwrap();
         assert!(batches.is_empty());
-        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 0);
+
+        let active = wal_file.active_segment.lock().unwrap();
+        assert_eq!(active.next_batch_id, 0);
     }
 
     #[test]
     fn test_append_and_read_single_batch() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+        let (_temp_dir, wal_file) = new_wal_file();
 
-        let metadata = table::time_series_table_metadata();
-        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
         let batch = table::uncompressed_time_series_table_record_batch(5);
-
         wal_file.append_and_sync(&batch).unwrap();
 
         let batches = wal_file.read_all().unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0], batch);
-        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 1);
+
+        let active = wal_file.active_segment.lock().unwrap();
+        assert_eq!(active.next_batch_id, 1);
     }
 
     #[test]
     fn test_append_and_read_multiple_batches() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
-
-        let metadata = table::time_series_table_metadata();
-        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
+        let (_temp_dir, wal_file) = new_wal_file();
 
         let batch_1 = table::uncompressed_time_series_table_record_batch(10);
         let batch_2 = table::uncompressed_time_series_table_record_batch(20);
@@ -563,79 +554,112 @@ mod tests {
         assert_eq!(batches[0], batch_1);
         assert_eq!(batches[1], batch_2);
         assert_eq!(batches[2], batch_3);
-        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 3);
+
+        let active = wal_file.active_segment.lock().unwrap();
+        assert_eq!(active.next_batch_id, 3);
     }
 
     #[test]
-    fn test_reopen_existing_file_and_append() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+    fn test_segment_rotates_at_threshold() {
+        let (_temp_dir, wal_file) = new_wal_file();
 
-        let metadata = table::time_series_table_metadata();
-        let batch_1 = table::uncompressed_time_series_table_record_batch(10);
-        {
-            let wal_file =
-                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
-            wal_file.append_and_sync(&batch_1).unwrap();
-        }
+        let batch = table::uncompressed_time_series_table_record_batch(5);
 
-        let batch_2 = table::uncompressed_time_series_table_record_batch(20);
-        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
-        wal_file.append_and_sync(&batch_2).unwrap();
-
-        let batches = wal_file.read_all().unwrap();
-        assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0], batch_1);
-        assert_eq!(batches[1], batch_2);
-        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 2);
-    }
-
-    #[test]
-    fn test_reopen_existing_file_and_read_without_append() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
-
-        let metadata = table::time_series_table_metadata();
-        let batch = table::uncompressed_time_series_table_record_batch(10);
-        {
-            let wal_file =
-                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
             wal_file.append_and_sync(&batch).unwrap();
         }
 
-        let wal_file = WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap();
-        let batches = wal_file.read_all().unwrap();
-        assert_eq!(batches.len(), 1);
-        assert_eq!(batches[0], batch);
-        assert_eq!(wal_file.next_batch_id.load(Ordering::Relaxed), 1);
+        let closed = wal_file.closed_segments.lock().unwrap();
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].start_id, 0);
+        assert_eq!(closed[0].end_id, SEGMENT_ROTATION_THRESHOLD - 1);
+
+        let active = wal_file.active_segment.lock().unwrap();
+        assert_eq!(active.start_id, SEGMENT_ROTATION_THRESHOLD);
+    }
+    
+    #[test]
+    fn test_reopen_loads_closed_segments() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+        let metadata = table::time_series_table_metadata();
+
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+
+        // Write enough batches to trigger a rotation, then drop.
+        {
+            let wal_file =
+                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+            for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+                wal_file.append_and_sync(&batch).unwrap();
+            }
+        }
+
+        // The closed segment should be detected and the next id should continue.
+        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+
+        let active = wal_file.active_segment.lock().unwrap();
+        assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD);
+        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 1);
     }
 
     #[test]
-    fn test_file_size_not_changed_on_reopen() {
+    fn test_reopen_and_append_continues_batch_ids() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+        let metadata = table::time_series_table_metadata();
+
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+
+        // Fill and rotate one segment.
+        {
+            let wal_file =
+                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+            for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+                wal_file.append_and_sync(&batch).unwrap();
+            }
+        }
+
+        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        wal_file.append_and_sync(&batch).unwrap();
+
+        let batches = wal_file.read_all().unwrap();
+        assert_eq!(batches.len(), SEGMENT_ROTATION_THRESHOLD as usize + 1);
+
+        let active = wal_file.active_segment.lock().unwrap();
+        assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD + 1);
+    }
+
+    #[test]
+    fn test_mark_batches_as_persisted_deletes_fully_persisted_segment() {
+        let (_temp_dir, wal_file) = new_wal_file();
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+
+        // Fill and rotate one full segment.
+        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+            wal_file.append_and_sync(&batch).unwrap();
+        }
+
+        let segment_path = wal_file.closed_segments.lock().unwrap()[0].path.clone();
+        assert!(segment_path.exists());
+
+        let ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD).collect();
+        wal_file.mark_batches_as_persisted(ids).unwrap();
+
+        assert!(!segment_path.exists());
+        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
+    }
+
+    fn new_wal_file() -> (TempDir, WriteAheadLogFile) {
         let temp_dir = tempfile::tempdir().unwrap();
         let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
 
         let metadata = table::time_series_table_metadata();
-        let batch = table::uncompressed_time_series_table_record_batch(10);
 
-        let wal_file_path = {
-            let wal_file =
-                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
-            wal_file.append_and_sync(&batch).unwrap();
-
-            wal_file.path.clone()
-        };
-
-        let size_before = std::fs::metadata(&wal_file_path).unwrap().len();
-
-        let wal_file_path = {
-            let wal_file =
-                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
-
-            wal_file.path.clone()
-        };
-
-        let size_after = std::fs::metadata(&wal_file_path).unwrap().len();
-        assert_eq!(size_before, size_after);
+        (
+            temp_dir,
+            WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap(),
+        )
     }
 }
