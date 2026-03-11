@@ -631,6 +631,59 @@ mod tests {
     }
 
     #[test]
+    fn test_close_leftover_active_segment_on_reopen() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+        let metadata = table::time_series_table_metadata();
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+
+        // Write some batches but do not rotate, so the active segment is leftover as "{start_id}-.wal".
+        {
+            let wal_file =
+                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+            wal_file.append_and_sync(&batch).unwrap();
+            wal_file.append_and_sync(&batch).unwrap();
+        }
+
+        // On re-open, close_leftover_active_segment should rename it to "0-1.wal".
+        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+
+        let closed = wal_file.closed_segments.lock().unwrap();
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].start_id, 0);
+        assert_eq!(closed[0].end_id, 1);
+
+        let active = wal_file.active_segment.lock().unwrap();
+        assert_eq!(active.next_batch_id, 2);
+    }
+
+    #[test]
+    fn test_delete_leftover_empty_active_segment_on_reopen() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+        let metadata = table::time_series_table_metadata();
+
+        // Create a WAL file and immediately drop it without writing anything.
+        // This leaves an empty "{start_id}-.wal" active segment.
+        {
+            WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        }
+
+        // On re-open, the empty leftover active segment should be removed.
+        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+
+        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
+        let active = wal_file.active_segment.lock().unwrap();
+        assert_eq!(active.next_batch_id, 0);
+        assert!(active.path.exists());
+
+        // Only the new active segment file should exist.
+        let file_count = std::fs::read_dir(&folder_path).unwrap().count();
+        assert_eq!(file_count, 1);
+    }
+
+    #[test]
     fn test_mark_batches_as_persisted_deletes_fully_persisted_segment() {
         let (_temp_dir, wal_file) = new_wal_file();
 
