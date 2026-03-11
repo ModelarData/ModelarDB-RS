@@ -577,7 +577,7 @@ mod tests {
         let active = wal_file.active_segment.lock().unwrap();
         assert_eq!(active.start_id, SEGMENT_ROTATION_THRESHOLD);
     }
-    
+
     #[test]
     fn test_reopen_loads_closed_segments() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -701,6 +701,54 @@ mod tests {
         wal_file.mark_batches_as_persisted(ids).unwrap();
 
         assert!(!segment_path.exists());
+        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_mark_batches_as_persisted_retains_partially_persisted_segment() {
+        let (_temp_dir, wal_file) = new_wal_file();
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+
+        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+            wal_file.append_and_sync(&batch).unwrap();
+        }
+
+        let segment_path = wal_file.closed_segments.lock().unwrap()[0].path.clone();
+
+        // Only persist a subset of the batch ids in the closed segment.
+        let partial_ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD - 1).collect();
+        wal_file.mark_batches_as_persisted(partial_ids).unwrap();
+
+        // Segment should still exist since not all ids are persisted.
+        assert!(segment_path.exists());
+        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 1);
+
+        // When persisting the last batch, the segment should be deleted.
+        wal_file
+            .mark_batches_as_persisted(HashSet::from([SEGMENT_ROTATION_THRESHOLD - 1]))
+            .unwrap();
+
+        assert!(!segment_path.exists());
+        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_multiple_fully_persisted_segments_all_deleted() {
+        let (_temp_dir, wal_file) = new_wal_file();
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+
+        // Trigger five full rotations.
+        for _ in 0..SEGMENT_ROTATION_THRESHOLD * 5 {
+            wal_file.append_and_sync(&batch).unwrap();
+        }
+
+        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 5);
+
+        let ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD * 5).collect();
+        wal_file.mark_batches_as_persisted(ids).unwrap();
+
         assert!(wal_file.closed_segments.lock().unwrap().is_empty());
     }
 
