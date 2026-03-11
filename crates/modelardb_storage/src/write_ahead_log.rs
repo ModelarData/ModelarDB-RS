@@ -16,7 +16,7 @@
 //! Implementation of types that provide a write-ahead log for ModelarDB that can be used to
 //! efficiently persist data and operations on disk to avoid data loss and enable crash recovery.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom};
 use std::path::PathBuf;
@@ -157,6 +157,9 @@ struct WriteAheadLogFile {
     /// The batch id to give to the next batch of data appended to the log file. This is incremented
     /// after each append, so the batch id given to data is monotonically increasing.
     next_batch_id: Mutex<u64>,
+    /// Batch ids that have been confirmed as saved to disk. Used to determine whether a
+    /// contiguous prefix of batches can be trimmed from the start of the log file.
+    persisted_batch_ids: Mutex<BTreeSet<u64>>,
 }
 
 impl WriteAheadLogFile {
@@ -201,6 +204,7 @@ impl WriteAheadLogFile {
             writer: Mutex::new(writer),
             batch_offset,
             next_batch_id: Mutex::new(batch_offset + batch_count),
+            persisted_batch_ids: Mutex::new(BTreeSet::new()),
         })
     }
 
@@ -229,6 +233,31 @@ impl WriteAheadLogFile {
         *next_batch_id += 1;
 
         Ok(current_batch_id)
+    }
+
+    /// Mark the given batch ids as saved to disk. Returns the new contiguous persisted watermark,
+    /// i.e., the highest batch id such that all ids from `batch_offset` up to and including it are
+    /// persisted. Returns `None` if no new contiguous prefix is available.
+    fn mark_batches_as_persisted(&self, batch_ids: HashSet<u64>) -> Option<u64> {
+        let mut persisted = self
+            .persisted_batch_ids
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
+        persisted.extend(batch_ids);
+
+        // Walk forward from batch_offset to find the contiguous prefix watermark.
+        let mut watermark = self.batch_offset;
+        while persisted.contains(&watermark) {
+            watermark += 1;
+        }
+
+        // If watermark advanced, we have a contiguous prefix ending at watermark - 1.
+        if watermark > self.batch_offset {
+            Some(watermark - 1)
+        } else {
+            None
+        }
     }
 
     /// Read all data from the log file. This can be called even if the [`StreamWriter`] has not
