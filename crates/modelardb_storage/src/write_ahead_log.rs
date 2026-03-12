@@ -371,6 +371,26 @@ impl WriteAheadLogFile {
         Ok(())
     }
 
+    /// Update the in-memory set of persisted batch ids from the commit history of `delta_table`
+    /// and delete any fully persisted closed segment files. If the commit history could not be
+    /// read or a segment file could not be deleted, return [`ModelarDbStorageError`].
+    async fn load_persisted_batches_from_delta_table(&self, delta_table: DeltaTable) -> Result<()> {
+        let mut persisted_batch_ids = HashSet::new();
+
+        let history = delta_table.history(None).await?;
+        for commit in history.into_iter() {
+            if let Some(batch_ids) = commit.info.get("batchIds") {
+                let batch_ids: Vec<u64> = serde_json::from_value(batch_ids.clone()).expect(
+                    "The batchIds field in the commit metadata should be a JSON array of u64 values.",
+                );
+
+                persisted_batch_ids.extend(batch_ids);
+            }
+        }
+
+        self.mark_batches_as_persisted(persisted_batch_ids)
+    }
+
     /// Return pairs of (batch_id, batch) for all batches in the log that have not yet been
     /// persisted. The persisted batch ids are retrieved from the commit history of `delta_table`
     /// to ensure duplicated data is avoided. If the commit history could not be read or the
