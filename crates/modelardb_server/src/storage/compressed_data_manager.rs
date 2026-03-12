@@ -410,7 +410,7 @@ mod tests {
         let local_data_folder = data_manager.local_data_folder.clone();
 
         let mut delta_table = local_data_folder
-            .create_time_series_table(&table::time_series_table_metadata())
+            .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -465,14 +465,8 @@ mod tests {
     #[tokio::test]
     async fn test_remaining_memory_incremented_when_saving_compressed_segments() {
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder = data_manager.local_data_folder.clone();
 
         let segments = compressed_segments_record_batch();
-        local_data_folder
-            .create_time_series_table(&segments.time_series_table_metadata)
-            .await
-            .unwrap();
-
         data_manager
             .insert_compressed_segments(segments.clone())
             .await
@@ -519,14 +513,9 @@ mod tests {
     #[tokio::test]
     async fn test_decrease_compressed_remaining_memory_in_bytes() {
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder = data_manager.local_data_folder.clone();
 
         // Insert data that should be saved when the remaining memory is decreased.
         let segments = compressed_segments_record_batch();
-        local_data_folder
-            .create_time_series_table(&segments.time_series_table_metadata)
-            .await
-            .unwrap();
         data_manager
             .insert_compressed_segments(segments)
             .await
@@ -580,6 +569,11 @@ mod tests {
         let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
 
         let time_series_table_metadata = table::time_series_table_metadata();
+        local_data_folder
+            .create_time_series_table(&time_series_table_metadata)
+            .await
+            .unwrap();
+
         local_data_folder
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
