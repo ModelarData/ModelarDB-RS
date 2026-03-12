@@ -1003,6 +1003,34 @@ mod tests {
     }
 
     #[test]
+    fn test_unpersisted_batches_returns_batches_across_closed_and_active_segments() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+
+        // Fill one full segment (triggers rotation) and write two more into the active segment.
+        for _ in 0..SEGMENT_ROTATION_THRESHOLD + 2 {
+            wal_file.append_and_sync(&batch).unwrap();
+        }
+
+        // Persist one batch id in the closed segment and one in the active segment.
+        wal_file
+            .mark_batches_as_persisted(HashSet::from([0, SEGMENT_ROTATION_THRESHOLD + 1]))
+            .unwrap();
+
+        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 1);
+
+        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        assert_eq!(unpersisted.len() as u64, SEGMENT_ROTATION_THRESHOLD);
+        assert_eq!(unpersisted.first().unwrap(), &(1, batch.clone()));
+        assert_eq!(
+            unpersisted.last().unwrap(),
+            &(SEGMENT_ROTATION_THRESHOLD, batch)
+        );
+    }
+
+    #[test]
     fn test_unpersisted_batches_returns_empty_when_no_batches_written() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, wal_file) = new_wal_file(&temp_dir);
