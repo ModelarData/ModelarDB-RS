@@ -370,9 +370,9 @@ impl WriteAheadLogFile {
         Ok(())
     }
 
-    /// Read all data from all segment files (closed and active) in order. If any file could not
-    /// be read, return [`ModelarDbStorageError`].
-    fn read_all(&self) -> Result<Vec<RecordBatch>> {
+    /// Read all data from all segment files (closed and active) in order and return them as pairs
+    /// of (batch_id, batch). If any file could not be read, return [`ModelarDbStorageError`].
+    fn read_all(&self) -> Result<Vec<(u64, RecordBatch)>> {
         // Acquire the mutex to ensure data is not being written while reading.
         let active = self
             .active_segment
@@ -386,10 +386,13 @@ impl WriteAheadLogFile {
 
         let mut all_batches = Vec::new();
         for segment in closed_segments.iter() {
-            all_batches.extend(read_batches_from_path(&segment.path)?);
+            let batches = read_batches_from_path(&segment.path)?;
+            all_batches.extend((segment.start_id..=segment.end_id).zip(batches));
         }
 
-        all_batches.extend(read_batches_from_path(&active.path)?);
+        // Add the active segment's batches to the end of the list.
+        let active_batches = read_batches_from_path(&active.path)?;
+        all_batches.extend((active.start_id..=active.next_batch_id - 1).zip(active_batches));
 
         Ok(all_batches)
     }
