@@ -80,29 +80,39 @@ impl WriteAheadLog {
 
         // For each time series table, create a log file if it does not already exist.
         for metadata in local_data_folder.time_series_table_metadata().await? {
-            write_ahead_log.create_table_log(&metadata)?;
+            let delta_table = local_data_folder.delta_table(&metadata.name).await?;
+            write_ahead_log
+                .create_table_log(&metadata, Some(delta_table))
+                .await?;
         }
 
         Ok(write_ahead_log)
     }
 
-    /// Create a new [`WriteAheadLogFile`] for the table with the given metadata. If a log already
-    /// exists in the map or the log file could not be created, return [`ModelarDbStorageError`].
-    /// Note that if the log file already exists, but it is not present in the map, the existing
-    /// log file will be added to the map.
-    pub fn create_table_log(
+    /// Create a new [`WriteAheadLogFile`] for the table with the given metadata. If a delta table
+    /// is provided, the log file will be initialized with the persisted batch ids from the commit
+    /// history of the delta table. If a log already exists in the map or the log file could not be
+    /// created, return [`ModelarDbStorageError`]. Note that if the log file already exists, but it
+    /// is not present in the map, the existing log file will be added to the map.
+    pub async fn create_table_log(
         &mut self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
+        delta_table: Option<DeltaTable>,
     ) -> Result<()> {
         let table_name = time_series_table_metadata.name.clone();
 
         if !self.table_logs.contains_key(&table_name) {
             let table_log_path = self.folder_path.join(&table_name);
+            let log_file =
+                WriteAheadLogFile::try_new(table_log_path, &time_series_table_metadata.schema)?;
 
-            self.table_logs.insert(
-                table_name,
-                WriteAheadLogFile::try_new(table_log_path, &time_series_table_metadata.schema)?,
-            );
+            if let Some(delta_table) = delta_table {
+                log_file
+                    .load_persisted_batches_from_delta_table(delta_table)
+                    .await?;
+            }
+
+            self.table_logs.insert(table_name, log_file);
 
             Ok(())
         } else {
