@@ -554,7 +554,8 @@ mod tests {
 
     #[test]
     fn test_try_new_creates_active_segment() {
-        let (_temp_dir, wal_file) = new_wal_file();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
 
         let active = wal_file.active_segment.lock().unwrap();
         assert!(active.path.exists());
@@ -565,7 +566,8 @@ mod tests {
 
     #[test]
     fn test_read_all_empty_file() {
-        let (_temp_dir, wal_file) = new_wal_file();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
 
         let batches = wal_file.read_all().unwrap();
         assert!(batches.is_empty());
@@ -576,7 +578,8 @@ mod tests {
 
     #[test]
     fn test_append_and_read_single_batch() {
-        let (_temp_dir, wal_file) = new_wal_file();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
         wal_file.append_and_sync(&batch).unwrap();
@@ -591,7 +594,8 @@ mod tests {
 
     #[test]
     fn test_append_and_read_multiple_batches() {
-        let (_temp_dir, wal_file) = new_wal_file();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
 
         let batch_1 = table::uncompressed_time_series_table_record_batch(10);
         let batch_2 = table::uncompressed_time_series_table_record_batch(20);
@@ -613,7 +617,8 @@ mod tests {
 
     #[test]
     fn test_segment_rotates_at_threshold() {
-        let (_temp_dir, wal_file) = new_wal_file();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
@@ -737,7 +742,8 @@ mod tests {
 
     #[test]
     fn test_mark_batches_as_persisted_deletes_fully_persisted_segment() {
-        let (_temp_dir, wal_file) = new_wal_file();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
@@ -758,7 +764,8 @@ mod tests {
 
     #[test]
     fn test_mark_batches_as_persisted_retains_partially_persisted_segment() {
-        let (_temp_dir, wal_file) = new_wal_file();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
@@ -787,7 +794,8 @@ mod tests {
 
     #[test]
     fn test_multiple_fully_persisted_segments_all_deleted() {
-        let (_temp_dir, wal_file) = new_wal_file();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
@@ -804,15 +812,16 @@ mod tests {
         assert!(wal_file.closed_segments.lock().unwrap().is_empty());
     }
 
-    fn new_wal_file() -> (TempDir, WriteAheadLogFile) {
         let temp_dir = tempfile::tempdir().unwrap();
         let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
 
+    fn new_wal_file(temp_dir: &TempDir) -> (PathBuf, WriteAheadLogFile) {
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
         let metadata = table::time_series_table_metadata();
 
-        (
-            temp_dir,
-            WriteAheadLogFile::try_new(folder_path, &metadata.schema).unwrap(),
-        )
+        let wal_file =
+            WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+
+        (folder_path, wal_file)
     }
 }
