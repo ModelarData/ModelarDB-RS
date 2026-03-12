@@ -262,10 +262,28 @@ impl StorageEngine {
     ) -> Result<()> {
         // Write to the write-ahead log to ensure termination never duplicates or loses data. We use
         // a read lock since the specific log file is locked internally before writing.
-        let write_ahead_log = self.write_ahead_log.read().await;
-        let batch_id = write_ahead_log
-            .append_to_table_log(&time_series_table_metadata.name, &multivariate_data_points)?;
+        let batch_id = {
+            let write_ahead_log = self.write_ahead_log.read().await;
+            write_ahead_log
+                .append_to_table_log(&time_series_table_metadata.name, &multivariate_data_points)?
+        };
 
+        self.insert_data_points_with_batch_id(
+            time_series_table_metadata,
+            multivariate_data_points,
+            batch_id,
+        )
+    }
+
+    /// Pass `data_points` to [`UncompressedDataManager`] with a batch id given to the data by the
+    /// WAL. Return [`Ok`] if all of the data points were successfully inserted, otherwise return
+    /// [`ModelarDbServerError`].
+    pub(super) fn insert_data_points_with_batch_id(
+        &mut self,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
+        multivariate_data_points: RecordBatch,
+        batch_id: u64,
+    ) -> Result<()> {
         self.memory_pool
             .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size() as u64);
 
