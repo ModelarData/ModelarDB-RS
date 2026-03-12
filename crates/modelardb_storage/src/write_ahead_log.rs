@@ -831,7 +831,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_single_commit_populates_persisted_batch_ids() {
+    async fn test_load_persisted_batches_loads_single_commit() {
         let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
         let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
 
@@ -848,7 +848,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multiple_commits_accumulate_persisted_batch_ids() {
+    async fn test_load_persisted_batches_loads_multiple_commits() {
         let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
         let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
 
@@ -863,6 +863,32 @@ mod tests {
 
         let persisted = wal_file.persisted_batch_ids.lock().unwrap();
         assert_eq!(*persisted, BTreeSet::from([0, 1, 2, 3, 4]));
+    }
+
+    #[tokio::test]
+    async fn test_load_persisted_batches_deletes_fully_persisted_closed_segment() {
+        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+            wal_file.append_and_sync(&batch).unwrap();
+        }
+
+        let segment_path = wal_file.closed_segments.lock().unwrap()[0].path.clone();
+        assert!(segment_path.exists());
+
+        let all_ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD).collect();
+        let delta_table = write_compressed_segments_with_batch_ids(&data_folder, all_ids).await;
+
+        wal_file
+            .load_persisted_batches_from_delta_table(delta_table)
+            .await
+            .unwrap();
+
+        assert!(!segment_path.exists());
+        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
+        assert_eq!(wal_file.persisted_batch_ids.lock().unwrap().len(), 0);
     }
 
     async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
