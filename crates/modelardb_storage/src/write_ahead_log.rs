@@ -164,6 +164,17 @@ impl WriteAheadLog {
         log_file.mark_batches_as_persisted(batch_ids)
     }
 
+    /// Return pairs of (batch_id, batch) for all batches that have not yet been persisted in the
+    /// corresponding table log. If the log file does not exist or the batches could not be read
+    /// from the WAL files, return [`ModelarDbStorageError`].
+    pub fn unpersisted_batches_in_table_log(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<(u64, RecordBatch)>> {
+        let log_file = self.table_log(table_name)?;
+        log_file.unpersisted_batches()
+    }
+
     /// Get the log file for the table with the given name. If the log file does not exist, return
     /// [`ModelarDbStorageError`].
     fn table_log(&self, table_name: &str) -> Result<&WriteAheadLogFile> {
