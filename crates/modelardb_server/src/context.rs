@@ -124,7 +124,9 @@ impl Context {
 
         // Create a file in the write-ahead log to log uncompressed data for the table.
         let mut write_ahead_log = self.write_ahead_log.write().await;
-        write_ahead_log.create_table_log(time_series_table_metadata)?;
+        write_ahead_log
+            .create_table_log(time_series_table_metadata, None)
+            .await?;
 
         Ok(())
     }
@@ -262,6 +264,32 @@ impl Context {
             "Registered time series table '{}'.",
             &time_series_table_metadata.name
         );
+
+        Ok(())
+    }
+
+    /// For each time series table in the local data folder, use the write-ahead-log to replay any
+    /// data that was written to the storage engine but not compressed and saved to disk. Note that
+    /// this method should only be called before the storage engine starts ingesting data to avoid
+    /// replaying data that is currently in memory.
+    pub(super) async fn replay_write_ahead_log(&self) -> Result<()> {
+        let local_data_folder = &self.data_folders.local_data_folder;
+
+        let write_ahead_log = self.write_ahead_log.write().await;
+        let mut storage_engine = self.storage_engine.write().await;
+
+        for metadata in local_data_folder.time_series_table_metadata().await? {
+            let unpersisted_batches =
+                write_ahead_log.unpersisted_batches_in_table_log(&metadata.name)?;
+
+            for (batch_id, batch) in unpersisted_batches {
+                storage_engine.insert_data_points_with_batch_id(
+                    metadata.clone(),
+                    batch,
+                    batch_id,
+                )?;
+            }
+        }
 
         Ok(())
     }
