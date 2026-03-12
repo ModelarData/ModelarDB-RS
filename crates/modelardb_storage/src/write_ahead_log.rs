@@ -948,6 +948,69 @@ mod tests {
             .unwrap()
     }
 
+    #[test]
+    fn test_unpersisted_batches_returns_all_when_none_persisted() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+
+        let batch_1 = table::uncompressed_time_series_table_record_batch(10);
+        let batch_2 = table::uncompressed_time_series_table_record_batch(20);
+        wal_file.append_and_sync(&batch_1).unwrap();
+        wal_file.append_and_sync(&batch_2).unwrap();
+
+        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        assert_eq!(unpersisted.len(), 2);
+        assert_eq!(unpersisted[0], (0, batch_1));
+        assert_eq!(unpersisted[1], (1, batch_2));
+    }
+
+    #[test]
+    fn test_unpersisted_batches_returns_empty_when_all_persisted() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+        wal_file.append_and_sync(&batch).unwrap();
+        wal_file.append_and_sync(&batch).unwrap();
+
+        wal_file
+            .mark_batches_as_persisted(HashSet::from([0, 1]))
+            .unwrap();
+
+        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        assert!(unpersisted.is_empty());
+    }
+
+    #[test]
+    fn test_unpersisted_batches_filters_persisted_batch_ids() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+
+        let batch_1 = table::uncompressed_time_series_table_record_batch(10);
+        let batch_2 = table::uncompressed_time_series_table_record_batch(20);
+        wal_file.append_and_sync(&batch_1).unwrap();
+        wal_file.append_and_sync(&batch_1).unwrap();
+        wal_file.append_and_sync(&batch_2).unwrap();
+
+        wal_file
+            .mark_batches_as_persisted(HashSet::from([1]))
+            .unwrap();
+
+        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        assert_eq!(unpersisted.len(), 2);
+        assert_eq!(unpersisted[0], (0, batch_1));
+        assert_eq!(unpersisted[1], (2, batch_2));
+    }
+
+    #[test]
+    fn test_unpersisted_batches_returns_empty_when_no_batches_written() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+
+        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        assert!(unpersisted.is_empty());
+    }
+
     fn new_wal_file(temp_dir: &TempDir) -> (PathBuf, WriteAheadLogFile) {
         let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
         let metadata = table::time_series_table_metadata();
