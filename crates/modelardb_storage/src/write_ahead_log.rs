@@ -812,15 +812,58 @@ mod tests {
         assert!(wal_file.closed_segments.lock().unwrap().is_empty());
     }
 
+    #[tokio::test]
+    async fn test_no_batch_ids_in_history_leaves_persisted_set_empty() {
+        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+
+        let delta_table = data_folder
+            .delta_table(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+
+        wal_file
+            .load_persisted_batches_from_delta_table(delta_table)
+            .await
+            .unwrap();
+
+        assert!(wal_file.persisted_batch_ids.lock().unwrap().is_empty());
+    }
+
+    async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let metadata = table::time_series_table_metadata();
+
+        data_folder
+            .create_time_series_table(&metadata)
+            .await
+            .unwrap();
+
+        (temp_dir, data_folder)
+    }
+
+    async fn write_compressed_segments_with_batch_ids(
+        data_folder: &DataFolder,
+        batch_ids: HashSet<u64>,
+    ) -> DeltaTable {
+        let compressed_segments = table::compressed_segments_record_batch();
+
+        data_folder
+            .write_compressed_segments_to_time_series_table(
+                TIME_SERIES_TABLE_NAME,
+                vec![compressed_segments],
+                batch_ids,
+            )
+            .await
+            .unwrap()
+    }
 
     fn new_wal_file(temp_dir: &TempDir) -> (PathBuf, WriteAheadLogFile) {
         let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
         let metadata = table::time_series_table_metadata();
 
-        let wal_file =
-            WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
         (folder_path, wal_file)
     }
