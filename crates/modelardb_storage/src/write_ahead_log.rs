@@ -891,6 +891,34 @@ mod tests {
         assert_eq!(wal_file.persisted_batch_ids.lock().unwrap().len(), 0);
     }
 
+    #[tokio::test]
+    async fn test_load_persisted_batches_retains_partially_persisted_closed_segment() {
+        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+            wal_file.append_and_sync(&batch).unwrap();
+        }
+
+        let segment_path = wal_file.closed_segments.lock().unwrap()[0].path.clone();
+
+        let partial_ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD - 1).collect();
+        let delta_table = write_compressed_segments_with_batch_ids(&data_folder, partial_ids).await;
+
+        wal_file
+            .load_persisted_batches_from_delta_table(delta_table)
+            .await
+            .unwrap();
+
+        assert!(segment_path.exists());
+        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 1);
+        assert_eq!(
+            wal_file.persisted_batch_ids.lock().unwrap().len() as u64,
+            SEGMENT_ROTATION_THRESHOLD - 1
+        );
+    }
+
     async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
