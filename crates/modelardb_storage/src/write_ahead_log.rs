@@ -830,6 +830,41 @@ mod tests {
         assert!(wal_file.persisted_batch_ids.lock().unwrap().is_empty());
     }
 
+    #[tokio::test]
+    async fn test_single_commit_populates_persisted_batch_ids() {
+        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+
+        let delta_table =
+            write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
+
+        wal_file
+            .load_persisted_batches_from_delta_table(delta_table)
+            .await
+            .unwrap();
+
+        let persisted = wal_file.persisted_batch_ids.lock().unwrap();
+        assert_eq!(*persisted, BTreeSet::from([0, 1, 2]));
+    }
+
+    #[tokio::test]
+    async fn test_multiple_commits_accumulate_persisted_batch_ids() {
+        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+
+        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
+        let delta_table =
+            write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([2, 3, 4])).await;
+
+        wal_file
+            .load_persisted_batches_from_delta_table(delta_table)
+            .await
+            .unwrap();
+
+        let persisted = wal_file.persisted_batch_ids.lock().unwrap();
+        assert_eq!(*persisted, BTreeSet::from([0, 1, 2, 3, 4]));
+    }
+
     async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
