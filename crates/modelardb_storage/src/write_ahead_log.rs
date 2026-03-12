@@ -392,7 +392,9 @@ impl WriteAheadLogFile {
 
         // Add the active segment's batches to the end of the list.
         let active_batches = read_batches_from_path(&active.path)?;
-        all_batches.extend((active.start_id..=active.next_batch_id - 1).zip(active_batches));
+        if !active_batches.is_empty() {
+            all_batches.extend((active.start_id..=active.next_batch_id - 1).zip(active_batches));
+        }
 
         Ok(all_batches)
     }
@@ -534,7 +536,7 @@ mod tests {
 
         let batches = wal_file.read_all().unwrap();
         assert_eq!(batches.len(), 1);
-        assert_eq!(batches[0], batch);
+        assert_eq!(batches[0], (0, batch));
 
         let active = wal_file.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, 1);
@@ -554,9 +556,9 @@ mod tests {
 
         let batches = wal_file.read_all().unwrap();
         assert_eq!(batches.len(), 3);
-        assert_eq!(batches[0], batch_1);
-        assert_eq!(batches[1], batch_2);
-        assert_eq!(batches[2], batch_3);
+        assert_eq!(batches[0], (0, batch_1));
+        assert_eq!(batches[1], (1, batch_2));
+        assert_eq!(batches[2], (2, batch_3));
 
         let active = wal_file.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, 3);
