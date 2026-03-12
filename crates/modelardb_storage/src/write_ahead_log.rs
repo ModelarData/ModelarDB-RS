@@ -89,7 +89,7 @@ impl WriteAheadLog {
         Ok(write_ahead_log)
     }
 
-    /// Create a new [`WriteAheadLogFile`] for the table with the given metadata. If a delta table
+    /// Create a new write-ahead-log file for the table with the given metadata. If a delta table
     /// is provided, the log file will be initialized with the persisted batch ids from the commit
     /// history of the delta table. If a log already exists in the map or the log file could not be
     /// created, return [`ModelarDbStorageError`]. Note that if the log file already exists, but it
