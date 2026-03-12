@@ -47,7 +47,7 @@ pub struct WriteAheadLog {
     /// Logs for each table. The key is the table name, and the value is the log file for that table.
     table_logs: HashMap<String, WriteAheadLogFile>,
     /// Log file for operations that are not associated with a specific table.
-    operation_log: WriteAheadLogFile,
+    _operation_log: WriteAheadLogFile,
 }
 
 impl WriteAheadLog {
@@ -72,7 +72,7 @@ impl WriteAheadLog {
         let mut write_ahead_log = Self {
             folder_path: log_folder_path.clone(),
             table_logs: HashMap::new(),
-            operation_log: WriteAheadLogFile::try_new(
+            _operation_log: WriteAheadLogFile::try_new(
                 log_folder_path.join(OPERATIONS_LOG_FOLDER),
                 &operations_log_schema(),
             )?,
@@ -286,7 +286,6 @@ impl WriteAheadLogFile {
             schema: schema.clone(),
             active_segment: Mutex::new(active_file),
             closed_segments: Mutex::new(closed_segments),
-            // TODO: This needs to be initialized with persisted batch ids from Delta Lake.
             persisted_batch_ids: Mutex::new(BTreeSet::new()),
         })
     }
