@@ -26,6 +26,7 @@ use arrow::error::ArrowError::IpcError;
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
+use deltalake::DeltaTable;
 use modelardb_types::types::TimeSeriesTableMetadata;
 
 use crate::WRITE_AHEAD_LOG_FOLDER;
@@ -368,6 +369,47 @@ impl WriteAheadLogFile {
         *closed_segments = to_retain;
 
         Ok(())
+    }
+
+    /// Return pairs of (batch_id, batch) for all batches in the log that have not yet been
+    /// persisted. The persisted batch ids are retrieved from the commit history of `delta_table`
+    /// to ensure duplicated data is avoided. If the commit history could not be read or the
+    /// batches could not be read from the WAL files, return [`ModelarDbStorageError`].
+    async fn unpersisted_batches(
+        &self,
+        delta_table: DeltaTable,
+    ) -> Result<Vec<(u64, RecordBatch)>> {
+        let mut persisted_batch_ids = HashSet::new();
+
+        // For each commit in the history, extract the custom batch id metadata.
+        let history = delta_table.history(None).await?;
+        for commit in history.into_iter() {
+            if let Some(batch_ids) = commit.info.get("batchIds") {
+                let batch_ids: Vec<u64> = serde_json::from_value(batch_ids.clone()).expect(
+                    "The batchIds field in the commit metadata should be a JSON array of u64 values.",
+                );
+
+                persisted_batch_ids.extend(batch_ids);
+            }
+        }
+
+        // Add the persisted batch ids to the in-memory set and delete any fully persisted segments.
+        self.mark_batches_as_persisted(persisted_batch_ids)?;
+
+        let persisted = self
+            .persisted_batch_ids
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
+        // Collect all batches that have not yet been persisted.
+        let mut unpersisted = Vec::new();
+        for (batch_id, batch) in self.read_all()? {
+            if !persisted.contains(&batch_id) {
+                unpersisted.push((batch_id, batch));
+            }
+        }
+
+        Ok(unpersisted)
     }
 
     /// Read all data from all segment files (closed and active) in order and return them as pairs
