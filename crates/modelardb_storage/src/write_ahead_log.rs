@@ -509,6 +509,13 @@ impl WriteAheadLogFile {
             all_batches.extend((active.start_id..=active.next_batch_id - 1).zip(active_batches));
         }
 
+        debug!(
+            folder_path = %self.folder_path.display(),
+            closed_segment_count = closed_segments.len(),
+            batch_count = all_batches.len(),
+            "Read all batches from WAL files."
+        );
+
         Ok(all_batches)
     }
 }
@@ -543,12 +550,19 @@ fn close_leftover_active_segment(folder_path: &PathBuf) -> Result<()> {
 
     if batches.is_empty() {
         std::fs::remove_file(&active_path)?;
+        debug!(path = %active_path.display(), "Removed empty leftover active WAL segment.");
     } else {
         let end_id = start_id + batches.len() as u64 - 1;
-        std::fs::rename(
-            &active_path,
-            folder_path.join(format!("{start_id}-{end_id}.wal")),
-        )?;
+        let closed_path = folder_path.join(format!("{start_id}-{end_id}.wal"));
+
+        warn!(
+            path = %active_path.display(),
+            closed_path = %closed_path.display(),
+            batch_count = batches.len(),
+            "Closed leftover active WAL segment from unclean shutdown."
+        );
+
+        std::fs::rename(&active_path, closed_path)?;
     }
 
     Ok(())
