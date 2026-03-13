@@ -130,7 +130,7 @@ impl WriteAheadLog {
             Ok(())
         } else {
             Err(ModelarDbStorageError::InvalidState(format!(
-                "Table log for table '{table_name}' already exists",
+                "Table log for table '{table_name}' already exists.",
             )))
         }
     }
@@ -663,6 +663,32 @@ mod tests {
         assert_eq!(
             result.err().unwrap().to_string(),
             "Invalid State Error: Write-ahead log location 'memory:///modelardb' is not a local path."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_table_log_adds_log_for_table() {
+        let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
+
+        let metadata = table::time_series_table_metadata();
+        wal.create_table_log(&metadata, None).await.unwrap();
+
+        assert!(wal.table_logs.contains_key(TIME_SERIES_TABLE_NAME));
+    }
+
+    #[tokio::test]
+    async fn test_create_table_log_fails_if_table_log_already_exists() {
+        let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
+        let metadata = table::time_series_table_metadata();
+
+        wal.create_table_log(&metadata, None).await.unwrap();
+        let result = wal.create_table_log(&metadata, None).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            format!(
+                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' already exists.",
+            )
         );
     }
 
