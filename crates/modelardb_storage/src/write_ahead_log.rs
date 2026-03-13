@@ -656,6 +656,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_try_new_loads_persisted_batch_ids() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+
+        // Simulate a previous WAL session by committing batch ids to the delta table.
+        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
+
+        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+
+        let persisted = wal.table_logs[TIME_SERIES_TABLE_NAME]
+            .persisted_batch_ids
+            .lock()
+            .unwrap();
+
+        assert_eq!(*persisted, BTreeSet::from([0, 1, 2]));
+    }
+
+    #[tokio::test]
     async fn test_try_new_fails_for_non_local_data_folder() {
         let data_folder = DataFolder::open_memory().await.unwrap();
         let result = WriteAheadLog::try_new(&data_folder).await;
