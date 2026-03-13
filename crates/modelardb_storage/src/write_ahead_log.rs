@@ -368,6 +368,13 @@ impl WriteAheadLogFile {
     fn rotate_active_segment(&self, active: &mut ActiveSegment) -> Result<()> {
         let end_id = active.next_batch_id - 1;
 
+        debug!(
+            path = %active.path.display(),
+            start_id = active.start_id,
+            end_id,
+            "Rotating WAL segment."
+        );
+
         // Finish the current writer so the IPC end-of-stream marker is written.
         active.writer.finish()?;
 
@@ -413,6 +420,11 @@ impl WriteAheadLogFile {
         let mut to_retain = Vec::new();
         for segment in closed_segments.drain(..) {
             if segment.is_fully_persisted(&persisted) {
+                debug!(
+                    path = %segment.path.display(),
+                    "Deleting fully persisted WAL segment."
+                );
+
                 std::fs::remove_file(&segment.path)?;
 
                 // Remove the persisted ids for this segment as they are no longer needed.
@@ -445,6 +457,12 @@ impl WriteAheadLogFile {
                 persisted_batch_ids.extend(batch_ids);
             }
         }
+
+        debug!(
+            folder_path = %self.folder_path.display(),
+            batch_ids = ?persisted_batch_ids,
+            "Loaded persisted batch ids from Delta table commit history."
+        );
 
         self.mark_batches_as_persisted(persisted_batch_ids)
     }
