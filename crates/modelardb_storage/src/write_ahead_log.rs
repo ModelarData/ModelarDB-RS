@@ -404,6 +404,12 @@ impl WriteAheadLogFile {
     /// is now persisted is deleted from disk and removed from the in-memory list. If a segment file
     /// could not be deleted, return [`ModelarDbStorageError`].
     fn mark_batches_as_persisted(&self, batch_ids: HashSet<u64>) -> Result<()> {
+        debug!(
+            folder_path = %self.folder_path.display(),
+            batch_ids = ?batch_ids,
+            "Marking batches as persisted."
+        );
+
         let mut persisted = self
             .persisted_batch_ids
             .lock()
