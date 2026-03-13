@@ -692,6 +692,34 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_remove_table_log_removes_log_and_directory() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let mut wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+
+        let log_path = wal.table_logs[TIME_SERIES_TABLE_NAME].folder_path.clone();
+        assert!(log_path.exists());
+
+        wal.remove_table_log(TIME_SERIES_TABLE_NAME).unwrap();
+
+        assert!(!wal.table_logs.contains_key(TIME_SERIES_TABLE_NAME));
+        assert!(!log_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_remove_table_log_fails_if_table_log_does_not_exist() {
+        let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
+
+        let result = wal.remove_table_log(TIME_SERIES_TABLE_NAME);
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            format!(
+                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+            )
+        );
+    }
+
     async fn new_empty_write_ahead_log() -> (TempDir, WriteAheadLog) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
