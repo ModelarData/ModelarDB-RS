@@ -707,6 +707,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_remove_and_recreate_table_log_resets_batch_ids() {
+        let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
+
+        let metadata = table::time_series_table_metadata();
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+
+        wal.create_table_log(&metadata, None).await.unwrap();
+
+        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            .unwrap();
+        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            .unwrap();
+
+        wal.remove_table_log(TIME_SERIES_TABLE_NAME).unwrap();
+        wal.create_table_log(&metadata, None).await.unwrap();
+
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
     async fn test_remove_table_log_fails_if_table_log_does_not_exist() {
         let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
 
