@@ -1020,24 +1020,29 @@ mod tests {
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
-        // Write some batches but do not rotate, so the active segment is leftover as "{start_id}-.wal".
+        // Write enough batches to trigger a rotation and append to a new active segment.
         {
             let wal_file =
                 WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
-            wal_file.append_and_sync(&batch).unwrap();
-            wal_file.append_and_sync(&batch).unwrap();
+
+            for _ in 0..SEGMENT_ROTATION_THRESHOLD + 2 {
+                wal_file.append_and_sync(&batch).unwrap();
+            }
         }
 
-        // On re-open, close_leftover_active_segment should rename it to "0-1.wal".
+        // On re-open the leftover active segment should be closed, leaving two closed segments
+        // and a fresh active segment starting after them.
         let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
         let closed = wal_file.closed_segments.lock().unwrap();
-        assert_eq!(closed.len(), 1);
+        assert_eq!(closed.len(), 2);
         assert_eq!(closed[0].start_id, 0);
-        assert_eq!(closed[0].end_id, 1);
+        assert_eq!(closed[0].end_id, SEGMENT_ROTATION_THRESHOLD - 1);
+        assert_eq!(closed[1].start_id, SEGMENT_ROTATION_THRESHOLD);
+        assert_eq!(closed[1].end_id, SEGMENT_ROTATION_THRESHOLD + 1);
 
         let active = wal_file.active_segment.lock().unwrap();
-        assert_eq!(active.next_batch_id, 2);
+        assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD + 2);
     }
 
     #[test]
@@ -1135,6 +1140,7 @@ mod tests {
         wal_file.mark_batches_as_persisted(ids).unwrap();
 
         assert!(wal_file.closed_segments.lock().unwrap().is_empty());
+        assert!(wal_file.persisted_batch_ids.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
