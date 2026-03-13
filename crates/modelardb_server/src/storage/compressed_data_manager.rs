@@ -22,6 +22,7 @@ use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_storage::data_folder::DataFolder;
+use modelardb_storage::write_ahead_log::WriteAheadLog;
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
@@ -50,6 +51,8 @@ pub(super) struct CompressedDataManager {
     channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
+    /// Write-ahead log for persisting data and operations.
+    write_ahead_log: Arc<RwLock<WriteAheadLog>>,
 }
 
 impl CompressedDataManager {
@@ -58,6 +61,7 @@ impl CompressedDataManager {
         local_data_folder: DataFolder,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
+        write_ahead_log: Arc<RwLock<WriteAheadLog>>,
     ) -> Self {
         Self {
             data_transfer,
@@ -66,6 +70,7 @@ impl CompressedDataManager {
             compressed_queue: SegQueue::new(),
             channels,
             memory_pool,
+            write_ahead_log,
         }
     }
 
@@ -147,8 +152,10 @@ impl CompressedDataManager {
         {
             debug!("Found existing compressed data buffer for table '{time_series_table_name}'.",);
 
-            compressed_data_buffer
-                .append_compressed_segments(compressed_segment_batch.compressed_segments)
+            compressed_data_buffer.append_compressed_segments(
+                compressed_segment_batch.compressed_segments,
+                compressed_segment_batch.batch_ids,
+            )
         } else {
             // A String is created as two copies are required for compressed_data_buffer and
             // compressed_queue anyway and compressed_segments cannot be moved out of
@@ -160,8 +167,10 @@ impl CompressedDataManager {
 
             let mut compressed_data_buffer =
                 CompressedDataBuffer::new(compressed_segment_batch.time_series_table_metadata);
-            let segment_size = compressed_data_buffer
-                .append_compressed_segments(compressed_segment_batch.compressed_segments);
+            let segment_size = compressed_data_buffer.append_compressed_segments(
+                compressed_segment_batch.compressed_segments,
+                compressed_segment_batch.batch_ids,
+            );
 
             self.compressed_data_buffers
                 .insert(time_series_table_name.clone(), compressed_data_buffer);
@@ -244,10 +253,21 @@ impl CompressedDataManager {
         // actual size is not computed as DeltaTable seems to have no support for listing the files
         // added in a version without iterating through all of the Add actions from file_actions().
         let compressed_data_buffer_size_in_bytes = compressed_data_buffer.size_in_bytes;
+        let batch_ids = compressed_data_buffer.batch_ids();
         let compressed_segments = compressed_data_buffer.record_batches();
+
         self.local_data_folder
-            .write_compressed_segments_to_time_series_table(table_name, compressed_segments)
+            .write_compressed_segments_to_time_series_table(
+                table_name,
+                compressed_segments,
+                batch_ids.clone(),
+            )
             .await?;
+
+        // Inform the write-ahead log that data has been written to disk. We use a read lock since
+        // the specific log file is locked internally before being updated.
+        let write_ahead_log = self.write_ahead_log.read().await;
+        write_ahead_log.mark_batches_as_persisted_in_table_log(table_name, batch_ids)?;
 
         // Inform the data transfer component about the new data if a remote data folder was
         // provided. If the total size of the data related to table_name has reached the transfer
@@ -289,6 +309,8 @@ impl CompressedDataManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::HashSet;
 
     use datafusion::arrow::array::{Array, Int8Array};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -388,7 +410,7 @@ mod tests {
         let local_data_folder = data_manager.local_data_folder.clone();
 
         let mut delta_table = local_data_folder
-            .create_time_series_table(&table::time_series_table_metadata())
+            .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -443,14 +465,8 @@ mod tests {
     #[tokio::test]
     async fn test_remaining_memory_incremented_when_saving_compressed_segments() {
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder = data_manager.local_data_folder.clone();
 
         let segments = compressed_segments_record_batch();
-        local_data_folder
-            .create_time_series_table(&segments.time_series_table_metadata)
-            .await
-            .unwrap();
-
         data_manager
             .insert_compressed_segments(segments.clone())
             .await
@@ -497,14 +513,9 @@ mod tests {
     #[tokio::test]
     async fn test_decrease_compressed_remaining_memory_in_bytes() {
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-        let local_data_folder = data_manager.local_data_folder.clone();
 
         // Insert data that should be saved when the remaining memory is decreased.
         let segments = compressed_segments_record_batch();
-        local_data_folder
-            .create_time_series_table(&segments.time_series_table_metadata)
-            .await
-            .unwrap();
         data_manager
             .insert_compressed_segments(segments)
             .await
@@ -559,9 +570,18 @@ mod tests {
 
         let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder
+            .create_time_series_table(&time_series_table_metadata)
+            .await
+            .unwrap();
+
+        local_data_folder
             .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
+
+        let write_ahead_log = Arc::new(RwLock::new(
+            WriteAheadLog::try_new(&local_data_folder).await.unwrap(),
+        ));
 
         (
             temp_dir,
@@ -570,6 +590,7 @@ mod tests {
                 local_data_folder,
                 channels,
                 memory_pool,
+                write_ahead_log,
             ),
         )
     }
@@ -594,6 +615,7 @@ mod tests {
                     offset,
                 ),
             ],
+            HashSet::from([0, 1]),
         )
     }
 }

@@ -250,7 +250,11 @@ impl DataTransfer {
             .await?
         {
             self.remote_data_folder
-                .write_compressed_segments_to_time_series_table(table_name, record_batches)
+                .write_compressed_segments_to_time_series_table(
+                    table_name,
+                    record_batches,
+                    HashSet::new(),
+                )
                 .await?;
         } else {
             self.remote_data_folder
@@ -515,6 +519,7 @@ mod tests {
                 .write_compressed_segments_to_time_series_table(
                     TIME_SERIES_TABLE_NAME,
                     vec![table::compressed_segments_record_batch()],
+                    HashSet::new(),
                 )
                 .await
                 .unwrap();

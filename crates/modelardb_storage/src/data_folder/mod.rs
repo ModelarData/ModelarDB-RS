@@ -17,7 +17,7 @@
 
 pub mod cluster;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path as StdPath;
 use std::sync::Arc;
 use std::{env, fs};
@@ -58,6 +58,7 @@ use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
+use serde_json::json;
 use url::Url;
 use uuid::Uuid;
 
@@ -371,6 +372,14 @@ impl DataFolder {
     /// Return the session context used to query the tables using Apache DataFusion.
     pub fn session_context(&self) -> &SessionContext {
         &self.session_context
+    }
+
+    /// Return the location of the Delta Lake. This is `memory:///modelardb` if the Delta Lake is
+    /// in memory, the local path if the Delta Lake is stored on disk, `az://container-name`
+    /// if the Delta Lake is stored in Azure Blob Storage, or `s3://bucket-name` if the Delta Lake
+    /// is stored in Amazon S3.
+    pub fn location(&self) -> &str {
+        &self.location
     }
 
     /// Return an [`ObjectStore`] to access the root of the Delta Lake.
@@ -865,15 +874,22 @@ impl DataFolder {
     }
 
     /// Write `compressed_segments` to a Delta Lake table for a time series table with `table_name`.
+    /// The `batch_ids` from the WAL are included in the commit metadata for checkpointing.
     /// Returns an updated [`DeltaTable`] if the file was written successfully, otherwise returns
     /// [`ModelarDbStorageError`].
     pub async fn write_compressed_segments_to_time_series_table(
         &self,
         table_name: &str,
         compressed_segments: Vec<RecordBatch>,
+        batch_ids: HashSet<u64>,
     ) -> Result<DeltaTable> {
         let delta_table = self.delta_table(table_name).await?;
-        let delta_table_writer = self.time_series_table_writer(delta_table).await?;
+
+        let delta_table_writer = self
+            .time_series_table_writer(delta_table)
+            .await?
+            .with_batch_ids(batch_ids);
+
         self.write_record_batches_to_table(delta_table_writer, compressed_segments)
             .await
     }
@@ -1131,6 +1147,8 @@ pub struct DeltaTableWriter {
     operation_id: Uuid,
     /// Writes record batches to the Delta table as Apache Parquet files.
     delta_writer: DeltaWriter,
+    /// Batch ids from the WAL to include in the commit metadata for checkpointing.
+    batch_ids: HashSet<u64>,
 }
 
 impl DeltaTableWriter {
@@ -1183,7 +1201,14 @@ impl DeltaTableWriter {
             delta_operation,
             operation_id,
             delta_writer,
+            batch_ids: HashSet::new(),
         })
+    }
+
+    /// Add batch ids from the WAL that are included in the commit metadata for checkpointing.
+    pub fn with_batch_ids(mut self, batch_ids: HashSet<u64>) -> Self {
+        self.batch_ids = batch_ids;
+        self
     }
 
     /// Write `record_batch` to the Delta table. Returns a [`ModelarDbStorageError`] if the
@@ -1223,7 +1248,13 @@ impl DeltaTableWriter {
 
         // Prepare all inputs to the commit.
         let object_store = self.delta_table.object_store();
-        let commit_properties = CommitProperties::default();
+
+        let mut commit_properties = CommitProperties::default();
+        if !self.batch_ids.is_empty() {
+            commit_properties = commit_properties
+                .with_metadata(vec![("batchIds".to_owned(), json!(self.batch_ids))]);
+        }
+
         let table_data = match self.delta_table.snapshot() {
             Ok(table_data) => table_data,
             Err(delta_table_error) => {

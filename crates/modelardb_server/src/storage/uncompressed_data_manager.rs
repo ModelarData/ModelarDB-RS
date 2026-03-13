@@ -16,6 +16,7 @@
 //! Support for managing all uncompressed data that is ingested into the
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
+use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hasher};
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::mem;
@@ -23,14 +24,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::types::{TimeSeriesTableMetadata, Timestamp, Value};
-use object_store::path::{Path, PathPart};
+use object_store::path::Path;
 use tokio::runtime::Handle;
 use tracing::{debug, error, warn};
 
-use crate::context::Context;
 use crate::error::Result;
 use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
@@ -68,68 +68,34 @@ pub(super) struct UncompressedDataManager {
 }
 
 impl UncompressedDataManager {
-    pub(super) fn new(
+    /// Create a new [`UncompressedDataManager`] and delete all existing spilled buffers if
+    /// necessary. If the existing buffers could not be deleted, return
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    pub(super) async fn try_new(
         local_data_folder: DataFolder,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        // Delete the previously spilled on disk data buffers if they exist.
+        let object_store = local_data_folder.object_store();
+        let spilled_buffers = object_store
+            .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
+            .map_ok(|object_meta| object_meta.location)
+            .boxed();
+
+        object_store
+            .delete_stream(spilled_buffers)
+            .try_collect::<Vec<Path>>()
+            .await?;
+
+        Ok(Self {
             local_data_folder,
             current_batch_index: AtomicU64::new(0),
             uncompressed_in_memory_data_buffers: DashMap::new(),
             uncompressed_on_disk_data_buffers: DashMap::new(),
             channels,
             memory_pool,
-        }
-    }
-
-    /// Add references to the [`UncompressedDataBuffers`](UncompressedDataBuffer) currently on disk
-    /// to [`UncompressedDataManager`] which immediately will start compressing them.
-    pub(super) async fn initialize(&self, context: &Context) -> Result<()> {
-        let local_data_folder = self.local_data_folder.object_store();
-        let mut spilled_buffers =
-            local_data_folder.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)));
-
-        while let Some(maybe_spilled_buffer) = spilled_buffers.next().await {
-            let spilled_buffer = maybe_spilled_buffer?;
-            let path_parts: Vec<PathPart> = spilled_buffer.location.parts().collect();
-
-            let table_name = path_parts
-                .get(1)
-                .expect("The spilled buffers should be partitioned by their table name.")
-                .as_ref();
-
-            let tag_hash = path_parts
-                .get(2)
-                .expect("The spilled buffers should be partitioned by their tag hash.")
-                .as_ref()
-                .parse::<u64>()
-                .unwrap();
-
-            let file_name = path_parts
-                .get(3)
-                .expect("The spilled buffers should have an auto-generated file name.")
-                .as_ref();
-
-            let time_series_table_metadata = context
-                .time_series_table_metadata_from_default_database_schema(table_name)
-                .await?
-                .expect("The time series table for the spilled buffer should exist.");
-
-            let buffer = UncompressedOnDiskDataBuffer::try_new(
-                tag_hash,
-                time_series_table_metadata,
-                self.current_batch_index.load(Ordering::Relaxed),
-                local_data_folder.clone(),
-                file_name,
-            )?;
-
-            self.channels
-                .uncompressed_data_sender
-                .send(Message::Data(UncompressedDataBuffer::OnDisk(buffer)))?;
-        }
-
-        Ok(())
+        })
     }
 
     /// Read and process messages received from the [`StorageEngine`](super::StorageEngine) to
@@ -201,6 +167,7 @@ impl UncompressedDataManager {
                     &mut values,
                     time_series_table_metadata.clone(),
                     current_batch_index,
+                    ingested_data_buffer.batch_id,
                 )
                 .await?;
         }
@@ -235,6 +202,7 @@ impl UncompressedDataManager {
         values: &mut dyn Iterator<Item = Value>,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         current_batch_index: u64,
+        batch_id: u64,
     ) -> Result<bool> {
         let tag_hash = calculate_tag_hash(&time_series_table_metadata.name, &tag_values);
 
@@ -259,6 +227,9 @@ impl UncompressedDataManager {
                 timestamp,
                 values,
             );
+
+            uncompressed_in_memory_data_buffer.insert_batch_id(batch_id);
+
             buffer_is_full = uncompressed_in_memory_data_buffer.is_full();
             true
         } else {
@@ -292,6 +263,8 @@ impl UncompressedDataManager {
                     values,
                 );
 
+                uncompressed_in_memory_data_buffer.insert_batch_id(batch_id);
+
                 buffer_is_full = uncompressed_in_memory_data_buffer.is_full();
 
                 // The read-only reference must be dropped before the map can be modified.
@@ -307,6 +280,7 @@ impl UncompressedDataManager {
                     tag_values,
                     time_series_table_metadata,
                     current_batch_index,
+                    HashSet::from([batch_id]),
                 );
 
                 debug!(
@@ -558,7 +532,7 @@ impl UncompressedDataManager {
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<()> {
-        let (memory_use, maybe_data_points, time_series_table_metadata) =
+        let (memory_use, maybe_data_points, time_series_table_metadata, batch_ids) =
             match uncompressed_data_buffer {
                 UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
                     uncompressed_in_memory_data_buffer.memory_size(),
@@ -566,6 +540,7 @@ impl UncompressedDataManager {
                     uncompressed_in_memory_data_buffer
                         .time_series_table_metadata()
                         .clone(),
+                    uncompressed_in_memory_data_buffer.batch_ids().clone(),
                 ),
                 UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
                     0,
@@ -573,6 +548,7 @@ impl UncompressedDataManager {
                     uncompressed_on_disk_data_buffer
                         .time_series_table_metadata()
                         .clone(),
+                    uncompressed_on_disk_data_buffer.batch_ids().clone(),
                 ),
             };
 
@@ -610,6 +586,7 @@ impl UncompressedDataManager {
             .send(Message::Data(CompressedSegmentBatch::new(
                 time_series_table_metadata.clone(),
                 compressed_segments,
+                batch_ids,
             )))?;
 
         // Add the size of the uncompressed buffer back to the remaining reserved bytes.
@@ -657,6 +634,7 @@ fn calculate_tag_hash(table_name: &str, tag_values: &[String]) -> u64 {
 mod tests {
     use super::*;
 
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     use datafusion::arrow::array::StringBuilder;
@@ -670,86 +648,22 @@ mod tests {
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
-    use tokio::time::{Duration, sleep};
 
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
-    use crate::{ClusterMode, DataFolders};
 
     const TAG_VALUE: &str = "tag";
     const TAG_HASH: u64 = 14957893031159457585;
+    const BATCH_ID: u64 = 0;
 
     // Tests for UncompressedDataManager.
-    #[tokio::test]
-    async fn test_can_compress_existing_on_disk_data_buffers_when_initializing() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
-
-        // Create a context with a storage engine.
-        let context = Arc::new(
-            Context::try_new(
-                DataFolders::new(local_data_folder.clone(), None, local_data_folder),
-                ClusterMode::SingleNode,
-            )
-            .await
-            .unwrap(),
-        );
-
-        // Create a time series table in the context.
-        let time_series_table_metadata = Arc::new(table::time_series_table_metadata());
-        context
-            .create_time_series_table(&time_series_table_metadata)
-            .await
-            .unwrap();
-
-        // Ingest a single data point and sleep to allow the ingestion thread to finish.
-        let mut storage_engine = context.storage_engine.write().await;
-        let data = table::uncompressed_time_series_table_record_batch(1);
-
-        storage_engine
-            .insert_data_points(time_series_table_metadata, data)
-            .await
-            .unwrap();
-
-        sleep(Duration::from_millis(500)).await;
-
-        storage_engine
-            .uncompressed_data_manager
-            .spill_in_memory_data_buffer()
-            .await
-            .unwrap();
-
-        // Compress the spilled buffer and sleep to allow the compression thread to finish.
-        assert!(storage_engine.initialize(&context).await.is_ok());
-        sleep(Duration::from_millis(500)).await;
-
-        // The spilled buffer should be deleted and the content should be compressed.
-        let spilled_buffers = storage_engine
-            .uncompressed_data_manager
-            .local_data_folder
-            .object_store()
-            .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
-            .collect::<Vec<_>>()
-            .await;
-
-        assert_eq!(spilled_buffers.len(), 0);
-
-        assert_eq!(
-            storage_engine
-                .compressed_data_manager
-                .compressed_data_buffers
-                .len(),
-            1
-        );
-    }
-
     #[tokio::test]
     async fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (data_manager, time_series_table_metadata) = create_managers(&temp_dir).await;
 
         let data = table::uncompressed_time_series_table_record_batch(1);
-        let ingested_data_buffer = IngestedDataBuffer::new(time_series_table_metadata, data);
+        let ingested_data_buffer =
+            IngestedDataBuffer::new(time_series_table_metadata, data, BATCH_ID);
 
         data_manager
             .insert_data_points(ingested_data_buffer)
@@ -766,7 +680,8 @@ mod tests {
         let (data_manager, time_series_table_metadata) = create_managers(&temp_dir).await;
 
         let data = table::uncompressed_time_series_table_record_batch(2);
-        let ingested_data_buffer = IngestedDataBuffer::new(time_series_table_metadata, data);
+        let ingested_data_buffer =
+            IngestedDataBuffer::new(time_series_table_metadata, data, BATCH_ID);
 
         data_manager
             .insert_data_points(ingested_data_buffer)
@@ -790,7 +705,8 @@ mod tests {
             .memory_pool
             .remaining_ingested_memory_in_bytes();
 
-        let ingested_data_buffer = IngestedDataBuffer::new(time_series_table_metadata, data);
+        let ingested_data_buffer =
+            IngestedDataBuffer::new(time_series_table_metadata, data, BATCH_ID);
 
         data_manager
             .insert_data_points(ingested_data_buffer)
@@ -919,7 +835,7 @@ mod tests {
         .unwrap();
 
         let ingested_data_buffer =
-            IngestedDataBuffer::new(time_series_table_metadata.clone(), data);
+            IngestedDataBuffer::new(time_series_table_metadata.clone(), data, BATCH_ID);
         data_manager
             .insert_data_points(ingested_data_buffer)
             .await
@@ -939,7 +855,7 @@ mod tests {
         // Insert using insert_data_points() to finish unused buffers.
         let empty_record_batch = RecordBatch::new_empty(time_series_table_metadata.schema.clone());
         let ingested_data_buffer =
-            IngestedDataBuffer::new(time_series_table_metadata, empty_record_batch);
+            IngestedDataBuffer::new(time_series_table_metadata, empty_record_batch, BATCH_ID);
 
         data_manager
             .insert_data_points(ingested_data_buffer)
@@ -1151,6 +1067,7 @@ mod tests {
                 0,
                 object_store,
                 uncompressed_data,
+                HashSet::new(),
             ))
             .unwrap();
 
@@ -1267,6 +1184,7 @@ mod tests {
                     &mut values.iter().copied(),
                     time_series_table_metadata.clone(),
                     current_batch_index,
+                    BATCH_ID,
                 )
                 .await
                 .unwrap();
@@ -1298,7 +1216,9 @@ mod tests {
         let channels = Arc::new(Channels::new());
 
         let uncompressed_data_manager =
-            UncompressedDataManager::new(local_data_folder, memory_pool, channels);
+            UncompressedDataManager::try_new(local_data_folder, memory_pool, channels)
+                .await
+                .unwrap();
 
         (
             uncompressed_data_manager,

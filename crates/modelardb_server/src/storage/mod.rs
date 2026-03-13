@@ -34,13 +34,13 @@ use std::sync::{Arc, LazyLock};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::record_batch::RecordBatch;
+use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tracing::error;
 
 use crate::configuration::ConfigurationManager;
-use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_manager::CompressedDataManager;
@@ -82,6 +82,8 @@ pub struct StorageEngine {
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
     channels: Arc<Channels>,
+    /// Write-ahead log for persisting data and operations.
+    write_ahead_log: Arc<RwLock<WriteAheadLog>>,
 }
 
 impl StorageEngine {
@@ -91,6 +93,7 @@ impl StorageEngine {
     /// created.
     pub(super) async fn try_new(
         data_folders: DataFolders,
+        write_ahead_log: Arc<RwLock<WriteAheadLog>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
     ) -> Result<Self> {
         // Create shared memory pool.
@@ -109,11 +112,14 @@ impl StorageEngine {
         let channels = Arc::new(Channels::new());
 
         // Create the uncompressed data manager.
-        let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
-            data_folders.local_data_folder.clone(),
-            memory_pool.clone(),
-            channels.clone(),
-        ));
+        let uncompressed_data_manager = Arc::new(
+            UncompressedDataManager::try_new(
+                data_folders.local_data_folder.clone(),
+                memory_pool.clone(),
+                channels.clone(),
+            )
+            .await?,
+        );
 
         {
             let runtime_handle = runtime_handle.clone();
@@ -172,6 +178,7 @@ impl StorageEngine {
             data_folders.local_data_folder,
             channels.clone(),
             memory_pool.clone(),
+            write_ahead_log.clone(),
         ));
 
         {
@@ -198,6 +205,7 @@ impl StorageEngine {
             memory_pool,
             join_handles,
             channels,
+            write_ahead_log,
         };
 
         // Start the task that transfers data periodically if a remote data folder is given and
@@ -233,13 +241,6 @@ impl StorageEngine {
         Ok(())
     }
 
-    /// Add references to the
-    /// [`UncompressedDataBuffers`](uncompressed_data_buffer::UncompressedDataBuffer) currently on
-    /// disk to [`UncompressedDataManager`] which immediately will start compressing them.
-    pub(super) async fn initialize(&self, context: &Context) -> Result<()> {
-        self.uncompressed_data_manager.initialize(context).await
-    }
-
     /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if `record_batch` was
     /// successfully written to an Apache Parquet file, otherwise return [`ModelarDbServerError`].
     pub(super) async fn insert_record_batch(
@@ -259,7 +260,30 @@ impl StorageEngine {
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         multivariate_data_points: RecordBatch,
     ) -> Result<()> {
-        // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
+        // Write to the write-ahead log to ensure termination never duplicates or loses data. We use
+        // a read lock since the specific log file is locked internally before writing.
+        let batch_id = {
+            let write_ahead_log = self.write_ahead_log.read().await;
+            write_ahead_log
+                .append_to_table_log(&time_series_table_metadata.name, &multivariate_data_points)?
+        };
+
+        self.insert_data_points_with_batch_id(
+            time_series_table_metadata,
+            multivariate_data_points,
+            batch_id,
+        )
+    }
+
+    /// Pass `data_points` to [`UncompressedDataManager`] with a batch id given to the data by the
+    /// WAL. Return [`Ok`] if all of the data points were successfully inserted, otherwise return
+    /// [`ModelarDbServerError`].
+    pub(super) fn insert_data_points_with_batch_id(
+        &mut self,
+        time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
+        multivariate_data_points: RecordBatch,
+        batch_id: u64,
+    ) -> Result<()> {
         self.memory_pool
             .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size() as u64);
 
@@ -268,6 +292,7 @@ impl StorageEngine {
             .send(Message::Data(IngestedDataBuffer::new(
                 time_series_table_metadata,
                 multivariate_data_points,
+                batch_id,
             )))
             .map_err(|error| error.into())
     }

@@ -47,6 +47,8 @@ pub enum ModelarDbStorageError {
     EnvironmentVar(VarError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
+    /// Error returned when an invalid state is encountered.
+    InvalidState(String),
     /// Error returned from IO operations.
     Io(IoError),
     /// Error returned by ObjectStore.
@@ -71,6 +73,7 @@ impl Display for ModelarDbStorageError {
             Self::DeltaLake(reason) => write!(f, "Delta Lake Error: {reason}"),
             Self::EnvironmentVar(reason) => write!(f, "Environment Variable Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
+            Self::InvalidState(reason) => write!(f, "Invalid State Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
@@ -91,6 +94,7 @@ impl Error for ModelarDbStorageError {
             Self::DeltaLake(reason) => Some(reason),
             Self::EnvironmentVar(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
+            Self::InvalidState(_reason) => None,
             Self::Io(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
             Self::ObjectStorePath(reason) => Some(reason),

@@ -15,6 +15,7 @@
 
 //! Buffer for compressed segments from the same time series table.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
@@ -30,16 +31,20 @@ pub(super) struct CompressedSegmentBatch {
     pub(super) time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Compressed segments representing the data points to insert.
     pub(super) compressed_segments: Vec<RecordBatch>,
+    /// The ids given to the data by the WAL.
+    pub(super) batch_ids: HashSet<u64>,
 }
 
 impl CompressedSegmentBatch {
     pub(super) fn new(
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         compressed_segments: Vec<RecordBatch>,
+        batch_ids: HashSet<u64>,
     ) -> Self {
         Self {
             time_series_table_metadata,
             compressed_segments,
+            batch_ids,
         }
     }
 
@@ -59,6 +64,8 @@ pub(super) struct CompressedDataBuffer {
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
     pub(super) size_in_bytes: u64,
+    /// The ids given to the data by the WAL.
+    batch_ids: HashSet<u64>,
 }
 
 impl CompressedDataBuffer {
@@ -67,6 +74,7 @@ impl CompressedDataBuffer {
             time_series_table_metadata,
             compressed_segments: vec![],
             size_in_bytes: 0,
+            batch_ids: HashSet::new(),
         }
     }
 
@@ -76,6 +84,7 @@ impl CompressedDataBuffer {
     pub(super) fn append_compressed_segments(
         &mut self,
         mut compressed_segments: Vec<RecordBatch>,
+        batch_ids: HashSet<u64>,
     ) -> Result<u64> {
         if compressed_segments.iter().any(|compressed_segments| {
             compressed_segments.schema() != self.time_series_table_metadata.compressed_schema
@@ -94,12 +103,19 @@ impl CompressedDataBuffer {
             self.size_in_bytes += compressed_segments_size;
         }
 
+        self.batch_ids.extend(batch_ids);
+
         Ok(compressed_segments_size)
     }
 
     /// Return the compressed segments as a [`Vec<RecordBatch>`].
     pub(super) fn record_batches(self) -> Vec<RecordBatch> {
         self.compressed_segments
+    }
+
+    /// Return the ids given to the data by the WAL.
+    pub(super) fn batch_ids(&self) -> HashSet<u64> {
+        self.batch_ids.clone()
     }
 
     /// Return the size in bytes of `compressed_segments`.
@@ -133,10 +149,13 @@ mod tests {
             CompressedDataBuffer::new(table::time_series_table_metadata_arc());
 
         compressed_data_buffer
-            .append_compressed_segments(vec![
-                table::compressed_segments_record_batch(),
-                table::compressed_segments_record_batch(),
-            ])
+            .append_compressed_segments(
+                vec![
+                    table::compressed_segments_record_batch(),
+                    table::compressed_segments_record_batch(),
+                ],
+                HashSet::from([0, 1, 2]),
+            )
             .unwrap();
 
         assert_eq!(compressed_data_buffer.compressed_segments.len(), 2);
@@ -150,10 +169,13 @@ mod tests {
             CompressedDataBuffer::new(table::time_series_table_metadata_arc());
 
         compressed_data_buffer
-            .append_compressed_segments(vec![
-                table::compressed_segments_record_batch(),
-                table::compressed_segments_record_batch(),
-            ])
+            .append_compressed_segments(
+                vec![
+                    table::compressed_segments_record_batch(),
+                    table::compressed_segments_record_batch(),
+                ],
+                HashSet::from([0, 1, 2]),
+            )
             .unwrap();
 
         assert!(compressed_data_buffer.size_in_bytes > 0);
@@ -169,7 +191,7 @@ mod tests {
             table::compressed_segments_record_batch(),
         ];
         compressed_data_buffer
-            .append_compressed_segments(compressed_segments)
+            .append_compressed_segments(compressed_segments, HashSet::from([0, 1, 2]))
             .unwrap();
 
         let record_batches = compressed_data_buffer.record_batches();

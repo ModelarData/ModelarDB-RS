@@ -33,8 +33,10 @@ futures.workspace = true
 modelardb_compression = { path = "../modelardb_compression" }
 modelardb_types = { path = "../modelardb_types" }
 object_store = { workspace = true, features = ["aws", "azure"] }
+serde_json.workspace = true
 sqlparser.workspace = true
 tonic.workspace = true
+tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
 
