@@ -638,6 +638,43 @@ mod tests {
     use modelardb_test::table::TIME_SERIES_TABLE_NAME;
     use tempfile::TempDir;
 
+    // Tests for WriteAheadLog.
+    #[tokio::test]
+    async fn test_try_new_without_tables_creates_empty_wal() {
+        let (_temp_dir, wal) = new_empty_write_ahead_log().await;
+
+        assert!(wal.table_logs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_try_new_with_existing_table_creates_table_log() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+
+        assert_eq!(wal.table_logs.len(), 1);
+        assert!(wal.table_logs.contains_key(TIME_SERIES_TABLE_NAME));
+    }
+
+    #[tokio::test]
+    async fn test_try_new_fails_for_non_local_data_folder() {
+        let data_folder = DataFolder::open_memory().await.unwrap();
+        let result = WriteAheadLog::try_new(&data_folder).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "Invalid State Error: Write-ahead log location 'memory:///modelardb' is not a local path."
+        );
+    }
+
+    async fn new_empty_write_ahead_log() -> (TempDir, WriteAheadLog) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+
+        (temp_dir, wal)
+    }
+
+    // Tests for WriteAheadLogFile.
     #[test]
     fn test_try_new_creates_active_segment() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -1012,6 +1049,11 @@ mod tests {
 
         data_folder
             .create_time_series_table(&metadata)
+            .await
+            .unwrap();
+
+        data_folder
+            .save_time_series_table_metadata(&metadata)
             .await
             .unwrap();
 
