@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use arrow::datatypes::{DataType, Field, Schema};
@@ -37,7 +37,6 @@ use crate::error::{ModelarDbStorageError, Result};
 /// Folder containing the WAL files for the operations log.
 const OPERATIONS_LOG_FOLDER: &str = "operations";
 
-// TODO: Look into using a byte size based threshold instead of a number of batches.
 /// Number of batches to write to a single WAL segment file before rotating to a new one.
 const SEGMENT_ROTATION_THRESHOLD: u64 = 100;
 
@@ -68,7 +67,7 @@ impl WriteAheadLog {
 
         let log_folder_path = PathBuf::from(format!("{location}/{WRITE_AHEAD_LOG_FOLDER}"));
 
-        std::fs::create_dir_all(log_folder_path.clone())?;
+        std::fs::create_dir_all(&log_folder_path)?;
 
         let mut write_ahead_log = Self {
             folder_path: log_folder_path.clone(),
@@ -290,7 +289,7 @@ impl WriteAheadLogFile {
     /// A fresh active segment is always created on start-up. If the folder or file could not be
     /// created, return [`ModelarDbStorageError`].
     fn try_new(folder_path: PathBuf, schema: &Schema) -> Result<Self> {
-        std::fs::create_dir_all(folder_path.clone())?;
+        std::fs::create_dir_all(&folder_path)?;
 
         close_leftover_active_segment(&folder_path)?;
 
@@ -532,7 +531,7 @@ impl WriteAheadLogFile {
 /// its final `{start_id}-{end_id}.wal` name so it is picked up as a closed segment. If the
 /// file contains no batches, it is removed instead. If the file could not be renamed or
 /// removed, return [`ModelarDbStorageError`].
-fn close_leftover_active_segment(folder_path: &PathBuf) -> Result<()> {
+fn close_leftover_active_segment(folder_path: &Path) -> Result<()> {
     let Some(active_path) = std::fs::read_dir(folder_path)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -578,7 +577,7 @@ fn close_leftover_active_segment(folder_path: &PathBuf) -> Result<()> {
 
 /// Collect all closed segment files in `folder_path`. Closed segments have names of the form
 /// `{start_id}-{end_id}.wal` where both `start_id` and `end_id` are valid `u64` values.
-fn find_closed_segments(folder_path: &PathBuf) -> Result<Vec<ClosedSegment>> {
+fn find_closed_segments(folder_path: &Path) -> Result<Vec<ClosedSegment>> {
     let mut segments = Vec::new();
 
     for entry in std::fs::read_dir(folder_path)? {
@@ -603,10 +602,10 @@ fn find_closed_segments(folder_path: &PathBuf) -> Result<Vec<ClosedSegment>> {
     Ok(segments)
 }
 
-/// Read all [`RecordBatches`] from the file at `path`. Tolerates a missing end-of-stream
-/// marker, which is normal for the active segment. If the file could not be read, return
-/// [`ModelarDbStorageError`].
-fn read_batches_from_path(path: &PathBuf) -> Result<Vec<RecordBatch>> {
+/// Read all [`RecordBatches`](RecordBatch) from the file at `path`. Tolerates a missing
+/// end-of-stream marker, which is normal for the active segment. If the file could not be read,
+/// return [`ModelarDbStorageError`].
+fn read_batches_from_path(path: &Path) -> Result<Vec<RecordBatch>> {
     let file = File::open(path)?;
     let reader = StreamReader::try_new(file, None)?;
 
