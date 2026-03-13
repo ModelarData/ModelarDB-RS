@@ -759,6 +759,42 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_mark_batches_as_persisted_in_table_log_removes_from_unpersisted() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            .unwrap();
+        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            .unwrap();
+
+        wal.mark_batches_as_persisted_in_table_log(TIME_SERIES_TABLE_NAME, HashSet::from([0, 1]))
+            .unwrap();
+
+        let unpersisted = wal
+            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unwrap();
+
+        assert!(unpersisted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mark_batches_as_persisted_in_table_log_fails_if_table_log_does_not_exist() {
+        let (_temp_dir, wal) = new_empty_write_ahead_log().await;
+
+        let result =
+            wal.mark_batches_as_persisted_in_table_log(TIME_SERIES_TABLE_NAME, HashSet::new());
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            format!(
+                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+            )
+        );
+    }
+
     async fn new_empty_write_ahead_log() -> (TempDir, WriteAheadLog) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
