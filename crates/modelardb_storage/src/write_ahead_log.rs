@@ -1009,7 +1009,7 @@ mod tests {
         wal_file.append_and_sync(&batch).unwrap();
 
         let batches = wal_file.read_all().unwrap();
-        assert_eq!(batches.len(), SEGMENT_ROTATION_THRESHOLD as usize + 1);
+        assert_eq!(batches.len() as u64, SEGMENT_ROTATION_THRESHOLD + 1);
 
         let active = wal_file.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD + 1);
@@ -1222,7 +1222,7 @@ mod tests {
 
         assert!(!segment_path.exists());
         assert!(wal_file.closed_segments.lock().unwrap().is_empty());
-        assert_eq!(wal_file.persisted_batch_ids.lock().unwrap().len(), 0);
+        assert!(wal_file.persisted_batch_ids.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
