@@ -301,12 +301,14 @@ impl WriteAheadLogFile {
         // The next batch id is one past the end of the last closed segment, or 0 if there are none.
         let next_id = closed_segments.last().map(|s| s.end_id + 1).unwrap_or(0);
 
-        debug!(
-            folder_path = %folder_path.display(),
-            closed_segment_count = closed_segments.len(),
-            next_batch_id = next_id,
-            "Found closed WAL segments."
-        );
+        if !closed_segments.is_empty() {
+            debug!(
+                folder_path = %folder_path.display(),
+                closed_segment_count = closed_segments.len(),
+                next_batch_id = next_id,
+                "Found closed WAL segments."
+            );
+        }
 
         // Always create a fresh active segment on startup to avoid writing into the middle of
         // an existing IPC stream.
