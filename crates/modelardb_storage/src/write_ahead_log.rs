@@ -367,6 +367,11 @@ impl WriteAheadLogFile {
     /// Close the current active segment by renaming it to its final `{start_id}-{end_id}.wal`
     /// name and open a fresh active segment. The caller must hold the `active_segment` lock.
     fn rotate_active_segment(&self, active: &mut ActiveSegment) -> Result<()> {
+        let mut closed_segments = self
+            .closed_segments
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
         let end_id = active.next_batch_id - 1;
 
         debug!(
@@ -385,14 +390,11 @@ impl WriteAheadLogFile {
             .join(format!("{}-{end_id}.wal", active.start_id));
         std::fs::rename(&active.path, &closed_path)?;
 
-        self.closed_segments
-            .lock()
-            .expect("Mutex should not be poisoned.")
-            .push(ClosedSegment {
-                path: closed_path,
-                start_id: active.start_id,
-                end_id,
-            });
+        closed_segments.push(ClosedSegment {
+            path: closed_path,
+            start_id: active.start_id,
+            end_id,
+        });
 
         // Open a fresh active segment.
         let next_id = end_id + 1;
