@@ -426,26 +426,25 @@ impl WriteAheadLogFile {
             .expect("Mutex should not be poisoned.");
 
         // Identify and delete fully persisted segments.
-        let mut to_retain = Vec::new();
-        for segment in closed_segments.drain(..) {
-            if segment.is_fully_persisted(&persisted) {
-                debug!(
-                    path = %segment.path.display(),
-                    "Deleting fully persisted WAL segment."
-                );
-
-                std::fs::remove_file(&segment.path)?;
-
-                // Remove the persisted ids for this segment as they are no longer needed.
-                for id in segment.start_id..=segment.end_id {
-                    persisted.remove(&id);
-                }
-            } else {
-                to_retain.push(segment);
-            }
-        }
+        let (to_delete, to_retain): (Vec<_>, Vec<_>) = closed_segments
+            .drain(..)
+            .partition(|segment| segment.is_fully_persisted(&persisted));
 
         *closed_segments = to_retain;
+
+        for segment in to_delete {
+            debug!(
+                path = %segment.path.display(),
+                "Deleting fully persisted WAL segment."
+            );
+
+            std::fs::remove_file(&segment.path)?;
+
+            // Remove the persisted ids for this segment as they are no longer needed.
+            for id in segment.start_id..=segment.end_id {
+                persisted.remove(&id);
+            }
+        }
 
         Ok(())
     }
