@@ -250,6 +250,11 @@ impl ActiveSegment {
 
         let writer = StreamWriter::try_new(file, schema)?;
 
+        debug!(
+            path = %path.display(),
+            "WAL file created."
+        );
+
         Ok(Self {
             path,
             start_id,
@@ -296,6 +301,13 @@ impl WriteAheadLogFile {
         // The next batch id is one past the end of the last closed segment, or 0 if there are none.
         let next_id = closed_segments.last().map(|s| s.end_id + 1).unwrap_or(0);
 
+        debug!(
+            folder_path = %folder_path.display(),
+            closed_segment_count = closed_segments.len(),
+            next_batch_id = next_id,
+            "Found closed WAL segments."
+        );
+
         // Always create a fresh active segment on startup to avoid writing into the middle of
         // an existing IPC stream.
         let active_file = ActiveSegment::try_new(folder_path.clone(), schema, next_id)?;
@@ -332,6 +344,13 @@ impl WriteAheadLogFile {
         // Increment the batch id for the next batch of data.
         let current_batch_id = active.next_batch_id;
         active.next_batch_id += 1;
+
+        debug!(
+            path = %active.path.display(),
+            batch_id = current_batch_id,
+            row_count = data.num_rows(),
+            "Appended batch to WAL file."
+        );
 
         // Rotate to a new segment if the threshold has been reached. The number of batches in the
         // active segment is the difference between the next batch id (post-increment) and the
