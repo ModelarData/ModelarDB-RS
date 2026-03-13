@@ -28,6 +28,7 @@ use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use deltalake::DeltaTable;
 use modelardb_types::types::TimeSeriesTableMetadata;
+use tracing::{debug, info, warn};
 
 use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
@@ -86,6 +87,12 @@ impl WriteAheadLog {
                 .await?;
         }
 
+        info!(
+            path = %log_folder_path.display(),
+            table_count = write_ahead_log.table_logs.len(),
+            "WAL initialized."
+        );
+
         Ok(write_ahead_log)
     }
 
@@ -111,6 +118,12 @@ impl WriteAheadLog {
                     .load_persisted_batches_from_delta_table(delta_table)
                     .await?;
             }
+
+            debug!(
+                table = %table_name,
+                folder_path = %log_file.folder_path.display(),
+                "WAL table log created."
+            );
 
             self.table_logs.insert(table_name, log_file);
 
@@ -138,7 +151,13 @@ impl WriteAheadLog {
         }
 
         // Now that the file handle is closed, the files can be removed.
-        std::fs::remove_dir_all(log_path)?;
+        std::fs::remove_dir_all(&log_path)?;
+
+        debug!(
+            table = %table_name,
+            folder_path = %log_path.display(),
+            "WAL table log removed."
+        );
 
         Ok(())
     }
