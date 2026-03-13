@@ -268,7 +268,7 @@ impl Context {
         Ok(())
     }
 
-    /// For each time series table in the local data folder, use the write-ahead-log to replay any
+    /// For each time series table in the local data folder, use the write-ahead log to replay any
     /// data that was written to the storage engine but not compressed and saved to disk. Note that
     /// this method should only be called before the storage engine starts ingesting data to avoid
     /// replaying data that is currently in memory.

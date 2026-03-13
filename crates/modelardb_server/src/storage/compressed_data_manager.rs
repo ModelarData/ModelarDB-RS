@@ -264,7 +264,7 @@ impl CompressedDataManager {
             )
             .await?;
 
-        // Inform the write-ahead-log that data has been written to disk. We use a read lock since
+        // Inform the write-ahead log that data has been written to disk. We use a read lock since
         // the specific log file is locked internally before being updated.
         let write_ahead_log = self.write_ahead_log.read().await;
         write_ahead_log.mark_batches_as_persisted_in_table_log(table_name, batch_ids)?;
