@@ -23,7 +23,7 @@ use datafusion::catalog::{SchemaProvider, TableProvider};
 use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::configuration::ConfigurationManager;
 use crate::error::{ModelarDbServerError, Result};
@@ -281,6 +281,14 @@ impl Context {
         for metadata in local_data_folder.time_series_table_metadata().await? {
             let unpersisted_batches =
                 write_ahead_log.unpersisted_batches_in_table_log(&metadata.name)?;
+
+            if !unpersisted_batches.is_empty() {
+                warn!(
+                    table = %metadata.name,
+                    batch_count = unpersisted_batches.len(),
+                    "Replaying unpersisted batches for time series table."
+                );
+            }
 
             for (batch_id, batch) in unpersisted_batches {
                 storage_engine.insert_data_points_with_batch_id(
