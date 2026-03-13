@@ -1252,7 +1252,7 @@ impl DeltaTableWriter {
         let mut commit_properties = CommitProperties::default();
         if !self.batch_ids.is_empty() {
             commit_properties = commit_properties
-                .with_metadata(vec![("batchIds".to_string(), json!(self.batch_ids))]);
+                .with_metadata(vec![("batchIds".to_owned(), json!(self.batch_ids))]);
         }
 
         let table_data = match self.delta_table.snapshot() {

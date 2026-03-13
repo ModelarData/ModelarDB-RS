@@ -1,4 +1,4 @@
-/* Copyright 2025 The ModelarDB Contributors
+/* Copyright 2026 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,7 +65,7 @@ impl WriteAheadLog {
             )));
         }
 
-        let log_folder_path = PathBuf::from(format!("{location}/{WRITE_AHEAD_LOG_FOLDER}"));
+        let log_folder_path = PathBuf::from(location).join(WRITE_AHEAD_LOG_FOLDER);
 
         std::fs::create_dir_all(&log_folder_path)?;
 
@@ -103,7 +103,7 @@ impl WriteAheadLog {
     pub async fn create_table_log(
         &mut self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
-        delta_table: Option<DeltaTable>,
+        maybe_delta_table: Option<DeltaTable>,
     ) -> Result<()> {
         let table_name = time_series_table_metadata.name.clone();
 
@@ -112,7 +112,7 @@ impl WriteAheadLog {
             let log_file =
                 WriteAheadLogFile::try_new(table_log_path, &time_series_table_metadata.schema)?;
 
-            if let Some(delta_table) = delta_table {
+            if let Some(delta_table) = maybe_delta_table {
                 log_file
                     .load_persisted_batches_from_delta_table(delta_table)
                     .await?;
@@ -278,8 +278,8 @@ struct WriteAheadLogFile {
     active_segment: Mutex<ActiveSegment>,
     /// Closed, read-only segment files ordered by `start_id`.
     closed_segments: Mutex<Vec<ClosedSegment>>,
-    /// Batch ids that have been confirmed as saved to disk. Used to determine whether a
-    /// contiguous prefix of batches can be trimmed from the start of the log file.
+    /// Batch ids that have been confirmed as saved to disk. Used to determine when closed segments
+    /// can be deleted.
     persisted_batch_ids: Mutex<BTreeSet<u64>>,
 }
 
@@ -535,11 +535,11 @@ impl WriteAheadLogFile {
 /// removed, return [`ModelarDbStorageError`].
 fn close_leftover_active_segment(folder_path: &Path) -> Result<()> {
     let Some(active_path) = std::fs::read_dir(folder_path)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| {
-            p.file_stem()
-                .and_then(|s| s.to_str())
+        .filter_map(|maybe_entry| maybe_entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
                 .is_some_and(|stem| stem.ends_with('-'))
         })
     else {
@@ -548,7 +548,7 @@ fn close_leftover_active_segment(folder_path: &Path) -> Result<()> {
 
     let stem = active_path
         .file_stem()
-        .and_then(|s| s.to_str())
+        .and_then(|stem| stem.to_str())
         .expect("Active WAL segment stem should be '{start_id}-'.");
 
     let start_id: u64 = stem[..stem.len() - 1]
@@ -586,7 +586,7 @@ fn find_closed_segments(folder_path: &Path) -> Result<Vec<ClosedSegment>> {
         let path = entry?.path();
         let stem = path
             .file_stem()
-            .and_then(|s| s.to_str())
+            .and_then(|stem| stem.to_str())
             .expect("WAL file should have a valid UTF-8 stem.");
 
         if let Some((start_id, end_id)) = stem
