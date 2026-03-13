@@ -720,6 +720,45 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_append_to_table_log_returns_incrementing_batch_ids() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn test_append_to_table_log_fails_if_table_log_does_not_exist() {
+        let (_temp_dir, wal) = new_empty_write_ahead_log().await;
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+        let result = wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch);
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            format!(
+                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+            )
+        );
+    }
+
     async fn new_empty_write_ahead_log() -> (TempDir, WriteAheadLog) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
