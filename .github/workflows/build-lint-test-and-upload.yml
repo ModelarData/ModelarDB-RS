@@ -23,7 +23,7 @@ on:
 env:
   # General.
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -C instrument-coverage -C strip=symbols -D warnings
+  RUSTFLAGS: -C strip=symbols -D warnings
   RUSTDOCFLAGS: -D warnings
   LLVM_PROFILE_FILE: modelardb-%p-%m.profraw
 
@@ -37,6 +37,8 @@ env:
 jobs:
   build_lint_and_test:
     name: Build, Lint, and Test
+    env:
+      RUSTFLAGS: -C instrument-coverage -C strip=symbols -D warnings
 
     runs-on: ${{ matrix.operating-system }}
     strategy:
