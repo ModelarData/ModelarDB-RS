@@ -291,8 +291,8 @@ unsafe fn modelardb_type(
 /// Creates a table with the name in `table_name_ptr`, the schema in `schema_ptr`, and the error
 /// bounds in `error_bounds_ptr` in the [`DataFolder`] or [`Client`] in `maybe_operations_ptr`.
 /// Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`]; `table_name_ptr` points
-/// to a valid C string; `schema_ptr` points to an Apache Arrow [`Schema`]; `error_bounds_array_ptr`
-/// and `error_bounds_array_schema_ptr` point to a [`MapArray`] that maps from field column names to
+/// to a valid C string; `schema_ptr` points to an Apache Arrow [`Schema`]; `error_bound_array_ptr`
+/// and `error_bound_array_schema_ptr` point to a [`MapArray`] that maps from field column names to
 /// error bounds; and `generated_columns_array_ptr` and `generated_columns_array_schema_ptr` point
 /// to a [`MapArray`] that maps from field column names to error bounds. If an error bound is zero
 /// the column with that name is stored losslessly, if the error bound is positive it is interpreted
@@ -305,8 +305,8 @@ pub unsafe extern "C" fn modelardb_embedded_create(
     table_name_ptr: *const c_char,
     is_time_series_table: bool,
     schema_ptr: *const FFI_ArrowSchema,
-    error_bounds_array_ptr: *const FFI_ArrowArray,
-    error_bounds_array_schema_ptr: *const FFI_ArrowSchema,
+    error_bound_array_ptr: *const FFI_ArrowArray,
+    error_bound_array_schema_ptr: *const FFI_ArrowSchema,
     generated_columns_array_ptr: *const FFI_ArrowArray,
     generated_columns_array_schema_ptr: *const FFI_ArrowSchema,
 ) -> c_int {
@@ -317,8 +317,8 @@ pub unsafe extern "C" fn modelardb_embedded_create(
             table_name_ptr,
             is_time_series_table,
             schema_ptr,
-            error_bounds_array_ptr,
-            error_bounds_array_schema_ptr,
+            error_bound_array_ptr,
+            error_bound_array_schema_ptr,
             generated_columns_array_ptr,
             generated_columns_array_schema_ptr,
         )
@@ -335,8 +335,8 @@ unsafe fn create(
     table_name_ptr: *const c_char,
     is_time_series_table: bool,
     schema_ptr: *const FFI_ArrowSchema,
-    error_bounds_array_ptr: *const FFI_ArrowArray,
-    error_bounds_array_schema_ptr: *const FFI_ArrowSchema,
+    error_bound_array_ptr: *const FFI_ArrowArray,
+    error_bound_array_schema_ptr: *const FFI_ArrowSchema,
     generated_columns_array_ptr: *const FFI_ArrowArray,
     generated_columns_array_schema_ptr: *const FFI_ArrowSchema,
 ) -> Result<()> {
@@ -346,8 +346,8 @@ unsafe fn create(
 
     let error_bounds_array_data = unsafe {
         ffi::from_ffi(
-            error_bounds_array_ptr.read(),
-            &error_bounds_array_schema_ptr.read(),
+            error_bound_array_ptr.read(),
+            &error_bound_array_schema_ptr.read(),
         )?
     };
 
@@ -496,27 +496,27 @@ unsafe fn schema(
     }
 }
 
-/// Writes the data in `struct_array_ptr` and `struct_array_schema_ptr` to the table with the table
-/// name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in `maybe_operations_ptr`. Assumes
-/// `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`]; `table_name_ptr` points to a
-/// valid C string; `struct_array_ptr` is a valid pointer to enough memory for an Apache Arrow C
-/// Data Interface Array; and `struct_array_schema_ptr` is a valid pointer to enough memory for an
-/// Apache Arrow C Data Interface Schema.
+/// Writes the data in `uncompressed_struct_array_ptr` and `uncompressed_struct_array_schema_ptr`
+/// to the table with the table name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
+/// `maybe_operations_ptr`. Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`];
+/// `table_name_ptr` points to a valid C string; `struct_array_ptr` is a valid pointer to enough
+/// memory for an Apache Arrow C Data Interface Array; and `struct_array_schema_ptr` is a valid
+/// pointer to enough memory for an Apache Arrow C Data Interface Schema.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_write(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
-    struct_array_ptr: *const FFI_ArrowArray,
-    struct_array_schema_ptr: *const FFI_ArrowSchema,
+    uncompressed_struct_array_ptr: *const FFI_ArrowArray,
+    uncompressed_struct_array_schema_ptr: *const FFI_ArrowSchema,
 ) -> c_int {
     let maybe_unit = unsafe {
         write(
             maybe_operations_ptr,
             is_data_folder,
             table_name_ptr,
-            struct_array_ptr,
-            struct_array_schema_ptr,
+            uncompressed_struct_array_ptr,
+            uncompressed_struct_array_schema_ptr,
         )
     };
 
@@ -528,14 +528,18 @@ unsafe fn write(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
-    struct_array_ptr: *const FFI_ArrowArray,
-    struct_array_schema_ptr: *const FFI_ArrowSchema,
+    uncompressed_struct_array_ptr: *const FFI_ArrowArray,
+    uncompressed_struct_array_schema_ptr: *const FFI_ArrowSchema,
 ) -> Result<()> {
     let modelardb = unsafe { c_void_to_operations(maybe_operations_ptr, is_data_folder)? };
     let table_name = unsafe { c_char_ptr_to_str(table_name_ptr)? };
 
-    let uncompressed_data =
-        unsafe { pointers_to_record_batch(struct_array_ptr, struct_array_schema_ptr)? };
+    let uncompressed_data = unsafe {
+        pointers_to_record_batch(
+            uncompressed_struct_array_ptr,
+            uncompressed_struct_array_schema_ptr,
+        )?
+    };
 
     TOKIO_RUNTIME.block_on(modelardb.write(table_name, uncompressed_data))
 }
