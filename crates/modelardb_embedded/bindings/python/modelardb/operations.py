@@ -129,11 +129,18 @@ class Operations:
 
             content = header_path.read_text(encoding="UTF-8")
 
+            # Remove the Arrow C Data Interface block as pyarrow.cffi already defines it.
+            arrow_end_marker = "#endif // ARROW_C_DATA_INTERFACE"
+            arrow_start = content.find("#ifndef ARROW_C_DATA_INTERFACE")
+            arrow_end = content.find(arrow_end_marker)
+
+            content = content[:arrow_start] + content[arrow_end + len(arrow_end_marker):]
+
             # Remove preprocessor directives as cffi does not support them.
             content = "\n".join(line for line in content.splitlines() if not line.lstrip().startswith("#"))
 
             # Remove the extern "C" { ... } wrapper as it is C++ syntax, not C.
-            content = content.replace('extern "C" {', "").replace('} /* extern "C" */', "")
+            content = content.replace('extern "C" {', "").replace('} // extern "C"', "")
 
             return content
 
