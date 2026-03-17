@@ -289,10 +289,10 @@ unsafe fn modelardb_type(
 }
 
 /// Creates a table with the name in `table_name_ptr`, the schema in `schema_ptr`, and the error
-/// bounds in `error_bound_array_ptr` in the [`DataFolder`] or [`Client`] in `maybe_operations_ptr`.
+/// bounds in `error_bounds_array_ptr` in the [`DataFolder`] or [`Client`] in `maybe_operations_ptr`.
 /// Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`]; `table_name_ptr` points
-/// to a valid C string; `schema_ptr` points to an Apache Arrow [`Schema`]; `error_bound_array_ptr`
-/// and `error_bound_array_schema_ptr` point to a [`MapArray`] that maps from field column names to
+/// to a valid C string; `schema_ptr` points to an Apache Arrow [`Schema`]; `error_bounds_array_ptr`
+/// and `error_bounds_array_schema_ptr` point to a [`MapArray`] that maps from field column names to
 /// error bounds; and `generated_columns_array_ptr` and `generated_columns_array_schema_ptr` point
 /// to a [`MapArray`] that maps from field column names to generated columns. If an error bound is
 /// zero the column with that name is stored losslessly, if the error bound is positive it is
@@ -305,8 +305,8 @@ pub unsafe extern "C" fn modelardb_embedded_create(
     table_name_ptr: *const c_char,
     is_time_series_table: bool,
     schema_ptr: *const FFI_ArrowSchema,
-    error_bound_array_ptr: *const FFI_ArrowArray,
-    error_bound_array_schema_ptr: *const FFI_ArrowSchema,
+    error_bounds_array_ptr: *const FFI_ArrowArray,
+    error_bounds_array_schema_ptr: *const FFI_ArrowSchema,
     generated_columns_array_ptr: *const FFI_ArrowArray,
     generated_columns_array_schema_ptr: *const FFI_ArrowSchema,
 ) -> c_int {
@@ -317,8 +317,8 @@ pub unsafe extern "C" fn modelardb_embedded_create(
             table_name_ptr,
             is_time_series_table,
             schema_ptr,
-            error_bound_array_ptr,
-            error_bound_array_schema_ptr,
+            error_bounds_array_ptr,
+            error_bounds_array_schema_ptr,
             generated_columns_array_ptr,
             generated_columns_array_schema_ptr,
         )
@@ -335,8 +335,8 @@ unsafe fn create(
     table_name_ptr: *const c_char,
     is_time_series_table: bool,
     schema_ptr: *const FFI_ArrowSchema,
-    error_bound_array_ptr: *const FFI_ArrowArray,
-    error_bound_array_schema_ptr: *const FFI_ArrowSchema,
+    error_bounds_array_ptr: *const FFI_ArrowArray,
+    error_bounds_array_schema_ptr: *const FFI_ArrowSchema,
     generated_columns_array_ptr: *const FFI_ArrowArray,
     generated_columns_array_schema_ptr: *const FFI_ArrowSchema,
 ) -> Result<()> {
@@ -346,8 +346,8 @@ unsafe fn create(
 
     let error_bounds_array_data = unsafe {
         ffi::from_ffi(
-            error_bound_array_ptr.read(),
-            &error_bound_array_schema_ptr.read(),
+            error_bounds_array_ptr.read(),
+            &error_bounds_array_schema_ptr.read(),
         )?
     };
 
