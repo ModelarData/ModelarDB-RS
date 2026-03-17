@@ -45,14 +45,14 @@ def ignore_bindings_folder(path, content):
     return []
 
 
-def copy_file_to_cwd(source_folder: Path, file_name: Path):
+def copy_file_to_cwd(source_folder: Path, file_name: str):
     """Copy :attr:`file_name` in :attr:`source_folder` to the current working directory.
 
 
-    :param schema: The folder to copy a file from.
-    :type schema: Path
-    :param schema: The name of the file to copy.
-    :type schema: Path
+    :param source_folder: The folder to copy a file from.
+    :type source_folder: Path
+    :param file_name: The name of the file to copy.
+    :type file_name: str
     """
     source_file_path = source_folder / file_name
     target_file_path = Path.cwd() / file_name
