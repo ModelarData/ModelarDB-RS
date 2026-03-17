@@ -119,6 +119,7 @@ class Operations:
             """
             # Attempt to load the header installed as part of the Python package.
             header_path = pathlib.Path(__file__).parent.resolve() / "modelardb_embedded.h"
+
             if not header_path.exists():
                 # Attempt to load the header from the development repository.
                 header_path = pathlib.Path(__file__).parent.parent.parent.resolve() / "c" / "modelardb_embedded.h"

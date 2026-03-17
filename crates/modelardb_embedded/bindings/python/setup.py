@@ -24,6 +24,7 @@ from setuptools.command.bdist_wheel import bdist_wheel
 CRATES_FOLDER_NAME = "crates"
 CARGO_BUILD_NAME = "Cargo.toml"
 CARGO_LOCK_NAME = "Cargo.lock"
+MODELARDB_EMBEDDED_HEADER_NAME = "modelardb_embedded.h"
 
 
 def get_repository_root():
@@ -75,6 +76,10 @@ def copy_src_if_repository():
         )
         copy_file_to_cwd(repository_root, CARGO_BUILD_NAME)
         copy_file_to_cwd(repository_root, CARGO_LOCK_NAME)
+        shutil.copyfile(
+            source_crates_folder / "modelardb_embedded" / "bindings" / "c" / MODELARDB_EMBEDDED_HEADER_NAME,
+            cwd / "modelardb" / MODELARDB_EMBEDDED_HEADER_NAME,
+        )
         return
 
     raise FileNotFoundError("Failed to locate Rust source code.")
@@ -87,6 +92,7 @@ def delete_src_if_repository():
     crates_folder = cwd / CRATES_FOLDER_NAME
     cargo_build_file = cwd / CARGO_BUILD_NAME
     cargo_lock_file = cwd / CARGO_LOCK_NAME
+    header_file = cwd / "modelardb" / MODELARDB_EMBEDDED_HEADER_NAME
 
     repository_root = get_repository_root()
     git_folder = repository_root / ".git"
@@ -95,6 +101,7 @@ def delete_src_if_repository():
         shutil.rmtree(crates_folder, ignore_errors=True)
         cargo_build_file.unlink(missing_ok=True)
         cargo_lock_file.unlink(missing_ok=True)
+        header_file.unlink(missing_ok=True)
 
 
 class RustSDist(sdist):
