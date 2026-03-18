@@ -534,8 +534,9 @@ impl DataFolder {
     }
 
     /// Create a Delta Lake table for a metadata table with `table_name` and `schema` and register
-    /// it in the [`SessionContext`] in the `metadata` schema. If the table already exists or the
-    /// table could not be registered, return [`ModelarDbStorageError`].
+    /// it in the [`SessionContext`] in the `metadata` schema. If the table already exists, it is
+    /// reused. Return [`ModelarDbStorageError`] if the table cannot be created or cannot be
+    /// registered.
     pub async fn create_and_register_metadata_table(
         &self,
         table_name: &str,
