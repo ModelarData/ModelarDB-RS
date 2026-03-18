@@ -616,25 +616,111 @@ impl DataFolder {
     }
 
     /// Create a Delta Lake table for a time series table with `time_series_table_metadata` if it
-    /// does not already exist. Returns [`DeltaTable`] if the table could be created and
-    /// [`ModelarDbStorageError`] if it could not.
+    /// does not already exist and save the table metadata to the `time_series_table_metadata`
+    /// table. Returns [`DeltaTable`] if the table could be created and [`ModelarDbStorageError`]
+    /// if it could not.
     pub async fn create_time_series_table(
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<DeltaTable> {
-        self.create_delta_lake_table(
-            &time_series_table_metadata.name,
-            &time_series_table_metadata.compressed_schema,
-            &[FIELD_COLUMN.to_owned()],
-            self.location_of_table(&time_series_table_metadata.name),
-            SaveMode::ErrorIfExists,
-        )
-        .await
+        let delta_table = self
+            .create_delta_lake_table(
+                &time_series_table_metadata.name,
+                &time_series_table_metadata.compressed_schema,
+                &[FIELD_COLUMN.to_owned()],
+                self.location_of_table(&time_series_table_metadata.name),
+                SaveMode::ErrorIfExists,
+            )
+            .await?;
+
+        self.save_time_series_table_metadata(time_series_table_metadata)
+            .await?;
+
+        Ok(delta_table)
     }
 
     /// Return the location of the table with `table_name`.
     fn location_of_table(&self, table_name: &str) -> String {
         format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
+    }
+
+    /// Save the created time series table to the Delta Lake. This includes adding a row to the
+    /// `time_series_table_metadata` table and adding a row to the `time_series_table_field_columns`
+    /// table for each field column.
+    async fn save_time_series_table_metadata(
+        &self,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
+    ) -> Result<()> {
+        // Convert the query schema to bytes, so it can be saved in the Delta Lake.
+        let query_schema_bytes =
+            try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?;
+
+        // Add a new row in the time_series_table_metadata table to persist the time series table.
+        self.write_columns_to_metadata_table(
+            "time_series_table_metadata",
+            vec![
+                Arc::new(StringArray::from(vec![
+                    time_series_table_metadata.name.clone(),
+                ])),
+                Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+            ],
+        )
+        .await?;
+
+        // Add a row for each field column to the time_series_table_field_columns table.
+        for (query_schema_index, field) in time_series_table_metadata
+            .query_schema
+            .fields()
+            .iter()
+            .enumerate()
+        {
+            if field.data_type() == &ArrowValue::DATA_TYPE {
+                // Convert the generated column expression to bytes, if it exists.
+                let maybe_generated_column_expr = match time_series_table_metadata
+                    .generated_columns
+                    .get(query_schema_index)
+                {
+                    Some(Some(generated_column)) => {
+                        Some(generated_column.expr.to_bytes()?.to_vec())
+                    }
+                    _ => None,
+                };
+
+                // error_bounds matches schema and not query_schema to simplify looking up the error
+                // bound during ingestion as it occurs far more often than creation of time series tables.
+                let (error_bound_value, error_bound_is_relative) = if let Ok(schema_index) =
+                    time_series_table_metadata.schema.index_of(field.name())
+                {
+                    match time_series_table_metadata.error_bounds[schema_index] {
+                        ErrorBound::Absolute(value) => (value, false),
+                        ErrorBound::Relative(value) => (value, true),
+                        ErrorBound::Lossless => (0.0, false),
+                    }
+                } else {
+                    (0.0, false)
+                };
+
+                // query_schema_index is simply cast as a time series table contains at most 32767 columns.
+                self.write_columns_to_metadata_table(
+                    "time_series_table_field_columns",
+                    vec![
+                        Arc::new(StringArray::from(vec![
+                            time_series_table_metadata.name.clone(),
+                        ])),
+                        Arc::new(StringArray::from(vec![field.name().clone()])),
+                        Arc::new(Int16Array::from(vec![query_schema_index as i16])),
+                        Arc::new(Float32Array::from(vec![error_bound_value])),
+                        Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
+                        Arc::new(BinaryArray::from_opt_vec(vec![
+                            maybe_generated_column_expr.as_deref(),
+                        ])),
+                    ],
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Create a Delta Lake table with `table_name`, `schema`, and `partition_columns` if it does
@@ -759,85 +845,6 @@ impl DataFolder {
             .with_retention_period(retention_period)
             .with_enforce_retention_duration(false)
             .await?;
-
-        Ok(())
-    }
-
-    /// Save the created time series table to the Delta Lake. This includes adding a row to the
-    /// `time_series_table_metadata` table and adding a row to the `time_series_table_field_columns`
-    /// table for each field column.
-    pub async fn save_time_series_table_metadata(
-        &self,
-        time_series_table_metadata: &TimeSeriesTableMetadata,
-    ) -> Result<()> {
-        // Convert the query schema to bytes, so it can be saved in the Delta Lake.
-        let query_schema_bytes =
-            try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?;
-
-        // Add a new row in the time_series_table_metadata table to persist the time series table.
-        self.write_columns_to_metadata_table(
-            "time_series_table_metadata",
-            vec![
-                Arc::new(StringArray::from(vec![
-                    time_series_table_metadata.name.clone(),
-                ])),
-                Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
-            ],
-        )
-        .await?;
-
-        // Add a row for each field column to the time_series_table_field_columns table.
-        for (query_schema_index, field) in time_series_table_metadata
-            .query_schema
-            .fields()
-            .iter()
-            .enumerate()
-        {
-            if field.data_type() == &ArrowValue::DATA_TYPE {
-                // Convert the generated column expression to bytes, if it exists.
-                let maybe_generated_column_expr = match time_series_table_metadata
-                    .generated_columns
-                    .get(query_schema_index)
-                {
-                    Some(Some(generated_column)) => {
-                        Some(generated_column.expr.to_bytes()?.to_vec())
-                    }
-                    _ => None,
-                };
-
-                // error_bounds matches schema and not query_schema to simplify looking up the error
-                // bound during ingestion as it occurs far more often than creation of time series tables.
-                let (error_bound_value, error_bound_is_relative) = if let Ok(schema_index) =
-                    time_series_table_metadata.schema.index_of(field.name())
-                {
-                    match time_series_table_metadata.error_bounds[schema_index] {
-                        ErrorBound::Absolute(value) => (value, false),
-                        ErrorBound::Relative(value) => (value, true),
-                        ErrorBound::Lossless => (0.0, false),
-                    }
-                } else {
-                    (0.0, false)
-                };
-
-                // query_schema_index is simply cast as a time series table contains at most 32767 columns.
-                self.write_columns_to_metadata_table(
-                    "time_series_table_field_columns",
-                    vec![
-                        Arc::new(StringArray::from(vec![
-                            time_series_table_metadata.name.clone(),
-                        ])),
-                        Arc::new(StringArray::from(vec![field.name().clone()])),
-                        Arc::new(Int16Array::from(vec![query_schema_index as i16])),
-                        Arc::new(Float32Array::from(vec![error_bound_value])),
-                        Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                        Arc::new(BinaryArray::from_opt_vec(vec![
-                            maybe_generated_column_expr.as_deref(),
-                        ])),
-                    ],
-                )
-                .await?;
-            }
-        }
 
         Ok(())
     }
