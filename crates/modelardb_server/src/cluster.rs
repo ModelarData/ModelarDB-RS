@@ -195,10 +195,6 @@ impl Cluster {
     pub(crate) async fn drop_cluster_tables(&self, table_names: &[String]) -> Result<()> {
         // Drop the tables from the remote data folder.
         for table_name in table_names {
-            self.remote_data_folder
-                .drop_table_metadata(table_name)
-                .await?;
-
             self.remote_data_folder.drop_table(table_name).await?;
         }
 

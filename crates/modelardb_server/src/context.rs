@@ -254,12 +254,6 @@ impl Context {
 
         self.drop_table_from_storage_engine(table_name).await?;
 
-        // Drop the table metadata from the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .drop_table_metadata(table_name)
-            .await?;
-
         // Drop the table from the Delta Lake.
         self.data_folders
             .local_data_folder

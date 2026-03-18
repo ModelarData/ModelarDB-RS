@@ -511,9 +511,6 @@ impl Operations for DataFolder {
         // Drop the table from the Apache Arrow DataFusion session.
         self.session_context().deregister_table(table_name)?;
 
-        // Delete the table metadata from the Delta Lake.
-        self.drop_table_metadata(table_name).await?;
-
         // Drop the table from the Delta Lake.
         self.drop_table(table_name).await?;
 
