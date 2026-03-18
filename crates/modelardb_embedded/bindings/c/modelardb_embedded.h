@@ -26,7 +26,7 @@
 
 #ifdef __cplusplus
 extern "C" {
-#endif
+#endif // __cplusplus
 
 // Apache Arrow C Data Interface (from https://arrow.apache.org/docs/format/CDataInterface.html).
 #ifndef ARROW_C_DATA_INTERFACE
@@ -205,4 +205,4 @@ const char* modelardb_embedded_error();
 
 #ifdef __cplusplus
 } // extern "C"
-#endif
+#endif // __cplusplus
