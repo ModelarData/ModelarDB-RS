@@ -778,14 +778,50 @@ impl DataFolder {
         self.delete_table_files(&table_path).await
     }
 
-    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file
-    /// related to the table. The table folder cannot be deleted directly since folders do not exist
-    /// in object stores and therefore cannot be operated upon. If the table was dropped
-    /// successfully, the paths to the deleted files are returned, otherwise a
-    /// [`ModelarDbStorageError`] is returned.
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by dropping the table
+    /// metadata and deleting every file related to the table. The table folder cannot be deleted
+    /// directly since folders do not exist in object stores and therefore cannot be operated upon.
+    /// If the table was dropped successfully, the paths to the deleted files are returned,
+    /// otherwise a [`ModelarDbStorageError`] is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<Vec<Path>> {
+        self.drop_table_metadata(table_name).await?;
+
         let table_path = format!("{TABLE_FOLDER}/{table_name}");
         self.delete_table_files(&table_path).await
+    }
+
+    /// Depending on the type of the table with `table_name`, drop either the normal table metadata
+    /// or the time series table metadata from the Delta Lake. If the table does not exist or the
+    /// metadata could not be dropped, [`ModelarDbStorageError`] is returned.
+    async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
+        if self.is_normal_table(table_name).await? {
+            let delta_table = self.metadata_delta_table("normal_table_metadata").await?;
+
+            delta_table
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
+        } else if self.is_time_series_table(table_name).await? {
+            // Delete the table metadata from the time_series_table_metadata table.
+            self.metadata_delta_table("time_series_table_metadata")
+                .await?
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
+
+            // Delete the column metadata from the time_series_table_field_columns table.
+            self.metadata_delta_table("time_series_table_field_columns")
+                .await?
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
+        } else {
+            return Err(ModelarDbStorageError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            )));
+        }
+
+        Ok(())
     }
 
     /// Delete all files in the folder at `table_path` using bulk operations if available. If the
@@ -906,57 +942,6 @@ impl DataFolder {
                 Err(error)
             }
         }
-    }
-
-    /// Depending on the type of the table with `table_name`, drop either the normal table metadata
-    /// or the time series table metadata from the Delta Lake. If the table does not exist or the
-    /// metadata could not be dropped, [`ModelarDbStorageError`] is returned.
-    pub async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self.is_normal_table(table_name).await? {
-            self.drop_normal_table_metadata(table_name).await
-        } else if self.is_time_series_table(table_name).await? {
-            self.drop_time_series_table_metadata(table_name).await
-        } else {
-            Err(ModelarDbStorageError::InvalidArgument(format!(
-                "Table with name '{table_name}' does not exist."
-            )))
-        }
-    }
-
-    /// Drop the metadata for the normal table with `table_name` from the `normal_table_metadata`
-    /// table in the Delta Lake. If the metadata could not be dropped, [`ModelarDbStorageError`] is
-    /// returned.
-    async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<()> {
-        let delta_table = self.metadata_delta_table("normal_table_metadata").await?;
-
-        delta_table
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
-
-        Ok(())
-    }
-
-    /// Drop the metadata for the time series table with `table_name` from the Delta Lake. This
-    /// includes deleting a row from the `time_series_table_metadata` table and deleting a row from
-    /// the `time_series_table_field_columns` table for each field column. If the metadata could not
-    /// be dropped, [`ModelarDbStorageError`] is returned.
-    async fn drop_time_series_table_metadata(&self, table_name: &str) -> Result<()> {
-        // Delete the table metadata from the time_series_table_metadata table.
-        self.metadata_delta_table("time_series_table_metadata")
-            .await?
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
-
-        // Delete the column metadata from the time_series_table_field_columns table.
-        self.metadata_delta_table("time_series_table_field_columns")
-            .await?
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
-
-        Ok(())
     }
 
     /// Return the [`TimeSeriesTableMetadata`] of each time series table currently in the metadata
