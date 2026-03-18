@@ -755,22 +755,22 @@ impl DataFolder {
         Ok(delta_table)
     }
 
-    /// Drop the Delta Lake table with `table_name` from the Delta Lake by dropping the table
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting the table
     /// metadata and deleting every file related to the table. The table folder cannot be deleted
     /// directly since folders do not exist in object stores and therefore cannot be operated upon.
     /// If the table was dropped successfully, the paths to the deleted files are returned,
     /// otherwise a [`ModelarDbStorageError`] is returned.
     pub async fn drop_table(&self, table_name: &str) -> Result<Vec<Path>> {
-        self.drop_table_metadata(table_name).await?;
+        self.delete_table_metadata(table_name).await?;
 
         let table_path = format!("{TABLE_FOLDER}/{table_name}");
         self.delete_table_files(&table_path).await
     }
 
-    /// Depending on the type of the table with `table_name`, drop either the normal table metadata
+    /// Depending on the type of the table with `table_name`, delete either the normal table metadata
     /// or the time series table metadata from the Delta Lake. If the table does not exist or the
-    /// metadata could not be dropped, [`ModelarDbStorageError`] is returned.
-    async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
+    /// metadata could not be deleted, [`ModelarDbStorageError`] is returned.
+    async fn delete_table_metadata(&self, table_name: &str) -> Result<()> {
         if self.is_normal_table(table_name).await? {
             let delta_table = self.metadata_delta_table("normal_table_metadata").await?;
 
