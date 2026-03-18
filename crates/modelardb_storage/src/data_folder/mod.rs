@@ -1467,13 +1467,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_normal_table_metadata() {
+    async fn test_drop_normal_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        data_folder
-            .drop_table_metadata("normal_table_2")
-            .await
-            .unwrap();
+        data_folder.drop_table("normal_table_2").await.unwrap();
+
+        assert!(data_folder.delta_table("normal_table_2").await.is_err());
 
         // Verify that normal_table_2 was deleted from the normal_table_metadata table.
         let sql = "SELECT table_name FROM metadata.normal_table_metadata";
@@ -1485,13 +1484,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_time_series_table_metadata() {
+    async fn test_drop_time_series_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         data_folder
-            .drop_table_metadata(test::TIME_SERIES_TABLE_NAME)
+            .drop_table(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
+
+        assert!(
+            data_folder
+                .delta_table(test::TIME_SERIES_TABLE_NAME)
+                .await
+                .is_err()
+        );
 
         // Verify that the time series table was deleted from the time_series_table_metadata table.
         let sql = "SELECT table_name FROM metadata.time_series_table_metadata";
@@ -1511,12 +1517,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_table_metadata_for_missing_table() {
+    async fn test_drop_missing_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         assert!(
             data_folder
-                .drop_table_metadata("missing_table")
+                .drop_table("missing_table")
                 .await
                 .is_err()
         );
