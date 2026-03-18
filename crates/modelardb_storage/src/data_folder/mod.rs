@@ -555,22 +555,30 @@ impl DataFolder {
         DeltaTableWriter::try_new(delta_table, vec![], writer_properties)
     }
 
-    /// Create a Delta Lake table for a metadata table with `table_name` and `schema` if it does not
-    /// already exist. If the metadata table could not be created, [`ModelarDbStorageError`] is
-    /// returned. An error is not returned if the metadata table already exists.
-    pub async fn create_metadata_table(
+    /// Create a Delta Lake table for a metadata table with `table_name` and `schema` and register
+    /// it in the [`SessionContext`] in the `metadata` schema. If the table already exists or the
+    /// table could not be registered, return [`ModelarDbStorageError`].
+    pub async fn create_and_register_metadata_table(
         &self,
         table_name: &str,
         schema: &Schema,
-    ) -> Result<DeltaTable> {
-        self.create_delta_lake_table(
-            table_name,
-            schema,
-            &[],
-            self.location_of_metadata_table(table_name),
-            SaveMode::Ignore,
-        )
-        .await
+    ) -> Result<()> {
+        let delta_table = self
+            .create_delta_lake_table(
+                table_name,
+                schema,
+                &[],
+                self.location_of_metadata_table(table_name),
+                SaveMode::Ignore,
+            )
+            .await?;
+
+        let table_reference = TableReference::partial("metadata", table_name);
+        let metadata_table = Arc::new(MetadataTable::new(delta_table));
+        self.session_context
+            .register_table(table_reference, metadata_table)?;
+
+        Ok(())
     }
 
     /// Return the location of the metadata table with `table_name`.
