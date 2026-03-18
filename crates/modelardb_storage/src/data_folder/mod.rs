@@ -1339,7 +1339,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_is_not_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
             !data_folder
                 .is_normal_table(test::TIME_SERIES_TABLE_NAME)
@@ -1350,7 +1350,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_is_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
             data_folder
                 .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
@@ -1376,7 +1376,7 @@ mod tests {
 
         let time_series_table_metadata = test::time_series_table_metadata();
         data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 
@@ -1401,7 +1401,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_names = data_folder.time_series_table_names().await.unwrap();
         assert_eq!(time_series_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
@@ -1410,6 +1410,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_normal_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        assert!(data_folder.delta_table("normal_table_1").await.is_ok());
 
         // Retrieve the normal table metadata from the Delta Lake.
         let sql = "SELECT table_name FROM metadata.normal_table_metadata ORDER BY table_name";
@@ -1424,8 +1426,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_time_series_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+    async fn test_create_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        assert!(
+            data_folder
+                .delta_table(test::TIME_SERIES_TABLE_NAME)
+                .await
+                .is_ok()
+        );
 
         // Check that a row has been added to the time_series_table_metadata table.
         let sql = "SELECT table_name, query_schema FROM metadata.time_series_table_metadata";
@@ -1492,7 +1501,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_time_series_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         data_folder
             .drop_table_metadata(test::TIME_SERIES_TABLE_NAME)
@@ -1548,7 +1557,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_metadata = data_folder.time_series_table_metadata().await.unwrap();
 
@@ -1560,7 +1569,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_metadata_for_existing_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_metadata = data_folder
             .time_series_table_metadata_for_time_series_table(test::TIME_SERIES_TABLE_NAME)
@@ -1575,7 +1584,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_metadata_for_missing_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_metadata = data_folder
             .time_series_table_metadata_for_time_series_table("missing_table")
@@ -1586,7 +1595,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_bound() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let error_bounds = data_folder
             .error_bounds(test::TIME_SERIES_TABLE_NAME, 4)
@@ -1643,7 +1652,7 @@ mod tests {
         .unwrap();
 
         data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 
@@ -1671,14 +1680,13 @@ mod tests {
         );
     }
 
-    async fn create_data_folder_and_save_time_series_table() -> (TempDir, DataFolder) {
+    async fn create_data_folder_and_create_time_series_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        // Save a time series table to the Delta Lake.
         let time_series_table_metadata = test::time_series_table_metadata();
         data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 
