@@ -512,7 +512,7 @@ impl DataFolder {
     /// Return a [`DeltaTableWriter`] for writing to the time series table corresponding to
     /// `delta_table` in the Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta
     /// Lake cannot be established or the table does not exist.
-    pub async fn time_series_table_writer(
+    async fn time_series_table_writer(
         &self,
         delta_table: DeltaTable,
     ) -> Result<DeltaTableWriter> {
@@ -547,7 +547,7 @@ impl DataFolder {
     /// Return a [`DeltaTableWriter`] for writing to the table corresponding to `delta_table` in the
     /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
     /// established or the table does not exist.
-    pub async fn normal_or_metadata_table_writer(
+    async fn normal_or_metadata_table_writer(
         &self,
         delta_table: DeltaTable,
     ) -> Result<DeltaTableWriter> {
@@ -766,16 +766,6 @@ impl DataFolder {
         self.delta_table_cache.insert(location, delta_table.clone());
 
         Ok(delta_table)
-    }
-
-    /// Drop the metadata table with `table_name` from the Delta Lake by deleting every file related
-    /// to the table. The table folder cannot be deleted directly since folders do not exist in
-    /// object stores and therefore cannot be operated upon. If the table was dropped successfully,
-    /// the paths to the deleted files are returned, otherwise a [`ModelarDbStorageError`] is
-    /// returned.
-    pub async fn drop_metadata_table(&self, table_name: &str) -> Result<Vec<Path>> {
-        let table_path = format!("{METADATA_FOLDER}/{table_name}");
-        self.delete_table_files(&table_path).await
     }
 
     /// Drop the Delta Lake table with `table_name` from the Delta Lake by dropping the table
