@@ -95,9 +95,7 @@ class Operations:
                 case "Windows":
                     library_path = library_folder / "modelardb_embedded.dll"
                 case _:
-                    raise RuntimeError(
-                        "Only Linux, FreeBSD, macOS, and Windows are supported."
-                    )
+                    raise RuntimeError("Only Linux, FreeBSD, macOS, and Windows are supported.")
 
             if library_path.exists():
                 return library_path
