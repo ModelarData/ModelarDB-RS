@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .cffi import ffi
 from .error_bound import AbsoluteErrorBound, RelativeErrorBound
 from .ffi_array import FFIArray
 from .operations import (

@@ -22,18 +22,18 @@ from .test_operations import time_series_table_query_schema
 class TestTable(unittest.TestCase):
     def test_cannot_specify_error_bound_for_missing_columns(self):
         schema = time_series_table_query_schema()
-        self.assertRaises(
-            ValueError,
-            lambda: TimeSeriesTable(
-                schema, {"field_that_does_not_exist": AbsoluteErrorBound(0)}
-            ),
-        )
+        field_name = "field_that_does_not_exist"
+
+        with self.assertRaises(ValueError) as context:
+            TimeSeriesTable(schema, {field_name: AbsoluteErrorBound(1)})
+
+        self.assertEqual(f"The column {field_name} does not exist.", str(context.exception))
 
     def test_cannot_specify_generated_column_for_missing_columns(self):
         schema = time_series_table_query_schema()
-        self.assertRaises(
-            ValueError,
-            lambda: TimeSeriesTable(
-                schema, {}, {"field_that_does_not_exist": "field_one + field_two"}
-            ),
-        )
+        field_name = "field_that_does_not_exist"
+
+        with self.assertRaises(ValueError) as context:
+            TimeSeriesTable(schema, {}, {field_name: "field_one + field_two"})
+
+        self.assertEqual(f"The column {field_name} does not exist.", str(context.exception))
