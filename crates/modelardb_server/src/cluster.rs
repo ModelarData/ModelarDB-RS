@@ -174,10 +174,6 @@ impl Cluster {
             .create_time_series_table(time_series_table_metadata)
             .await?;
 
-        self.remote_data_folder
-            .save_time_series_table_metadata(time_series_table_metadata)
-            .await?;
-
         // Create the time series table in each peer node.
         let protobuf_bytes =
             modelardb_types::flight::encode_and_serialize_time_series_table_metadata(
@@ -683,11 +679,6 @@ mod test {
 
         data_folder
             .create_time_series_table(&time_series_table_metadata)
-            .await
-            .unwrap();
-
-        data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
     }

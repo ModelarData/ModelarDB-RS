@@ -113,7 +113,7 @@ impl Context {
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
-        // Create an empty Delta Lake table.
+        // Create an empty Delta Lake table and save the time series table metadata to the Delta Lake.
         self.data_folders
             .local_data_folder
             .create_time_series_table(time_series_table_metadata)
@@ -121,12 +121,6 @@ impl Context {
 
         // Register the time series table with Apache DataFusion.
         self.register_time_series_table(Arc::new(time_series_table_metadata.clone()))
-            .await?;
-
-        // Persist the new time series table to the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .save_time_series_table_metadata(time_series_table_metadata)
             .await?;
 
         info!(

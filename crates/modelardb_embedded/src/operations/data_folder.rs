@@ -146,9 +146,6 @@ impl Operations for DataFolder {
                     .create_time_series_table(&time_series_table_metadata)
                     .await?;
 
-                self.save_time_series_table_metadata(&time_series_table_metadata)
-                    .await?;
-
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_time_series_table(

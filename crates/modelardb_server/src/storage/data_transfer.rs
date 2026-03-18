@@ -481,11 +481,6 @@ mod tests {
             .await
             .unwrap();
 
-        local_data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
-            .await
-            .unwrap();
-
         (temp_dir, local_data_folder)
     }
 
