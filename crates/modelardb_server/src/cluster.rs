@@ -147,10 +147,6 @@ impl Cluster {
             .create_normal_table(table_name, schema)
             .await?;
 
-        self.remote_data_folder
-            .save_normal_table_metadata(table_name)
-            .await?;
-
         // Create the normal table in each peer node.
         let protobuf_bytes = modelardb_types::flight::encode_and_serialize_normal_table_metadata(
             table_name, schema,
@@ -661,11 +657,6 @@ mod test {
 
         data_folder
             .create_normal_table(table_name, &schema)
-            .await
-            .unwrap();
-
-        data_folder
-            .save_normal_table_metadata(table_name)
             .await
             .unwrap();
     }

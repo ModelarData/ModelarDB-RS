@@ -474,11 +474,6 @@ mod tests {
             .await
             .unwrap();
 
-        local_data_folder
-            .save_normal_table_metadata(NORMAL_TABLE_NAME)
-            .await
-            .unwrap();
-
         // Create a time series table.
         let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder

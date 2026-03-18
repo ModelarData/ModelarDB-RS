@@ -125,9 +125,6 @@ impl Operations for DataFolder {
         match table_type {
             TableType::NormalTable(schema) => {
                 let delta_table = self.create_normal_table(table_name, &schema).await?;
-
-                self.save_normal_table_metadata(table_name).await?;
-
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_normal_table(

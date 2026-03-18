@@ -78,7 +78,7 @@ impl Context {
         table_name: &str,
         schema: &Schema,
     ) -> Result<()> {
-        // Create an empty Delta Lake table.
+        // Create an empty Delta Lake table and save the normal table metadata to the Delta Lake.
         self.data_folders
             .local_data_folder
             .create_normal_table(table_name, schema)
@@ -86,12 +86,6 @@ impl Context {
 
         // Register the normal table with Apache DataFusion.
         self.register_normal_table(table_name).await?;
-
-        // Persist the new normal table to the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .save_normal_table_metadata(table_name)
-            .await?;
 
         info!("Created normal table '{}'.", table_name);
 
