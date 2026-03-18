@@ -563,7 +563,7 @@ impl DataFolder {
         table_name: &str,
         schema: &Schema,
     ) -> Result<DeltaTable> {
-        self.create_table(
+        self.create_delta_lake_table(
             table_name,
             schema,
             &[],
@@ -579,21 +579,40 @@ impl DataFolder {
     }
 
     /// Create a Delta Lake table for a normal table with `table_name` and `schema` if it does not
-    /// already exist. If the normal table could not be created, e.g., because it already exists,
+    /// already exist and save the table metadata to the `normal_table_metadata` table. If the
+    /// normal table could not be created, e.g., because it already exists,
     /// [`ModelarDbStorageError`] is returned.
     pub async fn create_normal_table(
         &self,
         table_name: &str,
         schema: &Schema,
     ) -> Result<DeltaTable> {
-        self.create_table(
-            table_name,
-            schema,
-            &[],
-            self.location_of_table(table_name),
-            SaveMode::ErrorIfExists,
+        let delta_table = self
+            .create_delta_lake_table(
+                table_name,
+                schema,
+                &[],
+                self.location_of_table(table_name),
+                SaveMode::ErrorIfExists,
+            )
+            .await?;
+
+        self.save_normal_table_metadata(table_name).await?;
+
+        Ok(delta_table)
+    }
+
+    /// Save the created normal table to the Delta Lake. This consists of adding a row to the
+    /// `normal_table_metadata` table with the `name` of the table. If the normal table metadata was
+    /// saved, return [`Ok`], otherwise return [`ModelarDbStorageError`].
+    async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
+        self.write_columns_to_metadata_table(
+            "normal_table_metadata",
+            vec![Arc::new(StringArray::from(vec![name]))],
         )
-        .await
+        .await?;
+
+        Ok(())
     }
 
     /// Create a Delta Lake table for a time series table with `time_series_table_metadata` if it
@@ -603,7 +622,7 @@ impl DataFolder {
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<DeltaTable> {
-        self.create_table(
+        self.create_delta_lake_table(
             &time_series_table_metadata.name,
             &time_series_table_metadata.compressed_schema,
             &[FIELD_COLUMN.to_owned()],
@@ -621,7 +640,7 @@ impl DataFolder {
     /// Create a Delta Lake table with `table_name`, `schema`, and `partition_columns` if it does
     /// not already exist. Returns [`DeltaTable`] if the table could be created and
     /// [`ModelarDbStorageError`] if it could not.
-    async fn create_table(
+    async fn create_delta_lake_table(
         &self,
         table_name: &str,
         schema: &Schema,
@@ -740,19 +759,6 @@ impl DataFolder {
             .with_retention_period(retention_period)
             .with_enforce_retention_duration(false)
             .await?;
-
-        Ok(())
-    }
-
-    /// Save the created normal table to the Delta Lake. This consists of adding a row to the
-    /// `normal_table_metadata` table with the `name` of the table. If the normal table metadata was
-    /// saved, return [`Ok`], otherwise return [`ModelarDbStorageError`].
-    pub async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
-        self.write_columns_to_metadata_table(
-            "normal_table_metadata",
-            vec![Arc::new(StringArray::from(vec![name]))],
-        )
-        .await?;
 
         Ok(())
     }
@@ -1320,7 +1326,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_normal_table_is_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
         assert!(data_folder.is_normal_table("normal_table_1").await.unwrap());
     }
 
@@ -1348,7 +1354,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_normal_table_is_not_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
         assert!(
             !data_folder
                 .is_time_series_table("normal_table_1")
@@ -1359,7 +1365,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         let time_series_table_metadata = test::time_series_table_metadata();
         data_folder
@@ -1380,7 +1386,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_normal_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         let normal_table_names = data_folder.normal_table_names().await.unwrap();
         assert_eq!(normal_table_names, vec!["normal_table_2", "normal_table_1"]);
@@ -1395,10 +1401,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_normal_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+    async fn test_create_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        // Retrieve the normal table from the Delta Lake.
+        // Retrieve the normal table metadata from the Delta Lake.
         let sql = "SELECT table_name FROM metadata.normal_table_metadata ORDER BY table_name";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
@@ -1461,7 +1467,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_normal_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         data_folder
             .drop_table_metadata("normal_table_2")
@@ -1505,7 +1511,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_table_metadata_for_missing_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         assert!(
             data_folder
@@ -1515,17 +1521,18 @@ mod tests {
         );
     }
 
-    async fn create_data_folder_and_save_normal_tables() -> (TempDir, DataFolder) {
+    async fn create_data_folder_and_create_normal_tables() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
+        let normal_table_schema = test::normal_table_schema();
         data_folder
-            .save_normal_table_metadata("normal_table_1")
+            .create_normal_table("normal_table_1", &normal_table_schema)
             .await
             .unwrap();
 
         data_folder
-            .save_normal_table_metadata("normal_table_2")
+            .create_normal_table("normal_table_2", &normal_table_schema)
             .await
             .unwrap();
 
