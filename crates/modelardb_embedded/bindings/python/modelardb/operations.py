@@ -23,8 +23,8 @@ from typing import Self
 
 import pyarrow
 from pyarrow import MapArray, RecordBatch, Schema, StringArray
-from pyarrow.cffi import ffi
 
+from .cffi import ffi
 from .error_bound import AbsoluteErrorBound
 from .table import NormalTable, TimeSeriesTable
 from .ffi_array import FFIArray
@@ -110,42 +110,6 @@ class Operations:
         except RuntimeError:
             library_path = __find_library("debug")
             warnings.warn("Using debug build, compile with --release.", RuntimeWarning)
-
-        def __read_header() -> str:
-            """Reads the C header for modelardb_embedded and strips preprocessor
-            directives and C++ guards that cffi cannot process.
-
-            :raises FileNotFoundError: If the C header cannot be found.
-            """
-            # Attempt to load the header installed as part of the Python package.
-            header_path = pathlib.Path(__file__).parent.resolve() / "modelardb_embedded.h"
-
-            if not header_path.exists():
-                # Attempt to load the header from the development repository.
-                header_path = pathlib.Path(__file__).parent.parent.parent.resolve() / "c" / "modelardb_embedded.h"
-
-            if not header_path.exists():
-                raise FileNotFoundError("The C header modelardb_embedded.h was not found.")
-
-            content = header_path.read_text(encoding="UTF-8")
-
-            # Remove the Arrow C Data Interface block as pyarrow.cffi already defines it.
-            arrow_end_marker = "#endif // ARROW_C_DATA_INTERFACE"
-            arrow_start = content.find("#ifndef ARROW_C_DATA_INTERFACE")
-            arrow_end = content.find(arrow_end_marker)
-
-            content = content[:arrow_start] + content[arrow_end + len(arrow_end_marker):]
-
-            # Remove preprocessor directives as cffi does not support them.
-            content = "\n".join(line for line in content.splitlines() if not line.lstrip().startswith("#"))
-
-            # Remove the extern "C" { ... } wrapper as it is C++ syntax, not C.
-            content = content.replace('extern "C" {', "").replace('} // extern "C"', "")
-
-            return content
-
-        # cffi is used instead of ctypes as it is being used by pyarrow.cffi.
-        ffi.cdef(__read_header())
 
         return ffi.dlopen(str(library_path))
 

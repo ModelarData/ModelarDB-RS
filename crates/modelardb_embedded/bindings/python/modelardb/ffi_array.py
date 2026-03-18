@@ -13,7 +13,8 @@
 # limitations under the License.
 
 from pyarrow import Array, RecordBatch
-from pyarrow.cffi import ffi
+
+from .cffi import ffi
 
 
 class FFIArray:
