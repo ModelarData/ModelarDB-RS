@@ -30,7 +30,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use chrono::TimeDelta;
 use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
-use datafusion::common::{DFSchema, ToDFSchema};
+use datafusion::common::{DFSchema, TableReference, ToDFSchema};
 use datafusion::datasource::sink::DataSink;
 use datafusion::logical_expr::{Expr, lit};
 use datafusion::parquet::file::properties::WriterProperties;
@@ -62,10 +62,8 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::{
-    METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties, register_metadata_table,
-    sql_and_concat,
-};
+use crate::query::metadata_table::MetadataTable;
+use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties, sql_and_concat};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -285,54 +283,37 @@ impl DataFolder {
     /// [`ModelarDbStorageError`].
     async fn create_and_register_metadata_tables(&self) -> Result<()> {
         // Create and register the normal_table_metadata table if it does not exist.
-        let delta_table = self
-            .create_metadata_table(
-                "normal_table_metadata",
-                &Schema::new(vec![Field::new("table_name", DataType::Utf8, false)]),
-            )
-            .await?;
-
-        register_metadata_table(&self.session_context, "normal_table_metadata", delta_table)?;
+        self.create_and_register_metadata_table(
+            "normal_table_metadata",
+            &Schema::new(vec![Field::new("table_name", DataType::Utf8, false)]),
+        )
+        .await?;
 
         // Create and register the time_series_table_metadata table if it does not exist.
-        let delta_table = self
-            .create_metadata_table(
-                "time_series_table_metadata",
-                &Schema::new(vec![
-                    Field::new("table_name", DataType::Utf8, false),
-                    Field::new("query_schema", DataType::Binary, false),
-                ]),
-            )
-            .await?;
-
-        register_metadata_table(
-            &self.session_context,
+        self.create_and_register_metadata_table(
             "time_series_table_metadata",
-            delta_table,
-        )?;
+            &Schema::new(vec![
+                Field::new("table_name", DataType::Utf8, false),
+                Field::new("query_schema", DataType::Binary, false),
+            ]),
+        )
+        .await?;
 
         // Create and register the time_series_table_field_columns table if it does not exist. Note
         // that column_index will only use a maximum of 10 bits. generated_column_expr is NULL if
         // the fields are stored as segments.
-        let delta_table = self
-            .create_metadata_table(
-                "time_series_table_field_columns",
-                &Schema::new(vec![
-                    Field::new("table_name", DataType::Utf8, false),
-                    Field::new("column_name", DataType::Utf8, false),
-                    Field::new("column_index", DataType::Int16, false),
-                    Field::new("error_bound_value", DataType::Float32, false),
-                    Field::new("error_bound_is_relative", DataType::Boolean, false),
-                    Field::new("generated_column_expr", DataType::Binary, true),
-                ]),
-            )
-            .await?;
-
-        register_metadata_table(
-            &self.session_context,
+        self.create_and_register_metadata_table(
             "time_series_table_field_columns",
-            delta_table,
-        )?;
+            &Schema::new(vec![
+                Field::new("table_name", DataType::Utf8, false),
+                Field::new("column_name", DataType::Utf8, false),
+                Field::new("column_index", DataType::Int16, false),
+                Field::new("error_bound_value", DataType::Float32, false),
+                Field::new("error_bound_is_relative", DataType::Boolean, false),
+                Field::new("generated_column_expr", DataType::Binary, true),
+            ]),
+        )
+        .await?;
 
         Ok(())
     }
@@ -512,10 +493,7 @@ impl DataFolder {
     /// Return a [`DeltaTableWriter`] for writing to the time series table corresponding to
     /// `delta_table` in the Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta
     /// Lake cannot be established or the table does not exist.
-    async fn time_series_table_writer(
-        &self,
-        delta_table: DeltaTable,
-    ) -> Result<DeltaTableWriter> {
+    async fn time_series_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
 
         // Specify that the file must be sorted by the tag columns and then by start_time.
