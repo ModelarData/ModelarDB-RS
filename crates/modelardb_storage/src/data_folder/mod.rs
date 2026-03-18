@@ -578,10 +578,10 @@ impl DataFolder {
         format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
     }
 
-    /// Create a Delta Lake table for a normal table with `table_name` and `schema` if it does not
-    /// already exist and save the table metadata to the `normal_table_metadata` table. If the
-    /// normal table could not be created, e.g., because it already exists,
-    /// [`ModelarDbStorageError`] is returned.
+    /// Create a Delta Lake table for a normal table with `table_name` and `schema` and save the
+    /// table metadata to the `normal_table_metadata` table. If the table already exists or
+    /// the metadata could not be saved, return [`ModelarDbStorageError`], otherwise return
+    /// the created [`DeltaTable`].
     pub async fn create_normal_table(
         &self,
         table_name: &str,
@@ -615,10 +615,10 @@ impl DataFolder {
         Ok(())
     }
 
-    /// Create a Delta Lake table for a time series table with `time_series_table_metadata` if it
-    /// does not already exist and save the table metadata to the `time_series_table_metadata`
-    /// table. Returns [`DeltaTable`] if the table could be created and [`ModelarDbStorageError`]
-    /// if it could not.
+    /// Create a Delta Lake table for a time series table with `time_series_table_metadata` and
+    /// save the table metadata to the `time_series_table_metadata` table. If the table already
+    /// exists or the metadata could not be saved, return [`ModelarDbStorageError`], otherwise
+    /// return the created [`DeltaTable`].
     pub async fn create_time_series_table(
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
@@ -1520,12 +1520,7 @@ mod tests {
     async fn test_drop_missing_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        assert!(
-            data_folder
-                .drop_table("missing_table")
-                .await
-                .is_err()
-        );
+        assert!(data_folder.drop_table("missing_table").await.is_err());
     }
 
     async fn create_data_folder_and_create_normal_tables() -> (TempDir, DataFolder) {
