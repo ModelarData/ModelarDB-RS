@@ -23,8 +23,8 @@ from typing import Self
 
 import pyarrow
 from pyarrow import MapArray, RecordBatch, Schema, StringArray
-from pyarrow.cffi import ffi
 
+from .cffi import ffi
 from .error_bound import AbsoluteErrorBound
 from .table import NormalTable, TimeSeriesTable
 from .ffi_array import FFIArray
@@ -110,117 +110,6 @@ class Operations:
         except RuntimeError:
             library_path = __find_library("debug")
             warnings.warn("Using debug build, compile with --release.", RuntimeWarning)
-
-        # cffi is used instead of ctypes as it is being used by pyarrow.cffi.
-        ffi.cdef(
-            """
-            static int RETURN_SUCCESS;
-            static int RETURN_FAILURE;
-
-            void* modelardb_embedded_open_memory();
-            void* modelardb_embedded_open_local(char* data_folder_path_ptr);
-            void* modelardb_embedded_open_s3(char* endpoint_ptr,
-                                             char* bucket_name_ptr,
-                                             char* access_key_id_ptr,
-                                             char* secret_access_key_ptr);
-            void* modelardb_embedded_open_azure(char* account_name_ptr,
-                                                char* access_key_ptr,
-                                                char* container_name_ptr);
-
-            void* modelardb_embedded_connect(char* url_ptr);
-
-            int modelardb_embedded_close(void* maybe_operations_ptr,
-                                         bool is_data_folder);
-
-            int modelardb_embedded_modelardb_type(void* maybe_operations_ptr,
-                                                  bool is_data_folder,
-                                                  int* modelardb_type_ptr);
-
-            int modelardb_embedded_create(void* maybe_operations_ptr,
-                                          bool is_data_folder,
-                                          char* table_name_ptr,
-                                          bool is_time_series_table,
-                                          struct ArrowSchema* schema_ptr,
-                                          struct ArrowArray* error_bound_array_ptr,
-                                          struct ArrowSchema* error_bound_array_schema_ptr,
-                                          struct ArrowArray* generated_columns_array_ptr,
-                                          struct ArrowSchema* generated_columns_array_schema_ptr);
-
-            int modelardb_embedded_tables(void* maybe_operations_ptr,
-                                          bool is_data_folder,
-                                          struct ArrowArray* tables_array_ptr,
-                                          struct ArrowSchema* tables_array_schema_ptr);
-
-            int modelardb_embedded_schema(void* maybe_operations_ptr,
-                                          bool is_data_folder,
-                                          char* table_name_ptr,
-                                          struct ArrowArray* schema_struct_array_ptr,
-                                          struct ArrowSchema* schema_struct_array_schema_ptr);
-
-            int modelardb_embedded_write(void* maybe_operations_ptr,
-                                         bool is_data_folder,
-                                         char* table_name_ptr,
-                                         struct ArrowArray* uncompressed_struct_ptr,
-                                         struct ArrowSchema* uncompressed_struct_schema_ptr);
-
-            int modelardb_embedded_read(void* maybe_operations_ptr,
-                                        bool is_data_folder,
-                                        char* sql_ptr,
-                                        struct ArrowArray* decompressed_struct_ptr,
-                                        struct ArrowSchema* decompressed_struct_schema_ptr);
-
-            int modelardb_embedded_copy(void* maybe_source_operations_ptr,
-                                        bool is_data_folder,
-                                        char* sql_ptr,
-                                        void* maybe_target_operations_ptr,
-                                        char* target_table_name_ptr);
-
-            int modelardb_embedded_read_time_series_table(void* maybe_operations_ptr,
-                                                          bool is_data_folder,
-                                                          char* table_name_ptr,
-                                                          struct ArrowArray* columns_array_ptr,
-                                                          struct ArrowSchema* columns_array_schema_ptr,
-                                                          struct ArrowArray* group_by_array_ptr,
-                                                          struct ArrowSchema* group_by_array_schema_ptr,
-                                                          char* start_time_ptr,
-                                                          char* end_time_ptr,
-                                                          struct ArrowArray* tags_array_ptr,
-                                                          struct ArrowSchema* tags_array_schema_ptr,
-                                                          struct ArrowArray* decompressed_struct_array_ptr,
-                                                          struct ArrowSchema* decompressed_struct_array_schema_ptr);
-
-            int modelardb_embedded_copy_time_series_table(void* maybe_source_operations_ptr,
-                                                          bool is_data_folder,
-                                                          char* source_table_name_ptr,
-                                                          void* maybe_target_operations_ptr,
-                                                          char* target_table_name_ptr,
-                                                          char* start_time_ptr,
-                                                          char* end_time_ptr,
-                                                          struct ArrowArray* tags_array_ptr,
-                                                          struct ArrowSchema* tags_array_schema_ptr);
-
-            int modelardb_embedded_move(void* maybe_source_operations_ptr,
-                                        bool is_data_folder,
-                                        char* source_table_name_ptr,
-                                        void* maybe_target_operations_ptr,
-                                        char* target_table_name_ptr);
-
-            int modelardb_embedded_truncate(void* maybe_operations_ptr,
-                                            bool is_data_folder,
-                                            char* table_name_ptr);
-
-            int modelardb_embedded_drop(void* maybe_operations_ptr,
-                                        bool is_data_folder,
-                                        char* table_name_ptr);
-
-            int modelardb_embedded_vacuum(void* maybe_operations_ptr,
-                                          bool is_data_folder,
-                                          char* table_name_ptr,
-                                          char* retention_period_in_seconds_ptr);
-
-            char* modelardb_embedded_error();
-            """
-        )
 
         return ffi.dlopen(str(library_path))
 
