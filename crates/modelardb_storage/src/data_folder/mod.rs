@@ -475,11 +475,7 @@ impl DataFolder {
     /// the table does not exist.
     pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
         let delta_table = self.delta_table(table_name).await?;
-        if self
-            .time_series_table_metadata_for_registered_time_series_table(table_name)
-            .await
-            .is_some()
-        {
+        if self.is_time_series_table(table_name).await? {
             self.time_series_table_writer(delta_table).await
         } else {
             self.normal_or_metadata_table_writer(delta_table).await
