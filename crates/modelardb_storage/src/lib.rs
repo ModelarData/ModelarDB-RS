@@ -95,7 +95,7 @@ pub fn register_normal_table(
     delta_table: DeltaTable,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
-    let normal_table = Arc::new(NormalTable::new(delta_table, data_sink));
+    let normal_table = Arc::new(NormalTable::new(delta_table, Some(data_sink)));
     session_context.register_table(table_name, normal_table)?;
 
     Ok(())
