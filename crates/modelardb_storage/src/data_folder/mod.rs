@@ -1042,82 +1042,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_normal_table_is_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
-        assert!(data_folder.is_normal_table("normal_table_1").await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_time_series_table_is_not_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
-        assert!(
-            !data_folder
-                .is_normal_table(test::TIME_SERIES_TABLE_NAME)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_time_series_table_is_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
-        assert!(
-            data_folder
-                .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_normal_table_is_not_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
-        assert!(
-            !data_folder
-                .is_time_series_table("normal_table_1")
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
-
-        let time_series_table_metadata = test::time_series_table_metadata();
-        data_folder
-            .create_time_series_table(&time_series_table_metadata)
-            .await
-            .unwrap();
-
-        let table_names = data_folder.table_names().await.unwrap();
-        assert_eq!(
-            table_names,
-            vec![
-                "normal_table_2",
-                "normal_table_1",
-                test::TIME_SERIES_TABLE_NAME
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_normal_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
-
-        let normal_table_names = data_folder.normal_table_names().await.unwrap();
-        assert_eq!(normal_table_names, vec!["normal_table_2", "normal_table_1"]);
-    }
-
-    #[tokio::test]
-    async fn test_time_series_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
-
-        let time_series_table_names = data_folder.time_series_table_names().await.unwrap();
-        assert_eq!(time_series_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
-    }
-
-    #[tokio::test]
     async fn test_create_normal_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
@@ -1248,22 +1172,80 @@ mod tests {
         assert!(data_folder.drop_table("missing_table").await.is_err());
     }
 
-    async fn create_data_folder_and_create_normal_tables() -> (TempDir, DataFolder) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+    #[tokio::test]
+    async fn test_normal_table_is_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+        assert!(data_folder.is_normal_table("normal_table_1").await.unwrap());
+    }
 
-        let normal_table_schema = test::normal_table_schema();
+    #[tokio::test]
+    async fn test_time_series_table_is_not_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+        assert!(
+            !data_folder
+                .is_normal_table(test::TIME_SERIES_TABLE_NAME)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_time_series_table_is_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+        assert!(
+            data_folder
+                .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_normal_table_is_not_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+        assert!(
+            !data_folder
+                .is_time_series_table("normal_table_1")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_table_names() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let time_series_table_metadata = test::time_series_table_metadata();
         data_folder
-            .create_normal_table("normal_table_1", &normal_table_schema)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 
-        data_folder
-            .create_normal_table("normal_table_2", &normal_table_schema)
-            .await
-            .unwrap();
+        let table_names = data_folder.table_names().await.unwrap();
+        assert_eq!(
+            table_names,
+            vec![
+                "normal_table_2",
+                "normal_table_1",
+                test::TIME_SERIES_TABLE_NAME
+            ]
+        );
+    }
 
-        (temp_dir, data_folder)
+    #[tokio::test]
+    async fn test_normal_table_names() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let normal_table_names = data_folder.normal_table_names().await.unwrap();
+        assert_eq!(normal_table_names, vec!["normal_table_2", "normal_table_1"]);
+    }
+
+    #[tokio::test]
+    async fn test_time_series_table_names() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        let time_series_table_names = data_folder.time_series_table_names().await.unwrap();
+        assert_eq!(time_series_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
     }
 
     #[tokio::test]
@@ -1389,6 +1371,24 @@ mod tests {
             &Some(last_generated_column),
             expected_generated_columns.last().unwrap()
         );
+    }
+
+    async fn create_data_folder_and_create_normal_tables() -> (TempDir, DataFolder) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let normal_table_schema = test::normal_table_schema();
+        data_folder
+            .create_normal_table("normal_table_1", &normal_table_schema)
+            .await
+            .unwrap();
+
+        data_folder
+            .create_normal_table("normal_table_2", &normal_table_schema)
+            .await
+            .unwrap();
+
+        (temp_dir, data_folder)
     }
 
     async fn create_data_folder_and_create_time_series_table() -> (TempDir, DataFolder) {
