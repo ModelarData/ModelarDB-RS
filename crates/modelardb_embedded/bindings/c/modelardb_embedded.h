@@ -127,8 +127,7 @@ int modelardb_embedded_tables(void* maybe_operations_ptr,
 int modelardb_embedded_schema(void* maybe_operations_ptr,
                               bool is_data_folder,
                               const char* table_name_ptr,
-                              struct ArrowArray* schema_struct_array_ptr,
-                              struct ArrowSchema* schema_struct_array_schema_ptr);
+                              struct ArrowSchema* schema_ptr);
 
 // Write data to the table with the given name.
 int modelardb_embedded_write(void* maybe_operations_ptr,

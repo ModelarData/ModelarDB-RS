@@ -255,9 +255,7 @@ class Operations:
         modelardb_type_int_ffi = ffi.new("int*")
 
         return_code = self.__library.modelardb_embedded_modelardb_type(
-            self.__operations_ptr,
-            self.__is_data_folder,
-            modelardb_type_int_ffi
+            self.__operations_ptr, self.__is_data_folder, modelardb_type_int_ffi
         )
         self.__check_return_code_and_raise_error(return_code)
 
@@ -351,21 +349,18 @@ class Operations:
         """
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
 
-        # The schema is retrieved using an empty record batch since using a pointer to the schema causes an
-        # ArrowInvalid error.
-        schema_batch_ffi = FFIArray.from_type(RecordBatch)
+        schema_ptr = ffi.new("struct ArrowSchema*")
+        schema_ptr_int = int(ffi.cast("uintptr_t", schema_ptr))
 
         return_code = self.__library.modelardb_embedded_schema(
             self.__operations_ptr,
             self.__is_data_folder,
             table_name_ptr,
-            schema_batch_ffi.array_ptr,
-            schema_batch_ffi.schema_ptr,
+            schema_ptr,
         )
         self.__check_return_code_and_raise_error(return_code)
 
-        schema_batch: RecordBatch = schema_batch_ffi.array()
-        return schema_batch.schema
+        return Schema._import_from_c(schema_ptr_int)
 
     def write(self, table_name: str, uncompressed_batch: RecordBatch):
         """Writes the data in `uncompressed_batch` to the table with

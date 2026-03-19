@@ -445,27 +445,22 @@ unsafe fn tables(
 }
 
 /// Writes the [`Schema`] of the table with the name in `table_name_ptr` in the [`DataFolder`] or
-/// [`Client`] in `maybe_operations_ptr` to `schema_struct_array_ptr` and
-/// `schema_struct_array_schema_ptr`. Assumes `maybe_operations_ptr` points to a [`DataFolder`] or
-/// [`Client`]; table_name_ptr` points to a valid C string; schema_struct_array_ptr` is a valid
-/// pointer to enough memory for an Apache Arrow C Data Interface Array; and
-/// `schema_struct_array_schema_ptr` is a valid pointer to enough memory for an Apache Arrow C Data
-/// Interface Schema.
+/// [`Client`] in `maybe_operations_ptr` to `schema_ptr`. Assumes `maybe_operations_ptr` points to
+/// a [`DataFolder`] or [`Client`]; `table_name_ptr` points to a valid C string; and `schema_ptr`
+/// is a valid pointer to enough memory for an Apache Arrow C Data Interface Schema.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_schema(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
-    schema_struct_array_ptr: *mut FFI_ArrowArray,
-    schema_struct_array_schema_ptr: *mut FFI_ArrowSchema,
+    schema_ptr: *mut FFI_ArrowSchema,
 ) -> c_int {
     let maybe_unit = unsafe {
         schema(
             maybe_operations_ptr,
             is_data_folder,
             table_name_ptr,
-            schema_struct_array_ptr,
-            schema_struct_array_schema_ptr,
+            schema_ptr,
         )
     };
     set_error_and_return_code(maybe_unit)
@@ -476,24 +471,17 @@ unsafe fn schema(
     maybe_operations_ptr: *mut c_void,
     is_data_folder: bool,
     table_name_ptr: *const c_char,
-    schema_struct_array_ptr: *mut FFI_ArrowArray,
-    schema_struct_array_schema_ptr: *mut FFI_ArrowSchema,
+    schema_ptr: *mut FFI_ArrowSchema,
 ) -> Result<()> {
     let modelardb = unsafe { c_void_to_operations(maybe_operations_ptr, is_data_folder)? };
     let table_name = unsafe { c_char_ptr_to_str(table_name_ptr)? };
 
     let schema = TOKIO_RUNTIME.block_on(modelardb.schema(table_name))?;
-    let schema_batch = RecordBatch::new_empty(Arc::new(schema));
 
-    // The schema is returned using an empty record batch since using a pointer to the schema
-    // causes an ArrowInvalid error.
-    unsafe {
-        record_batch_to_pointers(
-            schema_batch,
-            schema_struct_array_ptr,
-            schema_struct_array_schema_ptr,
-        )
-    }
+    let ffi_schema = FFI_ArrowSchema::try_from(&schema)?;
+    unsafe { schema_ptr.write(ffi_schema) };
+
+    Ok(())
 }
 
 /// Writes the data in `uncompressed_struct_array_ptr` and `uncompressed_struct_array_schema_ptr`
