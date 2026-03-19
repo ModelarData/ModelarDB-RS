@@ -299,6 +299,43 @@ impl DataFolder {
         Ok(())
     }
 
+    /// Create a Delta Lake table for a metadata table with `table_name` and `schema` and register
+    /// it in the [`SessionContext`] in the `metadata` schema. If the table already exists, it is
+    /// reused. Return [`ModelarDbStorageError`] if the table cannot be created or cannot be
+    /// registered.
+    async fn create_and_register_metadata_table(
+        &self,
+        table_name: &str,
+        schema: &Schema,
+    ) -> Result<()> {
+        let delta_table = self
+            .create_delta_lake_table(
+                table_name,
+                schema,
+                &[],
+                self.location_of_metadata_table(table_name),
+                SaveMode::Ignore,
+            )
+            .await?;
+
+        let table_reference = TableReference::partial("metadata", table_name);
+        let metadata_table = Arc::new(NormalTable::new(delta_table, None));
+        self.session_context
+            .register_table(table_reference, metadata_table)?;
+
+        Ok(())
+    }
+
+    /// Return the session context used to query the tables using Apache DataFusion.
+    pub fn session_context(&self) -> &SessionContext {
+        &self.session_context
+    }
+
+    /// Return an [`ObjectStore`] to access the root of the Delta Lake.
+    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
+        self.object_store.clone()
+    }
+
     /// Register all normal tables and time series tables in `self` with its [`SessionContext`].
     /// `data_sink` is set as the [`DataSink`] for all of the tables. If the tables could not be
     /// registered, [`ModelarDbStorageError`] is returned.
@@ -328,175 +365,6 @@ impl DataFolder {
         }
 
         Ok(())
-    }
-
-    /// Return the session context used to query the tables using Apache DataFusion.
-    pub fn session_context(&self) -> &SessionContext {
-        &self.session_context
-    }
-
-    /// Return an [`ObjectStore`] to access the root of the Delta Lake.
-    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
-        self.object_store.clone()
-    }
-
-    /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
-    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
-    /// established or the table does not exist.
-    async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
-        let table_path = self.location_of_metadata_table(table_name);
-        self.delta_table_from_path(&table_path).await
-    }
-
-    /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
-    /// table does not exist.
-    pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
-        let table_path = self.location_of_table(table_name);
-        self.delta_table_from_path(&table_path).await
-    }
-
-    /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
-    /// table does not exist.
-    async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
-        // Use the cache if possible and load to get the latest table data.
-        if let Some(mut delta_table) = self.delta_table_cache.get_mut(table_path) {
-            delta_table.load().await?;
-            Ok(delta_table.clone())
-        } else {
-            // If the table is not in the cache, open it and add it to the cache before returning.
-            let table_url = deltalake::ensure_table_uri(table_path)?;
-            let delta_table =
-                deltalake::open_table_with_storage_options(table_url, self.storage_options.clone())
-                    .await?;
-
-            self.delta_table_cache
-                .insert(table_path.to_owned(), delta_table.clone());
-
-            Ok(delta_table)
-        }
-    }
-
-    /// Return `true` if the table with `table_name` is a normal table, otherwise return `false`.
-    pub async fn is_normal_table(&self, table_name: &str) -> Result<bool> {
-        Ok(self
-            .normal_table_names()
-            .await?
-            .contains(&table_name.to_owned()))
-    }
-
-    /// Return `true` if the table with `table_name` is a time series table, otherwise return `false`.
-    pub async fn is_time_series_table(&self, table_name: &str) -> Result<bool> {
-        Ok(self
-            .time_series_table_names()
-            .await?
-            .contains(&table_name.to_owned()))
-    }
-
-    /// Return the name of each table currently in the Delta Lake. If the table names cannot be
-    /// retrieved, [`ModelarDbStorageError`] is returned.
-    pub async fn table_names(&self) -> Result<Vec<String>> {
-        let normal_table_names = self.normal_table_names().await?;
-        let time_series_table_names = self.time_series_table_names().await?;
-
-        let mut table_names = normal_table_names;
-        table_names.extend(time_series_table_names);
-
-        Ok(table_names)
-    }
-
-    /// Return the name of each normal table currently in the Delta Lake. Note that this does not
-    /// include time series tables. If the normal table names cannot be retrieved,
-    /// [`ModelarDbStorageError`] is returned.
-    pub async fn normal_table_names(&self) -> Result<Vec<String>> {
-        self.table_names_of_type(TableType::NormalTable).await
-    }
-
-    /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
-    /// table does not exist or the table is not a normal table, return [`None`].
-    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Arc<Schema>> {
-        if self
-            .is_normal_table(table_name)
-            .await
-            .is_ok_and(|is_normal_table| is_normal_table)
-        {
-            let schema = self
-                .delta_table(table_name)
-                .await
-                .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
-                .schema();
-
-            Some(schema)
-        } else {
-            None
-        }
-    }
-
-    /// Return the name of each time series table currently in the Delta Lake. Note that this does
-    /// not include normal tables. If the time series table names cannot be retrieved,
-    /// [`ModelarDbStorageError`] is returned.
-    pub async fn time_series_table_names(&self) -> Result<Vec<String>> {
-        self.table_names_of_type(TableType::TimeSeriesTable).await
-    }
-
-    /// Return the name of tables of `table_type`. Returns [`ModelarDbStorageError`] if the table
-    /// names cannot be retrieved.
-    async fn table_names_of_type(&self, table_type: TableType) -> Result<Vec<String>> {
-        let table_type = match table_type {
-            TableType::NormalTable => "normal_table",
-            TableType::TimeSeriesTable => "time_series_table",
-        };
-
-        let sql = format!("SELECT table_name FROM metadata.{table_type}_metadata");
-        let batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let table_names = modelardb_types::array!(batch, 0, StringArray);
-        Ok(table_names.iter().flatten().map(str::to_owned).collect())
-    }
-
-    /// Return a [`DeltaTableWriter`] for writing to the table with `table_name` in the Delta Lake,
-    /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
-    /// the table does not exist.
-    pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
-        let delta_table = self.delta_table(table_name).await?;
-        if self.is_time_series_table(table_name).await? {
-            DeltaTableWriter::try_new_for_time_series_table(delta_table)
-        } else {
-            DeltaTableWriter::try_new_for_normal_table(delta_table)
-        }
-    }
-
-    /// Create a Delta Lake table for a metadata table with `table_name` and `schema` and register
-    /// it in the [`SessionContext`] in the `metadata` schema. If the table already exists, it is
-    /// reused. Return [`ModelarDbStorageError`] if the table cannot be created or cannot be
-    /// registered.
-    async fn create_and_register_metadata_table(
-        &self,
-        table_name: &str,
-        schema: &Schema,
-    ) -> Result<()> {
-        let delta_table = self
-            .create_delta_lake_table(
-                table_name,
-                schema,
-                &[],
-                self.location_of_metadata_table(table_name),
-                SaveMode::Ignore,
-            )
-            .await?;
-
-        let table_reference = TableReference::partial("metadata", table_name);
-        let metadata_table = Arc::new(NormalTable::new(delta_table, None));
-        self.session_context
-            .register_table(table_reference, metadata_table)?;
-
-        Ok(())
-    }
-
-    /// Return the location of the metadata table with `table_name`.
-    fn location_of_metadata_table(&self, table_name: &str) -> String {
-        format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
     }
 
     /// Create a Delta Lake table for a normal table with `table_name` and `schema` and save the
@@ -558,11 +426,6 @@ impl DataFolder {
             .await?;
 
         Ok(delta_table)
-    }
-
-    /// Return the location of the table with `table_name`.
-    fn location_of_table(&self, table_name: &str) -> String {
-        format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
 
     /// Save the created time series table to the Delta Lake. This includes adding a row to the
@@ -796,6 +659,33 @@ impl DataFolder {
         Ok(())
     }
 
+    /// Return a [`DeltaTableWriter`] for writing to the table with `table_name` in the Delta Lake,
+    /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
+    /// the table does not exist.
+    pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
+        let delta_table = self.delta_table(table_name).await?;
+        if self.is_time_series_table(table_name).await? {
+            DeltaTableWriter::try_new_for_time_series_table(delta_table)
+        } else {
+            DeltaTableWriter::try_new_for_normal_table(delta_table)
+        }
+    }
+
+    /// Write `record_batches` to the table with `table_name` in the Delta Lake. The correct
+    /// writer is selected automatically based on the table type. Returns an updated [`DeltaTable`]
+    /// if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
+    pub async fn write_record_batches(
+        &self,
+        table_name: &str,
+        record_batches: Vec<RecordBatch>,
+    ) -> Result<DeltaTable> {
+        let delta_table_writer = self.table_writer(table_name).await?;
+
+        delta_table_writer
+            .write_all_and_commit(&record_batches)
+            .await
+    }
+
     /// Write `columns` to a Delta Lake table with `table_name`. Returns an updated [`DeltaTable`]
     /// version if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
     async fn write_columns_to_metadata_table(
@@ -812,19 +702,129 @@ impl DataFolder {
             .await
     }
 
-    /// Write `record_batches` to the table with `table_name` in the Delta Lake. The correct
-    /// writer is selected automatically based on the table type. Returns an updated [`DeltaTable`]
-    /// if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
-    pub async fn write_record_batches(
-        &self,
-        table_name: &str,
-        record_batches: Vec<RecordBatch>,
-    ) -> Result<DeltaTable> {
-        let delta_table_writer = self.table_writer(table_name).await?;
+    /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
+    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
+    /// established or the table does not exist.
+    async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
+        let table_path = self.location_of_metadata_table(table_name);
+        self.delta_table_from_path(&table_path).await
+    }
 
-        delta_table_writer
-            .write_all_and_commit(&record_batches)
+    /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
+    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
+    /// table does not exist.
+    pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
+        let table_path = self.location_of_table(table_name);
+        self.delta_table_from_path(&table_path).await
+    }
+
+    /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
+    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
+    /// table does not exist.
+    async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
+        // Use the cache if possible and load to get the latest table data.
+        if let Some(mut delta_table) = self.delta_table_cache.get_mut(table_path) {
+            delta_table.load().await?;
+            Ok(delta_table.clone())
+        } else {
+            // If the table is not in the cache, open it and add it to the cache before returning.
+            let table_url = deltalake::ensure_table_uri(table_path)?;
+            let delta_table =
+                deltalake::open_table_with_storage_options(table_url, self.storage_options.clone())
+                    .await?;
+
+            self.delta_table_cache
+                .insert(table_path.to_owned(), delta_table.clone());
+
+            Ok(delta_table)
+        }
+    }
+
+    /// Return `true` if the table with `table_name` is a normal table, otherwise return `false`.
+    pub async fn is_normal_table(&self, table_name: &str) -> Result<bool> {
+        Ok(self
+            .normal_table_names()
+            .await?
+            .contains(&table_name.to_owned()))
+    }
+
+    /// Return `true` if the table with `table_name` is a time series table, otherwise return `false`.
+    pub async fn is_time_series_table(&self, table_name: &str) -> Result<bool> {
+        Ok(self
+            .time_series_table_names()
+            .await?
+            .contains(&table_name.to_owned()))
+    }
+
+    /// Return the name of each table currently in the Delta Lake. If the table names cannot be
+    /// retrieved, [`ModelarDbStorageError`] is returned.
+    pub async fn table_names(&self) -> Result<Vec<String>> {
+        let normal_table_names = self.normal_table_names().await?;
+        let time_series_table_names = self.time_series_table_names().await?;
+
+        let mut table_names = normal_table_names;
+        table_names.extend(time_series_table_names);
+
+        Ok(table_names)
+    }
+
+    /// Return the name of each normal table currently in the Delta Lake. Note that this does not
+    /// include time series tables. If the normal table names cannot be retrieved,
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn normal_table_names(&self) -> Result<Vec<String>> {
+        self.table_names_of_type(TableType::NormalTable).await
+    }
+
+    /// Return the name of each time series table currently in the Delta Lake. Note that this does
+    /// not include normal tables. If the time series table names cannot be retrieved,
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn time_series_table_names(&self) -> Result<Vec<String>> {
+        self.table_names_of_type(TableType::TimeSeriesTable).await
+    }
+
+    /// Return the name of tables of `table_type`. Returns [`ModelarDbStorageError`] if the table
+    /// names cannot be retrieved.
+    async fn table_names_of_type(&self, table_type: TableType) -> Result<Vec<String>> {
+        let table_type = match table_type {
+            TableType::NormalTable => "normal_table",
+            TableType::TimeSeriesTable => "time_series_table",
+        };
+
+        let sql = format!("SELECT table_name FROM metadata.{table_type}_metadata");
+        let batch = sql_and_concat(&self.session_context, &sql).await?;
+
+        let table_names = modelardb_types::array!(batch, 0, StringArray);
+        Ok(table_names.iter().flatten().map(str::to_owned).collect())
+    }
+
+    /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
+    /// table does not exist or the table is not a normal table, return [`None`].
+    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Arc<Schema>> {
+        if self
+            .is_normal_table(table_name)
             .await
+            .is_ok_and(|is_normal_table| is_normal_table)
+        {
+            let schema = self
+                .delta_table(table_name)
+                .await
+                .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
+                .schema();
+
+            Some(schema)
+        } else {
+            None
+        }
+    }
+
+    /// Return the location of the metadata table with `table_name`.
+    fn location_of_metadata_table(&self, table_name: &str) -> String {
+        format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
+    }
+
+    /// Return the location of the table with `table_name`.
+    fn location_of_table(&self, table_name: &str) -> String {
+        format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
 
     /// Return the [`TimeSeriesTableMetadata`] of each time series table currently in the metadata
