@@ -62,7 +62,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::query::metadata_table::MetadataTable;
+use crate::query::normal_table::NormalTable;
 use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties, sql_and_concat};
 
 /// Types of tables supported by ModelarDB.
@@ -553,7 +553,7 @@ impl DataFolder {
             .await?;
 
         let table_reference = TableReference::partial("metadata", table_name);
-        let metadata_table = Arc::new(MetadataTable::new(delta_table));
+        let metadata_table = Arc::new(NormalTable::new(delta_table, None));
         self.session_context
             .register_table(table_reference, metadata_table)?;
 
