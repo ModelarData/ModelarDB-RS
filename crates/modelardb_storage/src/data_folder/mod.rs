@@ -806,7 +806,9 @@ impl DataFolder {
         let delta_table = self.metadata_delta_table(table_name).await?;
         let record_batch = RecordBatch::try_new(TableProvider::schema(&delta_table), columns)?;
         let delta_table_writer = DeltaTableWriter::try_new_for_normal_table(delta_table)?;
-        self.write_record_batches_to_table(delta_table_writer, vec![record_batch])
+
+        delta_table_writer
+            .write_all_and_commit(&[record_batch])
             .await
     }
 
@@ -819,25 +821,10 @@ impl DataFolder {
         record_batches: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
         let delta_table_writer = self.table_writer(table_name).await?;
-        self.write_record_batches_to_table(delta_table_writer, record_batches)
-            .await
-    }
 
-    /// Write `record_batches` to the `delta_table_writer` and commit. Returns an updated
-    /// [`DeltaTable`] if all `record_batches` are written and committed successfully, otherwise it
-    /// rolls back all writes done using `delta_table_writer` and returns [`ModelarDbStorageError`].
-    async fn write_record_batches_to_table(
-        &self,
-        mut delta_table_writer: DeltaTableWriter,
-        record_batches: Vec<RecordBatch>,
-    ) -> Result<DeltaTable> {
-        match delta_table_writer.write_all(&record_batches).await {
-            Ok(_) => delta_table_writer.commit().await,
-            Err(error) => {
-                delta_table_writer.rollback().await?;
-                Err(error)
-            }
-        }
+        delta_table_writer
+            .write_all_and_commit(&record_batches)
+            .await
     }
 
     /// Return the [`TimeSeriesTableMetadata`] of each time series table currently in the metadata

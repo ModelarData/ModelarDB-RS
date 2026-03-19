@@ -162,6 +162,22 @@ impl DeltaTableWriter {
         Ok(())
     }
 
+    /// Write all `record_batches` and commit. If writing fails, roll back all writes and return
+    /// [`ModelarDbStorageError`]. Returns the updated [`DeltaTable`] if all `record_batches` are
+    /// written and committed successfully.
+    pub async fn write_all_and_commit(
+        mut self,
+        record_batches: &[RecordBatch],
+    ) -> Result<DeltaTable> {
+        match self.write_all(record_batches).await {
+            Ok(_) => self.commit().await,
+            Err(error) => {
+                self.rollback().await?;
+                Err(error)
+            }
+        }
+    }
+
     /// Consume the [`DeltaTableWriter`], finish the writing, and commit the files that have been
     /// written to the log. If an error occurs before the commit is finished, the already written
     /// files are deleted if possible. Returns a [`ModelarDbStorageError`] if an error occurs when
