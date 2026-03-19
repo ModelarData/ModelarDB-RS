@@ -39,12 +39,11 @@ use datafusion_proto::bytes::Serializeable;
 use delta_kernel::engine::arrow_conversion::TryIntoKernel;
 use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
-use deltalake::parquet::file::metadata::SortingColumn;
 use deltalake::protocol::SaveMode;
 use deltalake::{DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
+use modelardb_types::schemas::FIELD_COLUMN;
 use modelardb_types::types::{
     ArrowValue, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
     TimeSeriesTableMetadata,
@@ -59,7 +58,7 @@ use url::Url;
 use crate::data_folder::delta_table_writer::DeltaTableWriter;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::query::normal_table::NormalTable;
-use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties, sql_and_concat};
+use crate::{METADATA_FOLDER, TABLE_FOLDER, sql_and_concat};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -462,50 +461,10 @@ impl DataFolder {
     pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
         let delta_table = self.delta_table(table_name).await?;
         if self.is_time_series_table(table_name).await? {
-            self.time_series_table_writer(delta_table).await
+            DeltaTableWriter::try_new_for_time_series_table(delta_table)
         } else {
-            self.normal_table_writer(delta_table).await
+            DeltaTableWriter::try_new_for_normal_table(delta_table)
         }
-    }
-
-    /// Return a [`DeltaTableWriter`] for writing to the time series table corresponding to
-    /// `delta_table` in the Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta
-    /// Lake cannot be established or the table does not exist.
-    async fn time_series_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
-        let partition_columns = vec![FIELD_COLUMN.to_owned()];
-
-        // Specify that the file must be sorted by the tag columns and then by start_time.
-        let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
-        let compressed_schema_len = TableProvider::schema(&delta_table).fields().len();
-        let sorting_columns_len = (compressed_schema_len - base_compressed_schema_len) + 1;
-        let mut sorting_columns = Vec::with_capacity(sorting_columns_len);
-
-        // Compressed segments have the tag columns at the end of the schema.
-        for tag_column_index in base_compressed_schema_len..compressed_schema_len {
-            sorting_columns.push(SortingColumn {
-                column_idx: tag_column_index as i32,
-                descending: false,
-                nulls_first: false,
-            });
-        }
-
-        // Compressed segments store the first timestamp in the second column.
-        sorting_columns.push(SortingColumn {
-            column_idx: 1,
-            descending: false,
-            nulls_first: false,
-        });
-
-        let writer_properties = apache_parquet_writer_properties(Some(sorting_columns));
-        DeltaTableWriter::try_new(delta_table, partition_columns, writer_properties)
-    }
-
-    /// Return a [`DeltaTableWriter`] for writing to the normal table corresponding to `delta_table`
-    /// in the Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot
-    /// be established or the table does not exist.
-    async fn normal_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
-        let writer_properties = apache_parquet_writer_properties(None);
-        DeltaTableWriter::try_new(delta_table, vec![], writer_properties)
     }
 
     /// Create a Delta Lake table for a metadata table with `table_name` and `schema` and register
@@ -846,7 +805,7 @@ impl DataFolder {
     ) -> Result<DeltaTable> {
         let delta_table = self.metadata_delta_table(table_name).await?;
         let record_batch = RecordBatch::try_new(TableProvider::schema(&delta_table), columns)?;
-        let delta_table_writer = self.normal_table_writer(delta_table).await?;
+        let delta_table_writer = DeltaTableWriter::try_new_for_normal_table(delta_table)?;
         self.write_record_batches_to_table(delta_table_writer, vec![record_batch])
             .await
     }

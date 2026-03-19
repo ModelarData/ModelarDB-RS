@@ -22,6 +22,7 @@ use std::sync::Arc;
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 use datafusion::catalog::TableProvider;
+use datafusion::parquet::file::metadata::SortingColumn;
 use datafusion::parquet::file::properties::WriterProperties;
 use delta_kernel::table_properties::DataSkippingNumIndexedCols;
 use deltalake::DeltaTable;
@@ -30,10 +31,12 @@ use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add};
 use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
 use deltalake::protocol::{DeltaOperation, SaveMode};
+use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use object_store::ObjectStore;
 use object_store::path::Path;
 use uuid::Uuid;
 
+use crate::apache_parquet_writer_properties;
 use crate::error::{ModelarDbStorageError, Result};
 
 /// Functionality for transactionally writing [`RecordBatches`](RecordBatch) to a Delta table stored
@@ -52,6 +55,42 @@ pub struct DeltaTableWriter {
 }
 
 impl DeltaTableWriter {
+    /// Create a [`DeltaTableWriter`] configured for writing to a normal table.
+    pub(crate) fn try_new_for_normal_table(delta_table: DeltaTable) -> Result<Self> {
+        let writer_properties = apache_parquet_writer_properties(None);
+        Self::try_new(delta_table, vec![], writer_properties)
+    }
+
+    /// Create a [`DeltaTableWriter`] configured for writing to a time series table.
+    pub(crate) fn try_new_for_time_series_table(delta_table: DeltaTable) -> Result<Self> {
+        let partition_columns = vec![FIELD_COLUMN.to_owned()];
+
+        // Specify that the file must be sorted by the tag columns and then by start_time.
+        let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
+        let compressed_schema_len = TableProvider::schema(&delta_table).fields().len();
+        let sorting_columns_len = (compressed_schema_len - base_compressed_schema_len) + 1;
+        let mut sorting_columns = Vec::with_capacity(sorting_columns_len);
+
+        // Compressed segments have the tag columns at the end of the schema.
+        for tag_column_index in base_compressed_schema_len..compressed_schema_len {
+            sorting_columns.push(SortingColumn {
+                column_idx: tag_column_index as i32,
+                descending: false,
+                nulls_first: false,
+            });
+        }
+
+        // Compressed segments store the first timestamp in the second column.
+        sorting_columns.push(SortingColumn {
+            column_idx: 1,
+            descending: false,
+            nulls_first: false,
+        });
+
+        let writer_properties = apache_parquet_writer_properties(Some(sorting_columns));
+        Self::try_new(delta_table, partition_columns, writer_properties)
+    }
+
     /// Create a new [`DeltaTableWriter`]. Returns a [`ModelarDbStorageError`] if the state of the
     /// Delta table cannot be loaded from `delta_table`.
     pub fn try_new(
