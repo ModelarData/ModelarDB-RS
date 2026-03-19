@@ -362,7 +362,7 @@ impl DataFolder {
     /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
     /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
     /// established or the table does not exist.
-    pub async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
+    async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_metadata_table(table_name);
         self.delta_table_from_path(&table_path).await
     }
@@ -537,7 +537,7 @@ impl DataFolder {
     /// it in the [`SessionContext`] in the `metadata` schema. If the table already exists, it is
     /// reused. Return [`ModelarDbStorageError`] if the table cannot be created or cannot be
     /// registered.
-    pub async fn create_and_register_metadata_table(
+    async fn create_and_register_metadata_table(
         &self,
         table_name: &str,
         schema: &Schema,
@@ -864,7 +864,7 @@ impl DataFolder {
 
     /// Write `columns` to a Delta Lake table with `table_name`. Returns an updated [`DeltaTable`]
     /// version if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
-    pub async fn write_columns_to_metadata_table(
+    async fn write_columns_to_metadata_table(
         &self,
         table_name: &str,
         columns: Vec<ArrayRef>,
