@@ -38,7 +38,8 @@ use deltalake::{ObjectStore, Path};
 use futures::stream::StreamExt;
 use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
 use modelardb_embedded::operations::Operations;
-use modelardb_storage::data_folder::{DataFolder, DeltaTableWriter};
+use modelardb_storage::data_folder::DataFolder;
+use modelardb_storage::data_folder::delta_table_writer::DeltaTableWriter;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use sysinfo::System;
 
