@@ -101,17 +101,12 @@ impl DataFolder {
 
     /// Create a new [`DataFolder`] that manages the Delta tables in memory.
     pub async fn open_memory() -> Result<Self> {
-        let data_folder = Self {
-            location: "memory:///modelardb".to_owned(),
-            storage_options: HashMap::new(),
-            object_store: Arc::new(InMemory::new()),
-            delta_table_cache: DashMap::new(),
-            session_context: Arc::new(crate::create_session_context()),
-        };
-
-        data_folder.create_and_register_metadata_tables().await?;
-
-        Ok(data_folder)
+        Self::try_new(
+            "memory:///modelardb".to_owned(),
+            HashMap::new(),
+            Arc::new(InMemory::new()),
+        )
+        .await
     }
 
     /// Create a new [`DataFolder`] that manages the Delta tables in `data_folder_path`. Returns a
@@ -132,17 +127,7 @@ impl DataFolder {
             .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8."))?
             .to_owned();
 
-        let data_folder = Self {
-            location,
-            storage_options: HashMap::new(),
-            object_store: Arc::new(object_store),
-            delta_table_cache: DashMap::new(),
-            session_context: Arc::new(crate::create_session_context()),
-        };
-
-        data_folder.create_and_register_metadata_tables().await?;
-
-        Ok(data_folder)
+        Self::try_new(location, HashMap::new(), Arc::new(object_store)).await
     }
 
     /// Create a new [`DataFolder`] that manages Delta tables in the remote object store given by
@@ -221,17 +206,7 @@ impl DataFolder {
             )
             .build()?;
 
-        let data_folder = DataFolder {
-            location,
-            storage_options,
-            object_store: Arc::new(object_store),
-            delta_table_cache: DashMap::new(),
-            session_context: Arc::new(crate::create_session_context()),
-        };
-
-        data_folder.create_and_register_metadata_tables().await?;
-
-        Ok(data_folder)
+        Self::try_new(location, storage_options, Arc::new(object_store)).await
     }
 
     /// Create a new [`DataFolder`] that manages the Delta tables in an object store with an
@@ -254,10 +229,21 @@ impl DataFolder {
             .map_err(|error| ModelarDbStorageError::InvalidArgument(error.to_string()))?;
         let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
 
-        let data_folder = DataFolder {
+        Self::try_new(location, storage_options, Arc::new(object_store)).await
+    }
+
+    /// Create a new [`DataFolder`] with the given `location`, `storage_options`, and `object_store`,
+    /// create the metadata tables, and return the [`DataFolder`]. Returns [`ModelarDbStorageError`]
+    /// if the metadata tables cannot be created.
+    async fn try_new(
+        location: String,
+        storage_options: HashMap<String, String>,
+        object_store: Arc<dyn ObjectStore>,
+    ) -> Result<Self> {
+        let data_folder = Self {
             location,
             storage_options,
-            object_store: Arc::new(object_store),
+            object_store,
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(crate::create_session_context()),
         };
@@ -517,10 +503,7 @@ impl DataFolder {
     /// Return a [`DeltaTableWriter`] for writing to the normal table corresponding to `delta_table`
     /// in the Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot
     /// be established or the table does not exist.
-    async fn normal_table_writer(
-        &self,
-        delta_table: DeltaTable,
-    ) -> Result<DeltaTableWriter> {
+    async fn normal_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
         let writer_properties = apache_parquet_writer_properties(None);
         DeltaTableWriter::try_new(delta_table, vec![], writer_properties)
     }
