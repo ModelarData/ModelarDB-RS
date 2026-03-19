@@ -244,19 +244,9 @@ impl DataTransfer {
         debug!("Transferring {current_size_in_bytes} bytes for the table '{table_name}'.",);
 
         // Write the data to the remote Delta Lake.
-        if self
-            .local_data_folder
-            .is_time_series_table(table_name)
-            .await?
-        {
-            self.remote_data_folder
-                .write_record_batches(table_name, record_batches)
-                .await?;
-        } else {
-            self.remote_data_folder
-                .write_record_batches(table_name, record_batches)
-                .await?;
-        }
+        self.remote_data_folder
+            .write_record_batches(table_name, record_batches)
+            .await?;
 
         // Delete the data that has been transferred to the remote Delta Lake.
         self.local_data_folder.truncate_table(table_name).await?;
