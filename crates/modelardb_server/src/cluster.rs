@@ -147,10 +147,6 @@ impl Cluster {
             .create_normal_table(table_name, schema)
             .await?;
 
-        self.remote_data_folder
-            .save_normal_table_metadata(table_name)
-            .await?;
-
         // Create the normal table in each peer node.
         let protobuf_bytes = modelardb_types::flight::encode_and_serialize_normal_table_metadata(
             table_name, schema,
@@ -178,10 +174,6 @@ impl Cluster {
             .create_time_series_table(time_series_table_metadata)
             .await?;
 
-        self.remote_data_folder
-            .save_time_series_table_metadata(time_series_table_metadata)
-            .await?;
-
         // Create the time series table in each peer node.
         let protobuf_bytes =
             modelardb_types::flight::encode_and_serialize_time_series_table_metadata(
@@ -203,10 +195,6 @@ impl Cluster {
     pub(crate) async fn drop_cluster_tables(&self, table_names: &[String]) -> Result<()> {
         // Drop the tables from the remote data folder.
         for table_name in table_names {
-            self.remote_data_folder
-                .drop_table_metadata(table_name)
-                .await?;
-
             self.remote_data_folder.drop_table(table_name).await?;
         }
 
@@ -663,11 +651,6 @@ mod test {
             .create_normal_table(table_name, &schema)
             .await
             .unwrap();
-
-        data_folder
-            .save_normal_table_metadata(table_name)
-            .await
-            .unwrap();
     }
 
     /// Create a time series table named `table_name` with a field column named `column_name` in
@@ -692,11 +675,6 @@ mod test {
 
         data_folder
             .create_time_series_table(&time_series_table_metadata)
-            .await
-            .unwrap();
-
-        data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
     }

@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 use crate::data_folder::DataFolder;
 use crate::error::Result;
-use crate::{register_metadata_table, sql_and_concat};
+use crate::sql_and_concat;
 
 /// Trait that extends [`DataFolder`] to provide management of the Delta Lake for the cluster.
 #[allow(async_fn_in_trait)]
@@ -51,27 +51,21 @@ impl ClusterMetadata for DataFolder {
     /// [`ModelarDbStorageError`](crate::error::ModelarDbStorageError).
     async fn create_and_register_cluster_metadata_tables(&self) -> Result<()> {
         // Create and register the cluster_metadata table if it does not exist.
-        let delta_table = self
-            .create_metadata_table(
-                "cluster_metadata",
-                &Schema::new(vec![Field::new("key", DataType::Utf8, false)]),
-            )
-            .await?;
-
-        register_metadata_table(self.session_context(), "cluster_metadata", delta_table)?;
+        self.create_and_register_metadata_table(
+            "cluster_metadata",
+            &Schema::new(vec![Field::new("key", DataType::Utf8, false)]),
+        )
+        .await?;
 
         // Create and register the nodes table if it does not exist.
-        let delta_table = self
-            .create_metadata_table(
-                "nodes",
-                &Schema::new(vec![
-                    Field::new("url", DataType::Utf8, false),
-                    Field::new("mode", DataType::Utf8, false),
-                ]),
-            )
-            .await?;
-
-        register_metadata_table(self.session_context(), "nodes", delta_table)?;
+        self.create_and_register_metadata_table(
+            "nodes",
+            &Schema::new(vec![
+                Field::new("url", DataType::Utf8, false),
+                Field::new("mode", DataType::Utf8, false),
+            ]),
+        )
+        .await?;
 
         Ok(())
     }

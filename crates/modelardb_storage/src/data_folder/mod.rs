@@ -30,7 +30,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use chrono::TimeDelta;
 use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
-use datafusion::common::{DFSchema, ToDFSchema};
+use datafusion::common::{DFSchema, TableReference, ToDFSchema};
 use datafusion::datasource::sink::DataSink;
 use datafusion::logical_expr::{Expr, lit};
 use datafusion::parquet::file::properties::WriterProperties;
@@ -62,10 +62,8 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::{
-    METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties, register_metadata_table,
-    sql_and_concat,
-};
+use crate::query::metadata_table::MetadataTable;
+use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties, sql_and_concat};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -285,54 +283,37 @@ impl DataFolder {
     /// [`ModelarDbStorageError`].
     async fn create_and_register_metadata_tables(&self) -> Result<()> {
         // Create and register the normal_table_metadata table if it does not exist.
-        let delta_table = self
-            .create_metadata_table(
-                "normal_table_metadata",
-                &Schema::new(vec![Field::new("table_name", DataType::Utf8, false)]),
-            )
-            .await?;
-
-        register_metadata_table(&self.session_context, "normal_table_metadata", delta_table)?;
+        self.create_and_register_metadata_table(
+            "normal_table_metadata",
+            &Schema::new(vec![Field::new("table_name", DataType::Utf8, false)]),
+        )
+        .await?;
 
         // Create and register the time_series_table_metadata table if it does not exist.
-        let delta_table = self
-            .create_metadata_table(
-                "time_series_table_metadata",
-                &Schema::new(vec![
-                    Field::new("table_name", DataType::Utf8, false),
-                    Field::new("query_schema", DataType::Binary, false),
-                ]),
-            )
-            .await?;
-
-        register_metadata_table(
-            &self.session_context,
+        self.create_and_register_metadata_table(
             "time_series_table_metadata",
-            delta_table,
-        )?;
+            &Schema::new(vec![
+                Field::new("table_name", DataType::Utf8, false),
+                Field::new("query_schema", DataType::Binary, false),
+            ]),
+        )
+        .await?;
 
         // Create and register the time_series_table_field_columns table if it does not exist. Note
         // that column_index will only use a maximum of 10 bits. generated_column_expr is NULL if
         // the fields are stored as segments.
-        let delta_table = self
-            .create_metadata_table(
-                "time_series_table_field_columns",
-                &Schema::new(vec![
-                    Field::new("table_name", DataType::Utf8, false),
-                    Field::new("column_name", DataType::Utf8, false),
-                    Field::new("column_index", DataType::Int16, false),
-                    Field::new("error_bound_value", DataType::Float32, false),
-                    Field::new("error_bound_is_relative", DataType::Boolean, false),
-                    Field::new("generated_column_expr", DataType::Binary, true),
-                ]),
-            )
-            .await?;
-
-        register_metadata_table(
-            &self.session_context,
+        self.create_and_register_metadata_table(
             "time_series_table_field_columns",
-            delta_table,
-        )?;
+            &Schema::new(vec![
+                Field::new("table_name", DataType::Utf8, false),
+                Field::new("column_name", DataType::Utf8, false),
+                Field::new("column_index", DataType::Int16, false),
+                Field::new("error_bound_value", DataType::Float32, false),
+                Field::new("error_bound_is_relative", DataType::Boolean, false),
+                Field::new("generated_column_expr", DataType::Binary, true),
+            ]),
+        )
+        .await?;
 
         Ok(())
     }
@@ -512,10 +493,7 @@ impl DataFolder {
     /// Return a [`DeltaTableWriter`] for writing to the time series table corresponding to
     /// `delta_table` in the Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta
     /// Lake cannot be established or the table does not exist.
-    pub async fn time_series_table_writer(
-        &self,
-        delta_table: DeltaTable,
-    ) -> Result<DeltaTableWriter> {
+    async fn time_series_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
 
         // Specify that the file must be sorted by the tag columns and then by start_time.
@@ -547,7 +525,7 @@ impl DataFolder {
     /// Return a [`DeltaTableWriter`] for writing to the table corresponding to `delta_table` in the
     /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
     /// established or the table does not exist.
-    pub async fn normal_or_metadata_table_writer(
+    async fn normal_or_metadata_table_writer(
         &self,
         delta_table: DeltaTable,
     ) -> Result<DeltaTableWriter> {
@@ -555,22 +533,31 @@ impl DataFolder {
         DeltaTableWriter::try_new(delta_table, vec![], writer_properties)
     }
 
-    /// Create a Delta Lake table for a metadata table with `table_name` and `schema` if it does not
-    /// already exist. If the metadata table could not be created, [`ModelarDbStorageError`] is
-    /// returned. An error is not returned if the metadata table already exists.
-    pub async fn create_metadata_table(
+    /// Create a Delta Lake table for a metadata table with `table_name` and `schema` and register
+    /// it in the [`SessionContext`] in the `metadata` schema. If the table already exists, it is
+    /// reused. Return [`ModelarDbStorageError`] if the table cannot be created or cannot be
+    /// registered.
+    pub async fn create_and_register_metadata_table(
         &self,
         table_name: &str,
         schema: &Schema,
-    ) -> Result<DeltaTable> {
-        self.create_table(
-            table_name,
-            schema,
-            &[],
-            self.location_of_metadata_table(table_name),
-            SaveMode::Ignore,
-        )
-        .await
+    ) -> Result<()> {
+        let delta_table = self
+            .create_delta_lake_table(
+                table_name,
+                schema,
+                &[],
+                self.location_of_metadata_table(table_name),
+                SaveMode::Ignore,
+            )
+            .await?;
+
+        let table_reference = TableReference::partial("metadata", table_name);
+        let metadata_table = Arc::new(MetadataTable::new(delta_table));
+        self.session_context
+            .register_table(table_reference, metadata_table)?;
+
+        Ok(())
     }
 
     /// Return the location of the metadata table with `table_name`.
@@ -578,176 +565,34 @@ impl DataFolder {
         format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
     }
 
-    /// Create a Delta Lake table for a normal table with `table_name` and `schema` if it does not
-    /// already exist. If the normal table could not be created, e.g., because it already exists,
-    /// [`ModelarDbStorageError`] is returned.
+    /// Create a Delta Lake table for a normal table with `table_name` and `schema` and save the
+    /// table metadata to the `normal_table_metadata` table. If the table already exists or
+    /// the metadata could not be saved, return [`ModelarDbStorageError`], otherwise return
+    /// the created [`DeltaTable`].
     pub async fn create_normal_table(
         &self,
         table_name: &str,
         schema: &Schema,
     ) -> Result<DeltaTable> {
-        self.create_table(
-            table_name,
-            schema,
-            &[],
-            self.location_of_table(table_name),
-            SaveMode::ErrorIfExists,
-        )
-        .await
-    }
-
-    /// Create a Delta Lake table for a time series table with `time_series_table_metadata` if it
-    /// does not already exist. Returns [`DeltaTable`] if the table could be created and
-    /// [`ModelarDbStorageError`] if it could not.
-    pub async fn create_time_series_table(
-        &self,
-        time_series_table_metadata: &TimeSeriesTableMetadata,
-    ) -> Result<DeltaTable> {
-        self.create_table(
-            &time_series_table_metadata.name,
-            &time_series_table_metadata.compressed_schema,
-            &[FIELD_COLUMN.to_owned()],
-            self.location_of_table(&time_series_table_metadata.name),
-            SaveMode::ErrorIfExists,
-        )
-        .await
-    }
-
-    /// Return the location of the table with `table_name`.
-    fn location_of_table(&self, table_name: &str) -> String {
-        format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
-    }
-
-    /// Create a Delta Lake table with `table_name`, `schema`, and `partition_columns` if it does
-    /// not already exist. Returns [`DeltaTable`] if the table could be created and
-    /// [`ModelarDbStorageError`] if it could not.
-    async fn create_table(
-        &self,
-        table_name: &str,
-        schema: &Schema,
-        partition_columns: &[String],
-        location: String,
-        save_mode: SaveMode,
-    ) -> Result<DeltaTable> {
-        let mut columns: Vec<StructField> = Vec::with_capacity(schema.fields().len());
-        for field in schema.fields() {
-            let field: &Field = field;
-
-            // Delta Lake does not support unsigned integers. Thus tables containing the Apache
-            // Arrow types UInt8, UInt16, UInt32, and UInt64 must currently be rejected.
-            match field.data_type() {
-                DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
-                    Err(DeltaTableError::SchemaMismatch {
-                        msg: "Unsigned integers are not supported.".to_owned(),
-                    })?
-                }
-                _ => {} // All possible cases must be handled.
-            }
-
-            let struct_field: StructField = field.try_into_kernel()?;
-            columns.push(struct_field);
-        }
-
-        let delta_table = CreateBuilder::new()
-            .with_storage_options(self.storage_options.clone())
-            .with_table_name(table_name)
-            .with_location(location.clone())
-            .with_columns(columns)
-            .with_partition_columns(partition_columns)
-            .with_save_mode(save_mode)
+        let delta_table = self
+            .create_delta_lake_table(
+                table_name,
+                schema,
+                &[],
+                self.location_of_table(table_name),
+                SaveMode::ErrorIfExists,
+            )
             .await?;
 
-        // If the table was created successfully, add it to the cache.
-        self.delta_table_cache.insert(location, delta_table.clone());
+        self.save_normal_table_metadata(table_name).await?;
 
         Ok(delta_table)
-    }
-
-    /// Drop the metadata table with `table_name` from the Delta Lake by deleting every file related
-    /// to the table. The table folder cannot be deleted directly since folders do not exist in
-    /// object stores and therefore cannot be operated upon. If the table was dropped successfully,
-    /// the paths to the deleted files are returned, otherwise a [`ModelarDbStorageError`] is
-    /// returned.
-    pub async fn drop_metadata_table(&self, table_name: &str) -> Result<Vec<Path>> {
-        let table_path = format!("{METADATA_FOLDER}/{table_name}");
-        self.delete_table_files(&table_path).await
-    }
-
-    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting every file
-    /// related to the table. The table folder cannot be deleted directly since folders do not exist
-    /// in object stores and therefore cannot be operated upon. If the table was dropped
-    /// successfully, the paths to the deleted files are returned, otherwise a
-    /// [`ModelarDbStorageError`] is returned.
-    pub async fn drop_table(&self, table_name: &str) -> Result<Vec<Path>> {
-        let table_path = format!("{TABLE_FOLDER}/{table_name}");
-        self.delete_table_files(&table_path).await
-    }
-
-    /// Delete all files in the folder at `table_path` using bulk operations if available. If the
-    /// files were deleted successfully, the paths to the deleted files are returned.
-    async fn delete_table_files(&self, table_path: &str) -> Result<Vec<Path>> {
-        let file_locations = self
-            .object_store
-            .list(Some(&Path::from(table_path)))
-            .map_ok(|object_meta| object_meta.location)
-            .boxed();
-
-        let deleted_paths = self
-            .object_store
-            .delete_stream(file_locations)
-            .try_collect::<Vec<Path>>()
-            .await?;
-
-        // Remove the table from the cache.
-        let delta_table_path = format!("{}/{}", self.location, table_path);
-        self.delta_table_cache.remove(&delta_table_path);
-
-        Ok(deleted_paths)
-    }
-
-    /// Truncate the Delta Lake table with `table_name` by deleting all rows in the table. If the
-    /// rows could not be deleted, a [`ModelarDbStorageError`] is returned.
-    pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
-        let delta_table = self.delta_table(table_name).await?;
-        delta_table.delete().await?;
-
-        Ok(())
-    }
-
-    /// Vacuum the Delta Lake table with `table_name` by deleting stale files that are older than
-    /// `maybe_retention_period_in_seconds` seconds. If a retention period is not given, the
-    /// default retention period of 7 days is used. If the retention period is larger than
-    /// [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds or the files could not be deleted, a
-    /// [`ModelarDbStorageError`] is returned.
-    pub async fn vacuum_table(
-        &self,
-        table_name: &str,
-        maybe_retention_period_in_seconds: Option<u64>,
-    ) -> Result<()> {
-        let delta_table = self.delta_table(table_name).await?;
-
-        let retention_period_in_seconds =
-            maybe_retention_period_in_seconds.unwrap_or(60 * 60 * 24 * 7);
-
-        let retention_period = TimeDelta::new(retention_period_in_seconds as i64, 0).ok_or(
-            ModelarDbStorageError::InvalidArgument(format!(
-                "Retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
-            )),
-        )?;
-
-        delta_table
-            .vacuum()
-            .with_retention_period(retention_period)
-            .with_enforce_retention_duration(false)
-            .await?;
-
-        Ok(())
     }
 
     /// Save the created normal table to the Delta Lake. This consists of adding a row to the
     /// `normal_table_metadata` table with the `name` of the table. If the normal table metadata was
     /// saved, return [`Ok`], otherwise return [`ModelarDbStorageError`].
-    pub async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
+    async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
         self.write_columns_to_metadata_table(
             "normal_table_metadata",
             vec![Arc::new(StringArray::from(vec![name]))],
@@ -757,10 +602,39 @@ impl DataFolder {
         Ok(())
     }
 
+    /// Create a Delta Lake table for a time series table with `time_series_table_metadata` and
+    /// save the table metadata to the `time_series_table_metadata` table. If the table already
+    /// exists or the metadata could not be saved, return [`ModelarDbStorageError`], otherwise
+    /// return the created [`DeltaTable`].
+    pub async fn create_time_series_table(
+        &self,
+        time_series_table_metadata: &TimeSeriesTableMetadata,
+    ) -> Result<DeltaTable> {
+        let delta_table = self
+            .create_delta_lake_table(
+                &time_series_table_metadata.name,
+                &time_series_table_metadata.compressed_schema,
+                &[FIELD_COLUMN.to_owned()],
+                self.location_of_table(&time_series_table_metadata.name),
+                SaveMode::ErrorIfExists,
+            )
+            .await?;
+
+        self.save_time_series_table_metadata(time_series_table_metadata)
+            .await?;
+
+        Ok(delta_table)
+    }
+
+    /// Return the location of the table with `table_name`.
+    fn location_of_table(&self, table_name: &str) -> String {
+        format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
+    }
+
     /// Save the created time series table to the Delta Lake. This includes adding a row to the
     /// `time_series_table_metadata` table and adding a row to the `time_series_table_field_columns`
     /// table for each field column.
-    pub async fn save_time_series_table_metadata(
+    async fn save_time_series_table_metadata(
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
@@ -836,6 +710,158 @@ impl DataFolder {
         Ok(())
     }
 
+    /// Create a Delta Lake table with `table_name`, `schema`, and `partition_columns` if it does
+    /// not already exist. Returns [`DeltaTable`] if the table could be created and
+    /// [`ModelarDbStorageError`] if it could not.
+    async fn create_delta_lake_table(
+        &self,
+        table_name: &str,
+        schema: &Schema,
+        partition_columns: &[String],
+        location: String,
+        save_mode: SaveMode,
+    ) -> Result<DeltaTable> {
+        let mut columns: Vec<StructField> = Vec::with_capacity(schema.fields().len());
+        for field in schema.fields() {
+            let field: &Field = field;
+
+            // Delta Lake does not support unsigned integers. Thus tables containing the Apache
+            // Arrow types UInt8, UInt16, UInt32, and UInt64 must currently be rejected.
+            match field.data_type() {
+                DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
+                    Err(DeltaTableError::SchemaMismatch {
+                        msg: "Unsigned integers are not supported.".to_owned(),
+                    })?
+                }
+                _ => {} // All possible cases must be handled.
+            }
+
+            let struct_field: StructField = field.try_into_kernel()?;
+            columns.push(struct_field);
+        }
+
+        let delta_table = CreateBuilder::new()
+            .with_storage_options(self.storage_options.clone())
+            .with_table_name(table_name)
+            .with_location(location.clone())
+            .with_columns(columns)
+            .with_partition_columns(partition_columns)
+            .with_save_mode(save_mode)
+            .await?;
+
+        // If the table was created successfully, add it to the cache.
+        self.delta_table_cache.insert(location, delta_table.clone());
+
+        Ok(delta_table)
+    }
+
+    /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting the table
+    /// metadata and deleting every file related to the table. The table folder cannot be deleted
+    /// directly since folders do not exist in object stores and therefore cannot be operated upon.
+    /// If the table was dropped successfully, the paths to the deleted files are returned,
+    /// otherwise a [`ModelarDbStorageError`] is returned.
+    pub async fn drop_table(&self, table_name: &str) -> Result<Vec<Path>> {
+        self.delete_table_metadata(table_name).await?;
+
+        let table_path = format!("{TABLE_FOLDER}/{table_name}");
+        self.delete_table_files(&table_path).await
+    }
+
+    /// Depending on the type of the table with `table_name`, delete either the normal table metadata
+    /// or the time series table metadata from the Delta Lake. If the table does not exist or the
+    /// metadata could not be deleted, [`ModelarDbStorageError`] is returned.
+    async fn delete_table_metadata(&self, table_name: &str) -> Result<()> {
+        if self.is_normal_table(table_name).await? {
+            let delta_table = self.metadata_delta_table("normal_table_metadata").await?;
+
+            delta_table
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
+        } else if self.is_time_series_table(table_name).await? {
+            // Delete the table metadata from the time_series_table_metadata table.
+            self.metadata_delta_table("time_series_table_metadata")
+                .await?
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
+
+            // Delete the column metadata from the time_series_table_field_columns table.
+            self.metadata_delta_table("time_series_table_field_columns")
+                .await?
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
+        } else {
+            return Err(ModelarDbStorageError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Delete all files in the folder at `table_path` using bulk operations if available. If the
+    /// files were deleted successfully, the paths to the deleted files are returned.
+    async fn delete_table_files(&self, table_path: &str) -> Result<Vec<Path>> {
+        let file_locations = self
+            .object_store
+            .list(Some(&Path::from(table_path)))
+            .map_ok(|object_meta| object_meta.location)
+            .boxed();
+
+        let deleted_paths = self
+            .object_store
+            .delete_stream(file_locations)
+            .try_collect::<Vec<Path>>()
+            .await?;
+
+        // Remove the table from the cache.
+        let delta_table_path = format!("{}/{}", self.location, table_path);
+        self.delta_table_cache.remove(&delta_table_path);
+
+        Ok(deleted_paths)
+    }
+
+    /// Truncate the Delta Lake table with `table_name` by deleting all rows in the table. If the
+    /// rows could not be deleted, a [`ModelarDbStorageError`] is returned.
+    pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
+        let delta_table = self.delta_table(table_name).await?;
+        delta_table.delete().await?;
+
+        Ok(())
+    }
+
+    /// Vacuum the Delta Lake table with `table_name` by deleting stale files that are older than
+    /// `maybe_retention_period_in_seconds` seconds. If a retention period is not given, the
+    /// default retention period of 7 days is used. If the retention period is larger than
+    /// [`MAX_RETENTION_PERIOD_IN_SECONDS`] seconds or the files could not be deleted, a
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn vacuum_table(
+        &self,
+        table_name: &str,
+        maybe_retention_period_in_seconds: Option<u64>,
+    ) -> Result<()> {
+        let delta_table = self.delta_table(table_name).await?;
+
+        let retention_period_in_seconds =
+            maybe_retention_period_in_seconds.unwrap_or(60 * 60 * 24 * 7);
+
+        let retention_period = TimeDelta::new(retention_period_in_seconds as i64, 0).ok_or(
+            ModelarDbStorageError::InvalidArgument(format!(
+                "Retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+            )),
+        )?;
+
+        delta_table
+            .vacuum()
+            .with_retention_period(retention_period)
+            .with_enforce_retention_duration(false)
+            .await?;
+
+        Ok(())
+    }
+
     /// Write `columns` to a Delta Lake table with `table_name`. Returns an updated [`DeltaTable`]
     /// version if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
     pub async fn write_columns_to_metadata_table(
@@ -893,57 +919,6 @@ impl DataFolder {
                 Err(error)
             }
         }
-    }
-
-    /// Depending on the type of the table with `table_name`, drop either the normal table metadata
-    /// or the time series table metadata from the Delta Lake. If the table does not exist or the
-    /// metadata could not be dropped, [`ModelarDbStorageError`] is returned.
-    pub async fn drop_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self.is_normal_table(table_name).await? {
-            self.drop_normal_table_metadata(table_name).await
-        } else if self.is_time_series_table(table_name).await? {
-            self.drop_time_series_table_metadata(table_name).await
-        } else {
-            Err(ModelarDbStorageError::InvalidArgument(format!(
-                "Table with name '{table_name}' does not exist."
-            )))
-        }
-    }
-
-    /// Drop the metadata for the normal table with `table_name` from the `normal_table_metadata`
-    /// table in the Delta Lake. If the metadata could not be dropped, [`ModelarDbStorageError`] is
-    /// returned.
-    async fn drop_normal_table_metadata(&self, table_name: &str) -> Result<()> {
-        let delta_table = self.metadata_delta_table("normal_table_metadata").await?;
-
-        delta_table
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
-
-        Ok(())
-    }
-
-    /// Drop the metadata for the time series table with `table_name` from the Delta Lake. This
-    /// includes deleting a row from the `time_series_table_metadata` table and deleting a row from
-    /// the `time_series_table_field_columns` table for each field column. If the metadata could not
-    /// be dropped, [`ModelarDbStorageError`] is returned.
-    async fn drop_time_series_table_metadata(&self, table_name: &str) -> Result<()> {
-        // Delete the table metadata from the time_series_table_metadata table.
-        self.metadata_delta_table("time_series_table_metadata")
-            .await?
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
-
-        // Delete the column metadata from the time_series_table_field_columns table.
-        self.metadata_delta_table("time_series_table_field_columns")
-            .await?
-            .delete()
-            .with_predicate(col("table_name").eq(lit(table_name)))
-            .await?;
-
-        Ok(())
     }
 
     /// Return the [`TimeSeriesTableMetadata`] of each time series table currently in the metadata
@@ -1320,13 +1295,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_normal_table_is_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
         assert!(data_folder.is_normal_table("normal_table_1").await.unwrap());
     }
 
     #[tokio::test]
     async fn test_time_series_table_is_not_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
             !data_folder
                 .is_normal_table(test::TIME_SERIES_TABLE_NAME)
@@ -1337,7 +1312,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_is_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
             data_folder
                 .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
@@ -1348,7 +1323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_normal_table_is_not_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
         assert!(
             !data_folder
                 .is_time_series_table("normal_table_1")
@@ -1359,11 +1334,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         let time_series_table_metadata = test::time_series_table_metadata();
         data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 
@@ -1380,7 +1355,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_normal_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         let normal_table_names = data_folder.normal_table_names().await.unwrap();
         assert_eq!(normal_table_names, vec!["normal_table_2", "normal_table_1"]);
@@ -1388,17 +1363,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_names = data_folder.time_series_table_names().await.unwrap();
         assert_eq!(time_series_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
     }
 
     #[tokio::test]
-    async fn test_save_normal_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+    async fn test_create_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        // Retrieve the normal table from the Delta Lake.
+        assert!(data_folder.delta_table("normal_table_1").await.is_ok());
+
+        // Retrieve the normal table metadata from the Delta Lake.
         let sql = "SELECT table_name FROM metadata.normal_table_metadata ORDER BY table_name";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
@@ -1411,8 +1388,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_time_series_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+    async fn test_create_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        assert!(
+            data_folder
+                .delta_table(test::TIME_SERIES_TABLE_NAME)
+                .await
+                .is_ok()
+        );
 
         // Check that a row has been added to the time_series_table_metadata table.
         let sql = "SELECT table_name, query_schema FROM metadata.time_series_table_metadata";
@@ -1460,13 +1444,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_normal_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+    async fn test_drop_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        data_folder
-            .drop_table_metadata("normal_table_2")
-            .await
-            .unwrap();
+        data_folder.drop_table("normal_table_2").await.unwrap();
+
+        assert!(data_folder.delta_table("normal_table_2").await.is_err());
 
         // Verify that normal_table_2 was deleted from the normal_table_metadata table.
         let sql = "SELECT table_name FROM metadata.normal_table_metadata";
@@ -1478,13 +1461,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_time_series_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+    async fn test_drop_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         data_folder
-            .drop_table_metadata(test::TIME_SERIES_TABLE_NAME)
+            .drop_table(test::TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
+
+        assert!(
+            data_folder
+                .delta_table(test::TIME_SERIES_TABLE_NAME)
+                .await
+                .is_err()
+        );
 
         // Verify that the time series table was deleted from the time_series_table_metadata table.
         let sql = "SELECT table_name FROM metadata.time_series_table_metadata";
@@ -1504,28 +1494,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_table_metadata_for_missing_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_normal_tables().await;
+    async fn test_drop_missing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        assert!(
-            data_folder
-                .drop_table_metadata("missing_table")
-                .await
-                .is_err()
-        );
+        assert!(data_folder.drop_table("missing_table").await.is_err());
     }
 
-    async fn create_data_folder_and_save_normal_tables() -> (TempDir, DataFolder) {
+    async fn create_data_folder_and_create_normal_tables() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
+        let normal_table_schema = test::normal_table_schema();
         data_folder
-            .save_normal_table_metadata("normal_table_1")
+            .create_normal_table("normal_table_1", &normal_table_schema)
             .await
             .unwrap();
 
         data_folder
-            .save_normal_table_metadata("normal_table_2")
+            .create_normal_table("normal_table_2", &normal_table_schema)
             .await
             .unwrap();
 
@@ -1534,7 +1520,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_metadata = data_folder.time_series_table_metadata().await.unwrap();
 
@@ -1546,7 +1532,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_metadata_for_existing_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_metadata = data_folder
             .time_series_table_metadata_for_time_series_table(test::TIME_SERIES_TABLE_NAME)
@@ -1561,7 +1547,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_series_table_metadata_for_missing_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_metadata = data_folder
             .time_series_table_metadata_for_time_series_table("missing_table")
@@ -1572,7 +1558,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_bound() {
-        let (_temp_dir, data_folder) = create_data_folder_and_save_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let error_bounds = data_folder
             .error_bounds(test::TIME_SERIES_TABLE_NAME, 4)
@@ -1629,7 +1615,7 @@ mod tests {
         .unwrap();
 
         data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 
@@ -1657,14 +1643,13 @@ mod tests {
         );
     }
 
-    async fn create_data_folder_and_save_time_series_table() -> (TempDir, DataFolder) {
+    async fn create_data_folder_and_create_time_series_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        // Save a time series table to the Delta Lake.
         let time_series_table_metadata = test::time_series_table_metadata();
         data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
+            .create_time_series_table(&time_series_table_metadata)
             .await
             .unwrap();
 

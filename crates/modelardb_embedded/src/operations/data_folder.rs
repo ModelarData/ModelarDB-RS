@@ -125,9 +125,6 @@ impl Operations for DataFolder {
         match table_type {
             TableType::NormalTable(schema) => {
                 let delta_table = self.create_normal_table(table_name, &schema).await?;
-
-                self.save_normal_table_metadata(table_name).await?;
-
                 let data_sink = Arc::new(DataFolderDataSink::new());
 
                 modelardb_storage::register_normal_table(
@@ -147,9 +144,6 @@ impl Operations for DataFolder {
 
                 let delta_table = self
                     .create_time_series_table(&time_series_table_metadata)
-                    .await?;
-
-                self.save_time_series_table_metadata(&time_series_table_metadata)
                     .await?;
 
                 let data_sink = Arc::new(DataFolderDataSink::new());
@@ -516,9 +510,6 @@ impl Operations for DataFolder {
     async fn drop(&mut self, table_name: &str) -> Result<()> {
         // Drop the table from the Apache Arrow DataFusion session.
         self.session_context().deregister_table(table_name)?;
-
-        // Delete the table metadata from the Delta Lake.
-        self.drop_table_metadata(table_name).await?;
 
         // Drop the table from the Delta Lake.
         self.drop_table(table_name).await?;

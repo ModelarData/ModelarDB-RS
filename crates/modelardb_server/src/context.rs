@@ -78,7 +78,7 @@ impl Context {
         table_name: &str,
         schema: &Schema,
     ) -> Result<()> {
-        // Create an empty Delta Lake table.
+        // Create an empty Delta Lake table and save the normal table metadata to the Delta Lake.
         self.data_folders
             .local_data_folder
             .create_normal_table(table_name, schema)
@@ -86,12 +86,6 @@ impl Context {
 
         // Register the normal table with Apache DataFusion.
         self.register_normal_table(table_name).await?;
-
-        // Persist the new normal table to the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .save_normal_table_metadata(table_name)
-            .await?;
 
         info!("Created normal table '{}'.", table_name);
 
@@ -119,7 +113,7 @@ impl Context {
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
-        // Create an empty Delta Lake table.
+        // Create an empty Delta Lake table and save the time series table metadata to the Delta Lake.
         self.data_folders
             .local_data_folder
             .create_time_series_table(time_series_table_metadata)
@@ -127,12 +121,6 @@ impl Context {
 
         // Register the time series table with Apache DataFusion.
         self.register_time_series_table(Arc::new(time_series_table_metadata.clone()))
-            .await?;
-
-        // Persist the new time series table to the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .save_time_series_table_metadata(time_series_table_metadata)
             .await?;
 
         info!(
@@ -265,12 +253,6 @@ impl Context {
         session_context.deregister_table(table_name)?;
 
         self.drop_table_from_storage_engine(table_name).await?;
-
-        // Drop the table metadata from the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .drop_table_metadata(table_name)
-            .await?;
 
         // Drop the table from the Delta Lake.
         self.data_folders
