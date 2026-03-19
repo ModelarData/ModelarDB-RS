@@ -478,7 +478,7 @@ impl DataFolder {
         if self.is_time_series_table(table_name).await? {
             self.time_series_table_writer(delta_table).await
         } else {
-            self.normal_or_metadata_table_writer(delta_table).await
+            self.normal_table_writer(delta_table).await
         }
     }
 
@@ -514,10 +514,10 @@ impl DataFolder {
         DeltaTableWriter::try_new(delta_table, partition_columns, writer_properties)
     }
 
-    /// Return a [`DeltaTableWriter`] for writing to the table corresponding to `delta_table` in the
-    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
-    /// established or the table does not exist.
-    async fn normal_or_metadata_table_writer(
+    /// Return a [`DeltaTableWriter`] for writing to the normal table corresponding to `delta_table`
+    /// in the Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot
+    /// be established or the table does not exist.
+    async fn normal_table_writer(
         &self,
         delta_table: DeltaTable,
     ) -> Result<DeltaTableWriter> {
@@ -863,7 +863,7 @@ impl DataFolder {
     ) -> Result<DeltaTable> {
         let delta_table = self.metadata_delta_table(table_name).await?;
         let record_batch = RecordBatch::try_new(TableProvider::schema(&delta_table), columns)?;
-        let delta_table_writer = self.normal_or_metadata_table_writer(delta_table).await?;
+        let delta_table_writer = self.normal_table_writer(delta_table).await?;
         self.write_record_batches_to_table(delta_table_writer, vec![record_batch])
             .await
     }
