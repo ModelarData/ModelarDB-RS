@@ -24,14 +24,14 @@ use arrow::datatypes::Schema;
 use datafusion::catalog::TableProvider;
 use datafusion::parquet::file::properties::WriterProperties;
 use delta_kernel::table_properties::DataSkippingNumIndexedCols;
+use deltalake::DeltaTable;
 use deltalake::delta_datafusion::DeltaDataChecker;
 use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add};
 use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
 use deltalake::protocol::{DeltaOperation, SaveMode};
-use deltalake::DeltaTable;
-use object_store::path::Path;
 use object_store::ObjectStore;
+use object_store::path::Path;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};

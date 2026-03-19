@@ -868,31 +868,16 @@ impl DataFolder {
             .await
     }
 
-    /// Write `record_batches` to a Delta Lake table for a normal table with `table_name`. Returns
-    /// an updated [`DeltaTable`] version if the file was written successfully, otherwise returns
-    /// [`ModelarDbStorageError`].
-    pub async fn write_record_batches_to_normal_table(
+    /// Write `record_batches` to the table with `table_name` in the Delta Lake. The correct
+    /// writer is selected automatically based on the table type. Returns an updated [`DeltaTable`]
+    /// if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
+    pub async fn write_record_batches(
         &self,
         table_name: &str,
         record_batches: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
-        let delta_table = self.delta_table(table_name).await?;
-        let delta_table_writer = self.normal_or_metadata_table_writer(delta_table).await?;
+        let delta_table_writer = self.table_writer(table_name).await?;
         self.write_record_batches_to_table(delta_table_writer, record_batches)
-            .await
-    }
-
-    /// Write `compressed_segments` to a Delta Lake table for a time series table with `table_name`.
-    /// Returns an updated [`DeltaTable`] if the file was written successfully, otherwise returns
-    /// [`ModelarDbStorageError`].
-    pub async fn write_compressed_segments_to_time_series_table(
-        &self,
-        table_name: &str,
-        compressed_segments: Vec<RecordBatch>,
-    ) -> Result<DeltaTable> {
-        let delta_table = self.delta_table(table_name).await?;
-        let delta_table_writer = self.time_series_table_writer(delta_table).await?;
-        self.write_record_batches_to_table(delta_table_writer, compressed_segments)
             .await
     }
 

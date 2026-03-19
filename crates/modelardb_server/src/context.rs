@@ -747,10 +747,7 @@ mod tests {
         // Write data to the normal table.
         let local_data_folder = &context.data_folders.local_data_folder;
         local_data_folder
-            .write_record_batches_to_normal_table(
-                NORMAL_TABLE_NAME,
-                vec![table::normal_table_record_batch()],
-            )
+            .write_record_batches(NORMAL_TABLE_NAME, vec![table::normal_table_record_batch()])
             .await
             .unwrap();
 
@@ -818,7 +815,7 @@ mod tests {
         // Write data to the time series table.
         let local_data_folder = &context.data_folders.local_data_folder;
         local_data_folder
-            .write_compressed_segments_to_time_series_table(
+            .write_record_batches(
                 TIME_SERIES_TABLE_NAME,
                 vec![table::compressed_segments_record_batch()],
             )

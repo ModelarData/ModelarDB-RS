@@ -250,11 +250,11 @@ impl DataTransfer {
             .await?
         {
             self.remote_data_folder
-                .write_compressed_segments_to_time_series_table(table_name, record_batches)
+                .write_record_batches(table_name, record_batches)
                 .await?;
         } else {
             self.remote_data_folder
-                .write_record_batches_to_normal_table(table_name, record_batches)
+                .write_record_batches(table_name, record_batches)
                 .await?;
         }
 
@@ -493,16 +493,13 @@ mod tests {
         for _ in 0..batch_write_count {
             // Write to the normal table.
             local_data_folder
-                .write_record_batches_to_normal_table(
-                    NORMAL_TABLE_NAME,
-                    vec![table::normal_table_record_batch()],
-                )
+                .write_record_batches(NORMAL_TABLE_NAME, vec![table::normal_table_record_batch()])
                 .await
                 .unwrap();
 
             // Write to the time series table.
             local_data_folder
-                .write_compressed_segments_to_time_series_table(
+                .write_record_batches(
                     TIME_SERIES_TABLE_NAME,
                     vec![table::compressed_segments_record_batch()],
                 )
