@@ -1708,6 +1708,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_time_series_table_metadata_for_registered_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        data_folder
+            .register_tables(Arc::new(NoOpDataSink {}))
+            .await
+            .unwrap();
+
+        let metadata = data_folder
+            .time_series_table_metadata_for_registered_time_series_table(
+                test::TIME_SERIES_TABLE_NAME,
+            )
+            .await;
+
+        assert_eq!(
+            metadata.unwrap().as_ref(),
+            &test::time_series_table_metadata(),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_time_series_table_metadata_for_unregistered_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        let metadata = data_folder
+            .time_series_table_metadata_for_registered_time_series_table("missing_table")
+            .await;
+
+        assert!(metadata.is_none());
+    }
+
+    #[tokio::test]
     async fn test_error_bound() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
