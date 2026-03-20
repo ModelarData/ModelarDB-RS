@@ -1614,6 +1614,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_normal_table_schema_for_existing_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let schema = data_folder
+            .normal_table_schema("normal_table_1")
+            .await
+            .unwrap();
+
+        assert_eq!(schema.as_ref(), &test::normal_table_schema());
+    }
+
+    #[tokio::test]
+    async fn test_normal_table_schema_for_missing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let maybe_schema = data_folder.normal_table_schema("missing_table").await;
+
+        assert!(maybe_schema.is_none());
+    }
+
+    #[tokio::test]
     async fn test_time_series_table_metadata() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
