@@ -1008,7 +1008,7 @@ mod tests {
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
     use modelardb_test::table as test;
-    use modelardb_test::table::NoOpDataSink;
+    use modelardb_test::table::{NoOpDataSink, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::ArrowTimestamp;
     use tempfile::TempDir;
 
@@ -1109,7 +1109,7 @@ mod tests {
         assert!(
             data_folder
                 .session_context
-                .table_provider(test::TIME_SERIES_TABLE_NAME)
+                .table_provider(TIME_SERIES_TABLE_NAME)
                 .await
                 .is_ok()
         );
@@ -1153,7 +1153,7 @@ mod tests {
 
         assert!(
             data_folder
-                .delta_table(test::TIME_SERIES_TABLE_NAME)
+                .delta_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .is_ok()
         );
@@ -1166,7 +1166,7 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![test::TIME_SERIES_TABLE_NAME])
+            StringArray::from(vec![TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
@@ -1185,10 +1185,7 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![
-                test::TIME_SERIES_TABLE_NAME,
-                test::TIME_SERIES_TABLE_NAME
-            ])
+            StringArray::from(vec![TIME_SERIES_TABLE_NAME, TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
@@ -1258,13 +1255,13 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         data_folder
-            .drop_table(test::TIME_SERIES_TABLE_NAME)
+            .drop_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
         assert!(
             data_folder
-                .delta_table(test::TIME_SERIES_TABLE_NAME)
+                .delta_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .is_err()
         );
@@ -1321,7 +1318,7 @@ mod tests {
 
         let mut delta_table = data_folder
             .write_record_batches(
-                test::TIME_SERIES_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 vec![test::compressed_segments_record_batch()],
             )
             .await
@@ -1330,7 +1327,7 @@ mod tests {
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
 
         data_folder
-            .truncate_table(test::TIME_SERIES_TABLE_NAME)
+            .truncate_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -1383,14 +1380,14 @@ mod tests {
 
         data_folder
             .write_record_batches(
-                test::TIME_SERIES_TABLE_NAME,
+                TIME_SERIES_TABLE_NAME,
                 vec![test::compressed_segments_record_batch()],
             )
             .await
             .unwrap();
 
         data_folder
-            .truncate_table(test::TIME_SERIES_TABLE_NAME)
+            .truncate_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -1398,12 +1395,12 @@ mod tests {
         let column_path = format!(
             "{}/tables/{}/field_column=0",
             temp_dir.path().to_str().unwrap(),
-            test::TIME_SERIES_TABLE_NAME
+            TIME_SERIES_TABLE_NAME
         );
         assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 1);
 
         data_folder
-            .vacuum_table(test::TIME_SERIES_TABLE_NAME, Some(0))
+            .vacuum_table(TIME_SERIES_TABLE_NAME, Some(0))
             .await
             .unwrap();
 
@@ -1498,7 +1495,7 @@ mod tests {
 
         let batch_to_write = test::compressed_segments_record_batch();
         let delta_table = data_folder
-            .write_record_batches(test::TIME_SERIES_TABLE_NAME, vec![batch_to_write.clone()])
+            .write_record_batches(TIME_SERIES_TABLE_NAME, vec![batch_to_write.clone()])
             .await
             .unwrap();
 
@@ -1512,7 +1509,7 @@ mod tests {
 
         data_folder
             .session_context
-            .register_table(test::TIME_SERIES_TABLE_NAME, Arc::new(delta_table))
+            .register_table(TIME_SERIES_TABLE_NAME, Arc::new(delta_table))
             .unwrap();
 
         let read_batch = sql_and_concat(
@@ -1520,7 +1517,7 @@ mod tests {
             &format!(
                 "SELECT {} FROM {}",
                 column_names.join(", "),
-                test::TIME_SERIES_TABLE_NAME
+                TIME_SERIES_TABLE_NAME
             ),
         )
         .await
@@ -1580,7 +1577,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
             !data_folder
-                .is_normal_table(test::TIME_SERIES_TABLE_NAME)
+                .is_normal_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -1591,7 +1588,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
             data_folder
-                .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
+                .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -1621,11 +1618,7 @@ mod tests {
         let table_names = data_folder.table_names().await.unwrap();
         assert_eq!(
             table_names,
-            vec![
-                "normal_table_2",
-                "normal_table_1",
-                test::TIME_SERIES_TABLE_NAME
-            ]
+            vec!["normal_table_2", "normal_table_1", TIME_SERIES_TABLE_NAME]
         );
     }
 
@@ -1642,7 +1635,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_names = data_folder.time_series_table_names().await.unwrap();
-        assert_eq!(time_series_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
+        assert_eq!(time_series_table_names, vec![TIME_SERIES_TABLE_NAME]);
     }
 
     #[tokio::test]
@@ -1683,7 +1676,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_metadata = data_folder
-            .time_series_table_metadata_for_time_series_table(test::TIME_SERIES_TABLE_NAME)
+            .time_series_table_metadata_for_time_series_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -1717,9 +1710,7 @@ mod tests {
             .unwrap();
 
         let metadata = data_folder
-            .time_series_table_metadata_for_registered_time_series_table(
-                test::TIME_SERIES_TABLE_NAME,
-            )
+            .time_series_table_metadata_for_registered_time_series_table(TIME_SERIES_TABLE_NAME)
             .await;
 
         assert_eq!(
@@ -1733,7 +1724,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let metadata = data_folder
-            .time_series_table_metadata_for_registered_time_series_table("missing_table")
+            .time_series_table_metadata_for_registered_time_series_table(TIME_SERIES_TABLE_NAME)
             .await;
 
         assert!(metadata.is_none());
@@ -1744,7 +1735,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let error_bounds = data_folder
-            .error_bounds(test::TIME_SERIES_TABLE_NAME, 4)
+            .error_bounds(TIME_SERIES_TABLE_NAME, 4)
             .await
             .unwrap();
 
