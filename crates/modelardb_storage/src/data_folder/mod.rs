@@ -1258,7 +1258,13 @@ mod tests {
     async fn test_drop_missing_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        assert!(data_folder.drop_table("missing_table").await.is_err());
+        let result = data_folder.drop_table("missing_table").await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: Table with name 'missing_table' does not exist."
+        );
+    }
     }
 
     #[tokio::test]
@@ -1368,11 +1374,14 @@ mod tests {
     async fn test_time_series_table_metadata_for_missing_time_series_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
-        let time_series_table_metadata = data_folder
+        let result = data_folder
             .time_series_table_metadata_for_time_series_table("missing_table")
             .await;
 
-        assert!(time_series_table_metadata.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: No metadata for time series table named 'missing_table'."
+        );
     }
 
     #[tokio::test]
