@@ -1008,6 +1008,7 @@ mod tests {
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
     use modelardb_test::table as test;
+    use modelardb_test::table::NoOpDataSink;
     use modelardb_types::types::ArrowTimestamp;
     use tempfile::TempDir;
 
@@ -1081,6 +1082,37 @@ mod tests {
                   generated_column_expr FROM metadata.time_series_table_field_columns")
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_register_tables() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        data_folder
+            .create_time_series_table(&test::time_series_table_metadata())
+            .await
+            .unwrap();
+
+        data_folder
+            .register_tables(Arc::new(NoOpDataSink {}))
+            .await
+            .unwrap();
+
+        // Verify the tables are queryable through the session context.
+        assert!(
+            data_folder
+                .session_context
+                .table_provider("normal_table_1")
+                .await
+                .is_ok()
+        );
+        assert!(
+            data_folder
+                .session_context
+                .table_provider(test::TIME_SERIES_TABLE_NAME)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
