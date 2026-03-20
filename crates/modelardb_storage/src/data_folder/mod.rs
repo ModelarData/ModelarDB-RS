@@ -1434,6 +1434,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_write_record_batches_to_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let batch_to_write = test::normal_table_record_batch();
+        let delta_table = data_folder
+            .write_record_batches("normal_table_1", vec![batch_to_write.clone()])
+            .await
+            .unwrap();
+
+        // Verify the write produced a Parquet file.
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        // Read the data back and verify the content.
+        data_folder
+            .session_context
+            .register_table("normal_table_1", Arc::new(delta_table))
+            .unwrap();
+
+        let read_batch =
+            sql_and_concat(&data_folder.session_context, "SELECT * FROM normal_table_1")
+                .await
+                .unwrap();
+
+        assert_eq!(read_batch, batch_to_write);
+    }
+
+    #[tokio::test]
+    async fn test_write_record_batches_to_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        let batch_to_write = test::compressed_segments_record_batch();
+        let delta_table = data_folder
+            .write_record_batches(test::TIME_SERIES_TABLE_NAME, vec![batch_to_write.clone()])
+            .await
+            .unwrap();
+
+        // Verify the write produced a Parquet file.
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        // Read the data back and verify the content. The partition column (field_column) is
+        // moved to the end by Delta Lake, so SELECT the columns in the original schema order.
+        let schema = test::time_series_table_metadata().compressed_schema.clone();
+        let column_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+
+        data_folder
+            .session_context
+            .register_table(test::TIME_SERIES_TABLE_NAME, Arc::new(delta_table))
+            .unwrap();
+
+        let read_batch = sql_and_concat(
+            &data_folder.session_context,
+            &format!(
+                "SELECT {} FROM {}",
+                column_names.join(", "),
+                test::TIME_SERIES_TABLE_NAME
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(read_batch, batch_to_write);
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_vec_to_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let delta_table = data_folder
+            .write_record_batches("normal_table_1", vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_record_batch_to_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let empty_batch = RecordBatch::new_empty(Arc::new(test::normal_table_schema()));
+        let delta_table = data_folder
+            .write_record_batches("normal_table_1", vec![empty_batch])
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_write_record_batches_to_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let result = data_folder
+            .write_record_batches("missing_table", vec![test::normal_table_record_batch()])
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+        );
+    }
+
+    #[tokio::test]
     async fn test_normal_table_is_normal_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
         assert!(data_folder.is_normal_table("normal_table_1").await.unwrap());
