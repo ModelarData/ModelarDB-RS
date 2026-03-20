@@ -254,7 +254,7 @@ mod tests {
     use super::*;
 
     use modelardb_test::table as test;
-    use modelardb_test::table::NORMAL_TABLE_NAME;
+    use modelardb_test::table::{NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use tempfile::TempDir;
 
     use crate::data_folder::DataFolder;
@@ -278,10 +278,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_and_commit() {
-        let (_temp_dir, _data_folder, mut writer) = create_normal_table_writer().await;
+        let (_temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
 
         writer
-            .write(&test::normal_table_record_batch())
+            .write(&test::compressed_segments_record_batch())
             .await
             .unwrap();
 
@@ -291,9 +291,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_empty_record_batch() {
-        let (_temp_dir, _data_folder, mut writer) = create_normal_table_writer().await;
+        let (_temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
 
-        let empty_batch = RecordBatch::new_empty(Arc::new(test::normal_table_schema()));
+        let empty_batch =
+            RecordBatch::new_empty(test::time_series_table_metadata().compressed_schema);
         writer.write(&empty_batch).await.unwrap();
 
         let delta_table = writer.commit().await.unwrap();
@@ -302,11 +303,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_with_schema_mismatch() {
-        let (_temp_dir, _data_folder, mut writer) = create_normal_table_writer().await;
+        let (_temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
 
-        let result = writer
-            .write(&test::compressed_segments_record_batch())
-            .await;
+        let result = writer.write(&test::normal_table_record_batch()).await;
 
         assert!(
             result
@@ -317,41 +316,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_all_and_commit_to_normal_table() {
-        let (_temp_dir, data_folder, writer) = create_normal_table_writer().await;
-
-        let batch = test::normal_table_record_batch();
-        let delta_table = writer
-            .write_all_and_commit(&[batch.clone(), batch])
-            .await
-            .unwrap();
-
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
-
-        // Verify both batches were written.
-        data_folder
-            .session_context()
-            .register_table(NORMAL_TABLE_NAME, Arc::new(delta_table))
-            .unwrap();
-
-        let result = sql_and_concat(
-            data_folder.session_context(),
-            &format!("SELECT * FROM {NORMAL_TABLE_NAME}"),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result.num_rows(), 10);
-    }
-
-    #[tokio::test]
-    async fn test_write_all_and_commit_to_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let delta_table = data_folder
-            .delta_table(test::TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
-        let writer = DeltaTableWriter::try_new_for_time_series_table(delta_table).unwrap();
+    async fn test_write_all_and_commit() {
+        let (_temp_dir, data_folder, writer) = create_time_series_table_writer().await;
 
         let batch = test::compressed_segments_record_batch();
         let delta_table = writer
@@ -364,12 +330,12 @@ mod tests {
         // Verify both batches were written.
         data_folder
             .session_context()
-            .register_table(test::TIME_SERIES_TABLE_NAME, Arc::new(delta_table))
+            .register_table(TIME_SERIES_TABLE_NAME, Arc::new(delta_table))
             .unwrap();
 
         let result = sql_and_concat(
             data_folder.session_context(),
-            &format!("SELECT * FROM {}", test::TIME_SERIES_TABLE_NAME),
+            &format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}"),
         )
         .await
         .unwrap();
@@ -379,10 +345,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_all_and_commit_rolls_back_on_error() {
-        let (temp_dir, data_folder, writer) = create_normal_table_writer().await;
+        let (temp_dir, data_folder, writer) = create_time_series_table_writer().await;
 
-        let valid_batch = test::normal_table_record_batch();
-        let invalid_batch = test::compressed_segments_record_batch();
+        let valid_batch = test::compressed_segments_record_batch();
+        let invalid_batch = test::normal_table_record_batch();
         let result = writer
             .write_all_and_commit(&[valid_batch, invalid_batch])
             .await;
@@ -394,20 +360,24 @@ mod tests {
                 .starts_with("Delta Lake Error: Attempted to write invalid data to the table:")
         );
 
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        // Verify no commit was made.
+        let delta_table = data_folder
+            .delta_table(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
 
-        // Verify the physical files were cleaned up. Only _delta_log should remain.
-        let table_path = format!(
-            "{}/tables/{NORMAL_TABLE_NAME}",
+        // Verify the physical files were cleaned up from the partition folder.
+        let column_path = format!(
+            "{}/tables/{TIME_SERIES_TABLE_NAME}/field_column=0",
             temp_dir.path().to_str().unwrap()
         );
-        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 0);
     }
 
     #[tokio::test]
     async fn test_commit_without_writes() {
-        let (_temp_dir, _data_folder, writer) = create_normal_table_writer().await;
+        let (_temp_dir, _data_folder, writer) = create_time_series_table_writer().await;
 
         let delta_table = writer.commit().await.unwrap();
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
@@ -415,30 +385,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback() {
-        let (temp_dir, _data_folder, mut writer) = create_normal_table_writer().await;
+        let (temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
 
         writer
-            .write(&test::normal_table_record_batch())
+            .write(&test::compressed_segments_record_batch())
             .await
             .unwrap();
 
         let delta_table = writer.rollback().await.unwrap();
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
 
-        // Verify the physical files were cleaned up. Only _delta_log should remain.
-        let table_path = format!(
-            "{}/tables/{NORMAL_TABLE_NAME}",
+        // Verify the physical files were cleaned up from the partition folder.
+        let column_path = format!(
+            "{}/tables/{TIME_SERIES_TABLE_NAME}/field_column=0",
             temp_dir.path().to_str().unwrap()
         );
-        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 1);
-    }
-
-    async fn create_normal_table_writer() -> (TempDir, DataFolder, DeltaTableWriter) {
-        let (temp_dir, data_folder) = create_data_folder_with_normal_table().await;
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
-        let writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
-
-        (temp_dir, data_folder, writer)
+        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 0);
     }
 
     async fn create_data_folder_with_normal_table() -> (TempDir, DataFolder) {
@@ -453,15 +415,17 @@ mod tests {
         (temp_dir, data_folder)
     }
 
-    async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
+    async fn create_time_series_table_writer() -> (TempDir, DataFolder, DeltaTableWriter) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        data_folder
+        let delta_table = data_folder
             .create_time_series_table(&test::time_series_table_metadata())
             .await
             .unwrap();
 
-        (temp_dir, data_folder)
+        let writer = DeltaTableWriter::try_new_for_time_series_table(delta_table).unwrap();
+
+        (temp_dir, data_folder, writer)
     }
 }
