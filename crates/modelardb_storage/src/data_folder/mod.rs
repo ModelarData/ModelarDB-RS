@@ -1265,6 +1265,57 @@ mod tests {
             "Invalid Argument Error: Table with name 'missing_table' does not exist."
         );
     }
+
+    #[tokio::test]
+    async fn test_truncate_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let mut delta_table = data_folder
+            .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        data_folder.truncate_table("normal_table_1").await.unwrap();
+
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_truncate_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        let mut delta_table = data_folder
+            .write_record_batches(
+                test::TIME_SERIES_TABLE_NAME,
+                vec![test::compressed_segments_record_batch()],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        data_folder
+            .truncate_table(test::TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_truncate_missing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder.truncate_table("missing_table").await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+        );
     }
 
     #[tokio::test]
