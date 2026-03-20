@@ -1097,6 +1097,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_existing_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder
+            .create_normal_table("normal_table_1", &test::normal_table_schema())
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Generic error: A Delta Lake table already exists at that location."
+        );
+    }
+
+    #[tokio::test]
     async fn test_create_time_series_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
@@ -1149,6 +1163,41 @@ mod tests {
         assert_eq!(
             **batch.column(5),
             BinaryArray::from_opt_vec(vec![None, None])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_existing_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        let result = data_folder
+            .create_time_series_table(&test::time_series_table_metadata())
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Generic error: A Delta Lake table already exists at that location."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_table_with_unsigned_integers() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::UInt32, false),
+            Field::new("name", DataType::Utf8, false),
+        ]);
+
+        let result = data_folder
+            .create_normal_table("uint_table", &schema)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Data does not match the schema or partitions of the table: \
+            Unsigned integers are not supported."
         );
     }
 
