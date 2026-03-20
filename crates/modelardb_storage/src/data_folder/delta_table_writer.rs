@@ -278,9 +278,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_and_commit() {
-        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
-        let mut writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+        let (_temp_dir, _data_folder, mut writer) = create_normal_table_writer().await;
 
         writer
             .write(&test::normal_table_record_batch())
@@ -293,9 +291,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_empty_record_batch() {
-        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
-        let mut writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+        let (_temp_dir, _data_folder, mut writer) = create_normal_table_writer().await;
 
         let empty_batch = RecordBatch::new_empty(Arc::new(test::normal_table_schema()));
         writer.write(&empty_batch).await.unwrap();
@@ -306,9 +302,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_with_schema_mismatch() {
-        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
-        let mut writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+        let (_temp_dir, _data_folder, mut writer) = create_normal_table_writer().await;
 
         let result = writer
             .write(&test::compressed_segments_record_batch())
@@ -324,9 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_all_and_commit_to_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
-        let writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+        let (_temp_dir, data_folder, writer) = create_normal_table_writer().await;
 
         let batch = test::normal_table_record_batch();
         let delta_table = writer
@@ -387,9 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_all_and_commit_rolls_back_on_error() {
-        let (temp_dir, data_folder) = create_data_folder_with_normal_table().await;
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
-        let writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+        let (temp_dir, data_folder, writer) = create_normal_table_writer().await;
 
         let valid_batch = test::normal_table_record_batch();
         let invalid_batch = test::compressed_segments_record_batch();
@@ -417,9 +407,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_without_writes() {
-        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
-        let writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+        let (_temp_dir, _data_folder, writer) = create_normal_table_writer().await;
 
         let delta_table = writer.commit().await.unwrap();
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
@@ -427,9 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback() {
-        let (temp_dir, data_folder) = create_data_folder_with_normal_table().await;
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
-        let mut writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+        let (temp_dir, _data_folder, mut writer) = create_normal_table_writer().await;
 
         writer
             .write(&test::normal_table_record_batch())
@@ -445,6 +431,14 @@ mod tests {
             temp_dir.path().to_str().unwrap()
         );
         assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 1);
+    }
+
+    async fn create_normal_table_writer() -> (TempDir, DataFolder, DeltaTableWriter) {
+        let (temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        let writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+
+        (temp_dir, data_folder, writer)
     }
 
     async fn create_data_folder_with_normal_table() -> (TempDir, DataFolder) {
