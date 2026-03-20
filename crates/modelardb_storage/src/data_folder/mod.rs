@@ -1013,6 +1013,43 @@ mod tests {
 
     // Tests for DataFolder.
     #[tokio::test]
+    async fn test_open_local_url_without_scheme() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap();
+
+        let data_folder = DataFolder::open_local_url(path).await;
+        assert!(data_folder.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_open_local_url_with_file_scheme() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap();
+        let url = format!("file://{path}");
+
+        let data_folder = DataFolder::open_local_url(&url).await;
+        assert!(data_folder.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_open_local_url_with_memory_scheme() {
+        let data_folder = DataFolder::open_local_url("memory://").await;
+        assert!(data_folder.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_open_local_url_with_invalid_scheme() {
+        let data_folder = DataFolder::open_local_url("invalid://path").await;
+        assert!(data_folder.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_open_memory() {
+        let data_folder = DataFolder::open_memory().await;
+        assert!(data_folder.is_ok());
+    }
+
+    #[tokio::test]
     async fn test_create_metadata_data_folder_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
