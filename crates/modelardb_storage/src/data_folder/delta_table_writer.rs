@@ -248,3 +248,169 @@ async fn delete_added_files(object_store: &dyn ObjectStore, added_files: Vec<Add
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use modelardb_test::table as test;
+    use modelardb_test::table::NORMAL_TABLE_NAME;
+    use tempfile::TempDir;
+
+    use crate::data_folder::DataFolder;
+
+    // Tests for DeltaTableWriter.
+    #[tokio::test]
+    async fn test_try_new() {
+        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        let writer =
+            DeltaTableWriter::try_new(delta_table, vec![], WriterProperties::default()).unwrap();
+
+        let delta_table = writer
+            .write_all_and_commit(&[test::normal_table_record_batch()])
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_write_and_commit() {
+        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        let mut writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+
+        writer
+            .write(&test::normal_table_record_batch())
+            .await
+            .unwrap();
+
+        let delta_table = writer.commit().await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_write_with_schema_mismatch() {
+        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        let mut writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+
+        let result = writer
+            .write(&test::compressed_segments_record_batch())
+            .await;
+
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .starts_with("Delta Lake Error: Attempted to write invalid data to the table:")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_write_all_and_commit_to_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        let writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+
+        let batch = test::normal_table_record_batch();
+        let delta_table = writer
+            .write_all_and_commit(&[batch.clone(), batch])
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_write_all_and_commit_to_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let delta_table = data_folder
+            .delta_table(test::TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+        let writer = DeltaTableWriter::try_new_for_time_series_table(delta_table).unwrap();
+
+        let batch = test::compressed_segments_record_batch();
+        let delta_table = writer
+            .write_all_and_commit(&[batch.clone(), batch])
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_write_all_and_commit_rolls_back_on_error() {
+        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        let writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+
+        let valid_batch = test::normal_table_record_batch();
+        let invalid_batch = test::compressed_segments_record_batch();
+        let result = writer
+            .write_all_and_commit(&[valid_batch, invalid_batch])
+            .await;
+
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .starts_with("Delta Lake Error: Attempted to write invalid data to the table:")
+        );
+
+        // Verify the rollback left no committed files.
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_commit_without_writes() {
+        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        let writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+
+        let delta_table = writer.commit().await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_rollback() {
+        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        let mut writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+
+        writer
+            .write(&test::normal_table_record_batch())
+            .await
+            .unwrap();
+
+        let delta_table = writer.rollback().await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    async fn create_data_folder_with_normal_table() -> (TempDir, DataFolder) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        data_folder
+            .create_normal_table(NORMAL_TABLE_NAME, &test::normal_table_schema())
+            .await
+            .unwrap();
+
+        (temp_dir, data_folder)
+    }
+
+    async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        data_folder
+            .create_time_series_table(&test::time_series_table_metadata())
+            .await
+            .unwrap();
+
+        (temp_dir, data_folder)
+    }
+}
