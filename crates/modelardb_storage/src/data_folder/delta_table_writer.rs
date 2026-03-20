@@ -258,6 +258,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::data_folder::DataFolder;
+    use crate::sql_and_concat;
 
     // Tests for DeltaTableWriter.
     #[tokio::test]
@@ -291,6 +292,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_write_empty_record_batch() {
+        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        let mut writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
+
+        let empty_batch = RecordBatch::new_empty(Arc::new(test::normal_table_schema()));
+        writer.write(&empty_batch).await.unwrap();
+
+        let delta_table = writer.commit().await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
     async fn test_write_with_schema_mismatch() {
         let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
         let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
@@ -321,6 +335,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        // Verify both batches were written.
+        data_folder
+            .session_context()
+            .register_table(NORMAL_TABLE_NAME, Arc::new(delta_table))
+            .unwrap();
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            &format!("SELECT * FROM {NORMAL_TABLE_NAME}"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.num_rows(), 10);
     }
 
     #[tokio::test]
@@ -339,11 +368,26 @@ mod tests {
             .unwrap();
 
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        // Verify both batches were written.
+        data_folder
+            .session_context()
+            .register_table(test::TIME_SERIES_TABLE_NAME, Arc::new(delta_table))
+            .unwrap();
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            &format!("SELECT * FROM {}", test::TIME_SERIES_TABLE_NAME),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.num_rows(), 6);
     }
 
     #[tokio::test]
     async fn test_write_all_and_commit_rolls_back_on_error() {
-        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let (temp_dir, data_folder) = create_data_folder_with_normal_table().await;
         let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
         let writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
 
@@ -360,9 +404,15 @@ mod tests {
                 .starts_with("Delta Lake Error: Attempted to write invalid data to the table:")
         );
 
-        // Verify the rollback left no committed files.
         let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+
+        // Verify the physical files were cleaned up. Only _delta_log should remain.
+        let table_path = format!(
+            "{}/tables/{NORMAL_TABLE_NAME}",
+            temp_dir.path().to_str().unwrap()
+        );
+        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 1);
     }
 
     #[tokio::test]
@@ -377,7 +427,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback() {
-        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
+        let (temp_dir, data_folder) = create_data_folder_with_normal_table().await;
         let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
         let mut writer = DeltaTableWriter::try_new_for_normal_table(delta_table).unwrap();
 
@@ -388,6 +438,13 @@ mod tests {
 
         let delta_table = writer.rollback().await.unwrap();
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+
+        // Verify the physical files were cleaned up. Only _delta_log should remain.
+        let table_path = format!(
+            "{}/tables/{NORMAL_TABLE_NAME}",
+            temp_dir.path().to_str().unwrap()
+        );
+        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 1);
     }
 
     async fn create_data_folder_with_normal_table() -> (TempDir, DataFolder) {
