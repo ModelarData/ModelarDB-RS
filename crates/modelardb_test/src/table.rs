@@ -15,10 +15,18 @@
 
 //! Implementation of table related functions and constants used throughout ModelarDB for testing purposes.
 
+use std::any::Any;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
 use arrow::array::{BinaryArray, Float32Array, Int8Array, Int16Array, RecordBatch, StringArray};
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+use async_trait::async_trait;
+use datafusion::datasource::sink::DataSink;
+use datafusion::error::Result as DataFusionResult;
+use datafusion::execution::{SendableRecordBatchStream, TaskContext};
+use datafusion::physical_plan::metrics::MetricsSet;
+use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
 use modelardb_types::types::{
     ArrowTimestamp, ArrowValue, ErrorBound, TimeSeriesTableMetadata, Timestamp, TimestampArray,
     Value, ValueArray,
@@ -38,6 +46,44 @@ pub const TIME_SERIES_TABLE_SQL: &str = "CREATE TIME SERIES TABLE time_series_ta
 
 /// Name of the time series table used in tests.
 pub const TIME_SERIES_TABLE_NAME: &str = "time_series_table";
+
+/// [`DataSink`] implementation that does nothing.
+pub struct NoOpDataSink {}
+
+#[async_trait]
+impl DataSink for NoOpDataSink {
+    fn as_any(&self) -> &dyn Any {
+        unimplemented!();
+    }
+
+    fn metrics(&self) -> Option<MetricsSet> {
+        unimplemented!();
+    }
+
+    fn schema(&self) -> &Arc<Schema> {
+        unimplemented!();
+    }
+
+    async fn write_all(
+        &self,
+        _data: SendableRecordBatchStream,
+        _context: &Arc<TaskContext>,
+    ) -> DataFusionResult<u64> {
+        unimplemented!();
+    }
+}
+
+impl Debug for NoOpDataSink {
+    fn fmt(&self, _f: &mut Formatter<'_>) -> FmtResult {
+        unimplemented!();
+    }
+}
+
+impl DisplayAs for NoOpDataSink {
+    fn fmt_as(&self, _t: DisplayFormatType, _f: &mut Formatter<'_>) -> FmtResult {
+        unimplemented!();
+    }
+}
 
 /// Return protobuf message bytes containing metadata for a normal table.
 pub fn normal_table_metadata_protobuf_bytes() -> Vec<u8> {
