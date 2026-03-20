@@ -664,11 +664,11 @@ impl DataFolder {
     /// the table does not exist.
     pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
         let delta_table = self.delta_table(table_name).await?;
-        if self
-            .time_series_table_metadata_for_registered_time_series_table(table_name)
-            .await
-            .is_some()
-        {
+        let partition_columns = delta_table.snapshot()?.metadata().partition_columns();
+
+        // If the table is a time series table, the partition column is the field column.
+        // self.is_time_series_table() is not used to avoid a redundant query to the metadata table.
+        if partition_columns.contains(&FIELD_COLUMN.to_owned()) {
             DeltaTableWriter::try_new_for_time_series_table(delta_table)
         } else {
             DeltaTableWriter::try_new_for_normal_table(delta_table)
