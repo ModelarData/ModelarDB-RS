@@ -1039,8 +1039,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_open_local_url_with_invalid_scheme() {
-        let data_folder = DataFolder::open_local_url("invalid://path").await;
-        assert!(data_folder.is_err());
+        let url = "invalid://path";
+        let result = DataFolder::open_local_url(url).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            format!("Invalid Argument Error: {url} is not a valid local URL.")
+        );
     }
 
     #[tokio::test]
@@ -1190,9 +1195,7 @@ mod tests {
             Field::new("name", DataType::Utf8, false),
         ]);
 
-        let result = data_folder
-            .create_normal_table("uint_table", &schema)
-            .await;
+        let result = data_folder.create_normal_table("uint_table", &schema).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
