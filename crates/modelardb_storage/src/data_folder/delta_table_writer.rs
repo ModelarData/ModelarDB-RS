@@ -98,7 +98,7 @@ impl DeltaTableWriter {
         partition_columns: Vec<String>,
         writer_properties: WriterProperties,
     ) -> Result<Self> {
-        // Checker for if record batches match the table’s invariants, constraints, and nullability.
+        // Checks whether record batches match the table’s invariants, constraints, and nullability.
         let delta_table_state = delta_table.snapshot()?;
         let snapshot = delta_table_state.snapshot();
         let delta_data_checker = DeltaDataChecker::new(snapshot);
