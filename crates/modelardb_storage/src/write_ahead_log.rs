@@ -14,7 +14,11 @@
  */
 
 //! Implementation of types that provide a write-ahead log for ModelarDB that can be used to
-//! efficiently persist data on disk to avoid data loss and enable crash recovery.
+//! efficiently persist data on disk to avoid data loss and enable crash recovery. Each table has
+//! its own segmented log consisting of an active segment that is appended to and zero or more
+//! closed segments that are read-only. The active segment is closed once a configured number of
+//! batches have been written to it, and closed segments are deleted once all of their batches have
+//! been persisted to the Delta Lake.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
@@ -34,8 +38,8 @@ use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
 use crate::error::{ModelarDbStorageError, Result};
 
-/// Number of batches to write to a single WAL segment file before rotating to a new one.
-const SEGMENT_ROTATION_THRESHOLD: u64 = 100;
+/// Number of batches to write to a single WAL segment file before closing it and starting a new one.
+const SEGMENT_BATCH_COUNT_THRESHOLD: u64 = 100;
 
 /// Write-ahead log that logs data on a per-table level.
 pub struct WriteAheadLog {
@@ -212,7 +216,7 @@ impl ClosedSegment {
 }
 
 /// The currently active WAL segment being written to. All fields are mutated together
-/// during rotation and are protected by the mutex in [`SegmentedLog`].
+/// when closing the active segment and are protected by the mutex in [`SegmentedLog`].
 struct ActiveSegment {
     /// Path to the active segment file.
     path: PathBuf,
@@ -220,7 +224,7 @@ struct ActiveSegment {
     start_id: u64,
     /// Writer to write data in IPC streaming format to this segment file.
     writer: StreamWriter<File>,
-    /// The batch id to give to the next batch of data. Monotonically increasing across rotations.
+    /// The batch id to give to the next batch of data. Monotonically increasing across segments.
     next_batch_id: u64,
 }
 
@@ -254,8 +258,8 @@ impl ActiveSegment {
 
 /// Segmented log that appends data in Arrow IPC streaming format to segment files in a folder.
 /// At any point in time there is exactly one active segment being written to plus zero or more
-/// closed segments that are read-only. The active segment is rotated into the closed list once
-/// [`SEGMENT_ROTATION_THRESHOLD`] batches have been written to it. Appending enforces that
+/// closed segments that are read-only. The active segment is closed once
+/// [`SEGMENT_BATCH_COUNT_THRESHOLD`] batches have been written to it. Appending enforces that
 /// [`sync_data()`](File::sync_data) is called immediately after writing to ensure that all data is
 /// on disk before returning. Note that an exclusive lock is held on the file while it is being
 /// written to.
@@ -313,9 +317,9 @@ impl SegmentedLog {
     }
 
     /// Append the given data to the active segment and sync the file to ensure that all data is on
-    /// disk. Return the batch id given to the appended data. Rotates to a new segment file if
-    /// [`SEGMENT_ROTATION_THRESHOLD`] is reached. If the data could not be appended or the file
-    /// could not be synced, return [`ModelarDbStorageError`].
+    /// disk. Return the batch id given to the appended data. Close the active segment and start a
+    /// new one if [`SEGMENT_BATCH_COUNT_THRESHOLD`] is reached. If the data could not be appended
+    /// or the file could not be synced, return [`ModelarDbStorageError`].
     fn append_and_sync(&self, data: &RecordBatch) -> Result<u64> {
         // Acquire the mutex to ensure only one thread can write at a time.
         let mut active = self
@@ -343,12 +347,12 @@ impl SegmentedLog {
             "Appended batch to WAL file."
         );
 
-        // Rotate to a new segment if the threshold has been reached. The number of batches in the
-        // active segment is the difference between the next batch id (post-increment) and the
-        // active start id.
+        // Close the active segment and start a new one if the threshold has been reached. The
+        // number of batches in the active segment is the difference between the next batch id
+        // (post-increment) and the active start id.
         let active_batch_count = active.next_batch_id - active.start_id;
-        if active_batch_count >= SEGMENT_ROTATION_THRESHOLD {
-            self.rotate_active_segment(&mut active)?;
+        if active_batch_count >= SEGMENT_BATCH_COUNT_THRESHOLD {
+            self.close_active_segment(&mut active)?;
         }
 
         Ok(current_batch_id)
@@ -356,7 +360,7 @@ impl SegmentedLog {
 
     /// Close the current active segment by renaming it to its final `{start_id}-{end_id}.wal`
     /// name and open a fresh active segment. The caller must hold the `active_segment` lock.
-    fn rotate_active_segment(&self, active: &mut ActiveSegment) -> Result<()> {
+    fn close_active_segment(&self, active: &mut ActiveSegment) -> Result<()> {
         let mut closed_segments = self
             .closed_segments
             .lock()
@@ -368,7 +372,7 @@ impl SegmentedLog {
             path = %active.path.display(),
             start_id = active.start_id,
             end_id,
-            "Rotating WAL segment."
+            "Closing active WAL segment."
         );
 
         // Finish the current writer so the IPC end-of-stream marker is written.
@@ -928,23 +932,23 @@ mod tests {
     }
 
     #[test]
-    fn test_segment_rotates_at_threshold() {
+    fn test_segment_closes_at_threshold() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
-        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+        for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD {
             segmented_log.append_and_sync(&batch).unwrap();
         }
 
         let closed = segmented_log.closed_segments.lock().unwrap();
         assert_eq!(closed.len(), 1);
         assert_eq!(closed[0].start_id, 0);
-        assert_eq!(closed[0].end_id, SEGMENT_ROTATION_THRESHOLD - 1);
+        assert_eq!(closed[0].end_id, SEGMENT_BATCH_COUNT_THRESHOLD - 1);
 
         let active = segmented_log.active_segment.lock().unwrap();
-        assert_eq!(active.start_id, SEGMENT_ROTATION_THRESHOLD);
+        assert_eq!(active.start_id, SEGMENT_BATCH_COUNT_THRESHOLD);
     }
 
     #[test]
@@ -955,11 +959,11 @@ mod tests {
 
         let batch = table::uncompressed_time_series_table_record_batch(10);
 
-        // Write enough batches to trigger a rotation, then drop.
+        // Write enough batches to close the active segment, then drop.
         {
             let segmented_log =
                 SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
-            for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+            for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD {
                 segmented_log.append_and_sync(&batch).unwrap();
             }
         }
@@ -968,7 +972,7 @@ mod tests {
         let segmented_log = SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
         let active = segmented_log.active_segment.lock().unwrap();
-        assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD);
+        assert_eq!(active.next_batch_id, SEGMENT_BATCH_COUNT_THRESHOLD);
         assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 1);
     }
 
@@ -980,11 +984,11 @@ mod tests {
 
         let batch = table::uncompressed_time_series_table_record_batch(10);
 
-        // Fill and rotate one segment.
+        // Fill and close one full segment.
         {
             let segmented_log =
                 SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
-            for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+            for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD {
                 segmented_log.append_and_sync(&batch).unwrap();
             }
         }
@@ -993,10 +997,10 @@ mod tests {
         segmented_log.append_and_sync(&batch).unwrap();
 
         let batches = segmented_log.read_all().unwrap();
-        assert_eq!(batches.len() as u64, SEGMENT_ROTATION_THRESHOLD + 1);
+        assert_eq!(batches.len() as u64, SEGMENT_BATCH_COUNT_THRESHOLD + 1);
 
         let active = segmented_log.active_segment.lock().unwrap();
-        assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD + 1);
+        assert_eq!(active.next_batch_id, SEGMENT_BATCH_COUNT_THRESHOLD + 1);
     }
 
     #[test]
@@ -1007,12 +1011,12 @@ mod tests {
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
-        // Write enough batches to trigger a rotation and append to a new active segment.
+        // Write enough batches to close the active segment and append to a new active segment.
         {
             let segmented_log =
                 SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
-            for _ in 0..SEGMENT_ROTATION_THRESHOLD + 2 {
+            for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD + 2 {
                 segmented_log.append_and_sync(&batch).unwrap();
             }
         }
@@ -1024,12 +1028,12 @@ mod tests {
         let closed = segmented_log.closed_segments.lock().unwrap();
         assert_eq!(closed.len(), 2);
         assert_eq!(closed[0].start_id, 0);
-        assert_eq!(closed[0].end_id, SEGMENT_ROTATION_THRESHOLD - 1);
-        assert_eq!(closed[1].start_id, SEGMENT_ROTATION_THRESHOLD);
-        assert_eq!(closed[1].end_id, SEGMENT_ROTATION_THRESHOLD + 1);
+        assert_eq!(closed[0].end_id, SEGMENT_BATCH_COUNT_THRESHOLD - 1);
+        assert_eq!(closed[1].start_id, SEGMENT_BATCH_COUNT_THRESHOLD);
+        assert_eq!(closed[1].end_id, SEGMENT_BATCH_COUNT_THRESHOLD + 1);
 
         let active = segmented_log.active_segment.lock().unwrap();
-        assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD + 2);
+        assert_eq!(active.next_batch_id, SEGMENT_BATCH_COUNT_THRESHOLD + 2);
     }
 
     #[test]
@@ -1064,8 +1068,8 @@ mod tests {
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
-        // Fill and rotate one full segment.
-        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+        // Fill and close one full segment.
+        for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD {
             segmented_log.append_and_sync(&batch).unwrap();
         }
 
@@ -1074,7 +1078,7 @@ mod tests {
             .clone();
         assert!(segment_path.exists());
 
-        let ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD).collect();
+        let ids: HashSet<u64> = (0..SEGMENT_BATCH_COUNT_THRESHOLD).collect();
         segmented_log.mark_batches_as_persisted(ids).unwrap();
 
         assert!(!segment_path.exists());
@@ -1088,7 +1092,7 @@ mod tests {
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
-        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+        for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD {
             segmented_log.append_and_sync(&batch).unwrap();
         }
 
@@ -1097,7 +1101,7 @@ mod tests {
             .clone();
 
         // Only persist a subset of the batch ids in the closed segment.
-        let partial_ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD - 1).collect();
+        let partial_ids: HashSet<u64> = (0..SEGMENT_BATCH_COUNT_THRESHOLD - 1).collect();
         segmented_log
             .mark_batches_as_persisted(partial_ids)
             .unwrap();
@@ -1108,7 +1112,7 @@ mod tests {
 
         // When persisting the last batch, the segment should be deleted.
         segmented_log
-            .mark_batches_as_persisted(HashSet::from([SEGMENT_ROTATION_THRESHOLD - 1]))
+            .mark_batches_as_persisted(HashSet::from([SEGMENT_BATCH_COUNT_THRESHOLD - 1]))
             .unwrap();
 
         assert!(!segment_path.exists());
@@ -1122,14 +1126,14 @@ mod tests {
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
-        // Trigger five full rotations.
-        for _ in 0..SEGMENT_ROTATION_THRESHOLD * 5 {
+        // Close five full segments.
+        for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD * 5 {
             segmented_log.append_and_sync(&batch).unwrap();
         }
 
         assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 5);
 
-        let ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD * 5).collect();
+        let ids: HashSet<u64> = (0..SEGMENT_BATCH_COUNT_THRESHOLD * 5).collect();
         segmented_log.mark_batches_as_persisted(ids).unwrap();
 
         assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
@@ -1195,7 +1199,7 @@ mod tests {
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
-        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+        for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD {
             segmented_log.append_and_sync(&batch).unwrap();
         }
 
@@ -1204,7 +1208,7 @@ mod tests {
             .clone();
         assert!(segment_path.exists());
 
-        let all_ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD).collect();
+        let all_ids: HashSet<u64> = (0..SEGMENT_BATCH_COUNT_THRESHOLD).collect();
         let delta_table = write_compressed_segments_with_batch_ids(&data_folder, all_ids).await;
 
         segmented_log
@@ -1223,7 +1227,7 @@ mod tests {
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
-        for _ in 0..SEGMENT_ROTATION_THRESHOLD {
+        for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD {
             segmented_log.append_and_sync(&batch).unwrap();
         }
 
@@ -1231,7 +1235,7 @@ mod tests {
             .path
             .clone();
 
-        let partial_ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD - 1).collect();
+        let partial_ids: HashSet<u64> = (0..SEGMENT_BATCH_COUNT_THRESHOLD - 1).collect();
         let delta_table = write_compressed_segments_with_batch_ids(&data_folder, partial_ids).await;
 
         segmented_log
@@ -1243,7 +1247,7 @@ mod tests {
         assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 1);
         assert_eq!(
             segmented_log.persisted_batch_ids.lock().unwrap().len() as u64,
-            SEGMENT_ROTATION_THRESHOLD - 1
+            SEGMENT_BATCH_COUNT_THRESHOLD - 1
         );
     }
 
@@ -1342,24 +1346,24 @@ mod tests {
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
-        // Fill one full segment (triggers rotation) and write two more into the active segment.
-        for _ in 0..SEGMENT_ROTATION_THRESHOLD + 2 {
+        // Fill one full segment and write two more into the active segment.
+        for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD + 2 {
             segmented_log.append_and_sync(&batch).unwrap();
         }
 
         // Persist one batch id in the closed segment and one in the active segment.
         segmented_log
-            .mark_batches_as_persisted(HashSet::from([0, SEGMENT_ROTATION_THRESHOLD + 1]))
+            .mark_batches_as_persisted(HashSet::from([0, SEGMENT_BATCH_COUNT_THRESHOLD + 1]))
             .unwrap();
 
         assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 1);
 
         let unpersisted = segmented_log.unpersisted_batches().unwrap();
-        assert_eq!(unpersisted.len() as u64, SEGMENT_ROTATION_THRESHOLD);
+        assert_eq!(unpersisted.len() as u64, SEGMENT_BATCH_COUNT_THRESHOLD);
         assert_eq!(unpersisted.first().unwrap(), &(1, batch.clone()));
         assert_eq!(
             unpersisted.last().unwrap(),
-            &(SEGMENT_ROTATION_THRESHOLD, batch)
+            &(SEGMENT_BATCH_COUNT_THRESHOLD, batch)
         );
     }
 
