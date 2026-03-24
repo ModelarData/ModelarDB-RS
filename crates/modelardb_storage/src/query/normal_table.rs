@@ -13,10 +13,10 @@
  * limitations under the License.
  */
 
-//! Implementation of [`NormalTable`] which allows normal tables to be queried through Apache DataFusion.
-//! It wraps a [`DeltaTable`] and forwards most method calls to it. However, for
-//! [`TableProvider::scan()`] it updates the [`DeltaTable`] to the latest version and it implements
-//! [`TableProvider::insert_into()`] so rows can be inserted with INSERT.
+//! Implementation of [`NormalTable`] which allows normal tables and metadata tables to be queried
+//! through Apache DataFusion. It wraps a [`DeltaTable`] and forwards most method calls to it.
+//! However, for [`TableProvider::scan()`] it updates the [`DeltaTable`] to the latest version. If a
+//! [`DataSink`] is provided, [`TableProvider::insert_into()`] is also supported.
 
 use std::borrow::Cow;
 use std::{any::Any, sync::Arc};
@@ -33,23 +33,26 @@ use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use deltalake::DeltaTable;
 use tonic::async_trait;
 
-/// A queryable representation of a normal table. [`NormalTable`] wraps the [`TableProvider`]
-/// [`DeltaTable`] and passes most methods calls directly to it. Thus, it can be registered with
-/// Apache DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is updated to the
-/// latest snapshot when accessed and support for inserting has been added.
+/// A queryable representation of a normal table or a metadata table. [`NormalTable`] wraps the
+/// [`TableProvider`] of [`DeltaTable`] and passes most method calls directly to it. Thus, it can be
+/// registered with Apache DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is
+/// updated to the latest snapshot when accessed and, if a [`DataSink`] is provided, support for
+/// inserting data with INSERT has been added. Metadata tables are registered without a [`DataSink`]
+/// since they are managed internally and should not be modified by users.
 #[derive(Debug)]
 pub(crate) struct NormalTable {
     /// Access to the Delta Lake table.
     delta_table: DeltaTable,
-    /// Where data should be written to.
-    data_sink: Arc<dyn DataSink>,
+    /// Where data should be written to. [`None`] for metadata tables since they should not support
+    /// INSERT as they are managed internally.
+    maybe_data_sink: Option<Arc<dyn DataSink>>,
 }
 
 impl NormalTable {
-    pub(crate) fn new(delta_table: DeltaTable, data_sink: Arc<dyn DataSink>) -> Self {
+    pub(crate) fn new(delta_table: DeltaTable, maybe_data_sink: Option<Arc<dyn DataSink>>) -> Self {
         Self {
             delta_table,
-            data_sink,
+            maybe_data_sink,
         }
     }
 }
@@ -128,15 +131,21 @@ impl TableProvider for NormalTable {
 
     /// Create an [`ExecutionPlan`] that will insert the result of `input` into the normal table.
     /// Generally, [`arrow_flight::flight_service_server::FlightService::do_put()`] should be used
-    /// instead of this method as it is more efficient. Returns a [`DataFusionError::Plan`] if the
-    /// necessary metadata cannot be retrieved from the Delta Lake.
+    /// instead of this method as it is more efficient. Returns a [`DataFusionError::Plan`] if no
+    /// [`DataSink`] was provided (the table is a metadata table) or if the necessary metadata
+    /// cannot be retrieved from the Delta Lake.
     async fn insert_into(
         &self,
         _state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
         _insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let file_sink = Arc::new(DataSinkExec::new(input, self.data_sink.clone(), None));
+        let data_sink = self.maybe_data_sink.clone().ok_or_else(|| {
+            DataFusionError::Plan("INSERT is not supported for metadata tables.".to_owned())
+        })?;
+
+        let file_sink = Arc::new(DataSinkExec::new(input, data_sink, None));
+
         Ok(file_sink)
     }
 }

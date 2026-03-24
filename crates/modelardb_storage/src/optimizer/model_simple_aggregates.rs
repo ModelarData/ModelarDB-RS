@@ -621,63 +621,18 @@ impl Accumulator for ModelAvgAccumulator {
 mod tests {
     use super::*;
 
-    use std::any::{Any, TypeId};
-    use std::fmt::{Debug, Formatter, Result as FmtResult};
+    use std::any::TypeId;
 
-    use datafusion::arrow::datatypes::Schema;
-    use datafusion::datasource::sink::DataSink;
-    use datafusion::execution::{SendableRecordBatchStream, TaskContext};
     use datafusion::physical_plan::aggregates::AggregateExec;
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
-    use datafusion::physical_plan::metrics::MetricsSet;
-    use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
-    use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
+    use modelardb_test::table::{self, NoOpDataSink, TIME_SERIES_TABLE_NAME};
     use tempfile::TempDir;
-    use tonic::async_trait;
 
     use crate::data_folder::DataFolder;
     use crate::query::grid_exec::GridExec;
     use crate::query::time_series_table::TimeSeriesTable;
-
-    // DataSink for testing.
-    struct NoOpDataSink {}
-
-    #[async_trait]
-    impl DataSink for NoOpDataSink {
-        fn as_any(&self) -> &dyn Any {
-            unimplemented!();
-        }
-
-        fn schema(&self) -> &Arc<Schema> {
-            unimplemented!();
-        }
-
-        fn metrics(&self) -> Option<MetricsSet> {
-            unimplemented!();
-        }
-
-        async fn write_all(
-            &self,
-            _data: SendableRecordBatchStream,
-            _context: &Arc<TaskContext>,
-        ) -> DataFusionResult<u64> {
-            unimplemented!();
-        }
-    }
-
-    impl Debug for NoOpDataSink {
-        fn fmt(&self, _f: &mut Formatter<'_>) -> FmtResult {
-            unimplemented!();
-        }
-    }
-
-    impl DisplayAs for NoOpDataSink {
-        fn fmt_as(&self, _t: DisplayFormatType, _f: &mut Formatter<'_>) -> FmtResult {
-            unimplemented!();
-        }
-    }
 
     // Tests for ModelSimpleAggregates.
     #[tokio::test]

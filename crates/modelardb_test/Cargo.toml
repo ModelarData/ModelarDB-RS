@@ -21,5 +21,7 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
 arrow.workspace = true
+async-trait.workspace = true
+datafusion.workspace = true
 modelardb_types = { path = "../modelardb_types" }
 rand.workspace = true

@@ -16,11 +16,12 @@
 //! Implementation of the type used to interact with local and remote storage through a Delta Lake.
 
 pub mod cluster;
+pub mod delta_table_writer;
 
 use std::collections::HashMap;
+use std::env;
 use std::path::Path as StdPath;
 use std::sync::Arc;
-use std::{env, fs};
 
 use arrow::array::{
     ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, Float32Array, Int16Array, RecordBatch,
@@ -33,22 +34,16 @@ use datafusion::catalog::TableProvider;
 use datafusion::common::{DFSchema, TableReference, ToDFSchema};
 use datafusion::datasource::sink::DataSink;
 use datafusion::logical_expr::{Expr, lit};
-use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
 use delta_kernel::engine::arrow_conversion::TryIntoKernel;
-use delta_kernel::table_properties::DataSkippingNumIndexedCols;
-use deltalake::delta_datafusion::DeltaDataChecker;
-use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
-use deltalake::kernel::{Action, Add, StructField};
+use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
-use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
-use deltalake::parquet::file::metadata::SortingColumn;
-use deltalake::protocol::{DeltaOperation, SaveMode};
+use deltalake::protocol::SaveMode;
 use deltalake::{DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
+use modelardb_types::schemas::FIELD_COLUMN;
 use modelardb_types::types::{
     ArrowValue, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
     TimeSeriesTableMetadata,
@@ -59,11 +54,11 @@ use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
 use url::Url;
-use uuid::Uuid;
 
+use crate::data_folder::delta_table_writer::DeltaTableWriter;
 use crate::error::{ModelarDbStorageError, Result};
-use crate::query::metadata_table::MetadataTable;
-use crate::{METADATA_FOLDER, TABLE_FOLDER, apache_parquet_writer_properties, sql_and_concat};
+use crate::query::normal_table::NormalTable;
+use crate::{METADATA_FOLDER, TABLE_FOLDER, sql_and_concat};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -105,17 +100,12 @@ impl DataFolder {
 
     /// Create a new [`DataFolder`] that manages the Delta tables in memory.
     pub async fn open_memory() -> Result<Self> {
-        let data_folder = Self {
-            location: "memory:///modelardb".to_owned(),
-            storage_options: HashMap::new(),
-            object_store: Arc::new(InMemory::new()),
-            delta_table_cache: DashMap::new(),
-            session_context: Arc::new(crate::create_session_context()),
-        };
-
-        data_folder.create_and_register_metadata_tables().await?;
-
-        Ok(data_folder)
+        Self::try_new(
+            "memory:///modelardb".to_owned(),
+            HashMap::new(),
+            Arc::new(InMemory::new()),
+        )
+        .await
     }
 
     /// Create a new [`DataFolder`] that manages the Delta tables in `data_folder_path`. Returns a
@@ -123,7 +113,7 @@ impl DataFolder {
     /// the metadata tables cannot be created.
     pub async fn open_local(data_folder_path: &StdPath) -> Result<Self> {
         // Ensure the directories in the path exists as LocalFileSystem otherwise returns an error.
-        fs::create_dir_all(data_folder_path)
+        std::fs::create_dir_all(data_folder_path)
             .map_err(|error| DeltaTableError::generic(error.to_string()))?;
 
         // Use with_automatic_cleanup to ensure empty directories are deleted automatically.
@@ -136,17 +126,7 @@ impl DataFolder {
             .ok_or_else(|| DeltaTableError::generic("Local data folder path is not UTF-8."))?
             .to_owned();
 
-        let data_folder = Self {
-            location,
-            storage_options: HashMap::new(),
-            object_store: Arc::new(object_store),
-            delta_table_cache: DashMap::new(),
-            session_context: Arc::new(crate::create_session_context()),
-        };
-
-        data_folder.create_and_register_metadata_tables().await?;
-
-        Ok(data_folder)
+        Self::try_new(location, HashMap::new(), Arc::new(object_store)).await
     }
 
     /// Create a new [`DataFolder`] that manages Delta tables in the remote object store given by
@@ -225,17 +205,7 @@ impl DataFolder {
             )
             .build()?;
 
-        let data_folder = DataFolder {
-            location,
-            storage_options,
-            object_store: Arc::new(object_store),
-            delta_table_cache: DashMap::new(),
-            session_context: Arc::new(crate::create_session_context()),
-        };
-
-        data_folder.create_and_register_metadata_tables().await?;
-
-        Ok(data_folder)
+        Self::try_new(location, storage_options, Arc::new(object_store)).await
     }
 
     /// Create a new [`DataFolder`] that manages the Delta tables in an object store with an
@@ -258,10 +228,21 @@ impl DataFolder {
             .map_err(|error| ModelarDbStorageError::InvalidArgument(error.to_string()))?;
         let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
 
-        let data_folder = DataFolder {
+        Self::try_new(location, storage_options, Arc::new(object_store)).await
+    }
+
+    /// Create a new [`DataFolder`] with the given `location`, `storage_options`, and `object_store`,
+    /// create the metadata tables, and return the [`DataFolder`]. Returns [`ModelarDbStorageError`]
+    /// if the metadata tables cannot be created.
+    async fn try_new(
+        location: String,
+        storage_options: HashMap<String, String>,
+        object_store: Arc<dyn ObjectStore>,
+    ) -> Result<Self> {
+        let data_folder = Self {
             location,
             storage_options,
-            object_store: Arc::new(object_store),
+            object_store,
             delta_table_cache: DashMap::new(),
             session_context: Arc::new(crate::create_session_context()),
         };
@@ -318,6 +299,43 @@ impl DataFolder {
         Ok(())
     }
 
+    /// Create a Delta Lake table for a metadata table with `table_name` and `schema` and register
+    /// it in the [`SessionContext`] in the `metadata` schema. If the table already exists, it is
+    /// reused. Return [`ModelarDbStorageError`] if the table cannot be created or cannot be
+    /// registered.
+    async fn create_and_register_metadata_table(
+        &self,
+        table_name: &str,
+        schema: &Schema,
+    ) -> Result<()> {
+        let delta_table = self
+            .create_delta_lake_table(
+                table_name,
+                schema,
+                &[],
+                self.location_of_metadata_table(table_name),
+                SaveMode::Ignore,
+            )
+            .await?;
+
+        let table_reference = TableReference::partial("metadata", table_name);
+        let metadata_table = Arc::new(NormalTable::new(delta_table, None));
+        self.session_context
+            .register_table(table_reference, metadata_table)?;
+
+        Ok(())
+    }
+
+    /// Return the session context used to query the tables using Apache DataFusion.
+    pub fn session_context(&self) -> &SessionContext {
+        &self.session_context
+    }
+
+    /// Return an [`ObjectStore`] to access the root of the Delta Lake.
+    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
+        self.object_store.clone()
+    }
+
     /// Register all normal tables and time series tables in `self` with its [`SessionContext`].
     /// `data_sink` is set as the [`DataSink`] for all of the tables. If the tables could not be
     /// registered, [`ModelarDbStorageError`] is returned.
@@ -347,222 +365,6 @@ impl DataFolder {
         }
 
         Ok(())
-    }
-
-    /// Return the session context used to query the tables using Apache DataFusion.
-    pub fn session_context(&self) -> &SessionContext {
-        &self.session_context
-    }
-
-    /// Return an [`ObjectStore`] to access the root of the Delta Lake.
-    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
-        self.object_store.clone()
-    }
-
-    /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
-    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
-    /// established or the table does not exist.
-    pub async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
-        let table_path = self.location_of_metadata_table(table_name);
-        self.delta_table_from_path(&table_path).await
-    }
-
-    /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
-    /// table does not exist.
-    pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
-        let table_path = self.location_of_table(table_name);
-        self.delta_table_from_path(&table_path).await
-    }
-
-    /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
-    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
-    /// table does not exist.
-    async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
-        // Use the cache if possible and load to get the latest table data.
-        if let Some(mut delta_table) = self.delta_table_cache.get_mut(table_path) {
-            delta_table.load().await?;
-            Ok(delta_table.clone())
-        } else {
-            // If the table is not in the cache, open it and add it to the cache before returning.
-            let table_url = deltalake::ensure_table_uri(table_path)?;
-            let delta_table =
-                deltalake::open_table_with_storage_options(table_url, self.storage_options.clone())
-                    .await?;
-
-            self.delta_table_cache
-                .insert(table_path.to_owned(), delta_table.clone());
-
-            Ok(delta_table)
-        }
-    }
-
-    /// Return `true` if the table with `table_name` is a normal table, otherwise return `false`.
-    pub async fn is_normal_table(&self, table_name: &str) -> Result<bool> {
-        Ok(self
-            .normal_table_names()
-            .await?
-            .contains(&table_name.to_owned()))
-    }
-
-    /// Return `true` if the table with `table_name` is a time series table, otherwise return `false`.
-    pub async fn is_time_series_table(&self, table_name: &str) -> Result<bool> {
-        Ok(self
-            .time_series_table_names()
-            .await?
-            .contains(&table_name.to_owned()))
-    }
-
-    /// Return the name of each table currently in the Delta Lake. If the table names cannot be
-    /// retrieved, [`ModelarDbStorageError`] is returned.
-    pub async fn table_names(&self) -> Result<Vec<String>> {
-        let normal_table_names = self.normal_table_names().await?;
-        let time_series_table_names = self.time_series_table_names().await?;
-
-        let mut table_names = normal_table_names;
-        table_names.extend(time_series_table_names);
-
-        Ok(table_names)
-    }
-
-    /// Return the name of each normal table currently in the Delta Lake. Note that this does not
-    /// include time series tables. If the normal table names cannot be retrieved,
-    /// [`ModelarDbStorageError`] is returned.
-    pub async fn normal_table_names(&self) -> Result<Vec<String>> {
-        self.table_names_of_type(TableType::NormalTable).await
-    }
-
-    /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
-    /// table does not exist or the table is not a normal table, return [`None`].
-    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Arc<Schema>> {
-        if self
-            .is_normal_table(table_name)
-            .await
-            .is_ok_and(|is_normal_table| is_normal_table)
-        {
-            let schema = self
-                .delta_table(table_name)
-                .await
-                .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
-                .schema();
-
-            Some(schema)
-        } else {
-            None
-        }
-    }
-
-    /// Return the name of each time series table currently in the Delta Lake. Note that this does
-    /// not include normal tables. If the time series table names cannot be retrieved,
-    /// [`ModelarDbStorageError`] is returned.
-    pub async fn time_series_table_names(&self) -> Result<Vec<String>> {
-        self.table_names_of_type(TableType::TimeSeriesTable).await
-    }
-
-    /// Return the name of tables of `table_type`. Returns [`ModelarDbStorageError`] if the table
-    /// names cannot be retrieved.
-    async fn table_names_of_type(&self, table_type: TableType) -> Result<Vec<String>> {
-        let table_type = match table_type {
-            TableType::NormalTable => "normal_table",
-            TableType::TimeSeriesTable => "time_series_table",
-        };
-
-        let sql = format!("SELECT table_name FROM metadata.{table_type}_metadata");
-        let batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let table_names = modelardb_types::array!(batch, 0, StringArray);
-        Ok(table_names.iter().flatten().map(str::to_owned).collect())
-    }
-
-    /// Return a [`DeltaTableWriter`] for writing to the table with `table_name` in the Delta Lake,
-    /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
-    /// the table does not exist.
-    pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
-        let delta_table = self.delta_table(table_name).await?;
-        if self
-            .time_series_table_metadata_for_registered_time_series_table(table_name)
-            .await
-            .is_some()
-        {
-            self.time_series_table_writer(delta_table).await
-        } else {
-            self.normal_or_metadata_table_writer(delta_table).await
-        }
-    }
-
-    /// Return a [`DeltaTableWriter`] for writing to the time series table corresponding to
-    /// `delta_table` in the Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta
-    /// Lake cannot be established or the table does not exist.
-    async fn time_series_table_writer(&self, delta_table: DeltaTable) -> Result<DeltaTableWriter> {
-        let partition_columns = vec![FIELD_COLUMN.to_owned()];
-
-        // Specify that the file must be sorted by the tag columns and then by start_time.
-        let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
-        let compressed_schema_len = TableProvider::schema(&delta_table).fields().len();
-        let sorting_columns_len = (compressed_schema_len - base_compressed_schema_len) + 1;
-        let mut sorting_columns = Vec::with_capacity(sorting_columns_len);
-
-        // Compressed segments have the tag columns at the end of the schema.
-        for tag_column_index in base_compressed_schema_len..compressed_schema_len {
-            sorting_columns.push(SortingColumn {
-                column_idx: tag_column_index as i32,
-                descending: false,
-                nulls_first: false,
-            });
-        }
-
-        // Compressed segments store the first timestamp in the second column.
-        sorting_columns.push(SortingColumn {
-            column_idx: 1,
-            descending: false,
-            nulls_first: false,
-        });
-
-        let writer_properties = apache_parquet_writer_properties(Some(sorting_columns));
-        DeltaTableWriter::try_new(delta_table, partition_columns, writer_properties)
-    }
-
-    /// Return a [`DeltaTableWriter`] for writing to the table corresponding to `delta_table` in the
-    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
-    /// established or the table does not exist.
-    async fn normal_or_metadata_table_writer(
-        &self,
-        delta_table: DeltaTable,
-    ) -> Result<DeltaTableWriter> {
-        let writer_properties = apache_parquet_writer_properties(None);
-        DeltaTableWriter::try_new(delta_table, vec![], writer_properties)
-    }
-
-    /// Create a Delta Lake table for a metadata table with `table_name` and `schema` and register
-    /// it in the [`SessionContext`] in the `metadata` schema. If the table already exists, it is
-    /// reused. Return [`ModelarDbStorageError`] if the table cannot be created or cannot be
-    /// registered.
-    pub async fn create_and_register_metadata_table(
-        &self,
-        table_name: &str,
-        schema: &Schema,
-    ) -> Result<()> {
-        let delta_table = self
-            .create_delta_lake_table(
-                table_name,
-                schema,
-                &[],
-                self.location_of_metadata_table(table_name),
-                SaveMode::Ignore,
-            )
-            .await?;
-
-        let table_reference = TableReference::partial("metadata", table_name);
-        let metadata_table = Arc::new(MetadataTable::new(delta_table));
-        self.session_context
-            .register_table(table_reference, metadata_table)?;
-
-        Ok(())
-    }
-
-    /// Return the location of the metadata table with `table_name`.
-    fn location_of_metadata_table(&self, table_name: &str) -> String {
-        format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
     }
 
     /// Create a Delta Lake table for a normal table with `table_name` and `schema` and save the
@@ -624,11 +426,6 @@ impl DataFolder {
             .await?;
 
         Ok(delta_table)
-    }
-
-    /// Return the location of the table with `table_name`.
-    fn location_of_table(&self, table_name: &str) -> String {
-        format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
 
     /// Save the created time series table to the Delta Lake. This includes adding a row to the
@@ -862,63 +659,176 @@ impl DataFolder {
         Ok(())
     }
 
+    /// Return a [`DeltaTableWriter`] for writing to the table with `table_name` in the Delta Lake,
+    /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
+    /// the table does not exist.
+    pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
+        let delta_table = self.delta_table(table_name).await?;
+        let partition_columns = delta_table.snapshot()?.metadata().partition_columns();
+
+        // If the table is a time series table, the partition column is the field column.
+        // self.is_time_series_table() is not used to avoid a redundant query to the metadata table.
+        if partition_columns.contains(&FIELD_COLUMN.to_owned()) {
+            DeltaTableWriter::try_new_for_time_series_table(delta_table)
+        } else {
+            DeltaTableWriter::try_new_for_normal_table(delta_table)
+        }
+    }
+
+    /// Write `record_batches` to the table with `table_name` in the Delta Lake. The correct
+    /// writer is selected automatically based on the table type. Returns an updated [`DeltaTable`]
+    /// if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
+    pub async fn write_record_batches(
+        &self,
+        table_name: &str,
+        record_batches: Vec<RecordBatch>,
+    ) -> Result<DeltaTable> {
+        let delta_table_writer = self.table_writer(table_name).await?;
+
+        delta_table_writer
+            .write_all_and_commit(&record_batches)
+            .await
+    }
+
     /// Write `columns` to a Delta Lake table with `table_name`. Returns an updated [`DeltaTable`]
     /// version if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
-    pub async fn write_columns_to_metadata_table(
+    async fn write_columns_to_metadata_table(
         &self,
         table_name: &str,
         columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable> {
         let delta_table = self.metadata_delta_table(table_name).await?;
         let record_batch = RecordBatch::try_new(TableProvider::schema(&delta_table), columns)?;
-        let delta_table_writer = self.normal_or_metadata_table_writer(delta_table).await?;
-        self.write_record_batches_to_table(delta_table_writer, vec![record_batch])
+        let delta_table_writer = DeltaTableWriter::try_new_for_normal_table(delta_table)?;
+
+        delta_table_writer
+            .write_all_and_commit(&[record_batch])
             .await
     }
 
-    /// Write `record_batches` to a Delta Lake table for a normal table with `table_name`. Returns
-    /// an updated [`DeltaTable`] version if the file was written successfully, otherwise returns
-    /// [`ModelarDbStorageError`].
-    pub async fn write_record_batches_to_normal_table(
-        &self,
-        table_name: &str,
-        record_batches: Vec<RecordBatch>,
-    ) -> Result<DeltaTable> {
-        let delta_table = self.delta_table(table_name).await?;
-        let delta_table_writer = self.normal_or_metadata_table_writer(delta_table).await?;
-        self.write_record_batches_to_table(delta_table_writer, record_batches)
-            .await
+    /// Return a [`DeltaTable`] for manipulating the metadata table with `table_name` in the
+    /// Delta Lake, or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be
+    /// established or the table does not exist.
+    async fn metadata_delta_table(&self, table_name: &str) -> Result<DeltaTable> {
+        let table_path = self.location_of_metadata_table(table_name);
+        self.delta_table_from_path(&table_path).await
     }
 
-    /// Write `compressed_segments` to a Delta Lake table for a time series table with `table_name`.
-    /// Returns an updated [`DeltaTable`] if the file was written successfully, otherwise returns
-    /// [`ModelarDbStorageError`].
-    pub async fn write_compressed_segments_to_time_series_table(
-        &self,
-        table_name: &str,
-        compressed_segments: Vec<RecordBatch>,
-    ) -> Result<DeltaTable> {
-        let delta_table = self.delta_table(table_name).await?;
-        let delta_table_writer = self.time_series_table_writer(delta_table).await?;
-        self.write_record_batches_to_table(delta_table_writer, compressed_segments)
-            .await
+    /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
+    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
+    /// table does not exist.
+    pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
+        let table_path = self.location_of_table(table_name);
+        self.delta_table_from_path(&table_path).await
     }
 
-    /// Write `record_batches` to the `delta_table_writer` and commit. Returns an updated
-    /// [`DeltaTable`] if all `record_batches` are written and committed successfully, otherwise it
-    /// rolls back all writes done using `delta_table_writer` and returns [`ModelarDbStorageError`].
-    async fn write_record_batches_to_table(
-        &self,
-        mut delta_table_writer: DeltaTableWriter,
-        record_batches: Vec<RecordBatch>,
-    ) -> Result<DeltaTable> {
-        match delta_table_writer.write_all(&record_batches).await {
-            Ok(_) => delta_table_writer.commit().await,
-            Err(error) => {
-                delta_table_writer.rollback().await?;
-                Err(error)
-            }
+    /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
+    /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
+    /// table does not exist.
+    async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
+        // Use the cache if possible and load to get the latest table data.
+        if let Some(mut delta_table) = self.delta_table_cache.get_mut(table_path) {
+            delta_table.load().await?;
+            Ok(delta_table.clone())
+        } else {
+            // If the table is not in the cache, open it and add it to the cache before returning.
+            let table_url = deltalake::ensure_table_uri(table_path)?;
+            let delta_table =
+                deltalake::open_table_with_storage_options(table_url, self.storage_options.clone())
+                    .await?;
+
+            self.delta_table_cache
+                .insert(table_path.to_owned(), delta_table.clone());
+
+            Ok(delta_table)
         }
+    }
+
+    /// Return `true` if the table with `table_name` is a normal table, otherwise return `false`.
+    pub async fn is_normal_table(&self, table_name: &str) -> Result<bool> {
+        Ok(self
+            .normal_table_names()
+            .await?
+            .contains(&table_name.to_owned()))
+    }
+
+    /// Return `true` if the table with `table_name` is a time series table, otherwise return `false`.
+    pub async fn is_time_series_table(&self, table_name: &str) -> Result<bool> {
+        Ok(self
+            .time_series_table_names()
+            .await?
+            .contains(&table_name.to_owned()))
+    }
+
+    /// Return the name of each table currently in the Delta Lake. If the table names cannot be
+    /// retrieved, [`ModelarDbStorageError`] is returned.
+    pub async fn table_names(&self) -> Result<Vec<String>> {
+        let normal_table_names = self.normal_table_names().await?;
+        let time_series_table_names = self.time_series_table_names().await?;
+
+        let mut table_names = normal_table_names;
+        table_names.extend(time_series_table_names);
+
+        Ok(table_names)
+    }
+
+    /// Return the name of each normal table currently in the Delta Lake. Note that this does not
+    /// include time series tables. If the normal table names cannot be retrieved,
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn normal_table_names(&self) -> Result<Vec<String>> {
+        self.table_names_of_type(TableType::NormalTable).await
+    }
+
+    /// Return the name of each time series table currently in the Delta Lake. Note that this does
+    /// not include normal tables. If the time series table names cannot be retrieved,
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn time_series_table_names(&self) -> Result<Vec<String>> {
+        self.table_names_of_type(TableType::TimeSeriesTable).await
+    }
+
+    /// Return the name of tables of `table_type`. Returns [`ModelarDbStorageError`] if the table
+    /// names cannot be retrieved.
+    async fn table_names_of_type(&self, table_type: TableType) -> Result<Vec<String>> {
+        let table_type = match table_type {
+            TableType::NormalTable => "normal_table",
+            TableType::TimeSeriesTable => "time_series_table",
+        };
+
+        let sql = format!("SELECT table_name FROM metadata.{table_type}_metadata");
+        let batch = sql_and_concat(&self.session_context, &sql).await?;
+
+        let table_names = modelardb_types::array!(batch, 0, StringArray);
+        Ok(table_names.iter().flatten().map(str::to_owned).collect())
+    }
+
+    /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
+    /// table does not exist or the table is not a normal table, return [`None`].
+    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Arc<Schema>> {
+        if self
+            .is_normal_table(table_name)
+            .await
+            .is_ok_and(|is_normal_table| is_normal_table)
+        {
+            let schema = self
+                .delta_table(table_name)
+                .await
+                .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
+                .schema();
+
+            Some(schema)
+        } else {
+            None
+        }
+    }
+
+    /// Return the location of the metadata table with `table_name`.
+    fn location_of_metadata_table(&self, table_name: &str) -> String {
+        format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
+    }
+
+    /// Return the location of the table with `table_name`.
+    fn location_of_table(&self, table_name: &str) -> String {
+        format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
 
     /// Return the [`TimeSeriesTableMetadata`] of each time series table currently in the metadata
@@ -1093,164 +1003,6 @@ impl DataFolder {
     }
 }
 
-/// Functionality for transactionally writing [`RecordBatches`](RecordBatch) to a Delta table stored
-/// in an object store.
-pub struct DeltaTableWriter {
-    /// Delta table that all of the record batches will be written to.
-    delta_table: DeltaTable,
-    /// Checker that ensures all of the record batches match the table.
-    delta_data_checker: DeltaDataChecker,
-    /// Write operation that will be committed to the Delta table.
-    delta_operation: DeltaOperation,
-    /// Unique identifier for this write operation to the Delta table.
-    operation_id: Uuid,
-    /// Writes record batches to the Delta table as Apache Parquet files.
-    delta_writer: DeltaWriter,
-}
-
-impl DeltaTableWriter {
-    /// Create a new [`DeltaTableWriter`]. Returns a [`ModelarDbStorageError`] if the state of the
-    /// Delta table cannot be loaded from `delta_table`.
-    pub fn try_new(
-        delta_table: DeltaTable,
-        partition_columns: Vec<String>,
-        writer_properties: WriterProperties,
-    ) -> Result<Self> {
-        // Checker for if record batches match the table’s invariants, constraints, and nullability.
-        let delta_table_state = delta_table.snapshot()?;
-        let snapshot = delta_table_state.snapshot();
-        let delta_data_checker = DeltaDataChecker::new(snapshot);
-
-        // Operation that will be committed.
-        let delta_operation = DeltaOperation::Write {
-            mode: SaveMode::Append,
-            partition_by: if partition_columns.is_empty() {
-                None
-            } else {
-                Some(partition_columns.clone())
-            },
-            predicate: None,
-        };
-
-        // A UUID version 4 is used as the operation id to match the existing Operation trait in the
-        // deltalake crate as it is pub(trait) and thus cannot be used directly in DeltaTableWriter.
-        let operation_id = Uuid::new_v4();
-
-        // Writer that will write the record batches.
-        let object_store = delta_table.log_store().object_store(Some(operation_id));
-        let table_schema: Arc<Schema> = TableProvider::schema(&delta_table);
-        let num_indexed_cols =
-            DataSkippingNumIndexedCols::NumColumns(table_schema.fields.len() as u64);
-        let writer_config = WriterConfig::new(
-            table_schema,
-            partition_columns,
-            Some(writer_properties),
-            None,
-            None,
-            num_indexed_cols,
-            None,
-        );
-        let delta_writer = DeltaWriter::new(object_store, writer_config);
-
-        Ok(Self {
-            delta_table,
-            delta_data_checker,
-            delta_operation,
-            operation_id,
-            delta_writer,
-        })
-    }
-
-    /// Write `record_batch` to the Delta table. Returns a [`ModelarDbStorageError`] if the
-    /// [`RecordBatches`](RecordBatch) does not match the schema of the Delta table or if the
-    /// writing fails.
-    pub async fn write(&mut self, record_batch: &RecordBatch) -> Result<()> {
-        self.delta_data_checker.check_batch(record_batch).await?;
-        self.delta_writer.write(record_batch).await?;
-        Ok(())
-    }
-
-    /// Write all `record_batches` to the Delta table. Returns a [`ModelarDbStorageError`] if one of
-    /// the [`RecordBatches`](RecordBatch) does not match the schema of the Delta table or if the
-    /// writing fails.
-    pub async fn write_all(&mut self, record_batches: &[RecordBatch]) -> Result<()> {
-        for record_batch in record_batches {
-            self.write(record_batch).await?;
-        }
-        Ok(())
-    }
-
-    /// Consume the [`DeltaTableWriter`], finish the writing, and commit the files that have been
-    /// written to the log. If an error occurs before the commit is finished, the already written
-    /// files are deleted if possible. Returns a [`ModelarDbStorageError`] if an error occurs when
-    /// finishing the writing, committing the files that have been written, deleting the written
-    /// files, or updating the [`DeltaTable`].
-    pub async fn commit(mut self) -> Result<DeltaTable> {
-        // Write the remaining buffered files.
-        let added_files = self.delta_writer.close().await?;
-
-        // Clone added_files in case of rollback.
-        let actions = added_files
-            .clone()
-            .into_iter()
-            .map(Action::Add)
-            .collect::<Vec<Action>>();
-
-        // Prepare all inputs to the commit.
-        let object_store = self.delta_table.object_store();
-        let commit_properties = CommitProperties::default();
-        let table_data = match self.delta_table.snapshot() {
-            Ok(table_data) => table_data,
-            Err(delta_table_error) => {
-                delete_added_files(&object_store, added_files).await?;
-                return Err(ModelarDbStorageError::DeltaLake(delta_table_error));
-            }
-        };
-        let log_store = self.delta_table.log_store();
-
-        // Construct the commit to be written.
-        let commit_builder = CommitBuilder::from(commit_properties)
-            .with_actions(actions)
-            .with_operation_id(self.operation_id)
-            .build(Some(table_data), log_store, self.delta_operation);
-
-        // Write the commit to the Delta table.
-        let _finalized_commit = match commit_builder.await {
-            Ok(finalized_commit) => finalized_commit,
-            Err(delta_table_error) => {
-                delete_added_files(&object_store, added_files).await?;
-                return Err(ModelarDbStorageError::DeltaLake(delta_table_error));
-            }
-        };
-
-        // Return Delta table with the commit.
-        self.delta_table.load().await?;
-        Ok(self.delta_table)
-    }
-
-    /// Consume the [`DeltaTableWriter`], abort the writing, and delete all of the files that have
-    /// already been written. Returns a [`ModelarDbStorageError`] if an error occurs when aborting
-    /// the writing or deleting the files that have already been written. Rollback is not called
-    /// automatically as drop() is not async and async_drop() is not yet a stable API.
-    pub async fn rollback(self) -> Result<DeltaTable> {
-        let object_store = self.delta_table.object_store();
-        let added_files = self.delta_writer.close().await?;
-        delete_added_files(&object_store, added_files).await?;
-        Ok(self.delta_table)
-    }
-}
-
-/// Delete the `added_files` from `object_store`. Returns a [`ModelarDbStorageError`] if a file
-/// could not be deleted. It is a function instead of a method on [`DeltaTableWriter`] so it can be
-/// called by [`DeltaTableWriter`] after the [`DeltaWriter`] is closed without lifetime issues.
-async fn delete_added_files(object_store: &dyn ObjectStore, added_files: Vec<Add>) -> Result<()> {
-    for add_file in added_files {
-        let path: Path = Path::from(add_file.path);
-        object_store.delete(&path).await?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1260,10 +1012,53 @@ mod tests {
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
     use modelardb_test::table as test;
+    use modelardb_test::table::{NoOpDataSink, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::ArrowTimestamp;
     use tempfile::TempDir;
 
     // Tests for DataFolder.
+    #[tokio::test]
+    async fn test_open_local_url_without_scheme() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap();
+
+        let data_folder = DataFolder::open_local_url(path).await;
+        assert!(data_folder.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_open_local_url_with_file_scheme() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap();
+        let url = format!("file://{path}");
+
+        let data_folder = DataFolder::open_local_url(&url).await;
+        assert!(data_folder.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_open_local_url_with_memory_scheme() {
+        let data_folder = DataFolder::open_local_url("memory://").await;
+        assert!(data_folder.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_open_local_url_with_invalid_scheme() {
+        let url = "invalid://path";
+        let result = DataFolder::open_local_url(url).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            format!("Invalid Argument Error: {url} is not a valid local URL.")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_open_memory() {
+        let data_folder = DataFolder::open_memory().await;
+        assert!(data_folder.is_ok());
+    }
+
     #[tokio::test]
     async fn test_create_metadata_data_folder_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -1294,6 +1089,488 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_register_tables() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        data_folder
+            .create_time_series_table(&test::time_series_table_metadata())
+            .await
+            .unwrap();
+
+        data_folder
+            .register_tables(Arc::new(NoOpDataSink {}))
+            .await
+            .unwrap();
+
+        // Verify the tables are queryable through the session context.
+        assert!(
+            data_folder
+                .session_context
+                .table_provider("normal_table_1")
+                .await
+                .is_ok()
+        );
+        assert!(
+            data_folder
+                .session_context
+                .table_provider(TIME_SERIES_TABLE_NAME)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        assert!(data_folder.delta_table("normal_table_1").await.is_ok());
+
+        // Retrieve the normal table metadata from the Delta Lake.
+        let sql = "SELECT table_name FROM metadata.normal_table_metadata ORDER BY table_name";
+        let batch = sql_and_concat(&data_folder.session_context, sql)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec!["normal_table_1", "normal_table_2"])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_existing_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder
+            .create_normal_table("normal_table_1", &test::normal_table_schema())
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Generic error: A Delta Lake table already exists at that location."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        assert!(
+            data_folder
+                .delta_table(TIME_SERIES_TABLE_NAME)
+                .await
+                .is_ok()
+        );
+
+        // Check that a row has been added to the time_series_table_metadata table.
+        let sql = "SELECT table_name, query_schema FROM metadata.time_series_table_metadata";
+        let batch = sql_and_concat(&data_folder.session_context, sql)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec![TIME_SERIES_TABLE_NAME])
+        );
+        assert_eq!(
+            **batch.column(1),
+            BinaryArray::from_vec(vec![
+                &try_convert_schema_to_bytes(&test::time_series_table_metadata().query_schema)
+                    .unwrap()
+            ])
+        );
+
+        // Check that a row has been added to the time_series_table_field_columns table for each field column.
+        let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
+                   generated_column_expr FROM metadata.time_series_table_field_columns ORDER BY column_name";
+        let batch = sql_and_concat(&data_folder.session_context, sql)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec![TIME_SERIES_TABLE_NAME, TIME_SERIES_TABLE_NAME])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec!["field_1", "field_2"])
+        );
+        assert_eq!(**batch.column(2), Int16Array::from(vec![1, 2]));
+        assert_eq!(**batch.column(3), Float32Array::from(vec![1.0, 5.0]));
+        assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
+        assert_eq!(
+            **batch.column(5),
+            BinaryArray::from_opt_vec(vec![None, None])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_existing_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        let result = data_folder
+            .create_time_series_table(&test::time_series_table_metadata())
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Generic error: A Delta Lake table already exists at that location."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_table_with_unsigned_integers() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::UInt32, false),
+            Field::new("name", DataType::Utf8, false),
+        ]);
+
+        let result = data_folder.create_normal_table("uint_table", &schema).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Data does not match the schema or partitions of the table: \
+            Unsigned integers are not supported."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_drop_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        data_folder.drop_table("normal_table_2").await.unwrap();
+
+        assert!(data_folder.delta_table("normal_table_2").await.is_err());
+
+        // Verify that normal_table_2 was deleted from the normal_table_metadata table.
+        let sql = "SELECT table_name FROM metadata.normal_table_metadata";
+        let batch = sql_and_concat(&data_folder.session_context, sql)
+            .await
+            .unwrap();
+
+        assert_eq!(**batch.column(0), StringArray::from(vec!["normal_table_1"]));
+    }
+
+    #[tokio::test]
+    async fn test_drop_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        data_folder
+            .drop_table(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+
+        assert!(
+            data_folder
+                .delta_table(TIME_SERIES_TABLE_NAME)
+                .await
+                .is_err()
+        );
+
+        // Verify that the time series table was deleted from the time_series_table_metadata table.
+        let sql = "SELECT table_name FROM metadata.time_series_table_metadata";
+        let batch = sql_and_concat(&data_folder.session_context, sql)
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+
+        // Verify that the field columns were deleted from the time_series_table_field_columns table.
+        let sql = "SELECT table_name FROM metadata.time_series_table_field_columns";
+        let batch = sql_and_concat(&data_folder.session_context, sql)
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_drop_missing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder.drop_table("missing_table").await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: Table with name 'missing_table' does not exist."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_truncate_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let mut delta_table = data_folder
+            .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        data_folder.truncate_table("normal_table_1").await.unwrap();
+
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_truncate_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        let mut delta_table = data_folder
+            .write_record_batches(
+                TIME_SERIES_TABLE_NAME,
+                vec![test::compressed_segments_record_batch()],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        data_folder
+            .truncate_table(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_truncate_missing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder.truncate_table("missing_table").await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_normal_table() {
+        let (temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        data_folder
+            .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+            .await
+            .unwrap();
+
+        data_folder.truncate_table("normal_table_1").await.unwrap();
+
+        // The stale Parquet file should still exist on disk alongside the _delta_log folder.
+        let table_path = format!(
+            "{}/tables/normal_table_1",
+            temp_dir.path().to_str().unwrap()
+        );
+        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 2);
+
+        data_folder
+            .vacuum_table("normal_table_1", Some(0))
+            .await
+            .unwrap();
+
+        // Only the _delta_log folder should remain.
+        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_time_series_table() {
+        let (temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        data_folder
+            .write_record_batches(
+                TIME_SERIES_TABLE_NAME,
+                vec![test::compressed_segments_record_batch()],
+            )
+            .await
+            .unwrap();
+
+        data_folder
+            .truncate_table(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // The stale Parquet file should still exist in the partition folder.
+        let column_path = format!(
+            "{}/tables/{}/field_column=0",
+            temp_dir.path().to_str().unwrap(),
+            TIME_SERIES_TABLE_NAME
+        );
+        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 1);
+
+        data_folder
+            .vacuum_table(TIME_SERIES_TABLE_NAME, Some(0))
+            .await
+            .unwrap();
+
+        // The stale Parquet file should have been removed.
+        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_table_with_default_retention_period() {
+        let (temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        data_folder
+            .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+            .await
+            .unwrap();
+
+        data_folder.truncate_table("normal_table_1").await.unwrap();
+
+        // Vacuum with None uses the default 7-day retention period, so the recently
+        // truncated file is not yet stale and should still exist on disk.
+        data_folder
+            .vacuum_table("normal_table_1", None)
+            .await
+            .unwrap();
+
+        let table_path = format!(
+            "{}/tables/normal_table_1",
+            temp_dir.path().to_str().unwrap()
+        );
+        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_table_with_out_of_bounds_retention_period() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder
+            .vacuum_table("normal_table_1", Some(MAX_RETENTION_PERIOD_IN_SECONDS + 1))
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: \
+                Retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_missing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder.vacuum_table("missing_table", None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_write_record_batches_to_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let batch_to_write = test::normal_table_record_batch();
+        let delta_table = data_folder
+            .write_record_batches("normal_table_1", vec![batch_to_write.clone()])
+            .await
+            .unwrap();
+
+        // Verify the write produced a Parquet file.
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        // Read the data back and verify the content.
+        data_folder
+            .session_context
+            .register_table("normal_table_1", Arc::new(delta_table))
+            .unwrap();
+
+        let read_batch =
+            sql_and_concat(&data_folder.session_context, "SELECT * FROM normal_table_1")
+                .await
+                .unwrap();
+
+        assert_eq!(read_batch, batch_to_write);
+    }
+
+    #[tokio::test]
+    async fn test_write_record_batches_to_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        let batch_to_write = test::compressed_segments_record_batch();
+        let delta_table = data_folder
+            .write_record_batches(TIME_SERIES_TABLE_NAME, vec![batch_to_write.clone()])
+            .await
+            .unwrap();
+
+        // Verify the write produced a Parquet file.
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        // Read the data back and verify the content. The partition column (field_column) is
+        // moved to the end by Delta Lake, so SELECT the columns in the original schema order.
+        let schema = test::time_series_table_metadata().compressed_schema.clone();
+        let column_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+
+        data_folder
+            .session_context
+            .register_table(TIME_SERIES_TABLE_NAME, Arc::new(delta_table))
+            .unwrap();
+
+        let read_batch = sql_and_concat(
+            &data_folder.session_context,
+            &format!(
+                "SELECT {} FROM {}",
+                column_names.join(", "),
+                TIME_SERIES_TABLE_NAME
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(read_batch, batch_to_write);
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_vec_to_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let delta_table = data_folder
+            .write_record_batches("normal_table_1", vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_record_batch_to_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let empty_batch = RecordBatch::new_empty(Arc::new(test::normal_table_schema()));
+        let delta_table = data_folder
+            .write_record_batches("normal_table_1", vec![empty_batch])
+            .await
+            .unwrap();
+
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_write_record_batches_to_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let result = data_folder
+            .write_record_batches("missing_table", vec![test::normal_table_record_batch()])
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+        );
+    }
+
+    #[tokio::test]
     async fn test_normal_table_is_normal_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
         assert!(data_folder.is_normal_table("normal_table_1").await.unwrap());
@@ -1304,7 +1581,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
             !data_folder
-                .is_normal_table(test::TIME_SERIES_TABLE_NAME)
+                .is_normal_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -1315,7 +1592,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
             data_folder
-                .is_time_series_table(test::TIME_SERIES_TABLE_NAME)
+                .is_time_series_table(TIME_SERIES_TABLE_NAME)
                 .await
                 .unwrap()
         );
@@ -1345,11 +1622,7 @@ mod tests {
         let table_names = data_folder.table_names().await.unwrap();
         assert_eq!(
             table_names,
-            vec![
-                "normal_table_2",
-                "normal_table_1",
-                test::TIME_SERIES_TABLE_NAME
-            ]
+            vec!["normal_table_2", "normal_table_1", TIME_SERIES_TABLE_NAME]
         );
     }
 
@@ -1366,156 +1639,28 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_names = data_folder.time_series_table_names().await.unwrap();
-        assert_eq!(time_series_table_names, vec![test::TIME_SERIES_TABLE_NAME]);
+        assert_eq!(time_series_table_names, vec![TIME_SERIES_TABLE_NAME]);
     }
 
     #[tokio::test]
-    async fn test_create_normal_table() {
+    async fn test_normal_table_schema_for_existing_normal_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        assert!(data_folder.delta_table("normal_table_1").await.is_ok());
-
-        // Retrieve the normal table metadata from the Delta Lake.
-        let sql = "SELECT table_name FROM metadata.normal_table_metadata ORDER BY table_name";
-        let batch = sql_and_concat(&data_folder.session_context, sql)
+        let schema = data_folder
+            .normal_table_schema("normal_table_1")
             .await
             .unwrap();
 
-        assert_eq!(
-            **batch.column(0),
-            StringArray::from(vec!["normal_table_1", "normal_table_2"])
-        );
+        assert_eq!(schema.as_ref(), &test::normal_table_schema());
     }
 
     #[tokio::test]
-    async fn test_create_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
-
-        assert!(
-            data_folder
-                .delta_table(test::TIME_SERIES_TABLE_NAME)
-                .await
-                .is_ok()
-        );
-
-        // Check that a row has been added to the time_series_table_metadata table.
-        let sql = "SELECT table_name, query_schema FROM metadata.time_series_table_metadata";
-        let batch = sql_and_concat(&data_folder.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            **batch.column(0),
-            StringArray::from(vec![test::TIME_SERIES_TABLE_NAME])
-        );
-        assert_eq!(
-            **batch.column(1),
-            BinaryArray::from_vec(vec![
-                &try_convert_schema_to_bytes(&test::time_series_table_metadata().query_schema)
-                    .unwrap()
-            ])
-        );
-
-        // Check that a row has been added to the time_series_table_field_columns table for each field column.
-        let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                   generated_column_expr FROM metadata.time_series_table_field_columns ORDER BY column_name";
-        let batch = sql_and_concat(&data_folder.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            **batch.column(0),
-            StringArray::from(vec![
-                test::TIME_SERIES_TABLE_NAME,
-                test::TIME_SERIES_TABLE_NAME
-            ])
-        );
-        assert_eq!(
-            **batch.column(1),
-            StringArray::from(vec!["field_1", "field_2"])
-        );
-        assert_eq!(**batch.column(2), Int16Array::from(vec![1, 2]));
-        assert_eq!(**batch.column(3), Float32Array::from(vec![1.0, 5.0]));
-        assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
-        assert_eq!(
-            **batch.column(5),
-            BinaryArray::from_opt_vec(vec![None, None])
-        );
-    }
-
-    #[tokio::test]
-    async fn test_drop_normal_table() {
+    async fn test_normal_table_schema_for_missing_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        data_folder.drop_table("normal_table_2").await.unwrap();
+        let maybe_schema = data_folder.normal_table_schema("missing_table").await;
 
-        assert!(data_folder.delta_table("normal_table_2").await.is_err());
-
-        // Verify that normal_table_2 was deleted from the normal_table_metadata table.
-        let sql = "SELECT table_name FROM metadata.normal_table_metadata";
-        let batch = sql_and_concat(&data_folder.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(**batch.column(0), StringArray::from(vec!["normal_table_1"]));
-    }
-
-    #[tokio::test]
-    async fn test_drop_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
-
-        data_folder
-            .drop_table(test::TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
-
-        assert!(
-            data_folder
-                .delta_table(test::TIME_SERIES_TABLE_NAME)
-                .await
-                .is_err()
-        );
-
-        // Verify that the time series table was deleted from the time_series_table_metadata table.
-        let sql = "SELECT table_name FROM metadata.time_series_table_metadata";
-        let batch = sql_and_concat(&data_folder.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(batch.num_rows(), 0);
-
-        // Verify that the field columns were deleted from the time_series_table_field_columns table.
-        let sql = "SELECT table_name FROM metadata.time_series_table_field_columns";
-        let batch = sql_and_concat(&data_folder.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(batch.num_rows(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_drop_missing_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
-
-        assert!(data_folder.drop_table("missing_table").await.is_err());
-    }
-
-    async fn create_data_folder_and_create_normal_tables() -> (TempDir, DataFolder) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-
-        let normal_table_schema = test::normal_table_schema();
-        data_folder
-            .create_normal_table("normal_table_1", &normal_table_schema)
-            .await
-            .unwrap();
-
-        data_folder
-            .create_normal_table("normal_table_2", &normal_table_schema)
-            .await
-            .unwrap();
-
-        (temp_dir, data_folder)
+        assert!(maybe_schema.is_none());
     }
 
     #[tokio::test]
@@ -1535,7 +1680,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let time_series_table_metadata = data_folder
-            .time_series_table_metadata_for_time_series_table(test::TIME_SERIES_TABLE_NAME)
+            .time_series_table_metadata_for_time_series_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
@@ -1549,11 +1694,44 @@ mod tests {
     async fn test_time_series_table_metadata_for_missing_time_series_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
-        let time_series_table_metadata = data_folder
+        let result = data_folder
             .time_series_table_metadata_for_time_series_table("missing_table")
             .await;
 
-        assert!(time_series_table_metadata.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: No metadata for time series table named 'missing_table'."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_time_series_table_metadata_for_registered_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        data_folder
+            .register_tables(Arc::new(NoOpDataSink {}))
+            .await
+            .unwrap();
+
+        let metadata = data_folder
+            .time_series_table_metadata_for_registered_time_series_table(TIME_SERIES_TABLE_NAME)
+            .await;
+
+        assert_eq!(
+            metadata.unwrap().as_ref(),
+            &test::time_series_table_metadata(),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_time_series_table_metadata_for_unregistered_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        let metadata = data_folder
+            .time_series_table_metadata_for_registered_time_series_table(TIME_SERIES_TABLE_NAME)
+            .await;
+
+        assert!(metadata.is_none());
     }
 
     #[tokio::test]
@@ -1561,7 +1739,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let error_bounds = data_folder
-            .error_bounds(test::TIME_SERIES_TABLE_NAME, 4)
+            .error_bounds(TIME_SERIES_TABLE_NAME, 4)
             .await
             .unwrap();
 
@@ -1641,6 +1819,24 @@ mod tests {
             &Some(last_generated_column),
             expected_generated_columns.last().unwrap()
         );
+    }
+
+    async fn create_data_folder_and_create_normal_tables() -> (TempDir, DataFolder) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let normal_table_schema = test::normal_table_schema();
+        data_folder
+            .create_normal_table("normal_table_1", &normal_table_schema)
+            .await
+            .unwrap();
+
+        data_folder
+            .create_normal_table("normal_table_2", &normal_table_schema)
+            .await
+            .unwrap();
+
+        (temp_dir, data_folder)
     }
 
     async fn create_data_folder_and_create_time_series_table() -> (TempDir, DataFolder) {
