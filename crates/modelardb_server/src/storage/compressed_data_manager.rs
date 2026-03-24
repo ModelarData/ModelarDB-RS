@@ -152,10 +152,7 @@ impl CompressedDataManager {
         {
             debug!("Found existing compressed data buffer for table '{time_series_table_name}'.",);
 
-            compressed_data_buffer.append_compressed_segments(
-                compressed_segment_batch.compressed_segments,
-                compressed_segment_batch.batch_ids,
-            )
+            compressed_data_buffer.append_compressed_segment_batch(compressed_segment_batch)
         } else {
             // A String is created as two copies are required for compressed_data_buffer and
             // compressed_queue anyway and compressed_segments cannot be moved out of
@@ -165,12 +162,11 @@ impl CompressedDataManager {
                 "Creating compressed data buffer for table '{time_series_table_name}' as none exist.",
             );
 
-            let mut compressed_data_buffer =
-                CompressedDataBuffer::new(compressed_segment_batch.time_series_table_metadata);
-            let segment_size = compressed_data_buffer.append_compressed_segments(
-                compressed_segment_batch.compressed_segments,
-                compressed_segment_batch.batch_ids,
+            let mut compressed_data_buffer = CompressedDataBuffer::new(
+                compressed_segment_batch.time_series_table_metadata.clone(),
             );
+            let segment_size =
+                compressed_data_buffer.append_compressed_segment_batch(compressed_segment_batch);
 
             self.compressed_data_buffers
                 .insert(time_series_table_name.clone(), compressed_data_buffer);
