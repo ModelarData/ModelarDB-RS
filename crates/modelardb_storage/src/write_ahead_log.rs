@@ -14,14 +14,14 @@
  */
 
 //! Implementation of types that provide a write-ahead log for ModelarDB that can be used to
-//! efficiently persist data and operations on disk to avoid data loss and enable crash recovery.
+//! efficiently persist data on disk to avoid data loss and enable crash recovery.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::Schema;
 use arrow::error::ArrowError::IpcError;
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
@@ -34,20 +34,15 @@ use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
 use crate::error::{ModelarDbStorageError, Result};
 
-/// Folder containing the WAL files for the operations log.
-const OPERATIONS_LOG_FOLDER: &str = "operations";
-
 /// Number of batches to write to a single WAL segment file before rotating to a new one.
 const SEGMENT_ROTATION_THRESHOLD: u64 = 100;
 
-/// Write-ahead log that logs data on a per-table level and operations separately.
+/// Write-ahead log that logs data on a per-table level.
 pub struct WriteAheadLog {
     /// Path to the folder that contains the write-ahead log.
     folder_path: PathBuf,
     /// Logs for each table. The key is the table name, and the value is the log file for that table.
     table_logs: HashMap<String, WriteAheadLogFile>,
-    /// Log file for operations that are not associated with a specific table.
-    _operation_log: WriteAheadLogFile,
 }
 
 impl WriteAheadLog {
@@ -72,10 +67,6 @@ impl WriteAheadLog {
         let mut write_ahead_log = Self {
             folder_path: log_folder_path.clone(),
             table_logs: HashMap::new(),
-            _operation_log: WriteAheadLogFile::try_new(
-                log_folder_path.join(OPERATIONS_LOG_FOLDER),
-                &operations_log_schema(),
-            )?,
         };
 
         // For each time series table, create a log file if it does not already exist.
@@ -625,11 +616,6 @@ fn read_batches_from_path(path: &Path) -> Result<Vec<RecordBatch>> {
     }
 
     Ok(batches)
-}
-
-/// Return the schema for the operations log that is stored in [`OPERATIONS_LOG_FOLDER`].
-fn operations_log_schema() -> Schema {
-    Schema::new(vec![Field::new("operation", DataType::Utf8, false)])
 }
 
 #[cfg(test)]
