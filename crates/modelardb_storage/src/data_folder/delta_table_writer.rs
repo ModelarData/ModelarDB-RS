@@ -115,7 +115,7 @@ impl DeltaTableWriter {
         };
 
         // A UUID version 4 is used as the operation id to match the existing Operation trait in the
-        // deltalake crate as it is pub(trait) and thus cannot be used directly in DeltaTableWriter.
+        // deltalake crate as it is pub(crate) and thus cannot be used directly in DeltaTableWriter.
         let operation_id = Uuid::new_v4();
 
         // Writer that will write the record batches.
