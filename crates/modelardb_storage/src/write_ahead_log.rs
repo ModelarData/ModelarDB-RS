@@ -46,14 +46,15 @@ pub struct WriteAheadLog {
 }
 
 impl WriteAheadLog {
-    /// Create a new [`WriteAheadLog`] that stores the log in the root of `local_data_folder` in
+    /// Create a new [`WriteAheadLog`] that stores the WAL in the root of `local_data_folder` in
     /// the [`WRITE_AHEAD_LOG_FOLDER`] folder. If the folder does not exist, it is created. If the
-    /// log could not be created, return [`ModelarDbStorageError`].
+    /// WAL could not be created, return [`ModelarDbStorageError`].
     pub async fn try_new(local_data_folder: &DataFolder) -> Result<Self> {
         // Create the folder for the write-ahead log if it does not exist.
         let location = local_data_folder.location();
 
-        // Since the std:fs API is used, the location must be a local path.
+        // Since the std::fs API is used, the location must be a local path. We use std::fs to avoid
+        // the overhead of the ObjectStore API and to allow the use of File::sync_data().
         if location.contains("://") {
             return Err(ModelarDbStorageError::InvalidState(format!(
                 "Write-ahead log location '{location}' is not a local path."
@@ -69,11 +70,16 @@ impl WriteAheadLog {
             table_logs: HashMap::new(),
         };
 
-        // For each time series table, create a log file if it does not already exist.
+        // For each time series table, create a log folder if it does not already exist.
         for metadata in local_data_folder.time_series_table_metadata().await? {
             let delta_table = local_data_folder.delta_table(&metadata.name).await?;
-            write_ahead_log
-                .create_table_log(&metadata, Some(delta_table))
+            write_ahead_log.create_table_log(&metadata).await?;
+
+            // Load the persisted batch ids from the commit history of the delta table. This is
+            // only necessary when initializing the WAL for an existing table.
+            let table_log = write_ahead_log.table_log(&metadata.name)?;
+            table_log
+                .load_persisted_batches_from_delta_table(delta_table)
                 .await?;
         }
 
@@ -86,15 +92,13 @@ impl WriteAheadLog {
         Ok(write_ahead_log)
     }
 
-    /// Create a new write-ahead log file for the table with the given metadata. If a delta table
-    /// is provided, the log file will be initialized with the persisted batch ids from the commit
-    /// history of the delta table. If a log already exists in the map or the log file could not be
-    /// created, return [`ModelarDbStorageError`]. Note that if the log file already exists, but it
-    /// is not present in the map, the existing log file will be added to the map.
+    /// Create a new write-ahead log file for the table with the given metadata. If a log already
+    /// exists in the map or the log file could not be created, return [`ModelarDbStorageError`].
+    /// Note that if the log file already exists, but it is not present in the map, the existing log
+    /// file will be added to the map.
     pub async fn create_table_log(
         &mut self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
-        maybe_delta_table: Option<DeltaTable>,
     ) -> Result<()> {
         let table_name = time_series_table_metadata.name.clone();
 
@@ -102,12 +106,6 @@ impl WriteAheadLog {
             let table_log_path = self.folder_path.join(&table_name);
             let log_file =
                 WriteAheadLogFile::try_new(table_log_path, &time_series_table_metadata.schema)?;
-
-            if let Some(delta_table) = maybe_delta_table {
-                log_file
-                    .load_persisted_batches_from_delta_table(delta_table)
-                    .await?;
-            }
 
             debug!(
                 table = %table_name,
@@ -676,7 +674,7 @@ mod tests {
         let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
 
         let metadata = table::time_series_table_metadata();
-        wal.create_table_log(&metadata, None).await.unwrap();
+        wal.create_table_log(&metadata).await.unwrap();
 
         assert!(wal.table_logs.contains_key(TIME_SERIES_TABLE_NAME));
     }
@@ -686,8 +684,8 @@ mod tests {
         let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
         let metadata = table::time_series_table_metadata();
 
-        wal.create_table_log(&metadata, None).await.unwrap();
-        let result = wal.create_table_log(&metadata, None).await;
+        wal.create_table_log(&metadata).await.unwrap();
+        let result = wal.create_table_log(&metadata).await;
 
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -718,7 +716,7 @@ mod tests {
         let metadata = table::time_series_table_metadata();
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
-        wal.create_table_log(&metadata, None).await.unwrap();
+        wal.create_table_log(&metadata).await.unwrap();
 
         wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
             .unwrap();
@@ -726,7 +724,7 @@ mod tests {
             .unwrap();
 
         wal.remove_table_log(TIME_SERIES_TABLE_NAME).unwrap();
-        wal.create_table_log(&metadata, None).await.unwrap();
+        wal.create_table_log(&metadata).await.unwrap();
 
         assert_eq!(
             wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)

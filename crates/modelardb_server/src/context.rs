@@ -125,7 +125,7 @@ impl Context {
         // Create a file in the write-ahead log to log uncompressed data for the table.
         let mut write_ahead_log = self.write_ahead_log.write().await;
         write_ahead_log
-            .create_table_log(time_series_table_metadata, None)
+            .create_table_log(time_series_table_metadata)
             .await?;
 
         Ok(())
