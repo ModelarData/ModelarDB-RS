@@ -69,7 +69,7 @@ pub(super) struct UncompressedDataManager {
 
 impl UncompressedDataManager {
     /// Create a new [`UncompressedDataManager`] and delete all existing spilled buffers if
-    /// necessary. If the existing buffers could not be deleted, return
+    /// there are any. If the existing buffers could not be deleted, return
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(super) async fn try_new(
         local_data_folder: DataFolder,

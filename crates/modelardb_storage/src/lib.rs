@@ -64,7 +64,7 @@ const TABLE_FOLDER: &str = "tables";
 const METADATA_FOLDER: &str = "metadata";
 
 /// The folder storing the write-ahead log in the data folders.
-pub const WRITE_AHEAD_LOG_FOLDER: &str = "_modelardb_log";
+pub const WRITE_AHEAD_LOG_FOLDER: &str = "wal";
 
 /// Create a new [`SessionContext`] for interacting with Apache DataFusion. The [`SessionContext`]
 /// is constructed with the default configuration, default resource managers, and additional

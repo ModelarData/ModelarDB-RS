@@ -874,8 +874,10 @@ impl DataFolder {
     }
 
     /// Write `compressed_segments` to a Delta Lake table for a time series table with `table_name`.
-    /// The `batch_ids` from the WAL are included in the commit metadata for checkpointing.
-    /// Returns an updated [`DeltaTable`] if the file was written successfully, otherwise returns
+    /// The `batch_ids` from the WAL are included in the commit metadata, so the uncompressed
+    /// batches that correspond to the compressed segments can be deleted from the WAL. If the
+    /// uncompressed batches were not written to the WAL, `batch_ids` can be left empty. Returns an
+    /// updated [`DeltaTable`] if the file was written successfully, otherwise returns
     /// [`ModelarDbStorageError`].
     pub async fn write_compressed_segments_to_time_series_table(
         &self,
@@ -1147,7 +1149,8 @@ pub struct DeltaTableWriter {
     operation_id: Uuid,
     /// Writes record batches to the Delta table as Apache Parquet files.
     delta_writer: DeltaWriter,
-    /// Batch ids from the WAL to include in the commit metadata for checkpointing.
+    /// Batch ids from the WAL to include in the commit metadata so the uncompressed batches that
+    /// correspond to the compressed segments can be deleted from the WAL.
     batch_ids: HashSet<u64>,
 }
 
@@ -1205,7 +1208,8 @@ impl DeltaTableWriter {
         })
     }
 
-    /// Add batch ids from the WAL that are included in the commit metadata for checkpointing.
+    /// Add batch ids from the WAL that are included in the commit metadata so the uncompressed
+    /// batches that correspond to the compressed segments can be deleted from the WAL.
     pub fn with_batch_ids(mut self, batch_ids: HashSet<u64>) -> Self {
         self.batch_ids = batch_ids;
         self

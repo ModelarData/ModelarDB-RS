@@ -260,8 +260,8 @@ impl StorageEngine {
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         multivariate_data_points: RecordBatch,
     ) -> Result<()> {
-        // Write to the write-ahead log to ensure termination never duplicates or loses data. We use
-        // a read lock since the specific log file is locked internally before writing.
+        // Write to the write-ahead log to ensure termination never loses data. We use a read lock
+        // since the specific log file is locked internally before writing.
         let batch_id = {
             let write_ahead_log = self.write_ahead_log.read().await;
             write_ahead_log

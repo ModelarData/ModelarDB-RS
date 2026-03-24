@@ -690,17 +690,17 @@ mod tests {
             .await
             .unwrap();
 
+        let write_ahead_log = Arc::new(RwLock::new(
+            WriteAheadLog::try_new(&local_data_folder).await.unwrap(),
+        ));
+
         let configuration_manager = Arc::new(RwLock::new(
             ConfigurationManager::try_new(
-                local_data_folder.clone(),
+                local_data_folder,
                 ClusterMode::MultiNode(Box::new(cluster)),
             )
             .await
             .unwrap(),
-        ));
-
-        let write_ahead_log = Arc::new(RwLock::new(
-            WriteAheadLog::try_new(&local_data_folder).await.unwrap(),
         ));
 
         let storage_engine = Arc::new(RwLock::new(

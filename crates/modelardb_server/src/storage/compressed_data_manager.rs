@@ -252,6 +252,11 @@ impl CompressedDataManager {
         let batch_ids = compressed_data_buffer.batch_ids();
         let compressed_segments = compressed_data_buffer.record_batches();
 
+        // If a crash occurs between writing to the Delta Lake and updating the WAL, no data is
+        // lost or duplicated. The batch_ids are stored in the Delta Lake commit metadata, so on
+        // restart the WAL recovers which batches were persisted from the commit history and
+        // excludes them during replay. The WAL update is only an optimization to eagerly delete
+        // fully persisted WAL segment files.
         self.local_data_folder
             .write_compressed_segments_to_time_series_table(
                 table_name,
@@ -261,7 +266,7 @@ impl CompressedDataManager {
             .await?;
 
         // Inform the write-ahead log that data has been written to disk. We use a read lock since
-        // the specific log file is locked internally before being updated.
+        // the specific WAL file is locked internally before being updated.
         let write_ahead_log = self.write_ahead_log.read().await;
         write_ahead_log.mark_batches_as_persisted_in_table_log(table_name, batch_ids)?;
 
