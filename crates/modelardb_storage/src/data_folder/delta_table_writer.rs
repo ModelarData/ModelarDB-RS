@@ -17,6 +17,7 @@
 //! [`RecordBatches`](RecordBatch) to a Delta table stored in an object store. Writing can be
 //! committed or rolled back to ensure that the Delta table is always in a consistent state.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
@@ -34,6 +35,7 @@ use deltalake::protocol::{DeltaOperation, SaveMode};
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use object_store::ObjectStore;
 use object_store::path::Path;
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::apache_parquet_writer_properties;
@@ -52,6 +54,9 @@ pub struct DeltaTableWriter {
     operation_id: Uuid,
     /// Writes record batches to the Delta table as Apache Parquet files.
     delta_writer: DeltaWriter,
+    /// Batch ids from the WAL to include in the commit metadata so the uncompressed batches that
+    /// correspond to the written data can be deleted from the WAL.
+    batch_ids: HashSet<u64>,
 }
 
 impl DeltaTableWriter {
@@ -140,7 +145,15 @@ impl DeltaTableWriter {
             delta_operation,
             operation_id,
             delta_writer,
+            batch_ids: HashSet::new(),
         })
+    }
+
+    /// Add batch ids from the WAL that are included in the commit metadata so the uncompressed
+    /// batches that correspond to the written data can be deleted from the WAL.
+    pub fn with_batch_ids(mut self, batch_ids: HashSet<u64>) -> Self {
+        self.batch_ids = batch_ids;
+        self
     }
 
     /// Write `record_batch` to the Delta table. Returns a [`ModelarDbStorageError`] if the
@@ -196,7 +209,13 @@ impl DeltaTableWriter {
 
         // Prepare all inputs to the commit.
         let object_store = self.delta_table.object_store();
-        let commit_properties = CommitProperties::default();
+
+        let mut commit_properties = CommitProperties::default();
+        if !self.batch_ids.is_empty() {
+            commit_properties = commit_properties
+                .with_metadata(vec![("batchIds".to_owned(), json!(self.batch_ids))]);
+        }
+
         let table_data = match self.delta_table.snapshot() {
             Ok(table_data) => table_data,
             Err(delta_table_error) => {

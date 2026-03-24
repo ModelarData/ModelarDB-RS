@@ -16,7 +16,7 @@
 //! Operations for reading from and writing to ModelarDB data folders.
 
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::result::Result as StdResult;

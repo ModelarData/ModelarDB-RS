@@ -492,7 +492,6 @@ mod tests {
                 .write_record_batches(
                     TIME_SERIES_TABLE_NAME,
                     vec![table::compressed_segments_record_batch()],
-                    HashSet::new(),
                 )
                 .await
                 .unwrap();

@@ -258,11 +258,7 @@ impl CompressedDataManager {
         // excludes them during replay. The WAL update is only an optimization to eagerly delete
         // fully persisted WAL segment files.
         self.local_data_folder
-            .write_compressed_segments_to_time_series_table(
-                table_name,
-                compressed_segments,
-                batch_ids.clone(),
-            )
+            .write_record_batches_with_batch_ids(table_name, compressed_segments, batch_ids.clone())
             .await?;
 
         // Inform the write-ahead log that data has been written to disk. We use a read lock since

@@ -53,7 +53,6 @@ use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
-use serde_json::json;
 use url::Url;
 
 use crate::data_folder::delta_table_writer::DeltaTableWriter;
@@ -330,6 +329,14 @@ impl DataFolder {
     /// Return the session context used to query the tables using Apache DataFusion.
     pub fn session_context(&self) -> &SessionContext {
         &self.session_context
+    }
+
+    /// Return the location of the Delta Lake. This is `memory:///modelardb` if the Delta Lake is
+    /// in memory, the local path if the Delta Lake is stored on disk, `az://container-name`
+    /// if the Delta Lake is stored in Azure Blob Storage, or `s3://bucket-name` if the Delta Lake
+    /// is stored in Amazon S3.
+    pub fn location(&self) -> &str {
+        &self.location
     }
 
     /// Return an [`ObjectStore`] to access the root of the Delta Lake.
@@ -685,6 +692,28 @@ impl DataFolder {
         record_batches: Vec<RecordBatch>,
     ) -> Result<DeltaTable> {
         let delta_table_writer = self.table_writer(table_name).await?;
+
+        delta_table_writer
+            .write_all_and_commit(&record_batches)
+            .await
+    }
+
+    /// Write `record_batches` to the table with `table_name` in the Delta Lake. The correct
+    /// writer is selected automatically based on the table type. The `batch_ids` from the WAL are
+    /// included in the commit metadata, so the uncompressed batches that correspond to
+    /// `record_batches` can be deleted from the WAL. If the uncompressed batches were not written
+    /// to the WAL, use [`Self::write_record_batches`] instead. Returns an updated [`DeltaTable`]
+    /// if the file was written successfully, otherwise returns [`ModelarDbStorageError`].
+    pub async fn write_record_batches_with_batch_ids(
+        &self,
+        table_name: &str,
+        record_batches: Vec<RecordBatch>,
+        batch_ids: HashSet<u64>,
+    ) -> Result<DeltaTable> {
+        let delta_table_writer = self
+            .table_writer(table_name)
+            .await?
+            .with_batch_ids(batch_ids);
 
         delta_table_writer
             .write_all_and_commit(&record_batches)

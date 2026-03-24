@@ -1279,11 +1279,6 @@ mod tests {
             .await
             .unwrap();
 
-        data_folder
-            .save_time_series_table_metadata(&metadata)
-            .await
-            .unwrap();
-
         (temp_dir, data_folder)
     }
 
@@ -1294,7 +1289,7 @@ mod tests {
         let compressed_segments = table::compressed_segments_record_batch();
 
         data_folder
-            .write_compressed_segments_to_time_series_table(
+            .write_record_batches_with_batch_ids(
                 TIME_SERIES_TABLE_NAME,
                 vec![compressed_segments],
                 batch_ids,

@@ -306,7 +306,7 @@ impl Context {
         session_context.deregister_table(table_name)?;
 
         self.drop_table_from_storage_engine(table_name).await?;
-        
+
         let local_data_folder = &self.data_folders.local_data_folder;
 
         // If the table is a time series table, delete the table log file from the write-ahead log.
@@ -455,8 +455,6 @@ fn table_does_not_exist_error(table_name: &str) -> ModelarDbServerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::collections::HashSet;
 
     use modelardb_storage::data_folder::DataFolder;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
@@ -878,7 +876,6 @@ mod tests {
             .write_record_batches(
                 TIME_SERIES_TABLE_NAME,
                 vec![table::compressed_segments_record_batch()],
-                HashSet::new(),
             )
             .await
             .unwrap();
