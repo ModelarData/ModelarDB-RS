@@ -41,8 +41,8 @@ const SEGMENT_ROTATION_THRESHOLD: u64 = 100;
 pub struct WriteAheadLog {
     /// Path to the folder that contains the write-ahead log.
     folder_path: PathBuf,
-    /// Logs for each table. The key is the table name, and the value is the log file for that table.
-    table_logs: HashMap<String, WriteAheadLogFile>,
+    /// Logs for each table. The key is the table name, and the value is the table log for that table.
+    table_logs: HashMap<String, SegmentedLog>,
 }
 
 impl WriteAheadLog {
@@ -70,7 +70,7 @@ impl WriteAheadLog {
             table_logs: HashMap::new(),
         };
 
-        // For each time series table, create a log folder if it does not already exist.
+        // For each time series table, create a table log if it does not already exist.
         for metadata in local_data_folder.time_series_table_metadata().await? {
             let delta_table = local_data_folder.delta_table(&metadata.name).await?;
             write_ahead_log.create_table_log(&metadata).await?;
@@ -92,10 +92,10 @@ impl WriteAheadLog {
         Ok(write_ahead_log)
     }
 
-    /// Create a new write-ahead log file for the table with the given metadata. If a log already
-    /// exists in the map or the log file could not be created, return [`ModelarDbStorageError`].
-    /// Note that if the log file already exists, but it is not present in the map, the existing log
-    /// file will be added to the map.
+    /// Create a new segmented log for the table with the given metadata. If a table log already
+    /// exists in the map or the table log could not be created, return [`ModelarDbStorageError`].
+    /// Note that if the table log already exists, but it is not present in the map, the existing
+    /// table log will be added to the map.
     pub async fn create_table_log(
         &mut self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
@@ -104,16 +104,16 @@ impl WriteAheadLog {
 
         if !self.table_logs.contains_key(&table_name) {
             let table_log_path = self.folder_path.join(&table_name);
-            let log_file =
-                WriteAheadLogFile::try_new(table_log_path, &time_series_table_metadata.schema)?;
+            let table_log =
+                SegmentedLog::try_new(table_log_path, &time_series_table_metadata.schema)?;
 
             debug!(
                 table = %table_name,
-                folder_path = %log_file.folder_path.display(),
+                folder_path = %table_log.folder_path.display(),
                 "WAL table log created."
             );
 
-            self.table_logs.insert(table_name, log_file);
+            self.table_logs.insert(table_name, table_log);
 
             Ok(())
         } else {
@@ -123,14 +123,14 @@ impl WriteAheadLog {
         }
     }
 
-    /// Remove the log files for the table with the given name. If the log files do not exist or
+    /// Remove the table log for the table with the given name. If the table log does not exist or
     /// could not be removed, return [`ModelarDbStorageError`].
     pub fn remove_table_log(&mut self, table_name: &str) -> Result<()> {
         let log_path;
 
-        if let Some(log_file) = self.table_logs.remove(table_name) {
-            log_path = log_file.folder_path;
-            // log_file is dropped here as it goes out of scope which automatically closes its
+        if let Some(table_log) = self.table_logs.remove(table_name) {
+            log_path = table_log.folder_path;
+            // table_log is dropped here as it goes out of scope which automatically closes its
             // internal file handle.
         } else {
             return Err(ModelarDbStorageError::InvalidState(format!(
@@ -150,13 +150,13 @@ impl WriteAheadLog {
         Ok(())
     }
 
-    /// Append data to the log for the given table and sync the file to ensure that all data is on
-    /// disk. Only requires read access to the log since the internal Mutex handles write
-    /// synchronization. Return the batch id given to the appended data. If a table log does not
-    /// exist or the data could not be appended, return [`ModelarDbStorageError`].
+    /// Append data to the table log for the given table and sync the file to ensure that all data
+    /// is on disk. Only requires read access to the write-ahead log since the internal Mutex
+    /// handles write synchronization. Return the batch id given to the appended data. If a table
+    /// log does not exist or the data could not be appended, return [`ModelarDbStorageError`].
     pub fn append_to_table_log(&self, table_name: &str, data: &RecordBatch) -> Result<u64> {
-        let log_file = self.table_log(table_name)?;
-        log_file.append_and_sync(data)
+        let table_log = self.table_log(table_name)?;
+        table_log.append_and_sync(data)
     }
 
     /// Mark the given batch ids as saved to disk in the corresponding table log. Fully persisted
@@ -167,24 +167,24 @@ impl WriteAheadLog {
         table_name: &str,
         batch_ids: HashSet<u64>,
     ) -> Result<()> {
-        let log_file = self.table_log(table_name)?;
-        log_file.mark_batches_as_persisted(batch_ids)
+        let table_log = self.table_log(table_name)?;
+        table_log.mark_batches_as_persisted(batch_ids)
     }
 
     /// Return pairs of (batch_id, batch) for all batches that have not yet been persisted in the
-    /// corresponding table log. If the log file does not exist or the batches could not be read
-    /// from the WAL files, return [`ModelarDbStorageError`].
+    /// corresponding table log. If the table log does not exist or the batches could not be read
+    /// from the table log, return [`ModelarDbStorageError`].
     pub fn unpersisted_batches_in_table_log(
         &self,
         table_name: &str,
     ) -> Result<Vec<(u64, RecordBatch)>> {
-        let log_file = self.table_log(table_name)?;
-        log_file.unpersisted_batches()
+        let table_log = self.table_log(table_name)?;
+        table_log.unpersisted_batches()
     }
 
-    /// Get the log file for the table with the given name. If the log file does not exist, return
+    /// Get the table log for the table with the given name. If the table log does not exist, return
     /// [`ModelarDbStorageError`].
-    fn table_log(&self, table_name: &str) -> Result<&WriteAheadLogFile> {
+    fn table_log(&self, table_name: &str) -> Result<&SegmentedLog> {
         self.table_logs.get(table_name).ok_or_else(|| {
             ModelarDbStorageError::InvalidState(format!(
                 "Table log for table '{table_name}' does not exist."
@@ -212,7 +212,7 @@ impl ClosedSegment {
 }
 
 /// The currently active WAL segment being written to. All fields are mutated together
-/// during rotation and are protected by the mutex in [`WriteAheadLogFile`].
+/// during rotation and are protected by the mutex in [`SegmentedLog`].
 struct ActiveSegment {
     /// Path to the active segment file.
     path: PathBuf,
@@ -252,13 +252,14 @@ impl ActiveSegment {
     }
 }
 
-/// Wrapper around a [`File`] that enforces that [`sync_data()`](File::sync_data) is called
-/// immediately after writing to ensure that all data is on disk before returning. Note that
-/// an exclusive lock is held on the file while it is being written to. At any point in time there
-/// is exactly one active segment being written to plus zero or more closed segments that are
-/// read-only. The active segment is rotated into the closed list once [`SEGMENT_ROTATION_THRESHOLD`]
-/// batches have been written to it.
-struct WriteAheadLogFile {
+/// Segmented log that appends data in Arrow IPC streaming format to segment files in a folder.
+/// At any point in time there is exactly one active segment being written to plus zero or more
+/// closed segments that are read-only. The active segment is rotated into the closed list once
+/// [`SEGMENT_ROTATION_THRESHOLD`] batches have been written to it. Appending enforces that
+/// [`sync_data()`](File::sync_data) is called immediately after writing to ensure that all data is
+/// on disk before returning. Note that an exclusive lock is held on the file while it is being
+/// written to.
+struct SegmentedLog {
     /// Folder that contains all segment files for this log.
     folder_path: PathBuf,
     /// Arrow schema shared by every segment in this log.
@@ -272,8 +273,8 @@ struct WriteAheadLogFile {
     persisted_batch_ids: Mutex<BTreeSet<u64>>,
 }
 
-impl WriteAheadLogFile {
-    /// Create a new [`WriteAheadLogFile`] that appends data with `schema` to segment files in
+impl SegmentedLog {
+    /// Create a new [`SegmentedLog`] that appends data with `schema` to segment files in
     /// `folder_path`. Existing closed segment files are loaded into the closed-segment list.
     /// A fresh active segment is always created on start-up. If the folder or file could not be
     /// created, return [`ModelarDbStorageError`].
@@ -466,7 +467,7 @@ impl WriteAheadLogFile {
 
     /// Return pairs of (batch_id, batch) for all batches in the log that have not yet been
     /// persisted according to the current in-memory `persisted_batch_ids` set. If the batches
-    /// could not be read from the WAL files, return [`ModelarDbStorageError`].
+    /// could not be read from the segment files, return [`ModelarDbStorageError`].
     fn unpersisted_batches(&self) -> Result<Vec<(u64, RecordBatch)>> {
         let persisted = self
             .persisted_batch_ids
@@ -862,87 +863,87 @@ mod tests {
         (temp_dir, wal)
     }
 
-    // Tests for WriteAheadLogFile.
+    // Tests for SegmentedLog.
     #[test]
     fn test_try_new_creates_active_segment() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let active = wal_file.active_segment.lock().unwrap();
+        let active = segmented_log.active_segment.lock().unwrap();
         assert!(active.path.exists());
         assert_eq!(active.next_batch_id, 0);
 
-        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
+        assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
     }
 
     #[test]
     fn test_read_all_empty_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batches = wal_file.read_all().unwrap();
+        let batches = segmented_log.read_all().unwrap();
         assert!(batches.is_empty());
 
-        let active = wal_file.active_segment.lock().unwrap();
+        let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, 0);
     }
 
     #[test]
     fn test_append_and_read_single_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
-        wal_file.append_and_sync(&batch).unwrap();
+        segmented_log.append_and_sync(&batch).unwrap();
 
-        let batches = wal_file.read_all().unwrap();
+        let batches = segmented_log.read_all().unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0], (0, batch));
 
-        let active = wal_file.active_segment.lock().unwrap();
+        let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, 1);
     }
 
     #[test]
     fn test_append_and_read_multiple_batches() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch_1 = table::uncompressed_time_series_table_record_batch(10);
         let batch_2 = table::uncompressed_time_series_table_record_batch(20);
         let batch_3 = table::uncompressed_time_series_table_record_batch(30);
 
-        wal_file.append_and_sync(&batch_1).unwrap();
-        wal_file.append_and_sync(&batch_2).unwrap();
-        wal_file.append_and_sync(&batch_3).unwrap();
+        segmented_log.append_and_sync(&batch_1).unwrap();
+        segmented_log.append_and_sync(&batch_2).unwrap();
+        segmented_log.append_and_sync(&batch_3).unwrap();
 
-        let batches = wal_file.read_all().unwrap();
+        let batches = segmented_log.read_all().unwrap();
         assert_eq!(batches.len(), 3);
         assert_eq!(batches[0], (0, batch_1));
         assert_eq!(batches[1], (1, batch_2));
         assert_eq!(batches[2], (2, batch_3));
 
-        let active = wal_file.active_segment.lock().unwrap();
+        let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, 3);
     }
 
     #[test]
     fn test_segment_rotates_at_threshold() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
         for _ in 0..SEGMENT_ROTATION_THRESHOLD {
-            wal_file.append_and_sync(&batch).unwrap();
+            segmented_log.append_and_sync(&batch).unwrap();
         }
 
-        let closed = wal_file.closed_segments.lock().unwrap();
+        let closed = segmented_log.closed_segments.lock().unwrap();
         assert_eq!(closed.len(), 1);
         assert_eq!(closed[0].start_id, 0);
         assert_eq!(closed[0].end_id, SEGMENT_ROTATION_THRESHOLD - 1);
 
-        let active = wal_file.active_segment.lock().unwrap();
+        let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.start_id, SEGMENT_ROTATION_THRESHOLD);
     }
 
@@ -956,19 +957,19 @@ mod tests {
 
         // Write enough batches to trigger a rotation, then drop.
         {
-            let wal_file =
-                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+            let segmented_log =
+                SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
             for _ in 0..SEGMENT_ROTATION_THRESHOLD {
-                wal_file.append_and_sync(&batch).unwrap();
+                segmented_log.append_and_sync(&batch).unwrap();
             }
         }
 
         // The closed segment should be detected and the next id should continue.
-        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        let segmented_log = SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
-        let active = wal_file.active_segment.lock().unwrap();
+        let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD);
-        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 1);
+        assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -981,20 +982,20 @@ mod tests {
 
         // Fill and rotate one segment.
         {
-            let wal_file =
-                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+            let segmented_log =
+                SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
             for _ in 0..SEGMENT_ROTATION_THRESHOLD {
-                wal_file.append_and_sync(&batch).unwrap();
+                segmented_log.append_and_sync(&batch).unwrap();
             }
         }
 
-        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
-        wal_file.append_and_sync(&batch).unwrap();
+        let segmented_log = SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        segmented_log.append_and_sync(&batch).unwrap();
 
-        let batches = wal_file.read_all().unwrap();
+        let batches = segmented_log.read_all().unwrap();
         assert_eq!(batches.len() as u64, SEGMENT_ROTATION_THRESHOLD + 1);
 
-        let active = wal_file.active_segment.lock().unwrap();
+        let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD + 1);
     }
 
@@ -1008,26 +1009,26 @@ mod tests {
 
         // Write enough batches to trigger a rotation and append to a new active segment.
         {
-            let wal_file =
-                WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+            let segmented_log =
+                SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
             for _ in 0..SEGMENT_ROTATION_THRESHOLD + 2 {
-                wal_file.append_and_sync(&batch).unwrap();
+                segmented_log.append_and_sync(&batch).unwrap();
             }
         }
 
         // On re-open the leftover active segment should be closed, leaving two closed segments
         // and a fresh active segment starting after them.
-        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        let segmented_log = SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
-        let closed = wal_file.closed_segments.lock().unwrap();
+        let closed = segmented_log.closed_segments.lock().unwrap();
         assert_eq!(closed.len(), 2);
         assert_eq!(closed[0].start_id, 0);
         assert_eq!(closed[0].end_id, SEGMENT_ROTATION_THRESHOLD - 1);
         assert_eq!(closed[1].start_id, SEGMENT_ROTATION_THRESHOLD);
         assert_eq!(closed[1].end_id, SEGMENT_ROTATION_THRESHOLD + 1);
 
-        let active = wal_file.active_segment.lock().unwrap();
+        let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, SEGMENT_ROTATION_THRESHOLD + 2);
     }
 
@@ -1037,17 +1038,17 @@ mod tests {
         let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
         let metadata = table::time_series_table_metadata();
 
-        // Create a WAL file and immediately drop it without writing anything.
+        // Create a segmented log and immediately drop it without writing anything.
         // This leaves an empty "{start_id}-.wal" active segment.
         {
-            WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+            SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
         }
 
         // On re-open, the empty leftover active segment should be removed.
-        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        let segmented_log = SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
-        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
-        let active = wal_file.active_segment.lock().unwrap();
+        assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
+        let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, 0);
         assert!(active.path.exists());
 
@@ -1059,179 +1060,189 @@ mod tests {
     #[test]
     fn test_mark_batches_as_persisted_deletes_fully_persisted_segment() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
         // Fill and rotate one full segment.
         for _ in 0..SEGMENT_ROTATION_THRESHOLD {
-            wal_file.append_and_sync(&batch).unwrap();
+            segmented_log.append_and_sync(&batch).unwrap();
         }
 
-        let segment_path = wal_file.closed_segments.lock().unwrap()[0].path.clone();
+        let segment_path = segmented_log.closed_segments.lock().unwrap()[0]
+            .path
+            .clone();
         assert!(segment_path.exists());
 
         let ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD).collect();
-        wal_file.mark_batches_as_persisted(ids).unwrap();
+        segmented_log.mark_batches_as_persisted(ids).unwrap();
 
         assert!(!segment_path.exists());
-        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
+        assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
     }
 
     #[test]
     fn test_mark_batches_as_persisted_retains_partially_persisted_segment() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
         for _ in 0..SEGMENT_ROTATION_THRESHOLD {
-            wal_file.append_and_sync(&batch).unwrap();
+            segmented_log.append_and_sync(&batch).unwrap();
         }
 
-        let segment_path = wal_file.closed_segments.lock().unwrap()[0].path.clone();
+        let segment_path = segmented_log.closed_segments.lock().unwrap()[0]
+            .path
+            .clone();
 
         // Only persist a subset of the batch ids in the closed segment.
         let partial_ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD - 1).collect();
-        wal_file.mark_batches_as_persisted(partial_ids).unwrap();
+        segmented_log
+            .mark_batches_as_persisted(partial_ids)
+            .unwrap();
 
         // Segment should still exist since not all ids are persisted.
         assert!(segment_path.exists());
-        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 1);
+        assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 1);
 
         // When persisting the last batch, the segment should be deleted.
-        wal_file
+        segmented_log
             .mark_batches_as_persisted(HashSet::from([SEGMENT_ROTATION_THRESHOLD - 1]))
             .unwrap();
 
         assert!(!segment_path.exists());
-        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
+        assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
     }
 
     #[test]
     fn test_multiple_fully_persisted_segments_all_deleted() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
         // Trigger five full rotations.
         for _ in 0..SEGMENT_ROTATION_THRESHOLD * 5 {
-            wal_file.append_and_sync(&batch).unwrap();
+            segmented_log.append_and_sync(&batch).unwrap();
         }
 
-        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 5);
+        assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 5);
 
         let ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD * 5).collect();
-        wal_file.mark_batches_as_persisted(ids).unwrap();
+        segmented_log.mark_batches_as_persisted(ids).unwrap();
 
-        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
-        assert!(wal_file.persisted_batch_ids.lock().unwrap().is_empty());
+        assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
+        assert!(segmented_log.persisted_batch_ids.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn test_no_batch_ids_in_history_leaves_persisted_set_empty() {
         let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+        let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let delta_table = data_folder
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
 
-        wal_file
+        segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
             .await
             .unwrap();
 
-        assert!(wal_file.persisted_batch_ids.lock().unwrap().is_empty());
+        assert!(segmented_log.persisted_batch_ids.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn test_load_persisted_batches_loads_single_commit() {
         let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+        let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let delta_table =
             write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
 
-        wal_file
+        segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
             .await
             .unwrap();
 
-        let persisted = wal_file.persisted_batch_ids.lock().unwrap();
+        let persisted = segmented_log.persisted_batch_ids.lock().unwrap();
         assert_eq!(*persisted, BTreeSet::from([0, 1, 2]));
     }
 
     #[tokio::test]
     async fn test_load_persisted_batches_loads_multiple_commits() {
         let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+        let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
         let delta_table =
             write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([2, 3, 4])).await;
 
-        wal_file
+        segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
             .await
             .unwrap();
 
-        let persisted = wal_file.persisted_batch_ids.lock().unwrap();
+        let persisted = segmented_log.persisted_batch_ids.lock().unwrap();
         assert_eq!(*persisted, BTreeSet::from([0, 1, 2, 3, 4]));
     }
 
     #[tokio::test]
     async fn test_load_persisted_batches_deletes_fully_persisted_closed_segment() {
         let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+        let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
         for _ in 0..SEGMENT_ROTATION_THRESHOLD {
-            wal_file.append_and_sync(&batch).unwrap();
+            segmented_log.append_and_sync(&batch).unwrap();
         }
 
-        let segment_path = wal_file.closed_segments.lock().unwrap()[0].path.clone();
+        let segment_path = segmented_log.closed_segments.lock().unwrap()[0]
+            .path
+            .clone();
         assert!(segment_path.exists());
 
         let all_ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD).collect();
         let delta_table = write_compressed_segments_with_batch_ids(&data_folder, all_ids).await;
 
-        wal_file
+        segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
             .await
             .unwrap();
 
         assert!(!segment_path.exists());
-        assert!(wal_file.closed_segments.lock().unwrap().is_empty());
-        assert!(wal_file.persisted_batch_ids.lock().unwrap().is_empty());
+        assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
+        assert!(segmented_log.persisted_batch_ids.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn test_load_persisted_batches_retains_partially_persisted_closed_segment() {
         let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let (_wal_dir, wal_file) = new_wal_file(&temp_dir);
+        let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
         for _ in 0..SEGMENT_ROTATION_THRESHOLD {
-            wal_file.append_and_sync(&batch).unwrap();
+            segmented_log.append_and_sync(&batch).unwrap();
         }
 
-        let segment_path = wal_file.closed_segments.lock().unwrap()[0].path.clone();
+        let segment_path = segmented_log.closed_segments.lock().unwrap()[0]
+            .path
+            .clone();
 
         let partial_ids: HashSet<u64> = (0..SEGMENT_ROTATION_THRESHOLD - 1).collect();
         let delta_table = write_compressed_segments_with_batch_ids(&data_folder, partial_ids).await;
 
-        wal_file
+        segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
             .await
             .unwrap();
 
         assert!(segment_path.exists());
-        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 1);
+        assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 1);
         assert_eq!(
-            wal_file.persisted_batch_ids.lock().unwrap().len() as u64,
+            segmented_log.persisted_batch_ids.lock().unwrap().len() as u64,
             SEGMENT_ROTATION_THRESHOLD - 1
         );
     }
@@ -1273,14 +1284,14 @@ mod tests {
     #[test]
     fn test_unpersisted_batches_returns_all_when_none_persisted() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch_1 = table::uncompressed_time_series_table_record_batch(10);
         let batch_2 = table::uncompressed_time_series_table_record_batch(20);
-        wal_file.append_and_sync(&batch_1).unwrap();
-        wal_file.append_and_sync(&batch_2).unwrap();
+        segmented_log.append_and_sync(&batch_1).unwrap();
+        segmented_log.append_and_sync(&batch_2).unwrap();
 
-        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        let unpersisted = segmented_log.unpersisted_batches().unwrap();
         assert_eq!(unpersisted.len(), 2);
         assert_eq!(unpersisted[0], (0, batch_1));
         assert_eq!(unpersisted[1], (1, batch_2));
@@ -1289,36 +1300,36 @@ mod tests {
     #[test]
     fn test_unpersisted_batches_returns_empty_when_all_persisted() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(10);
-        wal_file.append_and_sync(&batch).unwrap();
-        wal_file.append_and_sync(&batch).unwrap();
+        segmented_log.append_and_sync(&batch).unwrap();
+        segmented_log.append_and_sync(&batch).unwrap();
 
-        wal_file
+        segmented_log
             .mark_batches_as_persisted(HashSet::from([0, 1]))
             .unwrap();
 
-        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        let unpersisted = segmented_log.unpersisted_batches().unwrap();
         assert!(unpersisted.is_empty());
     }
 
     #[test]
     fn test_unpersisted_batches_filters_persisted_batch_ids() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch_1 = table::uncompressed_time_series_table_record_batch(10);
         let batch_2 = table::uncompressed_time_series_table_record_batch(20);
-        wal_file.append_and_sync(&batch_1).unwrap();
-        wal_file.append_and_sync(&batch_1).unwrap();
-        wal_file.append_and_sync(&batch_2).unwrap();
+        segmented_log.append_and_sync(&batch_1).unwrap();
+        segmented_log.append_and_sync(&batch_1).unwrap();
+        segmented_log.append_and_sync(&batch_2).unwrap();
 
-        wal_file
+        segmented_log
             .mark_batches_as_persisted(HashSet::from([1]))
             .unwrap();
 
-        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        let unpersisted = segmented_log.unpersisted_batches().unwrap();
         assert_eq!(unpersisted.len(), 2);
         assert_eq!(unpersisted[0], (0, batch_1));
         assert_eq!(unpersisted[1], (2, batch_2));
@@ -1327,23 +1338,23 @@ mod tests {
     #[test]
     fn test_unpersisted_batches_returns_batches_across_closed_and_active_segments() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
         // Fill one full segment (triggers rotation) and write two more into the active segment.
         for _ in 0..SEGMENT_ROTATION_THRESHOLD + 2 {
-            wal_file.append_and_sync(&batch).unwrap();
+            segmented_log.append_and_sync(&batch).unwrap();
         }
 
         // Persist one batch id in the closed segment and one in the active segment.
-        wal_file
+        segmented_log
             .mark_batches_as_persisted(HashSet::from([0, SEGMENT_ROTATION_THRESHOLD + 1]))
             .unwrap();
 
-        assert_eq!(wal_file.closed_segments.lock().unwrap().len(), 1);
+        assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 1);
 
-        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        let unpersisted = segmented_log.unpersisted_batches().unwrap();
         assert_eq!(unpersisted.len() as u64, SEGMENT_ROTATION_THRESHOLD);
         assert_eq!(unpersisted.first().unwrap(), &(1, batch.clone()));
         assert_eq!(
@@ -1355,18 +1366,18 @@ mod tests {
     #[test]
     fn test_unpersisted_batches_returns_empty_when_no_batches_written() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_folder_path, wal_file) = new_wal_file(&temp_dir);
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let unpersisted = wal_file.unpersisted_batches().unwrap();
+        let unpersisted = segmented_log.unpersisted_batches().unwrap();
         assert!(unpersisted.is_empty());
     }
 
-    fn new_wal_file(temp_dir: &TempDir) -> (PathBuf, WriteAheadLogFile) {
+    fn new_segmented_log(temp_dir: &TempDir) -> (PathBuf, SegmentedLog) {
         let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
         let metadata = table::time_series_table_metadata();
 
-        let wal_file = WriteAheadLogFile::try_new(folder_path.clone(), &metadata.schema).unwrap();
+        let segmented_log = SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
 
-        (folder_path, wal_file)
+        (folder_path, segmented_log)
     }
 }
