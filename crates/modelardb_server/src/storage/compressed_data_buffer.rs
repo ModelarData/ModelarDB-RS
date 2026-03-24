@@ -31,7 +31,8 @@ pub(super) struct CompressedSegmentBatch {
     pub(super) time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Compressed segments representing the data points to insert.
     pub(super) compressed_segments: Vec<RecordBatch>,
-    /// The ids given to the data by the WAL.
+    /// The ids of the uncompressed batches that correspond to the compressed segments. The ids are
+    /// assigned by the WAL and are used to delete uncompressed data when compressed data is saved.
     pub(super) batch_ids: HashSet<u64>,
 }
 
@@ -64,7 +65,8 @@ pub(super) struct CompressedDataBuffer {
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
     pub(super) size_in_bytes: u64,
-    /// The ids given to the data by the WAL.
+    /// The ids of the uncompressed batches that correspond to the compressed segments. The ids are
+    /// assigned by the WAL and are used to delete uncompressed data when compressed data is saved.
     batch_ids: HashSet<u64>,
 }
 
@@ -113,7 +115,7 @@ impl CompressedDataBuffer {
         self.compressed_segments
     }
 
-    /// Return the ids given to the data by the WAL.
+    /// Return the ids given to the uncompressed batches by the WAL.
     pub(super) fn batch_ids(&self) -> HashSet<u64> {
         self.batch_ids.clone()
     }

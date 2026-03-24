@@ -88,7 +88,7 @@ pub(super) struct UncompressedInMemoryDataBuffer {
     values: Vec<ValueBuilder>,
     /// The tag values for the time series the buffer stores data points for.
     tag_values: Vec<String>,
-    /// The ids given to the data by the WAL.
+    /// The ids given to the batches by the WAL.
     batch_ids: HashSet<u64>,
 }
 
@@ -215,7 +215,7 @@ impl UncompressedInMemoryDataBuffer {
         compute_memory_size(self.values.len())
     }
 
-    /// Return the ids given to the data by the WAL.
+    /// Return the ids given to the batches by the WAL.
     pub(super) fn batch_ids(&self) -> &HashSet<u64> {
         &self.batch_ids
     }
@@ -274,7 +274,7 @@ pub(super) struct UncompressedOnDiskDataBuffer {
     /// Path to the Apache Parquet file containing the uncompressed data in the
     /// [`UncompressedOnDiskDataBuffer`].
     file_path: Path,
-    /// The ids given to the data by the WAL.
+    /// The ids given to the batches by the WAL.
     batch_ids: HashSet<u64>,
 }
 
@@ -339,7 +339,7 @@ impl UncompressedOnDiskDataBuffer {
         &self.time_series_table_metadata
     }
 
-    /// Return the ids given to the data by the WAL.
+    /// Return the ids given to the batches by the WAL.
     pub(super) fn batch_ids(&self) -> &HashSet<u64> {
         &self.batch_ids
     }
