@@ -15,9 +15,9 @@
 import unittest
 
 import pyarrow
-from modelardb import FFIArray
+from modelardb import ffi, FFIArray
 from pyarrow import Int64Array
-from pyarrow.cffi import ffi
+
 
 
 class TestFFIArray(unittest.TestCase):

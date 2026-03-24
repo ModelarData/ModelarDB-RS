@@ -42,7 +42,6 @@ use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use datafusion::prelude::SessionContext;
-use datafusion::sql::TableReference;
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use deltalake::parquet::file::metadata::SortingColumn;
@@ -53,7 +52,6 @@ use object_store::path::Path;
 use sqlparser::ast::Statement;
 
 use crate::error::Result;
-use crate::query::metadata_table::MetadataTable;
 use crate::query::normal_table::NormalTable;
 use crate::query::time_series_table::TimeSeriesTable;
 
@@ -92,21 +90,6 @@ pub fn create_session_context() -> SessionContext {
     session_context
 }
 
-/// Register the metadata table stored in `delta_table` with `table_name` in `session_context`. If
-/// the metadata table could not be registered with Apache DataFusion, return
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError).
-pub fn register_metadata_table(
-    session_context: &SessionContext,
-    table_name: &str,
-    delta_table: DeltaTable,
-) -> Result<()> {
-    let table_reference = TableReference::partial("metadata", table_name);
-    let metadata_table = Arc::new(MetadataTable::new(delta_table));
-    session_context.register_table(table_reference, metadata_table)?;
-
-    Ok(())
-}
-
 /// Register the normal table stored in `delta_table` with `table_name` and `data_sink` in
 /// `session_context`. If the normal table could not be registered with Apache DataFusion, return
 /// [`ModelarDbStorageError`](error::ModelarDbStorageError).
@@ -116,7 +99,7 @@ pub fn register_normal_table(
     delta_table: DeltaTable,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
-    let normal_table = Arc::new(NormalTable::new(delta_table, data_sink));
+    let normal_table = Arc::new(NormalTable::new(delta_table, Some(data_sink)));
     session_context.register_table(table_name, normal_table)?;
 
     Ok(())

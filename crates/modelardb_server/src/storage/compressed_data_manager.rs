@@ -92,7 +92,7 @@ impl CompressedDataManager {
         let record_batch_size_in_bytes = record_batch.get_array_memory_size();
 
         self.local_data_folder
-            .write_record_batches_to_normal_table(table_name, vec![record_batch])
+            .write_record_batches(table_name, vec![record_batch])
             .await?;
 
         // Inform the data transfer component about the new data if a remote data folder was
@@ -572,11 +572,6 @@ mod tests {
         let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder
             .create_time_series_table(&time_series_table_metadata)
-            .await
-            .unwrap();
-
-        local_data_folder
-            .save_time_series_table_metadata(&time_series_table_metadata)
             .await
             .unwrap();
 

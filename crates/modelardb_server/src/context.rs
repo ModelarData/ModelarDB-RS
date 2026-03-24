@@ -91,7 +91,7 @@ impl Context {
         table_name: &str,
         schema: &Schema,
     ) -> Result<()> {
-        // Create an empty Delta Lake table.
+        // Create an empty Delta Lake table and save the normal table metadata to the Delta Lake.
         self.data_folders
             .local_data_folder
             .create_normal_table(table_name, schema)
@@ -99,12 +99,6 @@ impl Context {
 
         // Register the normal table with Apache DataFusion.
         self.register_normal_table(table_name).await?;
-
-        // Persist the new normal table to the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .save_normal_table_metadata(table_name)
-            .await?;
 
         info!("Created normal table '{}'.", table_name);
 
@@ -138,7 +132,7 @@ impl Context {
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
-        // Create an empty Delta Lake table.
+        // Create an empty Delta Lake table and save the time series table metadata to the Delta Lake.
         self.data_folders
             .local_data_folder
             .create_time_series_table(time_series_table_metadata)
@@ -146,12 +140,6 @@ impl Context {
 
         // Register the time series table with Apache DataFusion.
         self.register_time_series_table(Arc::new(time_series_table_metadata.clone()))
-            .await?;
-
-        // Persist the new time series table to the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .save_time_series_table_metadata(time_series_table_metadata)
             .await?;
 
         info!(
@@ -318,7 +306,7 @@ impl Context {
         session_context.deregister_table(table_name)?;
 
         self.drop_table_from_storage_engine(table_name).await?;
-
+        
         let local_data_folder = &self.data_folders.local_data_folder;
 
         // If the table is a time series table, delete the table log file from the write-ahead log.
@@ -326,9 +314,6 @@ impl Context {
             let mut write_ahead_log = self.write_ahead_log.write().await;
             write_ahead_log.remove_table_log(table_name)?;
         }
-
-        // Drop the table metadata from the Delta Lake.
-        local_data_folder.drop_table_metadata(table_name).await?;
 
         // Drop the table from the Delta Lake.
         local_data_folder.drop_table(table_name).await?;
@@ -822,10 +807,7 @@ mod tests {
         // Write data to the normal table.
         let local_data_folder = &context.data_folders.local_data_folder;
         local_data_folder
-            .write_record_batches_to_normal_table(
-                NORMAL_TABLE_NAME,
-                vec![table::normal_table_record_batch()],
-            )
+            .write_record_batches(NORMAL_TABLE_NAME, vec![table::normal_table_record_batch()])
             .await
             .unwrap();
 
@@ -893,7 +875,7 @@ mod tests {
         // Write data to the time series table.
         let local_data_folder = &context.data_folders.local_data_folder;
         local_data_folder
-            .write_compressed_segments_to_time_series_table(
+            .write_record_batches(
                 TIME_SERIES_TABLE_NAME,
                 vec![table::compressed_segments_record_batch()],
                 HashSet::new(),

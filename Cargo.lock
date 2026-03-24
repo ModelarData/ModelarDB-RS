@@ -3373,6 +3373,8 @@ name = "modelardb_test"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "async-trait",
+ "datafusion",
  "modelardb_types",
  "rand 0.9.2",
 ]
