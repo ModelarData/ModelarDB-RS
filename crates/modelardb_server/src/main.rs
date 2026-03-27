@@ -86,13 +86,8 @@ async fn main() -> Result<()> {
     // Setup CTRL+C handler.
     setup_ctrl_c_handler(&context);
 
-    // Initialize storage engine with spilled buffers.
-    context
-        .storage_engine
-        .read()
-        .await
-        .initialize(&context)
-        .await?;
+    // Replay any data that was written to the storage engine but not compressed and saved to disk.
+    context.replay_write_ahead_log().await?;
 
     // Start the Apache Arrow Flight interface.
     remote::start_apache_arrow_flight_server(context, *PORT).await?;

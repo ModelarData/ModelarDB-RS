@@ -382,6 +382,7 @@ mod tests {
     use std::sync::Arc;
 
     use modelardb_storage::data_folder::DataFolder;
+    use modelardb_storage::write_ahead_log::WriteAheadLog;
     use modelardb_types::types::{Node, ServerMode};
     use tempfile::TempDir;
     use tokio::sync::RwLock;
@@ -689,6 +690,10 @@ mod tests {
             .await
             .unwrap();
 
+        let write_ahead_log = Arc::new(RwLock::new(
+            WriteAheadLog::try_new(&local_data_folder).await.unwrap(),
+        ));
+
         let configuration_manager = Arc::new(RwLock::new(
             ConfigurationManager::try_new(
                 local_data_folder,
@@ -699,7 +704,7 @@ mod tests {
         ));
 
         let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(data_folders, &configuration_manager)
+            StorageEngine::try_new(data_folders, write_ahead_log, &configuration_manager)
                 .await
                 .unwrap(),
         ));

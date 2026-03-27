@@ -15,6 +15,7 @@
 
 //! Buffer for compressed segments from the same time series table.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
@@ -30,16 +31,21 @@ pub(super) struct CompressedSegmentBatch {
     pub(super) time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Compressed segments representing the data points to insert.
     pub(super) compressed_segments: Vec<RecordBatch>,
+    /// The ids of the uncompressed batches that correspond to the compressed segments. The ids are
+    /// assigned by the WAL and are used to delete uncompressed data when compressed data is saved.
+    pub(super) batch_ids: HashSet<u64>,
 }
 
 impl CompressedSegmentBatch {
     pub(super) fn new(
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         compressed_segments: Vec<RecordBatch>,
+        batch_ids: HashSet<u64>,
     ) -> Self {
         Self {
             time_series_table_metadata,
             compressed_segments,
+            batch_ids,
         }
     }
 
@@ -59,6 +65,9 @@ pub(super) struct CompressedDataBuffer {
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
     pub(super) size_in_bytes: u64,
+    /// The ids of the uncompressed batches that correspond to the compressed segments. The ids are
+    /// assigned by the WAL and are used to delete uncompressed data when compressed data is saved.
+    batch_ids: HashSet<u64>,
 }
 
 impl CompressedDataBuffer {
@@ -67,16 +76,19 @@ impl CompressedDataBuffer {
             time_series_table_metadata,
             compressed_segments: vec![],
             size_in_bytes: 0,
+            batch_ids: HashSet::new(),
         }
     }
 
-    /// Append `compressed_segments` to the [`CompressedDataBuffer`] and return the size of
-    /// `compressed_segments` in bytes if their schema matches the time series table, otherwise
-    /// [`ModelarDbServerError`] is returned.
-    pub(super) fn append_compressed_segments(
+    /// Append the compressed segments in `compressed_segment_batch` to the [`CompressedDataBuffer`]
+    /// and return the size of the compressed segments in bytes if their schema matches the time
+    /// series table, otherwise [`ModelarDbServerError`] is returned.
+    pub(super) fn append_compressed_segment_batch(
         &mut self,
-        mut compressed_segments: Vec<RecordBatch>,
+        compressed_segment_batch: CompressedSegmentBatch,
     ) -> Result<u64> {
+        let mut compressed_segments = compressed_segment_batch.compressed_segments;
+
         if compressed_segments.iter().any(|compressed_segments| {
             compressed_segments.schema() != self.time_series_table_metadata.compressed_schema
         }) {
@@ -94,12 +106,19 @@ impl CompressedDataBuffer {
             self.size_in_bytes += compressed_segments_size;
         }
 
+        self.batch_ids.extend(compressed_segment_batch.batch_ids);
+
         Ok(compressed_segments_size)
     }
 
     /// Return the compressed segments as a [`Vec<RecordBatch>`].
     pub(super) fn record_batches(self) -> Vec<RecordBatch> {
         self.compressed_segments
+    }
+
+    /// Return the ids given to the uncompressed batches by the WAL.
+    pub(super) fn batch_ids(&self) -> HashSet<u64> {
+        self.batch_ids.clone()
     }
 
     /// Return the size in bytes of `compressed_segments`.
@@ -128,15 +147,12 @@ mod tests {
     use modelardb_test::table;
 
     #[test]
-    fn test_can_append_valid_compressed_segments() {
+    fn test_can_append_valid_compressed_segment_batch() {
         let mut compressed_data_buffer =
             CompressedDataBuffer::new(table::time_series_table_metadata_arc());
 
         compressed_data_buffer
-            .append_compressed_segments(vec![
-                table::compressed_segments_record_batch(),
-                table::compressed_segments_record_batch(),
-            ])
+            .append_compressed_segment_batch(compressed_segment_batch())
             .unwrap();
 
         assert_eq!(compressed_data_buffer.compressed_segments.len(), 2);
@@ -150,10 +166,7 @@ mod tests {
             CompressedDataBuffer::new(table::time_series_table_metadata_arc());
 
         compressed_data_buffer
-            .append_compressed_segments(vec![
-                table::compressed_segments_record_batch(),
-                table::compressed_segments_record_batch(),
-            ])
+            .append_compressed_segment_batch(compressed_segment_batch())
             .unwrap();
 
         assert!(compressed_data_buffer.size_in_bytes > 0);
@@ -164,12 +177,8 @@ mod tests {
         let mut compressed_data_buffer =
             CompressedDataBuffer::new(table::time_series_table_metadata_arc());
 
-        let compressed_segments = vec![
-            table::compressed_segments_record_batch(),
-            table::compressed_segments_record_batch(),
-        ];
         compressed_data_buffer
-            .append_compressed_segments(compressed_segments)
+            .append_compressed_segment_batch(compressed_segment_batch())
             .unwrap();
 
         let record_batches = compressed_data_buffer.record_batches();
@@ -177,6 +186,17 @@ mod tests {
             compute::concat_batches(&record_batches[0].schema(), &record_batches).unwrap();
         assert_eq!(record_batch.num_columns(), 11);
         assert_eq!(record_batch.num_rows(), 6);
+    }
+
+    fn compressed_segment_batch() -> CompressedSegmentBatch {
+        CompressedSegmentBatch::new(
+            table::time_series_table_metadata_arc(),
+            vec![
+                table::compressed_segments_record_batch(),
+                table::compressed_segments_record_batch(),
+            ],
+            HashSet::from([0, 1, 2]),
+        )
     }
 
     #[test]

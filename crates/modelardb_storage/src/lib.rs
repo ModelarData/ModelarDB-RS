@@ -21,6 +21,7 @@ pub mod error;
 mod optimizer;
 pub mod parser;
 mod query;
+pub mod write_ahead_log;
 
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -59,6 +60,9 @@ const TABLE_FOLDER: &str = "tables";
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
+
+/// The folder storing the write-ahead log in the data folders.
+pub const WRITE_AHEAD_LOG_FOLDER: &str = "wal";
 
 /// Create a new [`SessionContext`] for interacting with Apache DataFusion. The [`SessionContext`]
 /// is constructed with the default configuration, default resource managers, and additional

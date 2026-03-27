@@ -20,9 +20,10 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
+use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::configuration::ConfigurationManager;
 use crate::error::{ModelarDbServerError, Result};
@@ -38,6 +39,8 @@ pub struct Context {
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
+    /// Write-ahead log for persisting data and operations.
+    write_ahead_log: Arc<RwLock<WriteAheadLog>>,
 }
 
 impl Context {
@@ -50,14 +53,24 @@ impl Context {
                 .await?,
         ));
 
+        let write_ahead_log = Arc::new(RwLock::new(
+            WriteAheadLog::try_new(&data_folders.local_data_folder).await?,
+        ));
+
         let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(data_folders.clone(), &configuration_manager).await?,
+            StorageEngine::try_new(
+                data_folders.clone(),
+                write_ahead_log.clone(),
+                &configuration_manager,
+            )
+            .await?,
         ));
 
         Ok(Context {
             data_folders,
             configuration_manager,
             storage_engine,
+            write_ahead_log,
         })
     }
 
@@ -101,6 +114,12 @@ impl Context {
         self.check_if_table_exists(&time_series_table_metadata.name)
             .await?;
         self.register_and_save_time_series_table(time_series_table_metadata)
+            .await?;
+
+        // Create a file in the write-ahead log to log uncompressed data for the table.
+        let mut write_ahead_log = self.write_ahead_log.write().await;
+        write_ahead_log
+            .create_table_log(time_series_table_metadata)
             .await?;
 
         Ok(())
@@ -237,6 +256,40 @@ impl Context {
         Ok(())
     }
 
+    /// For each time series table in the local data folder, use the write-ahead log to replay any
+    /// data that was written to the storage engine but not compressed and saved to disk. Note that
+    /// this method should only be called before the storage engine starts ingesting data to avoid
+    /// replaying data that is currently in memory.
+    pub(super) async fn replay_write_ahead_log(&self) -> Result<()> {
+        let local_data_folder = &self.data_folders.local_data_folder;
+
+        let write_ahead_log = self.write_ahead_log.write().await;
+        let mut storage_engine = self.storage_engine.write().await;
+
+        for metadata in local_data_folder.time_series_table_metadata().await? {
+            let unpersisted_batches =
+                write_ahead_log.unpersisted_batches_in_table_log(&metadata.name)?;
+
+            if !unpersisted_batches.is_empty() {
+                warn!(
+                    table = %metadata.name,
+                    batch_count = unpersisted_batches.len(),
+                    "Replaying unpersisted batches for time series table."
+                );
+            }
+
+            for (batch_id, batch) in unpersisted_batches {
+                storage_engine.insert_data_points_with_batch_id(
+                    metadata.clone(),
+                    batch,
+                    batch_id,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Drop the table with `table_name` if it exists. The table is deregistered from the Apache
     /// Arrow Datafusion session context and deleted from the storage engine and Delta Lake. If the
     /// table does not exist or if it could not be dropped, [`ModelarDbServerError`] is returned.
@@ -254,11 +307,16 @@ impl Context {
 
         self.drop_table_from_storage_engine(table_name).await?;
 
+        let local_data_folder = &self.data_folders.local_data_folder;
+
+        // If the table is a time series table, delete the table log file from the write-ahead log.
+        if local_data_folder.is_time_series_table(table_name).await? {
+            let mut write_ahead_log = self.write_ahead_log.write().await;
+            write_ahead_log.remove_table_log(table_name)?;
+        }
+
         // Drop the table from the Delta Lake.
-        self.data_folders
-            .local_data_folder
-            .drop_table(table_name)
-            .await?;
+        local_data_folder.drop_table(table_name).await?;
 
         Ok(())
     }
