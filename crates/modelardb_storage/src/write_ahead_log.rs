@@ -51,14 +51,15 @@ pub struct WriteAheadLog {
 
 impl WriteAheadLog {
     /// Create a new [`WriteAheadLog`] that stores the WAL in the root of `local_data_folder` in
-    /// the [`WRITE_AHEAD_LOG_FOLDER`] folder. If the folder does not exist, it is created. If the
-    /// WAL could not be created, return [`ModelarDbStorageError`].
+    /// the [`WRITE_AHEAD_LOG_FOLDER`] folder. `local_data_folder` must be in a local path since the
+    /// WAL uses the [`std::fs`] API to avoid the overhead of the `ObjectStore` API and to allow the
+    /// use of [`sync_data()`](File::sync_data). If the folder does not exist, it is created. If
+    /// `local_data_folder` is not in a local path or the WAL could not be created, return
+    /// [`ModelarDbStorageError`].
     pub async fn try_new(local_data_folder: &DataFolder) -> Result<Self> {
         // Create the folder for the write-ahead log if it does not exist.
         let location = local_data_folder.location();
 
-        // Since the std::fs API is used, the location must be a local path. We use std::fs to avoid
-        // the overhead of the ObjectStore API and to allow the use of File::sync_data().
         if location.contains("://") {
             return Err(ModelarDbStorageError::InvalidState(format!(
                 "Write-ahead log location '{location}' is not a local path."
@@ -175,8 +176,8 @@ impl WriteAheadLog {
         table_log.mark_batches_as_persisted(batch_ids)
     }
 
-    /// Return pairs of (batch_id, batch) for all batches that have not yet been persisted in the
-    /// corresponding table log. If the table log does not exist or the batches could not be read
+    /// Return pairs of (batch_id, batch) for all batches in the corresponding table log that have
+    /// not yet been persisted. If the table log does not exist or the batches could not be read
     /// from the table log, return [`ModelarDbStorageError`].
     pub fn unpersisted_batches_in_table_log(
         &self,
@@ -211,7 +212,11 @@ struct ClosedSegment {
 impl ClosedSegment {
     /// Return `true` if every batch id in this segment is present in `persisted`.
     fn is_fully_persisted(&self, persisted: &BTreeSet<u64>) -> bool {
-        (self.start_id..=self.end_id).all(|id| persisted.contains(&id))
+        // Iterate in reverse since newer (higher) ids are least likely to be persisted, allowing
+        // all() to short-circuit earlier for partially persisted segments.
+        (self.start_id..=self.end_id)
+            .rev()
+            .all(|id| persisted.contains(&id))
     }
 }
 
