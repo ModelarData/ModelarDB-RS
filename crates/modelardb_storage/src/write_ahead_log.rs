@@ -537,8 +537,8 @@ impl SegmentedLog {
 
 /// If a leftover active segment (`{start_id}-.arrows`) exists in `folder_path`, rename it to
 /// its final `{start_id}-{end_id}.arrows` name so it is picked up as a closed segment. If the
-/// file contains no batches, it is removed instead. In both cases, the next batch id, implied by
-/// the leftover, is returned so the caller can ensure batch id continuity. If no leftover exists,
+/// file contains no batches, it is removed instead. In both cases, the next batch id implied by
+/// the leftover is returned so the caller can ensure batch id continuity. If no leftover exists,
 /// return `None`. If the file could not be renamed or removed, return [`ModelarDbStorageError`].
 fn close_leftover_active_segment(folder_path: &Path) -> Result<Option<u64>> {
     let Some(active_path) = std::fs::read_dir(folder_path)?
