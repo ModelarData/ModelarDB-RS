@@ -1639,6 +1639,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_missing_table_is_not_normal_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        assert!(!data_folder.is_normal_table("missing_table").await.unwrap());
+    }
+
+    #[tokio::test]
     async fn test_time_series_table_is_time_series_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
@@ -1655,6 +1663,19 @@ mod tests {
         assert!(
             !data_folder
                 .is_time_series_table("normal_table_1")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_missing_table_is_not_time_series_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        assert!(
+            !data_folder
+                .is_time_series_table("missing_table")
                 .await
                 .unwrap()
         );
