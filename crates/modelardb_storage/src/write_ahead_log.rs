@@ -1091,6 +1091,38 @@ mod tests {
     }
 
     #[test]
+    fn test_reopen_with_empty_leftover_after_all_segments_persisted_preserves_batch_id() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+        let metadata = table::time_series_table_metadata();
+
+        let batch = table::uncompressed_time_series_table_record_batch(5);
+
+        // Write enough batches to close two segments, persist all, then drop.
+        {
+            let segmented_log =
+                SegmentedLog::try_new(folder_path.clone(), &metadata.schema).unwrap();
+
+            for _ in 0..SEGMENT_BATCH_COUNT_THRESHOLD * 2 {
+                segmented_log.append_and_sync(&batch).unwrap();
+            }
+
+            let ids: HashSet<u64> = (0..SEGMENT_BATCH_COUNT_THRESHOLD * 2).collect();
+            segmented_log.mark_batches_as_persisted(ids).unwrap();
+
+            // Closed segments are deleted. Only the empty active segment remains.
+            assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
+            assert!(segmented_log.all_batches().unwrap().is_empty());
+        }
+
+        // On re-open, next_batch_id must continue from where it left off.
+        let segmented_log = SegmentedLog::try_new(folder_path, &metadata.schema).unwrap();
+
+        let active = segmented_log.active_segment.lock().unwrap();
+        assert_eq!(active.next_batch_id, SEGMENT_BATCH_COUNT_THRESHOLD * 2);
+    }
+
+    #[test]
     fn test_mark_batches_as_persisted_deletes_fully_persisted_segment() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
