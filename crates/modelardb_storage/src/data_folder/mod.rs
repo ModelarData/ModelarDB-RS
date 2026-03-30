@@ -1383,7 +1383,10 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+            format!(
+                "Invalid Argument Error: Delta table cannot be found at '{}'.",
+                data_folder.location_of_table("missing_table")
+            )
         );
     }
 
@@ -1498,7 +1501,10 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+            format!(
+                "Invalid Argument Error: Delta table cannot be found at '{}'.",
+                data_folder.location_of_table("missing_table")
+            )
         );
     }
 
@@ -1602,7 +1608,10 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+            format!(
+                "Invalid Argument Error: Delta table cannot be found at '{}'.",
+                data_folder.location_of_table("missing_table")
+            )
         );
     }
 
