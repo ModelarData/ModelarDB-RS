@@ -672,11 +672,8 @@ impl DataFolder {
     /// the table does not exist.
     pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
         let delta_table = self.delta_table(table_name).await?;
-        let partition_columns = delta_table.snapshot()?.metadata().partition_columns();
 
-        // If the table is a time series table, the partition column is the field column.
-        // self.is_time_series_table() is not used to avoid a redundant query to the metadata table.
-        if partition_columns.contains(&FIELD_COLUMN.to_owned()) {
+        if is_time_series_delta_table(&delta_table)? {
             DeltaTableWriter::try_new_for_time_series_table(delta_table)
         } else {
             DeltaTableWriter::try_new_for_normal_table(delta_table)
@@ -782,18 +779,20 @@ impl DataFolder {
 
     /// Return `true` if the table with `table_name` is a normal table, otherwise return `false`.
     pub async fn is_normal_table(&self, table_name: &str) -> Result<bool> {
-        Ok(self
-            .normal_table_names()
-            .await?
-            .contains(&table_name.to_owned()))
+        match self.delta_table(table_name).await {
+            Ok(delta_table) => Ok(!is_time_series_delta_table(&delta_table)?),
+            Err(ModelarDbStorageError::InvalidArgument(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Return `true` if the table with `table_name` is a time series table, otherwise return `false`.
     pub async fn is_time_series_table(&self, table_name: &str) -> Result<bool> {
-        Ok(self
-            .time_series_table_names()
-            .await?
-            .contains(&table_name.to_owned()))
+        match self.delta_table(table_name).await {
+            Ok(delta_table) => is_time_series_delta_table(&delta_table),
+            Err(ModelarDbStorageError::InvalidArgument(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Return the name of each table currently in the Delta Lake. If the table names cannot be
@@ -1037,6 +1036,13 @@ impl DataFolder {
 
         Ok(generated_columns)
     }
+}
+
+/// Return `true` if `delta_table` is a time series table based on its partition columns.
+/// Normal tables and metadata tables do not have partition columns.
+fn is_time_series_delta_table(delta_table: &DeltaTable) -> Result<bool> {
+    let partition_columns = delta_table.snapshot()?.metadata().partition_columns();
+    Ok(partition_columns.contains(&FIELD_COLUMN.to_owned()))
 }
 
 #[cfg(test)]
