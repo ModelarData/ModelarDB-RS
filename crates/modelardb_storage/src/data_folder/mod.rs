@@ -758,7 +758,8 @@ impl DataFolder {
             delta_table.load().await?;
             Ok(delta_table.clone())
         } else {
-            // If the table is not in the cache, open it and add it to the cache before returning.
+            // Return a clear error message if the table does not exist instead of the internal
+            // error message from deltalake.
             let table_url =
                 deltalake::table::builder::parse_table_uri(table_path).map_err(|_error| {
                     ModelarDbStorageError::InvalidArgument(format!(
@@ -766,6 +767,7 @@ impl DataFolder {
                     ))
                 })?;
 
+            // If the table is not in the cache, open it and add it to the cache before returning.
             let delta_table =
                 deltalake::open_table_with_storage_options(table_url, self.storage_options.clone())
                     .await?;
