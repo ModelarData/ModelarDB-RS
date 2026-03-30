@@ -762,7 +762,13 @@ impl DataFolder {
             Ok(delta_table.clone())
         } else {
             // If the table is not in the cache, open it and add it to the cache before returning.
-            let table_url = deltalake::ensure_table_uri(table_path)?;
+            let table_url =
+                deltalake::table::builder::parse_table_uri(table_path).map_err(|_error| {
+                    ModelarDbStorageError::InvalidArgument(format!(
+                        "Delta table cannot be found at '{table_path}'."
+                    ))
+                })?;
+
             let delta_table =
                 deltalake::open_table_with_storage_options(table_url, self.storage_options.clone())
                     .await?;
