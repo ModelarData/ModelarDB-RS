@@ -672,11 +672,8 @@ impl DataFolder {
     /// the table does not exist.
     pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
         let delta_table = self.delta_table(table_name).await?;
-        let partition_columns = delta_table.snapshot()?.metadata().partition_columns();
 
-        // If the table is a time series table, the partition column is the field column.
-        // self.is_time_series_table() is not used to avoid a redundant query to the metadata table.
-        if partition_columns.contains(&FIELD_COLUMN.to_owned()) {
+        if is_time_series_delta_table(&delta_table)? {
             DeltaTableWriter::try_new_for_time_series_table(delta_table)
         } else {
             DeltaTableWriter::try_new_for_normal_table(delta_table)
@@ -761,8 +758,16 @@ impl DataFolder {
             delta_table.load().await?;
             Ok(delta_table.clone())
         } else {
+            // Return a clear error message if the table does not exist instead of the internal
+            // error message from deltalake.
+            let table_url =
+                deltalake::table::builder::parse_table_uri(table_path).map_err(|_error| {
+                    ModelarDbStorageError::InvalidArgument(format!(
+                        "Delta table cannot be found at '{table_path}'."
+                    ))
+                })?;
+
             // If the table is not in the cache, open it and add it to the cache before returning.
-            let table_url = deltalake::ensure_table_uri(table_path)?;
             let delta_table =
                 deltalake::open_table_with_storage_options(table_url, self.storage_options.clone())
                     .await?;
@@ -776,18 +781,20 @@ impl DataFolder {
 
     /// Return `true` if the table with `table_name` is a normal table, otherwise return `false`.
     pub async fn is_normal_table(&self, table_name: &str) -> Result<bool> {
-        Ok(self
-            .normal_table_names()
-            .await?
-            .contains(&table_name.to_owned()))
+        match self.delta_table(table_name).await {
+            Ok(delta_table) => Ok(!is_time_series_delta_table(&delta_table)?),
+            Err(ModelarDbStorageError::InvalidArgument(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Return `true` if the table with `table_name` is a time series table, otherwise return `false`.
     pub async fn is_time_series_table(&self, table_name: &str) -> Result<bool> {
-        Ok(self
-            .time_series_table_names()
-            .await?
-            .contains(&table_name.to_owned()))
+        match self.delta_table(table_name).await {
+            Ok(delta_table) => is_time_series_delta_table(&delta_table),
+            Err(ModelarDbStorageError::InvalidArgument(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Return the name of each table currently in the Delta Lake. If the table names cannot be
@@ -1031,6 +1038,13 @@ impl DataFolder {
 
         Ok(generated_columns)
     }
+}
+
+/// Return `true` if `delta_table` is a time series table based on its partition columns.
+/// Normal tables and metadata tables do not have partition columns.
+fn is_time_series_delta_table(delta_table: &DeltaTable) -> Result<bool> {
+    let partition_columns = delta_table.snapshot()?.metadata().partition_columns();
+    Ok(partition_columns.contains(&FIELD_COLUMN.to_owned()))
 }
 
 #[cfg(test)]
@@ -1377,7 +1391,10 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+            format!(
+                "Invalid Argument Error: Delta table cannot be found at '{}'.",
+                data_folder.location_of_table("missing_table")
+            )
         );
     }
 
@@ -1492,7 +1509,10 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+            format!(
+                "Invalid Argument Error: Delta table cannot be found at '{}'.",
+                data_folder.location_of_table("missing_table")
+            )
         );
     }
 
@@ -1596,7 +1616,10 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Delta Lake Error: Not a Delta table: Generic delta kernel error: No files in log segment"
+            format!(
+                "Invalid Argument Error: Delta table cannot be found at '{}'.",
+                data_folder.location_of_table("missing_table")
+            )
         );
     }
 
@@ -1618,6 +1641,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_missing_table_is_not_normal_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        assert!(!data_folder.is_normal_table("missing_table").await.unwrap());
+    }
+
+    #[tokio::test]
     async fn test_time_series_table_is_time_series_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
         assert!(
@@ -1634,6 +1665,19 @@ mod tests {
         assert!(
             !data_folder
                 .is_time_series_table("normal_table_1")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_missing_table_is_not_time_series_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        assert!(
+            !data_folder
+                .is_time_series_table("missing_table")
                 .await
                 .unwrap()
         );
