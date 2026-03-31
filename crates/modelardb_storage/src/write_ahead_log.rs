@@ -670,6 +670,8 @@ mod tests {
     use modelardb_test::table::TIME_SERIES_TABLE_NAME;
     use tempfile::TempDir;
 
+    const SEGMENT_SIZE_THRESHOLD_IN_BYTES: u64 = 64 * 1024; // 64 KiB
+
     // Tests for WriteAheadLog.
     #[tokio::test]
     async fn test_try_new_without_tables_creates_empty_wal() {
@@ -681,7 +683,9 @@ mod tests {
     #[tokio::test]
     async fn test_try_new_with_existing_table_creates_table_log() {
         let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+        let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
 
         assert_eq!(wal.table_logs.len(), 1);
         assert!(wal.table_logs.contains_key(TIME_SERIES_TABLE_NAME));
@@ -695,7 +699,9 @@ mod tests {
         // WAL can load already persisted batch ids from the commit history.
         write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
 
-        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+        let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
 
         let persisted = wal.table_logs[TIME_SERIES_TABLE_NAME]
             .persisted_batch_ids
@@ -708,7 +714,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_new_fails_for_non_local_data_folder() {
         let data_folder = DataFolder::open_memory().await.unwrap();
-        let result = WriteAheadLog::try_new(&data_folder).await;
+        let result = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES).await;
 
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -747,7 +753,9 @@ mod tests {
     #[tokio::test]
     async fn test_remove_table_log_removes_log_and_directory() {
         let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let mut wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+        let mut wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
 
         let log_path = wal.table_logs[TIME_SERIES_TABLE_NAME].folder_path.clone();
         assert!(log_path.exists());
@@ -800,7 +808,9 @@ mod tests {
     #[tokio::test]
     async fn test_append_to_table_log_returns_incrementing_batch_ids() {
         let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+        let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
 
@@ -839,7 +849,9 @@ mod tests {
     #[tokio::test]
     async fn test_mark_batches_as_persisted_in_table_log_removes_from_unpersisted() {
         let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+        let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
         wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
@@ -880,7 +892,9 @@ mod tests {
     #[tokio::test]
     async fn test_unpersisted_batches_in_table_log_returns_all_when_none_persisted() {
         let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
-        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+        let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
 
         let batch = table::uncompressed_time_series_table_record_batch(5);
         wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
@@ -912,7 +926,9 @@ mod tests {
     async fn new_empty_write_ahead_log() -> (TempDir, WriteAheadLog) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-        let wal = WriteAheadLog::try_new(&data_folder).await.unwrap();
+        let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
 
         (temp_dir, wal)
     }
