@@ -203,6 +203,16 @@ impl WriteAheadLog {
             ))
         })
     }
+
+    /// Set the segment size threshold for the write-ahead log and all existing table logs.
+    /// New table logs created after this call will also use the new threshold.
+    pub fn set_segment_size_threshold_in_bytes(&mut self, segment_size_threshold_in_bytes: u64) {
+        self.segment_size_threshold_in_bytes = segment_size_threshold_in_bytes;
+
+        for table_log in self.table_logs.values_mut() {
+            table_log.segment_size_threshold_in_bytes = segment_size_threshold_in_bytes;
+        }
+    }
 }
 
 /// A closed WAL segment file. The file contains all batches with ids in `[start_id, end_id]`
