@@ -16,8 +16,8 @@
 //! Implementation of types that provide a write-ahead log for ModelarDB that can be used to
 //! efficiently persist data on disk to avoid data loss and enable crash recovery. Each table has
 //! its own segmented log consisting of an active segment that is appended to and zero or more
-//! closed segments that are read-only. The active segment is closed once the approximate in-memory
-//! size of its batches exceeds a configured threshold, and closed segments are deleted once all of
+//! closed segments that are read-only. The active segment is closed once the approximate size
+//! of its batches exceeds a configured threshold, and closed segments are deleted once all of
 //! their batches have been persisted to the Delta Lake.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -44,8 +44,8 @@ pub struct WriteAheadLog {
     folder_path: PathBuf,
     /// Logs for each table. The key is the table name, and the value is the table log for that table.
     table_logs: HashMap<String, SegmentedLog>,
-    /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and a new one is
-    /// started.
+    /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and
+    /// a new one is started.
     segment_size_threshold_in_bytes: u64,
 }
 
@@ -248,10 +248,10 @@ struct ActiveSegment {
     writer: StreamWriter<File>,
     /// The batch id to give to the next batch of data. Monotonically increasing across segments.
     next_batch_id: u64,
-    /// In-memory Apache Arrow size of all batches written to this segment. Note that this is an
-    /// approximation since [`get_array_memory_size()`](RecordBatch::get_array_memory_size()) is
-    /// used to avoid the overhead of getting the actual file size.
-    memory_size: u64,
+    /// Approximate size in bytes of all batches written to this segment. This is an approximation
+    /// since [`get_array_memory_size()`](RecordBatch::get_array_memory_size()) is used to avoid
+    /// the overhead of getting the actual file size.
+    approximate_size: u64,
 }
 
 impl ActiveSegment {
@@ -278,7 +278,7 @@ impl ActiveSegment {
             start_id,
             writer,
             next_batch_id: start_id,
-            memory_size: 0,
+            approximate_size: 0,
         })
     }
 }
@@ -286,7 +286,7 @@ impl ActiveSegment {
 /// Segmented log that appends data in Apache Arrow IPC streaming format to segment files in a
 /// folder. At any point in time there is exactly one active segment being written to plus zero or
 /// more closed segments that are read-only. The active segment is closed once the approximate
-/// in-memory size of its batches exceeds `segment_size_threshold_in_bytes`. Appending enforces that
+/// size of its batches exceeds `segment_size_threshold_in_bytes`. Appending enforces that
 /// [`sync_data()`](File::sync_data) is called immediately after writing to ensure that all data is
 /// on disk before returning. Note that an exclusive lock is held on the file while it is being
 /// written to, to ensure that no other thread can write to it.
@@ -302,8 +302,8 @@ struct SegmentedLog {
     /// Batch ids that have been confirmed as saved to disk. Used to determine when closed segments
     /// can be deleted.
     persisted_batch_ids: Mutex<BTreeSet<u64>>,
-    /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and a new one is
-    /// started.
+    /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and
+    /// a new one is started.
     segment_size_threshold_in_bytes: u64,
 }
 
@@ -381,18 +381,18 @@ impl SegmentedLog {
         let current_batch_id = active.next_batch_id;
         active.next_batch_id += 1;
 
-        active.memory_size += data.get_array_memory_size() as u64;
+        active.approximate_size += data.get_array_memory_size() as u64;
 
         debug!(
             path = %active.path.display(),
             batch_id = current_batch_id,
             row_count = data.num_rows(),
-            segment_memory_size = active.memory_size,
+            segment_approximate_size = active.approximate_size,
             "Appended batch to WAL file."
         );
 
         // Close the active segment and start a new one if the threshold has been reached.
-        if active.memory_size >= self.segment_size_threshold_in_bytes {
+        if active.approximate_size >= self.segment_size_threshold_in_bytes {
             self.close_active_segment(&mut active)?;
         }
 
@@ -1465,7 +1465,7 @@ mod tests {
         assert_eq!(unpersisted.last().unwrap(), &(segment_batch_count, batch));
     }
 
-    /// Fill the segment with `batch` until it reaches [`SEGMENT_SIZE_THRESHOLD_IN_BYTES`]. Return
+    /// Fill the segment with `batch` until it exceeds [`SEGMENT_SIZE_THRESHOLD_IN_BYTES`]. Return
     /// the number of batches that were appended.
     fn fill_segment_to_threshold(segmented_log: &SegmentedLog, batch: &RecordBatch) -> u64 {
         let memory_size = batch.get_array_memory_size();

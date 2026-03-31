@@ -51,8 +51,8 @@ struct Configuration {
     /// The number of seconds between each transfer of data to the remote object store. If [`None`],
     /// data is not transferred based on time.
     transfer_time_in_seconds: Option<u64>,
-    /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and a new one is
-    /// started.
+    /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and
+    /// a new one is started.
     segment_size_threshold_in_bytes: u64,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
