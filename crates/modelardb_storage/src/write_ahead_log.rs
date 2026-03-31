@@ -780,7 +780,7 @@ mod tests {
         let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
 
         let metadata = table::time_series_table_metadata();
-        let batch = table::uncompressed_time_series_table_record_batch(5);
+        let batch = table::uncompressed_time_series_table_record_batch(10);
 
         wal.create_table_log(&metadata).await.unwrap();
 
@@ -820,7 +820,7 @@ mod tests {
             .await
             .unwrap();
 
-        let batch = table::uncompressed_time_series_table_record_batch(5);
+        let batch = table::uncompressed_time_series_table_record_batch(10);
 
         assert_eq!(
             wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
@@ -843,7 +843,7 @@ mod tests {
     async fn test_append_to_table_log_fails_if_table_log_does_not_exist() {
         let (_temp_dir, wal) = new_empty_write_ahead_log().await;
 
-        let batch = table::uncompressed_time_series_table_record_batch(5);
+        let batch = table::uncompressed_time_series_table_record_batch(10);
         let result = wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch);
 
         assert_eq!(
@@ -861,7 +861,7 @@ mod tests {
             .await
             .unwrap();
 
-        let batch = table::uncompressed_time_series_table_record_batch(5);
+        let batch = table::uncompressed_time_series_table_record_batch(10);
         wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
             .unwrap();
         wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
@@ -904,7 +904,7 @@ mod tests {
             .await
             .unwrap();
 
-        let batch = table::uncompressed_time_series_table_record_batch(5);
+        let batch = table::uncompressed_time_series_table_record_batch(10);
         wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
             .unwrap();
         wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
@@ -929,6 +929,30 @@ mod tests {
                 "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
             )
         );
+    }
+
+    #[tokio::test]
+    async fn test_set_segment_size_threshold_in_bytes_updates_existing_table_logs() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let mut wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
+
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch_memory_size = batch.get_array_memory_size() as u64;
+
+        // Set the threshold to exactly one batch so the next append closes the segment.
+        wal.set_segment_size_threshold_in_bytes(batch_memory_size);
+        assert_eq!(wal.segment_size_threshold_in_bytes, batch_memory_size);
+
+        let table_log = wal.table_log(TIME_SERIES_TABLE_NAME).unwrap();
+        assert_eq!(table_log.segment_size_threshold_in_bytes, batch_memory_size);
+
+        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            .unwrap();
+
+        let closed_segments = table_log.closed_segments.lock().unwrap();
+        assert_eq!(closed_segments.len(), 1);
     }
 
     async fn new_empty_write_ahead_log() -> (TempDir, WriteAheadLog) {
@@ -971,7 +995,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(5);
+        let batch = table::uncompressed_time_series_table_record_batch(10);
         segmented_log.append_and_sync(&batch).unwrap();
 
         let batches = segmented_log.all_batches().unwrap();
