@@ -44,8 +44,8 @@ pub struct WriteAheadLog {
     folder_path: PathBuf,
     /// Logs for each table. The key is the table name, and the value is the table log for that table.
     table_logs: HashMap<String, SegmentedLog>,
-    /// The maximum approximate size in bytes of a single WAL segment file before closing it and
-    /// starting a new one.
+    /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and a new one is
+    /// started.
     segment_size_threshold_in_bytes: u64,
 }
 
@@ -302,8 +302,8 @@ struct SegmentedLog {
     /// Batch ids that have been confirmed as saved to disk. Used to determine when closed segments
     /// can be deleted.
     persisted_batch_ids: Mutex<BTreeSet<u64>>,
-    /// The maximum approximate size in bytes of a single WAL segment file before closing it and
-    /// starting a new one.
+    /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and a new one is
+    /// started.
     segment_size_threshold_in_bytes: u64,
 }
 

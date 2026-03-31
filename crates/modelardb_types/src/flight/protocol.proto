@@ -67,8 +67,7 @@ message Configuration {
   // The number of seconds between each transfer of data to the remote object store.
   optional uint64 transfer_time_in_seconds = 5;
 
-  // The maximum approximate size in bytes of a single WAL segment file before closing it and
-  // starting a new one.
+  // The approximate maximum size, in bytes, of a single WAL segment file before it is closed and a new one is started.
   uint64 segment_size_threshold_in_bytes = 6;
 
   // Number of threads to allocate for converting multivariate time series to univariate time series.
