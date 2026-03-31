@@ -17,7 +17,7 @@
 //! efficiently persist data on disk to avoid data loss and enable crash recovery. Each table has
 //! its own segmented log consisting of an active segment that is appended to and zero or more
 //! closed segments that are read-only. The active segment is closed once the approximate size
-//! of its batches exceeds a configured threshold, and closed segments are deleted once all of
+//! of its batches reaches a configured threshold, and closed segments are deleted once all of
 //! their batches have been persisted to the Delta Lake.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -286,7 +286,7 @@ impl ActiveSegment {
 /// Segmented log that appends data in Apache Arrow IPC streaming format to segment files in a
 /// folder. At any point in time there is exactly one active segment being written to plus zero or
 /// more closed segments that are read-only. The active segment is closed once the approximate
-/// size of its batches exceeds `segment_size_threshold_in_bytes`. Appending enforces that
+/// size of its batches reaches `segment_size_threshold_in_bytes`. Appending enforces that
 /// [`sync_data()`](File::sync_data) is called immediately after writing to ensure that all data is
 /// on disk before returning. Note that an exclusive lock is held on the file while it is being
 /// written to, to ensure that no other thread can write to it.
@@ -1465,7 +1465,7 @@ mod tests {
         assert_eq!(unpersisted.last().unwrap(), &(segment_batch_count, batch));
     }
 
-    /// Fill the segment with `batch` until it exceeds [`SEGMENT_SIZE_THRESHOLD_IN_BYTES`]. Return
+    /// Fill the segment with `batch` until it reaches [`SEGMENT_SIZE_THRESHOLD_IN_BYTES`]. Return
     /// the number of batches that were appended.
     fn fill_segment_to_threshold(segmented_log: &SegmentedLog, batch: &RecordBatch) -> u64 {
         let memory_size = batch.get_array_memory_size();
