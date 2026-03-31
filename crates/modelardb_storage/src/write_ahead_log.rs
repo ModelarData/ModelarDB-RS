@@ -38,7 +38,10 @@ use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
 use crate::error::{ModelarDbStorageError, Result};
 
-/// Number of batches to write to a single WAL segment file before closing it and starting a new one.
+/// Maximum approximate size in bytes of a single WAL segment file before closing it and starting
+/// a new one.
+const SEGMENT_SIZE_THRESHOLD_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
+
 const SEGMENT_BATCH_COUNT_THRESHOLD: u64 = 100;
 
 /// Write-ahead log that logs data on a per-table level.
@@ -231,6 +234,10 @@ struct ActiveSegment {
     writer: StreamWriter<File>,
     /// The batch id to give to the next batch of data. Monotonically increasing across segments.
     next_batch_id: u64,
+    /// In-memory Apache Arrow size of all batches written to this segment. Note that this is an
+    /// approximation since [`get_array_memory_size()`](RecordBatch::get_array_memory_size()) is
+    /// used to avoid the overhead of getting the actual file size.
+    memory_size: usize,
 }
 
 impl ActiveSegment {
@@ -257,6 +264,7 @@ impl ActiveSegment {
             start_id,
             writer,
             next_batch_id: start_id,
+            memory_size: 0,
         })
     }
 }
@@ -351,18 +359,18 @@ impl SegmentedLog {
         let current_batch_id = active.next_batch_id;
         active.next_batch_id += 1;
 
+        active.memory_size += data.get_array_memory_size();
+
         debug!(
             path = %active.path.display(),
             batch_id = current_batch_id,
             row_count = data.num_rows(),
+            segment_memory_size = active.memory_size,
             "Appended batch to WAL file."
         );
 
-        // Close the active segment and start a new one if the threshold has been reached. The
-        // number of batches in the active segment is the difference between the next batch id
-        // (post-increment) and the active start id.
-        let active_batch_count = active.next_batch_id - active.start_id;
-        if active_batch_count >= SEGMENT_BATCH_COUNT_THRESHOLD {
+        // Close the active segment and start a new one if the threshold has been reached.
+        if active.memory_size >= SEGMENT_SIZE_THRESHOLD_BYTES {
             self.close_active_segment(&mut active)?;
         }
 
