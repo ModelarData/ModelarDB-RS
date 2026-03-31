@@ -1015,30 +1015,15 @@ mod tests {
     #[test]
     fn test_reopen_loads_closed_segments() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
-        let metadata = table::time_series_table_metadata();
-
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         // Write enough batches to close the active segment, then drop.
-        let segment_batch_count = {
-            let segmented_log = SegmentedLog::try_new(
-                folder_path.clone(),
-                &metadata.schema,
-                SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-            )
-            .unwrap();
-
-            fill_segment_to_threshold(&segmented_log, &batch)
-        };
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
+        drop(segmented_log);
 
         // The closed segment should be detected and the next id should continue.
-        let segmented_log = SegmentedLog::try_new(
-            folder_path.clone(),
-            &metadata.schema,
-            SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-        )
-        .unwrap();
+        let segmented_log = open_segmented_log(&folder_path);
 
         let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, segment_batch_count);
@@ -1048,29 +1033,14 @@ mod tests {
     #[test]
     fn test_reopen_and_append_continues_batch_ids() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
-        let metadata = table::time_series_table_metadata();
-
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         // Write enough batches to close the active segment, then drop.
-        let segment_batch_count = {
-            let segmented_log = SegmentedLog::try_new(
-                folder_path.clone(),
-                &metadata.schema,
-                SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-            )
-            .unwrap();
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
+        drop(segmented_log);
 
-            fill_segment_to_threshold(&segmented_log, &batch)
-        };
-
-        let segmented_log = SegmentedLog::try_new(
-            folder_path.clone(),
-            &metadata.schema,
-            SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-        )
-        .unwrap();
+        let segmented_log = open_segmented_log(&folder_path);
         segmented_log.append_and_sync(&batch).unwrap();
 
         let batches = segmented_log.all_batches().unwrap();
@@ -1083,36 +1053,20 @@ mod tests {
     #[test]
     fn test_close_leftover_active_segment_on_reopen() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
-        let metadata = table::time_series_table_metadata();
+        let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(10);
 
         // Write enough batches to close the active segment and append to a new active segment,
         // then drop.
-        let segment_batch_count = {
-            let segmented_log = SegmentedLog::try_new(
-                folder_path.clone(),
-                &metadata.schema,
-                SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-            )
-            .unwrap();
-
-            let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
-            segmented_log.append_and_sync(&batch).unwrap();
-            segmented_log.append_and_sync(&batch).unwrap();
-
-            segment_batch_count
-        };
+        let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
+        segmented_log.append_and_sync(&batch).unwrap();
+        segmented_log.append_and_sync(&batch).unwrap();
+        drop(segmented_log);
 
         // On re-open the leftover active segment should be closed, leaving two closed segments
         // and a fresh active segment starting after them.
-        let segmented_log = SegmentedLog::try_new(
-            folder_path.clone(),
-            &metadata.schema,
-            SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-        )
-        .unwrap();
+        let segmented_log = open_segmented_log(&folder_path);
 
         let closed = segmented_log.closed_segments.lock().unwrap();
         assert_eq!(closed.len(), 2);
@@ -1128,27 +1082,14 @@ mod tests {
     #[test]
     fn test_delete_leftover_empty_active_segment_on_reopen() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
-        let metadata = table::time_series_table_metadata();
 
         // Create a segmented log and immediately drop it without writing anything.
         // This leaves an empty "{start_id}-.arrows" active segment.
-        {
-            SegmentedLog::try_new(
-                folder_path.clone(),
-                &metadata.schema,
-                SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-            )
-            .unwrap();
-        }
+        let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
+        drop(segmented_log);
 
         // On re-open, the empty leftover active segment should be removed.
-        let segmented_log = SegmentedLog::try_new(
-            folder_path.clone(),
-            &metadata.schema,
-            SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-        )
-        .unwrap();
+        let segmented_log = open_segmented_log(&folder_path);
 
         assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
         let active = segmented_log.active_segment.lock().unwrap();
@@ -1163,40 +1104,24 @@ mod tests {
     #[test]
     fn test_reopen_with_empty_leftover_after_all_segments_persisted_preserves_batch_id() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
-        let metadata = table::time_series_table_metadata();
+        let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::uncompressed_time_series_table_record_batch(10);
 
         // Write enough batches to close two segments, persist all, then drop.
-        let segment_batch_count = {
-            let segmented_log = SegmentedLog::try_new(
-                folder_path.clone(),
-                &metadata.schema,
-                SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-            )
-            .unwrap();
+        fill_segment_to_threshold(&segmented_log, &batch);
+        let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
 
-            fill_segment_to_threshold(&segmented_log, &batch);
-            let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
+        let ids: HashSet<u64> = (0..segment_batch_count * 2).collect();
+        segmented_log.mark_batches_as_persisted(ids).unwrap();
 
-            let ids: HashSet<u64> = (0..segment_batch_count * 2).collect();
-            segmented_log.mark_batches_as_persisted(ids).unwrap();
-
-            // Closed segments are deleted. Only the empty active segment remains.
-            assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
-            assert!(segmented_log.all_batches().unwrap().is_empty());
-
-            segment_batch_count
-        };
+        // Closed segments are deleted. Only the empty active segment remains.
+        assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
+        assert!(segmented_log.all_batches().unwrap().is_empty());
+        drop(segmented_log);
 
         // On re-open, next_batch_id must continue from where it left off.
-        let segmented_log = SegmentedLog::try_new(
-            folder_path,
-            &metadata.schema,
-            SEGMENT_SIZE_THRESHOLD_IN_BYTES,
-        )
-        .unwrap();
+        let segmented_log = open_segmented_log(&folder_path);
 
         let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.next_batch_id, segment_batch_count * 2);
@@ -1519,17 +1444,19 @@ mod tests {
         threshold_batch_count
     }
 
-    fn new_segmented_log(temp_dir: &TempDir) -> (PathBuf, SegmentedLog) {
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+    fn open_segmented_log(folder_path: &Path) -> SegmentedLog {
         let metadata = table::time_series_table_metadata();
-
-        let segmented_log = SegmentedLog::try_new(
-            folder_path.clone(),
+        SegmentedLog::try_new(
+            folder_path.to_path_buf(),
             &metadata.schema,
             SEGMENT_SIZE_THRESHOLD_IN_BYTES,
         )
-        .unwrap();
+        .unwrap()
+    }
 
+    fn new_segmented_log(temp_dir: &TempDir) -> (PathBuf, SegmentedLog) {
+        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+        let segmented_log = open_segmented_log(&folder_path);
         (folder_path, segmented_log)
     }
 }
