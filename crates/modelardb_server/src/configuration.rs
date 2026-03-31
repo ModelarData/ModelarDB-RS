@@ -13,13 +13,14 @@
  * limitations under the License.
  */
 
-//! Management of the system's configuration. The configuration consists of the server mode and
-//! the amount of reserved memory for uncompressed and compressed data.
+//! Management of the system's configuration. The configuration consists of various parameters that
+//! determine the behavior of the storage engine, write-ahead log, and data transfer component.
 
 use std::env;
 use std::sync::Arc;
 
 use modelardb_storage::data_folder::DataFolder;
+use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::flight::protocol;
 use object_store::path::Path;
 use object_store::{Error, ObjectStore, PutPayload};
@@ -50,6 +51,9 @@ struct Configuration {
     /// The number of seconds between each transfer of data to the remote object store. If [`None`],
     /// data is not transferred based on time.
     transfer_time_in_seconds: Option<u64>,
+    /// The maximum approximate size in bytes of a single WAL segment file before closing it and
+    /// starting a new one.
+    segment_size_threshold_in_bytes: u64,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
     pub(crate) ingestion_threads: u8,
@@ -82,6 +86,10 @@ impl Configuration {
 
         if let Ok(value) = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS") {
             self.transfer_time_in_seconds = Some(value.parse()?);
+        }
+
+        if let Ok(value) = env::var("MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES") {
+            self.segment_size_threshold_in_bytes = value.parse()?;
         }
 
         Ok(())
@@ -130,6 +138,7 @@ impl Default for Configuration {
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
             transfer_batch_size_in_bytes: Some(64 * 1024 * 1024),
             transfer_time_in_seconds: None,
+            segment_size_threshold_in_bytes: 64 * 1024 * 1024,
             ingestion_threads: 1,
             compression_threads: 1,
             writer_threads: 1,
@@ -339,6 +348,30 @@ impl ConfigurationManager {
             .await
     }
 
+    pub(crate) fn segment_size_threshold_in_bytes(&self) -> u64 {
+        self.configuration.segment_size_threshold_in_bytes
+    }
+
+    /// Set the new value and update the segment size threshold in the write-ahead log. If the
+    /// new configuration could not be saved to the configuration file, return
+    /// [`ModelarDbServerError`].
+    pub(crate) async fn set_segment_size_threshold_in_bytes(
+        &mut self,
+        new_segment_size_threshold_in_bytes: u64,
+        write_ahead_log: Arc<RwLock<WriteAheadLog>>,
+    ) -> Result<()> {
+        write_ahead_log
+            .write()
+            .await
+            .set_segment_size_threshold_in_bytes(new_segment_size_threshold_in_bytes);
+
+        self.configuration.segment_size_threshold_in_bytes = new_segment_size_threshold_in_bytes;
+
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
+    }
+
     pub(crate) fn ingestion_threads(&self) -> u8 {
         self.configuration.ingestion_threads
     }
@@ -366,6 +399,7 @@ impl ConfigurationManager {
                 .compressed_reserved_memory_in_bytes,
             transfer_batch_size_in_bytes: self.configuration.transfer_batch_size_in_bytes,
             transfer_time_in_seconds: self.configuration.transfer_time_in_seconds,
+            segment_size_threshold_in_bytes: self.configuration.segment_size_threshold_in_bytes,
             ingestion_threads: self.configuration.ingestion_threads as u32,
             compression_threads: self.configuration.compression_threads as u32,
             writer_threads: self.configuration.writer_threads as u32,
@@ -395,7 +429,8 @@ mod tests {
     #[tokio::test]
     async fn test_configuration_file_is_created_if_it_does_not_exist() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
+        let (_storage_engine, _write_ahead_log, configuration_manager) =
+            create_components(&temp_dir).await;
 
         let configuration_from_manager = configuration_manager.read().await.configuration.clone();
         let configuration_from_file = configuration_from_file(&temp_dir).await;
@@ -415,6 +450,7 @@ mod tests {
             compressed_reserved_memory_in_bytes: 1,
             transfer_batch_size_in_bytes: Some(1),
             transfer_time_in_seconds: Some(1),
+            segment_size_threshold_in_bytes: 1,
             ..Configuration::default()
         };
 
@@ -423,7 +459,8 @@ mod tests {
             .await
             .unwrap();
 
-        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
+        let (_storage_engine, _write_ahead_log, configuration_manager) =
+            create_components(&temp_dir).await;
 
         let configuration_from_manager = configuration_manager.read().await.configuration.clone();
         let configuration_from_file = configuration_from_file(&temp_dir).await;
@@ -483,7 +520,8 @@ mod tests {
     #[tokio::test]
     async fn test_set_multivariate_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+        let (storage_engine, _write_ahead_log, configuration_manager) =
+            create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -519,7 +557,8 @@ mod tests {
     #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+        let (storage_engine, _write_ahead_log, configuration_manager) =
+            create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -555,7 +594,8 @@ mod tests {
     #[tokio::test]
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+        let (storage_engine, _write_ahead_log, configuration_manager) =
+            create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -591,7 +631,8 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_batch_size_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+        let (storage_engine, _write_ahead_log, configuration_manager) =
+            create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -627,7 +668,8 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_time_in_seconds() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+        let (storage_engine, _write_ahead_log, configuration_manager) =
+            create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -657,6 +699,43 @@ mod tests {
         assert_eq!(configuration_from_file.transfer_time_in_seconds, new_value)
     }
 
+    #[tokio::test]
+    async fn test_set_segment_size_threshold_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_storage_engine, write_ahead_log, configuration_manager) =
+            create_components(&temp_dir).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .segment_size_threshold_in_bytes(),
+            64 * 1024 * 1024
+        );
+
+        let new_value = 1024;
+        configuration_manager
+            .write()
+            .await
+            .set_segment_size_threshold_in_bytes(new_value, write_ahead_log)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .segment_size_threshold_in_bytes(),
+            new_value
+        );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(
+            configuration_from_file.segment_size_threshold_in_bytes,
+            new_value
+        );
+    }
+
     /// Return the configuration from the configuration file at the root of `temp_dir`.
     async fn configuration_from_file(temp_dir: &TempDir) -> Configuration {
         let configuration_file_path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
@@ -670,6 +749,7 @@ mod tests {
         temp_dir: &TempDir,
     ) -> (
         Arc<RwLock<StorageEngine>>,
+        Arc<RwLock<WriteAheadLog>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
         let local_url = temp_dir.path().to_str().unwrap();
@@ -690,25 +770,37 @@ mod tests {
             .await
             .unwrap();
 
-        let write_ahead_log = Arc::new(RwLock::new(
-            WriteAheadLog::try_new(&local_data_folder).await.unwrap(),
-        ));
-
         let configuration_manager = Arc::new(RwLock::new(
             ConfigurationManager::try_new(
-                local_data_folder,
+                local_data_folder.clone(),
                 ClusterMode::MultiNode(Box::new(cluster)),
             )
             .await
             .unwrap(),
         ));
 
-        let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(data_folders, write_ahead_log, &configuration_manager)
-                .await
-                .unwrap(),
+        let write_ahead_log = Arc::new(RwLock::new(
+            WriteAheadLog::try_new(
+                &local_data_folder,
+                configuration_manager
+                    .read()
+                    .await
+                    .segment_size_threshold_in_bytes(),
+            )
+            .await
+            .unwrap(),
         ));
 
-        (storage_engine, configuration_manager)
+        let storage_engine = Arc::new(RwLock::new(
+            StorageEngine::try_new(
+                data_folders,
+                write_ahead_log.clone(),
+                &configuration_manager,
+            )
+            .await
+            .unwrap(),
+        ));
+
+        (storage_engine, write_ahead_log, configuration_manager)
     }
 }
