@@ -38,10 +38,6 @@ use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
 use crate::error::{ModelarDbStorageError, Result};
 
-/// Maximum approximate size in bytes of a single WAL segment file before closing it and starting
-/// a new one.
-const SEGMENT_SIZE_THRESHOLD_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
-
 const SEGMENT_BATCH_COUNT_THRESHOLD: u64 = 100;
 
 /// Write-ahead log that logs data on a per-table level.
@@ -50,6 +46,9 @@ pub struct WriteAheadLog {
     folder_path: PathBuf,
     /// Logs for each table. The key is the table name, and the value is the table log for that table.
     table_logs: HashMap<String, SegmentedLog>,
+    /// The maximum approximate size in bytes of a single WAL segment file before closing it and
+    /// starting a new one.
+    segment_size_threshold_in_bytes: u64,
 }
 
 impl WriteAheadLog {
@@ -59,7 +58,10 @@ impl WriteAheadLog {
     /// use of [`sync_data()`](File::sync_data). If the folder does not exist, it is created. If
     /// `local_data_folder` is not in a local path or the WAL could not be created, return
     /// [`ModelarDbStorageError`].
-    pub async fn try_new(local_data_folder: &DataFolder) -> Result<Self> {
+    pub async fn try_new(
+        local_data_folder: &DataFolder,
+        segment_size_threshold_in_bytes: u64,
+    ) -> Result<Self> {
         // Create the folder for the write-ahead log if it does not exist.
         let location = local_data_folder.location();
 
@@ -76,6 +78,7 @@ impl WriteAheadLog {
         let mut write_ahead_log = Self {
             folder_path: log_folder_path.clone(),
             table_logs: HashMap::new(),
+            segment_size_threshold_in_bytes,
         };
 
         // For each time series table, create a table log if it does not already exist.
@@ -112,8 +115,11 @@ impl WriteAheadLog {
 
         if !self.table_logs.contains_key(&table_name) {
             let table_log_path = self.folder_path.join(&table_name);
-            let table_log =
-                SegmentedLog::try_new(table_log_path, &time_series_table_metadata.schema)?;
+            let table_log = SegmentedLog::try_new(
+                table_log_path,
+                &time_series_table_metadata.schema,
+                self.segment_size_threshold_in_bytes,
+            )?;
 
             debug!(
                 table = %table_name,
@@ -237,7 +243,7 @@ struct ActiveSegment {
     /// In-memory Apache Arrow size of all batches written to this segment. Note that this is an
     /// approximation since [`get_array_memory_size()`](RecordBatch::get_array_memory_size()) is
     /// used to avoid the overhead of getting the actual file size.
-    memory_size: usize,
+    memory_size: u64,
 }
 
 impl ActiveSegment {
@@ -288,6 +294,9 @@ struct SegmentedLog {
     /// Batch ids that have been confirmed as saved to disk. Used to determine when closed segments
     /// can be deleted.
     persisted_batch_ids: Mutex<BTreeSet<u64>>,
+    /// The maximum approximate size in bytes of a single WAL segment file before closing it and
+    /// starting a new one.
+    segment_size_threshold_in_bytes: u64,
 }
 
 impl SegmentedLog {
@@ -295,7 +304,11 @@ impl SegmentedLog {
     /// `folder_path`. Existing closed segment files are appended to the closed-segment list.
     /// A fresh active segment is always created on start-up. If the folder or file could not be
     /// created, return [`ModelarDbStorageError`].
-    fn try_new(folder_path: PathBuf, schema: &Schema) -> Result<Self> {
+    fn try_new(
+        folder_path: PathBuf,
+        schema: &Schema,
+        segment_size_threshold_in_bytes: u64,
+    ) -> Result<Self> {
         std::fs::create_dir_all(&folder_path)?;
 
         let leftover_next_id = close_leftover_active_segment(&folder_path)?;
@@ -331,6 +344,7 @@ impl SegmentedLog {
             active_segment: Mutex::new(active_file),
             closed_segments: Mutex::new(closed_segments),
             persisted_batch_ids: Mutex::new(BTreeSet::new()),
+            segment_size_threshold_in_bytes,
         })
     }
 
@@ -359,7 +373,7 @@ impl SegmentedLog {
         let current_batch_id = active.next_batch_id;
         active.next_batch_id += 1;
 
-        active.memory_size += data.get_array_memory_size();
+        active.memory_size += data.get_array_memory_size() as u64;
 
         debug!(
             path = %active.path.display(),
@@ -370,7 +384,7 @@ impl SegmentedLog {
         );
 
         // Close the active segment and start a new one if the threshold has been reached.
-        if active.memory_size >= SEGMENT_SIZE_THRESHOLD_BYTES {
+        if active.memory_size >= self.segment_size_threshold_in_bytes {
             self.close_active_segment(&mut active)?;
         }
 
