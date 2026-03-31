@@ -16,9 +16,9 @@
 //! Implementation of types that provide a write-ahead log for ModelarDB that can be used to
 //! efficiently persist data on disk to avoid data loss and enable crash recovery. Each table has
 //! its own segmented log consisting of an active segment that is appended to and zero or more
-//! closed segments that are read-only. The active segment is closed once a configured number of
-//! batches have been written to it, and closed segments are deleted once all of their batches have
-//! been persisted to the Delta Lake.
+//! closed segments that are read-only. The active segment is closed once the approximate in-memory
+//! size of its batches exceeds a configured threshold, and closed segments are deleted once all of
+//! their batches have been persisted to the Delta Lake.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
@@ -37,8 +37,6 @@ use tracing::{debug, info, warn};
 use crate::WRITE_AHEAD_LOG_FOLDER;
 use crate::data_folder::DataFolder;
 use crate::error::{ModelarDbStorageError, Result};
-
-const SEGMENT_BATCH_COUNT_THRESHOLD: u64 = 100;
 
 /// Write-ahead log that logs data on a per-table level.
 pub struct WriteAheadLog {
@@ -277,8 +275,8 @@ impl ActiveSegment {
 
 /// Segmented log that appends data in Apache Arrow IPC streaming format to segment files in a
 /// folder. At any point in time there is exactly one active segment being written to plus zero or
-/// more closed segments that are read-only. The active segment is closed once
-/// [`SEGMENT_BATCH_COUNT_THRESHOLD`] batches have been written to it. Appending enforces that
+/// more closed segments that are read-only. The active segment is closed once the approximate
+/// in-memory size of its batches exceeds `segment_size_threshold_in_bytes`. Appending enforces that
 /// [`sync_data()`](File::sync_data) is called immediately after writing to ensure that all data is
 /// on disk before returning. Note that an exclusive lock is held on the file while it is being
 /// written to, to ensure that no other thread can write to it.
@@ -350,7 +348,7 @@ impl SegmentedLog {
 
     /// Append the given data to the active segment and sync the file to ensure that all data is on
     /// disk. Return the batch id given to the appended data. Close the active segment and start a
-    /// new one if [`SEGMENT_BATCH_COUNT_THRESHOLD`] is reached. If the data could not be appended
+    /// new one if `segment_size_threshold_in_bytes` is reached. If the data could not be appended
     /// or the file could not be synced, return [`ModelarDbStorageError`].
     fn append_and_sync(&self, data: &RecordBatch) -> Result<u64> {
         // Acquire the mutex to ensure only one thread can write at a time.
