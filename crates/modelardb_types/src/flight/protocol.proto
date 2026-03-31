@@ -75,6 +75,10 @@ message Configuration {
 
   // Number of threads to allocate for writing segments to a local and/or remote data folder.
   uint32 writer_threads = 8;
+
+  // The maximum approximate size in bytes of a single WAL segment file before closing it and
+  // starting a new one.
+  uint64 segment_size_threshold_in_bytes = 9;
 }
 
 // Request to update the configuration of a ModelarDB node.
@@ -85,6 +89,7 @@ message UpdateConfiguration {
     COMPRESSED_RESERVED_MEMORY_IN_BYTES = 2;
     TRANSFER_BATCH_SIZE_IN_BYTES = 3;
     TRANSFER_TIME_IN_SECONDS = 4;
+    SEGMENT_SIZE_THRESHOLD_IN_BYTES = 5;
   }
 
   // Setting to update in the configuration.
