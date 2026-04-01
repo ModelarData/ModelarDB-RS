@@ -26,6 +26,8 @@ mod storage;
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
 
+use modelardb_storage::write_ahead_log::WriteAheadLog;
+use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
@@ -46,6 +48,13 @@ pub static PORT: LazyLock<u16> =
 pub(crate) enum ClusterMode {
     SingleNode,
     MultiNode(Box<Cluster>),
+}
+
+/// The different possible modes for the write-ahead log, assigned when the server is started.
+#[derive(Clone)]
+pub(crate) enum WalMode {
+    Enabled(Arc<RwLock<WriteAheadLog>>),
+    Disabled,
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to extract
