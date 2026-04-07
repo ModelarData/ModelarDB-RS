@@ -678,7 +678,7 @@ mod tests {
     use modelardb_test::table::TIME_SERIES_TABLE_NAME;
     use tempfile::TempDir;
 
-    const SEGMENT_SIZE_THRESHOLD_IN_BYTES: u64 = 64 * 1024; // 64 KiB
+    const SEGMENT_SIZE_THRESHOLD_IN_BYTES: u64 = 64 * 1024; // 64 KiB.
 
     // Tests for WriteAheadLog.
     #[tokio::test]
