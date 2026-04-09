@@ -572,7 +572,9 @@ mod tests {
             .unwrap();
 
         let write_ahead_log = Arc::new(RwLock::new(
-            WriteAheadLog::try_new(&local_data_folder).await.unwrap(),
+            WriteAheadLog::try_new(&local_data_folder, 64 * 1024)
+                .await
+                .unwrap(),
         ));
 
         (
