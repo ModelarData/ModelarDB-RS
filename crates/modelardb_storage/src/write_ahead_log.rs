@@ -571,6 +571,55 @@ impl SegmentedLog {
 
         Ok(all_batches)
     }
+
+    /// Truncate all data in the log by deleting all closed segment files from disk and starting a
+    /// new active segment file. If the active segment could not be closed or a new active segment
+    /// could not be started, return [`ModelarDbStorageError`].
+    fn truncate(&self) -> Result<()> {
+        // Acquire the mutexes to ensure the log is not being written to while truncating.
+        let mut persisted_batch_ids = self
+            .persisted_batch_ids
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
+        let mut active = self
+            .active_segment
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
+        let mut closed_segments = self
+            .closed_segments
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
+        persisted_batch_ids.clear();
+
+        // Delete all closed segments from disk.
+        for segment in closed_segments.drain(..) {
+            debug!(
+                path = %segment.path.display(),
+                "Deleting closed WAL segment due to table truncate."
+            );
+
+            std::fs::remove_file(&segment.path)?;
+        }
+
+        // Delete the active segment from disk.
+        debug!(
+            path = %active.path.display(),
+            "Deleting active WAL segment due to table truncate."
+        );
+
+        std::fs::remove_file(&active.path)?;
+
+        // Continue generating ids matching the end of the deleted segments to avoid id collisions.
+        let next_id = active.next_batch_id;
+
+        // Open a new active segment
+        *active = ActiveSegment::try_new(self.folder_path.clone(), &self.schema, next_id)?;
+
+        Ok(())
+    }
 }
 
 /// If a leftover active segment (`{start_id}-.arrows`) exists in `folder_path`, rename it to
