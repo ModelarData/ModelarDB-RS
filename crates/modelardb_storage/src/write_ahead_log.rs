@@ -194,6 +194,14 @@ impl WriteAheadLog {
         table_log.unpersisted_batches()
     }
 
+    /// Truncate the table log for the given table name, removing all closed segment files from
+    /// disk, and starting a new active segment file. If the table log does not exist or the data
+    /// could not be truncated, return [`ModelarDbStorageError`].
+    pub fn truncate_table_log(&self, table_name: &str) -> Result<()> {
+        let table_log = self.table_log(table_name)?;
+        table_log.truncate()
+    }
+
     /// Get the table log for the table with the given name. If the table log does not exist, return
     /// [`ModelarDbStorageError`].
     fn table_log(&self, table_name: &str) -> Result<&SegmentedLog> {
