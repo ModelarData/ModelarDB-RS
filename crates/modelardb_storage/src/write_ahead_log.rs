@@ -615,7 +615,7 @@ impl SegmentedLog {
         // Continue generating ids from the next unused batch id to avoid id collisions.
         let next_id = active.next_batch_id;
 
-        // Open a new active segment
+        // Open a new active segment.
         *active = ActiveSegment::try_new(self.folder_path.clone(), &self.schema, next_id)?;
 
         Ok(())
