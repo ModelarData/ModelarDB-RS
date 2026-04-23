@@ -612,7 +612,7 @@ impl SegmentedLog {
 
         std::fs::remove_file(&active.path)?;
 
-        // Continue generating ids matching the end of the deleted segments to avoid id collisions.
+        // Continue generating ids from the next unused batch id to avoid id collisions.
         let next_id = active.next_batch_id;
 
         // Open a new active segment
@@ -1590,6 +1590,7 @@ mod tests {
 
         let active = segmented_log.active_segment.lock().unwrap();
         assert_eq!(active.start_id, expected_next_id);
+        assert_eq!(active.next_batch_id, expected_next_id);
     }
 
     #[test]
