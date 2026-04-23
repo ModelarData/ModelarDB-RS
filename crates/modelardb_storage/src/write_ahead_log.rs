@@ -989,6 +989,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_truncate_table_log_clears_unpersisted_batches_and_preserves_batch_ids() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
+
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            1
+        );
+
+        let unpersisted = wal
+            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unwrap();
+        assert_eq!(unpersisted.len(), 2);
+
+        wal.truncate_table_log(TIME_SERIES_TABLE_NAME).unwrap();
+
+        let unpersisted = wal
+            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unwrap();
+        assert!(unpersisted.is_empty());
+
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            2
+        );
+    }
+
+    #[tokio::test]
     async fn test_truncate_table_log_fails_if_table_log_does_not_exist() {
         let (_temp_dir, wal) = new_empty_write_ahead_log().await;
 
