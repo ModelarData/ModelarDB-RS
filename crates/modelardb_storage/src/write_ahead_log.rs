@@ -1572,6 +1572,26 @@ mod tests {
         assert!(unpersisted.is_empty());
     }
 
+    #[test]
+    fn test_truncate_segmented_log_maintains_batch_ids() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
+
+        // Fill one full segment and write two more into the active segment.
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
+        segmented_log.append_and_sync(&batch).unwrap();
+        segmented_log.append_and_sync(&batch).unwrap();
+
+        let expected_next_id = segment_batch_count + 2;
+
+        // Truncate should reset the state but carry over the next_batch_id.
+        segmented_log.truncate().unwrap();
+
+        let active = segmented_log.active_segment.lock().unwrap();
+        assert_eq!(active.start_id, expected_next_id);
+    }
+
     /// Fill the segment with `batch` until it reaches [`SEGMENT_SIZE_THRESHOLD_IN_BYTES`]. Return
     /// the number of batches that were appended.
     fn fill_segment_to_threshold(segmented_log: &SegmentedLog, batch: &RecordBatch) -> u64 {
