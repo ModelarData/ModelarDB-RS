@@ -1592,6 +1592,30 @@ mod tests {
         assert_eq!(active.start_id, expected_next_id);
     }
 
+    #[test]
+    fn test_truncate_empty_segmented_log() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
+
+        // Truncate the segmented log before appending any data.
+        segmented_log.truncate().unwrap();
+
+        // Verify in-memory state remains empty.
+        assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
+        assert!(segmented_log.persisted_batch_ids.lock().unwrap().is_empty());
+
+        // Verify the active segment ID is still 0, so it has not artificially incremented.
+        let active = segmented_log.active_segment.lock().unwrap();
+        assert_eq!(active.start_id, 0);
+        assert_eq!(active.next_batch_id, 0);
+        drop(active);
+
+        // Verify the old active segment was successfully replaced and exactly one file remains.
+        assert_eq!(std::fs::read_dir(&folder_path).unwrap().count(), 1);
+        let unpersisted = segmented_log.unpersisted_batches().unwrap();
+        assert!(unpersisted.is_empty());
+    }
+
     /// Fill the segment with `batch` until it reaches [`SEGMENT_SIZE_THRESHOLD_IN_BYTES`]. Return
     /// the number of batches that were appended.
     fn fill_segment_to_threshold(segmented_log: &SegmentedLog, batch: &RecordBatch) -> u64 {
