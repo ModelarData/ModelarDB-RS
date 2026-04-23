@@ -592,10 +592,8 @@ impl SegmentedLog {
             .lock()
             .expect("Mutex should not be poisoned.");
 
-        persisted_batch_ids.clear();
-
         // Delete all closed segments from disk.
-        for segment in closed_segments.drain(..) {
+        for segment in closed_segments.iter() {
             debug!(
                 path = %segment.path.display(),
                 "Deleting closed WAL segment due to table truncate."
@@ -614,9 +612,12 @@ impl SegmentedLog {
 
         // Continue generating ids from the next unused batch id to avoid id collisions.
         let next_id = active.next_batch_id;
+        let new_active = ActiveSegment::try_new(self.folder_path.clone(), &self.schema, next_id)?;
 
-        // Open a new active segment.
-        *active = ActiveSegment::try_new(self.folder_path.clone(), &self.schema, next_id)?;
+        // Commit the in-memory state transition only after all filesystem work succeeds.
+        persisted_batch_ids.clear();
+        closed_segments.clear();
+        *active = new_active;
 
         Ok(())
     }
