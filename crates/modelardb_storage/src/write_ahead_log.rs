@@ -573,8 +573,8 @@ impl SegmentedLog {
     }
 
     /// Truncate all data in the log by deleting all closed segment files from disk and starting a
-    /// new active segment file. If the active segment could not be closed or a new active segment
-    /// could not be started, return [`ModelarDbStorageError`].
+    /// new active segment file. If a closed segment file or the active segment file could not be
+    /// deleted or a new active segment file could not be created, return [`ModelarDbStorageError`].
     fn truncate(&self) -> Result<()> {
         // Acquire the mutexes to ensure the log is not being written to while truncating.
         let mut persisted_batch_ids = self
@@ -1576,7 +1576,7 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_segmented_log_clears_files_and_state() {
+    fn test_truncate_clears_files_and_state() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
@@ -1612,7 +1612,7 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_segmented_log_maintains_batch_ids() {
+    fn test_truncate_preserves_batch_ids() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
