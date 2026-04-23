@@ -1536,6 +1536,42 @@ mod tests {
         assert_eq!(unpersisted.last().unwrap(), &(segment_batch_count, batch));
     }
 
+    #[test]
+    fn test_truncate_segmented_log_clears_files_and_state() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
+
+        // Fill five full segments and write two more into the active segment.
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+        for _ in 0..5 {
+            fill_segment_to_threshold(&segmented_log, &batch);
+        }
+
+        segmented_log
+            .mark_batches_as_persisted(HashSet::from([0, 1, 2]))
+            .unwrap();
+
+        segmented_log.append_and_sync(&batch).unwrap();
+        segmented_log.append_and_sync(&batch).unwrap();
+
+        // Ensure we have five closed segments in memory and on disk, and one active segment.
+        assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 5);
+        assert_eq!(std::fs::read_dir(&folder_path).unwrap().count(), 6);
+
+        segmented_log.truncate().unwrap();
+
+        // Verify in-memory state is cleared.
+        assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 0);
+        assert_eq!(segmented_log.persisted_batch_ids.lock().unwrap().len(), 0);
+
+        // Verify the old closed segments and the old active segment were deleted from disk,
+        // and exactly one new active segment was created.
+        assert_eq!(std::fs::read_dir(&folder_path).unwrap().count(), 1);
+
+        let unpersisted = segmented_log.unpersisted_batches().unwrap();
+        assert!(unpersisted.is_empty());
+    }
+
     /// Fill the segment with `batch` until it reaches [`SEGMENT_SIZE_THRESHOLD_IN_BYTES`]. Return
     /// the number of batches that were appended.
     fn fill_segment_to_threshold(segmented_log: &SegmentedLog, batch: &RecordBatch) -> u64 {
