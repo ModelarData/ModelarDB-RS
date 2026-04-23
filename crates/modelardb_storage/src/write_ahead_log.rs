@@ -989,6 +989,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_truncate_table_log_fails_if_table_log_does_not_exist() {
+        let (_temp_dir, wal) = new_empty_write_ahead_log().await;
+
+        let result = wal.truncate_table_log(TIME_SERIES_TABLE_NAME);
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            format!(
+                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+            )
+        );
+    }
+
+    #[tokio::test]
     async fn test_set_segment_size_threshold_in_bytes_updates_existing_table_logs() {
         let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
         let mut wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
