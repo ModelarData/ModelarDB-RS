@@ -610,11 +610,13 @@ impl SegmentedLog {
 
         std::fs::remove_file(&active.path)?;
 
-        // Continue generating ids from the next unused batch id to avoid id collisions.
+        // Continue from the next unused batch id instead of resetting to 0. Historical batch
+        // ids may still be referenced by Delta commit metadata, so reusing them could cause
+        // old and new WAL batch ids to collide, for example after a rollback.
         let next_id = active.next_batch_id;
         let new_active = ActiveSegment::try_new(self.folder_path.clone(), &self.schema, next_id)?;
 
-        // Commit the in-memory state transition only after all filesystem work succeeds.
+        // Commit the in-memory state transition only after all filesystem operations succeed.
         persisted_batch_ids.clear();
         closed_segments.clear();
         *active = new_active;
