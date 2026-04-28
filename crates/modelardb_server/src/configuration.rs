@@ -63,11 +63,14 @@ struct Configuration {
     segment_size_threshold_in_bytes: u64,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
-    pub(crate) ingestion_threads: u8,
+    ingestion_threads: u8,
     /// Number of threads to allocate for compressing univariate time series to segments.
-    pub(crate) compression_threads: u8,
+    compression_threads: u8,
     /// Number of threads to allocate for writing segments to a local and/or remote data folder.
-    pub(crate) writer_threads: u8,
+    writer_threads: u8,
+    /// Whether the write-ahead log is enabled. If enabled, data is logged before ingestion and the
+    /// log is replayed on crash recovery.
+    wal_enabled: bool,
 }
 
 impl Configuration {
@@ -97,6 +100,10 @@ impl Configuration {
 
         if let Ok(value) = env::var("MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES") {
             self.segment_size_threshold_in_bytes = value.parse()?;
+        }
+
+        if let Ok(value) = env::var("MODELARDBD_WAL_ENABLED") {
+            self.wal_enabled = value.parse()?;
         }
 
         Ok(())
@@ -149,6 +156,7 @@ impl Default for Configuration {
             ingestion_threads: 1,
             compression_threads: 1,
             writer_threads: 1,
+            wal_enabled: true,
         }
     }
 }
@@ -203,11 +211,7 @@ impl ConfigurationManager {
         configuration.save_to_toml(&local_data_folder).await?;
 
         // Create the write-ahead log if enabled. The WAL is enabled by default.
-        let wal_mode = if env::var("MODELARDBD_WAL_ENABLED")
-            .unwrap_or_else(|_| "true".to_owned())
-            .parse::<bool>()
-            .unwrap_or(true)
-        {
+        let wal_mode = if configuration.wal_enabled {
             let write_ahead_log = WriteAheadLog::try_new(&local_data_folder).await?;
             WalMode::Enabled(Arc::new(RwLock::new(write_ahead_log)))
         } else {
