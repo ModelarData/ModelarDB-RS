@@ -50,13 +50,6 @@ pub(crate) enum ClusterMode {
     MultiNode(Box<Cluster>),
 }
 
-/// The different possible modes for the write-ahead log, assigned when the server is started.
-#[derive(Clone)]
-pub(crate) enum WalMode {
-    Enabled(Arc<RwLock<WriteAheadLog>>),
-    Disabled,
-}
-
 /// Setup tracing that prints to stdout, parse the command line arguments to extract
 /// [`DataFolders`], construct a [`Context`] with the systems components, initialize the normal
 /// tables and time series tables in the Delta Lake, initialize a CTRL+C handler that flushes the

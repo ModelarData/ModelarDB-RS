@@ -34,6 +34,13 @@ use crate::storage::StorageEngine;
 
 const CONFIGURATION_FILE_NAME: &str = "modelardbd.toml";
 
+/// The different possible modes for the write-ahead log, assigned when the server is started.
+#[derive(Clone)]
+pub(crate) enum WalMode {
+    Enabled(Arc<RwLock<WriteAheadLog>>),
+    Disabled,
+}
+
 /// The system's configuration. The configuration can be serialized into a [`CONFIGURATION_FILE_NAME`]
 /// configuration file and deserialized from it. Accessing and modifying the configuration should
 /// only be done through the [`ConfigurationManager`].
@@ -152,6 +159,8 @@ pub struct ConfigurationManager {
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
     cluster_mode: ClusterMode,
+    /// The mode of the write-ahead log used to determine whether data is logged before ingestion.
+    wal_mode: WalMode,
     /// The local data folder that stores the configuration file at the root.
     local_data_folder: DataFolder,
     /// The configuration of the system. This is stored in a separate type to allow for easier
@@ -193,8 +202,21 @@ impl ConfigurationManager {
         configuration.validate()?;
         configuration.save_to_toml(&local_data_folder).await?;
 
+        // Create the write-ahead log if enabled. The WAL is enabled by default.
+        let wal_mode = if env::var("MODELARDBD_WAL_ENABLED")
+            .unwrap_or_else(|_| "true".to_owned())
+            .parse::<bool>()
+            .unwrap_or(true)
+        {
+            let write_ahead_log = WriteAheadLog::try_new(&local_data_folder).await?;
+            WalMode::Enabled(Arc::new(RwLock::new(write_ahead_log)))
+        } else {
+            WalMode::Disabled
+        };
+
         Ok(Self {
             cluster_mode,
+            wal_mode,
             local_data_folder,
             configuration,
         })
@@ -202,6 +224,10 @@ impl ConfigurationManager {
 
     pub(crate) fn cluster_mode(&self) -> &ClusterMode {
         &self.cluster_mode
+    }
+
+    pub(crate) fn wal_mode(&self) -> &WalMode {
+        &self.wal_mode
     }
 
     pub(crate) fn multivariate_reserved_memory_in_bytes(&self) -> u64 {
