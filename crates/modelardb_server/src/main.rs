@@ -26,8 +26,6 @@ mod storage;
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
 
-use modelardb_storage::write_ahead_log::WriteAheadLog;
-use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
