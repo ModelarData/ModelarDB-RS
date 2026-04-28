@@ -433,6 +433,7 @@ impl ConfigurationManager {
             ingestion_threads: self.configuration.ingestion_threads as u32,
             compression_threads: self.configuration.compression_threads as u32,
             writer_threads: self.configuration.writer_threads as u32,
+            wal_enabled: self.configuration.wal_enabled,
         };
 
         configuration.encode_to_vec()
