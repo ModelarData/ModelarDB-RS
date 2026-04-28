@@ -22,11 +22,11 @@ use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_storage::data_folder::DataFolder;
-use modelardb_storage::write_ahead_log::WriteAheadLog;
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
+use crate::configuration::WalMode;
 use crate::error::Result;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
@@ -51,8 +51,8 @@ pub(super) struct CompressedDataManager {
     channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Write-ahead log for persisting data and operations.
-    write_ahead_log: Arc<RwLock<WriteAheadLog>>,
+    /// The mode of the write-ahead log used to determine whether data is logged before ingestion.
+    wal_mode: WalMode,
 }
 
 impl CompressedDataManager {
@@ -61,7 +61,7 @@ impl CompressedDataManager {
         local_data_folder: DataFolder,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
-        write_ahead_log: Arc<RwLock<WriteAheadLog>>,
+        wal_mode: WalMode,
     ) -> Self {
         Self {
             data_transfer,
@@ -70,7 +70,7 @@ impl CompressedDataManager {
             compressed_queue: SegQueue::new(),
             channels,
             memory_pool,
-            write_ahead_log,
+            wal_mode,
         }
     }
 
@@ -261,10 +261,12 @@ impl CompressedDataManager {
             .write_record_batches_with_batch_ids(table_name, compressed_segments, batch_ids.clone())
             .await?;
 
-        // Inform the write-ahead log that data has been written to disk. We use a read lock since
-        // the specific WAL file is locked internally before being updated.
-        let write_ahead_log = self.write_ahead_log.read().await;
-        write_ahead_log.mark_batches_as_persisted_in_table_log(table_name, batch_ids)?;
+        // Inform the write-ahead log that data has been written to disk if the WAL is enabled.
+        if let WalMode::Enabled(write_ahead_log) = &self.wal_mode {
+            // We use a read lock since the specific WAL file is locked internally before being updated.
+            let write_ahead_log = write_ahead_log.read().await;
+            write_ahead_log.mark_batches_as_persisted_in_table_log(table_name, batch_ids)?;
+        }
 
         // Inform the data transfer component about the new data if a remote data folder was
         // provided. If the total size of the data related to table_name has reached the transfer
@@ -311,6 +313,7 @@ mod tests {
 
     use datafusion::arrow::array::{Array, Int8Array};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use modelardb_storage::write_ahead_log::WriteAheadLog;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use modelardb_test::{
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, COMPRESSED_SEGMENTS_SIZE,
@@ -584,7 +587,7 @@ mod tests {
                 local_data_folder,
                 channels,
                 memory_pool,
-                write_ahead_log,
+                WalMode::Enabled(write_ahead_log),
             ),
         )
     }
