@@ -20,12 +20,11 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
-use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::configuration::ConfigurationManager;
+use crate::configuration::{ConfigurationManager, WalMode};
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
 use crate::storage::data_sinks::{NormalTableDataSink, TimeSeriesTableDataSink};
@@ -39,8 +38,6 @@ pub struct Context {
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
-    /// Write-ahead log for persisting data and operations.
-    pub write_ahead_log: Arc<RwLock<WriteAheadLog>>,
 }
 
 impl Context {
@@ -53,31 +50,16 @@ impl Context {
                 .await?,
         ));
 
-        let write_ahead_log = Arc::new(RwLock::new(
-            WriteAheadLog::try_new(
-                &data_folders.local_data_folder,
-                configuration_manager
-                    .read()
-                    .await
-                    .segment_size_threshold_in_bytes(),
-            )
-            .await?,
-        ));
+        let wal_mode = configuration_manager.read().await.wal_mode().clone();
 
         let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(
-                data_folders.clone(),
-                write_ahead_log.clone(),
-                &configuration_manager,
-            )
-            .await?,
+            StorageEngine::try_new(data_folders.clone(), wal_mode, &configuration_manager).await?,
         ));
 
         Ok(Context {
             data_folders,
             configuration_manager,
             storage_engine,
-            write_ahead_log,
         })
     }
 
@@ -124,10 +106,13 @@ impl Context {
             .await?;
 
         // Create a file in the write-ahead log to log uncompressed data for the table.
-        let mut write_ahead_log = self.write_ahead_log.write().await;
-        write_ahead_log
-            .create_table_log(time_series_table_metadata)
-            .await?;
+        let configuration_manager = self.configuration_manager.read().await;
+        if let WalMode::Enabled(write_ahead_log) = configuration_manager.wal_mode() {
+            let mut write_ahead_log = write_ahead_log.write().await;
+            write_ahead_log
+                .create_table_log(time_series_table_metadata)
+                .await?;
+        }
 
         Ok(())
     }
@@ -268,9 +253,13 @@ impl Context {
     /// this method should only be called before the storage engine starts ingesting data to avoid
     /// replaying data that is currently in memory.
     pub(super) async fn replay_write_ahead_log(&self) -> Result<()> {
-        let local_data_folder = &self.data_folders.local_data_folder;
+        let configuration_manager = self.configuration_manager.read().await;
+        let write_ahead_log = match configuration_manager.wal_mode() {
+            WalMode::Enabled(write_ahead_log) => write_ahead_log.write().await,
+            WalMode::Disabled => return Ok(()),
+        };
 
-        let write_ahead_log = self.write_ahead_log.write().await;
+        let local_data_folder = &self.data_folders.local_data_folder;
         let mut storage_engine = self.storage_engine.write().await;
 
         for metadata in local_data_folder.time_series_table_metadata().await? {
@@ -289,7 +278,7 @@ impl Context {
                 storage_engine.insert_data_points_with_batch_id(
                     metadata.clone(),
                     batch,
-                    batch_id,
+                    Some(batch_id),
                 )?;
             }
         }
@@ -318,8 +307,11 @@ impl Context {
 
         // If the table is a time series table, delete the table log file from the write-ahead log.
         if local_data_folder.is_time_series_table(table_name).await? {
-            let mut write_ahead_log = self.write_ahead_log.write().await;
-            write_ahead_log.remove_table_log(table_name)?;
+            let configuration_manager = self.configuration_manager.read().await;
+            if let WalMode::Enabled(write_ahead_log) = configuration_manager.wal_mode() {
+                let mut write_ahead_log = write_ahead_log.write().await;
+                write_ahead_log.remove_table_log(table_name)?;
+            }
         }
 
         // Drop the table from the Delta Lake.
