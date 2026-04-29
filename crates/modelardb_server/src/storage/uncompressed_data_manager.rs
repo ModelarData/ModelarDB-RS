@@ -16,7 +16,6 @@
 //! Support for managing all uncompressed data that is ingested into the
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
-use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hasher};
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::mem;
@@ -167,7 +166,7 @@ impl UncompressedDataManager {
                     &mut values,
                     time_series_table_metadata.clone(),
                     current_batch_index,
-                    ingested_data_buffer.batch_id,
+                    ingested_data_buffer.maybe_batch_id,
                 )
                 .await?;
         }
@@ -202,7 +201,7 @@ impl UncompressedDataManager {
         values: &mut dyn Iterator<Item = Value>,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         current_batch_index: u64,
-        batch_id: u64,
+        maybe_batch_id: Option<u64>,
     ) -> Result<bool> {
         let tag_hash = calculate_tag_hash(&time_series_table_metadata.name, &tag_values);
 
@@ -228,7 +227,7 @@ impl UncompressedDataManager {
                 values,
             );
 
-            uncompressed_in_memory_data_buffer.insert_batch_id(batch_id);
+            uncompressed_in_memory_data_buffer.insert_batch_id(maybe_batch_id);
 
             buffer_is_full = uncompressed_in_memory_data_buffer.is_full();
             true
@@ -263,7 +262,7 @@ impl UncompressedDataManager {
                     values,
                 );
 
-                uncompressed_in_memory_data_buffer.insert_batch_id(batch_id);
+                uncompressed_in_memory_data_buffer.insert_batch_id(maybe_batch_id);
 
                 buffer_is_full = uncompressed_in_memory_data_buffer.is_full();
 
@@ -280,7 +279,7 @@ impl UncompressedDataManager {
                     tag_values,
                     time_series_table_metadata,
                     current_batch_index,
-                    HashSet::from([batch_id]),
+                    maybe_batch_id.into_iter().collect(),
                 );
 
                 debug!(
@@ -653,7 +652,7 @@ mod tests {
 
     const TAG_VALUE: &str = "tag";
     const TAG_HASH: u64 = 14957893031159457585;
-    const BATCH_ID: u64 = 0;
+    const BATCH_ID: Option<u64> = Some(0);
 
     // Tests for UncompressedDataManager.
     #[tokio::test]

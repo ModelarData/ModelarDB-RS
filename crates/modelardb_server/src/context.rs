@@ -20,12 +20,11 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::{SchemaProvider, TableProvider};
-use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::configuration::ConfigurationManager;
+use crate::configuration::{ConfigurationManager, WalMode};
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
 use crate::storage::data_sinks::{NormalTableDataSink, TimeSeriesTableDataSink};
@@ -39,8 +38,6 @@ pub struct Context {
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
-    /// Write-ahead log for persisting data and operations.
-    pub write_ahead_log: Arc<RwLock<WriteAheadLog>>,
 }
 
 impl Context {
@@ -53,38 +50,23 @@ impl Context {
                 .await?,
         ));
 
-        let write_ahead_log = Arc::new(RwLock::new(
-            WriteAheadLog::try_new(
-                &data_folders.local_data_folder,
-                configuration_manager
-                    .read()
-                    .await
-                    .segment_size_threshold_in_bytes(),
-            )
-            .await?,
-        ));
+        let wal_mode = configuration_manager.read().await.wal_mode().clone();
 
         let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(
-                data_folders.clone(),
-                write_ahead_log.clone(),
-                &configuration_manager,
-            )
-            .await?,
+            StorageEngine::try_new(data_folders.clone(), wal_mode, &configuration_manager).await?,
         ));
 
         Ok(Context {
             data_folders,
             configuration_manager,
             storage_engine,
-            write_ahead_log,
         })
     }
 
     /// Create a normal table with `name` and `schema`. Returns [`ModelarDbServerError`] if the
     /// table could not be created.
     pub(crate) async fn create_normal_table(&self, name: &str, schema: &Schema) -> Result<()> {
-        self.check_if_table_exists(name).await?;
+        self.check_table_does_not_exist(name).await?;
         self.register_and_save_normal_table(name, schema).await?;
 
         Ok(())
@@ -118,16 +100,19 @@ impl Context {
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
-        self.check_if_table_exists(&time_series_table_metadata.name)
+        self.check_table_does_not_exist(&time_series_table_metadata.name)
             .await?;
         self.register_and_save_time_series_table(time_series_table_metadata)
             .await?;
 
         // Create a file in the write-ahead log to log uncompressed data for the table.
-        let mut write_ahead_log = self.write_ahead_log.write().await;
-        write_ahead_log
-            .create_table_log(time_series_table_metadata)
-            .await?;
+        let configuration_manager = self.configuration_manager.read().await;
+        if let WalMode::Enabled(write_ahead_log) = configuration_manager.wal_mode() {
+            let mut write_ahead_log = write_ahead_log.write().await;
+            write_ahead_log
+                .create_table_log(time_series_table_metadata)
+                .await?;
+        }
 
         Ok(())
     }
@@ -268,9 +253,16 @@ impl Context {
     /// this method should only be called before the storage engine starts ingesting data to avoid
     /// replaying data that is currently in memory.
     pub(super) async fn replay_write_ahead_log(&self) -> Result<()> {
-        let local_data_folder = &self.data_folders.local_data_folder;
+        let configuration_manager = self.configuration_manager.read().await;
+        let write_ahead_log = match configuration_manager.wal_mode() {
+            WalMode::Enabled(write_ahead_log) => write_ahead_log.write().await,
+            WalMode::Disabled => {
+                warn!("WAL is disabled.");
+                return Ok(());
+            }
+        };
 
-        let write_ahead_log = self.write_ahead_log.write().await;
+        let local_data_folder = &self.data_folders.local_data_folder;
         let mut storage_engine = self.storage_engine.write().await;
 
         for metadata in local_data_folder.time_series_table_metadata().await? {
@@ -289,7 +281,7 @@ impl Context {
                 storage_engine.insert_data_points_with_batch_id(
                     metadata.clone(),
                     batch,
-                    batch_id,
+                    Some(batch_id),
                 )?;
             }
         }
@@ -303,7 +295,7 @@ impl Context {
     pub async fn drop_table(&self, table_name: &str) -> Result<()> {
         // Deregistering the table from the Apache DataFusion session context and deleting the table
         // from the storage engine does not require the table to exist, so the table is checked first.
-        if self.check_if_table_exists(table_name).await.is_ok() {
+        if self.check_table_does_not_exist(table_name).await.is_ok() {
             return Err(table_does_not_exist_error(table_name));
         }
 
@@ -318,8 +310,11 @@ impl Context {
 
         // If the table is a time series table, delete the table log file from the write-ahead log.
         if local_data_folder.is_time_series_table(table_name).await? {
-            let mut write_ahead_log = self.write_ahead_log.write().await;
-            write_ahead_log.remove_table_log(table_name)?;
+            let configuration_manager = self.configuration_manager.read().await;
+            if let WalMode::Enabled(write_ahead_log) = configuration_manager.wal_mode() {
+                let mut write_ahead_log = write_ahead_log.write().await;
+                write_ahead_log.remove_table_log(table_name)?;
+            }
         }
 
         // Drop the table from the Delta Lake.
@@ -334,7 +329,7 @@ impl Context {
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
         // Deleting the table from the storage engine does not require the table to exist, so the
         // table is checked first.
-        if self.check_if_table_exists(table_name).await.is_ok() {
+        if self.check_table_does_not_exist(table_name).await.is_ok() {
             return Err(table_does_not_exist_error(table_name));
         }
 
@@ -345,9 +340,12 @@ impl Context {
         // If the table is a time series table, truncate the table log file from the write-ahead
         // log to ensure data is not retained and replayed upon restart.
         if local_data_folder.is_time_series_table(table_name).await? {
-            // We use a read lock since the specific table log is locked internally before being truncated.
-            let write_ahead_log = self.write_ahead_log.read().await;
-            write_ahead_log.truncate_table_log(table_name)?;
+            let configuration_manager = self.configuration_manager.read().await;
+            if let WalMode::Enabled(write_ahead_log) = configuration_manager.wal_mode() {
+                // We use a read lock since the specific table log is locked internally before being truncated.
+                let write_ahead_log = write_ahead_log.read().await;
+                write_ahead_log.truncate_table_log(table_name)?;
+            }
         }
 
         // Delete the table data from the Delta Lake.
@@ -380,7 +378,7 @@ impl Context {
         maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()> {
         // Check if the table exists first to provide a consistent error message if it does not.
-        if self.check_if_table_exists(table_name).await.is_ok() {
+        if self.check_table_does_not_exist(table_name).await.is_ok() {
             return Err(table_does_not_exist_error(table_name));
         }
 
@@ -418,7 +416,7 @@ impl Context {
     }
 
     /// Return [`ModelarDbServerError`] if a table named `table_name` exists in the default catalog.
-    pub async fn check_if_table_exists(&self, table_name: &str) -> Result<()> {
+    pub async fn check_table_does_not_exist(&self, table_name: &str) -> Result<()> {
         let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.await.is_ok() {
             return Err(ModelarDbServerError::InvalidArgument(format!(
@@ -506,7 +504,7 @@ mod tests {
         );
 
         // The normal table should be registered in the Apache DataFusion catalog.
-        assert_check_if_table_exists_error(&context, NORMAL_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, NORMAL_TABLE_NAME).await;
     }
 
     #[tokio::test]
@@ -557,7 +555,7 @@ mod tests {
         );
 
         // The time series table should be registered in the Apache DataFusion catalog.
-        assert_check_if_table_exists_error(&context, TIME_SERIES_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, TIME_SERIES_TABLE_NAME).await;
     }
 
     #[tokio::test]
@@ -634,14 +632,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_check_if_table_exists_error(&context, NORMAL_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, NORMAL_TABLE_NAME).await;
 
         context.drop_table(NORMAL_TABLE_NAME).await.unwrap();
 
         // The normal table should be deregistered from the Apache DataFusion session context.
         assert!(
             context
-                .check_if_table_exists(NORMAL_TABLE_NAME)
+                .check_table_does_not_exist(NORMAL_TABLE_NAME)
                 .await
                 .is_ok()
         );
@@ -670,14 +668,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_check_if_table_exists_error(&context, TIME_SERIES_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, TIME_SERIES_TABLE_NAME).await;
 
         context.drop_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
         // The time series table should be deregistered from the Apache DataFusion session context.
         assert!(
             context
-                .check_if_table_exists(TIME_SERIES_TABLE_NAME)
+                .check_table_does_not_exist(TIME_SERIES_TABLE_NAME)
                 .await
                 .is_ok()
         );
@@ -973,11 +971,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_check_if_table_exists_error(&context, TIME_SERIES_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, TIME_SERIES_TABLE_NAME).await;
     }
 
-    async fn assert_check_if_table_exists_error(context: &Arc<Context>, table_name: &str) {
-        let result = context.check_if_table_exists(table_name).await;
+    async fn assert_check_table_does_not_exist_error(context: &Arc<Context>, table_name: &str) {
+        let result = context.check_table_does_not_exist(table_name).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -992,7 +990,7 @@ mod tests {
 
         assert!(
             context
-                .check_if_table_exists(TIME_SERIES_TABLE_NAME)
+                .check_table_does_not_exist(TIME_SERIES_TABLE_NAME)
                 .await
                 .is_ok()
         );

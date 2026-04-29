@@ -46,20 +46,20 @@ pub(super) struct IngestedDataBuffer {
     pub(super) time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Uncompressed data points to insert.
     pub(super) data_points: RecordBatch,
-    /// The id given to the data by the WAL.
-    pub(super) batch_id: u64,
+    /// The id given to the data by the WAL, or [`None`] if the WAL is disabled.
+    pub(super) maybe_batch_id: Option<u64>,
 }
 
 impl IngestedDataBuffer {
     pub(super) fn new(
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         data_points: RecordBatch,
-        batch_id: u64,
+        maybe_batch_id: Option<u64>,
     ) -> Self {
         Self {
             time_series_table_metadata,
             data_points,
-            batch_id,
+            maybe_batch_id,
         }
     }
 }
@@ -157,9 +157,11 @@ impl UncompressedInMemoryDataBuffer {
         debug!("Inserted data point into {:?}.", self)
     }
 
-    /// Add `batch_id` to the batch ids given to the data by the WAL.
-    pub(super) fn insert_batch_id(&mut self, batch_id: u64) {
-        self.batch_ids.insert(batch_id);
+    /// Add `maybe_batch_id` to the batch ids given to the data by the WAL if it is not [`None`].
+    pub(super) fn insert_batch_id(&mut self, maybe_batch_id: Option<u64>) {
+        if let Some(batch_id) = maybe_batch_id {
+            self.batch_ids.insert(batch_id);
+        }
     }
 
     /// Return how many data points the [`UncompressedInMemoryDataBuffer`] can contain.
@@ -424,7 +426,7 @@ mod tests {
     use tokio::runtime::Runtime;
 
     const CURRENT_BATCH_INDEX: u64 = 1;
-    const BATCH_ID: u64 = 0;
+    const BATCH_ID: Option<u64> = Some(0);
     const TAG_VALUE: &str = "tag";
     const TAG_HASH: u64 = 15537859409877038916;
 

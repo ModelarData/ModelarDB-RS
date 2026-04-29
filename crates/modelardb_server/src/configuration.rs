@@ -34,6 +34,13 @@ use crate::storage::StorageEngine;
 
 const CONFIGURATION_FILE_NAME: &str = "modelardbd.toml";
 
+/// The different possible modes for the write-ahead log, assigned when the server is started.
+#[derive(Clone)]
+pub(crate) enum WalMode {
+    Enabled(Arc<RwLock<WriteAheadLog>>),
+    Disabled,
+}
+
 /// The system's configuration. The configuration can be serialized into a [`CONFIGURATION_FILE_NAME`]
 /// configuration file and deserialized from it. Accessing and modifying the configuration should
 /// only be done through the [`ConfigurationManager`].
@@ -56,11 +63,14 @@ struct Configuration {
     segment_size_threshold_in_bytes: u64,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
-    pub(crate) ingestion_threads: u8,
+    ingestion_threads: u8,
     /// Number of threads to allocate for compressing univariate time series to segments.
-    pub(crate) compression_threads: u8,
+    compression_threads: u8,
     /// Number of threads to allocate for writing segments to a local and/or remote data folder.
-    pub(crate) writer_threads: u8,
+    writer_threads: u8,
+    /// Whether the write-ahead log is enabled. If enabled, data is logged before ingestion and the
+    /// log is replayed on crash recovery.
+    wal_enabled: bool,
 }
 
 impl Configuration {
@@ -90,6 +100,10 @@ impl Configuration {
 
         if let Ok(value) = env::var("MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES") {
             self.segment_size_threshold_in_bytes = value.parse()?;
+        }
+
+        if let Ok(value) = env::var("MODELARDBD_WAL_ENABLED") {
+            self.wal_enabled = value.parse()?;
         }
 
         Ok(())
@@ -142,6 +156,7 @@ impl Default for Configuration {
             ingestion_threads: 1,
             compression_threads: 1,
             writer_threads: 1,
+            wal_enabled: true,
         }
     }
 }
@@ -152,6 +167,8 @@ pub struct ConfigurationManager {
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
     cluster_mode: ClusterMode,
+    /// The mode of the write-ahead log used to determine whether data is logged before ingestion.
+    wal_mode: WalMode,
     /// The local data folder that stores the configuration file at the root.
     local_data_folder: DataFolder,
     /// The configuration of the system. This is stored in a separate type to allow for easier
@@ -193,8 +210,22 @@ impl ConfigurationManager {
         configuration.validate()?;
         configuration.save_to_toml(&local_data_folder).await?;
 
+        // Create the write-ahead log if enabled. The WAL is enabled by default.
+        let wal_mode = if configuration.wal_enabled {
+            let write_ahead_log = WriteAheadLog::try_new(
+                &local_data_folder,
+                configuration.segment_size_threshold_in_bytes,
+            )
+            .await?;
+
+            WalMode::Enabled(Arc::new(RwLock::new(write_ahead_log)))
+        } else {
+            WalMode::Disabled
+        };
+
         Ok(Self {
             cluster_mode,
+            wal_mode,
             local_data_folder,
             configuration,
         })
@@ -202,6 +233,10 @@ impl ConfigurationManager {
 
     pub(crate) fn cluster_mode(&self) -> &ClusterMode {
         &self.cluster_mode
+    }
+
+    pub(crate) fn wal_mode(&self) -> &WalMode {
+        &self.wal_mode
     }
 
     pub(crate) fn multivariate_reserved_memory_in_bytes(&self) -> u64 {
@@ -348,6 +383,7 @@ impl ConfigurationManager {
             .await
     }
 
+    #[allow(dead_code)]
     pub(crate) fn segment_size_threshold_in_bytes(&self) -> u64 {
         self.configuration.segment_size_threshold_in_bytes
     }
@@ -358,8 +394,16 @@ impl ConfigurationManager {
     pub(crate) async fn set_segment_size_threshold_in_bytes(
         &mut self,
         new_segment_size_threshold_in_bytes: u64,
-        write_ahead_log: Arc<RwLock<WriteAheadLog>>,
     ) -> Result<()> {
+        let write_ahead_log = match self.wal_mode() {
+            WalMode::Enabled(write_ahead_log) => write_ahead_log.clone(),
+            WalMode::Disabled => {
+                return Err(ModelarDbServerError::InvalidState(
+                    "Cannot set segment size threshold when WAL is disabled.".to_owned(),
+                ));
+            }
+        };
+
         write_ahead_log
             .write()
             .await
@@ -403,6 +447,7 @@ impl ConfigurationManager {
             ingestion_threads: self.configuration.ingestion_threads as u32,
             compression_threads: self.configuration.compression_threads as u32,
             writer_threads: self.configuration.writer_threads as u32,
+            wal_enabled: self.configuration.wal_enabled,
         };
 
         configuration.encode_to_vec()
@@ -416,7 +461,6 @@ mod tests {
     use std::sync::Arc;
 
     use modelardb_storage::data_folder::DataFolder;
-    use modelardb_storage::write_ahead_log::WriteAheadLog;
     use modelardb_types::types::{Node, ServerMode};
     use tempfile::TempDir;
     use tokio::sync::RwLock;
@@ -429,8 +473,7 @@ mod tests {
     #[tokio::test]
     async fn test_configuration_file_is_created_if_it_does_not_exist() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         let configuration_from_manager = configuration_manager.read().await.configuration.clone();
         let configuration_from_file = configuration_from_file(&temp_dir).await;
@@ -459,8 +502,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (_storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         let configuration_from_manager = configuration_manager.read().await.configuration.clone();
         let configuration_from_file = configuration_from_file(&temp_dir).await;
@@ -520,8 +562,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_multivariate_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -557,8 +598,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -594,8 +634,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -631,8 +670,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_batch_size_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -668,8 +706,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_time_in_seconds() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -702,8 +739,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_segment_size_threshold_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_storage_engine, write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -717,7 +753,7 @@ mod tests {
         configuration_manager
             .write()
             .await
-            .set_segment_size_threshold_in_bytes(new_value, write_ahead_log)
+            .set_segment_size_threshold_in_bytes(new_value)
             .await
             .unwrap();
 
@@ -736,6 +772,24 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_set_segment_size_threshold_in_bytes_with_wal_disabled() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
+        configuration_manager.write().await.wal_mode = WalMode::Disabled;
+
+        let result = configuration_manager
+            .write()
+            .await
+            .set_segment_size_threshold_in_bytes(1)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: Cannot set segment size threshold when WAL is disabled."
+        );
+    }
+
     /// Return the configuration from the configuration file at the root of `temp_dir`.
     async fn configuration_from_file(temp_dir: &TempDir) -> Configuration {
         let configuration_file_path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
@@ -749,7 +803,6 @@ mod tests {
         temp_dir: &TempDir,
     ) -> (
         Arc<RwLock<StorageEngine>>,
-        Arc<RwLock<WriteAheadLog>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
         let local_url = temp_dir.path().to_str().unwrap();
@@ -779,28 +832,14 @@ mod tests {
             .unwrap(),
         ));
 
-        let write_ahead_log = Arc::new(RwLock::new(
-            WriteAheadLog::try_new(
-                &local_data_folder,
-                configuration_manager
-                    .read()
-                    .await
-                    .segment_size_threshold_in_bytes(),
-            )
-            .await
-            .unwrap(),
-        ));
+        let wal_mode = configuration_manager.read().await.wal_mode().clone();
 
         let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(
-                data_folders,
-                write_ahead_log.clone(),
-                &configuration_manager,
-            )
-            .await
-            .unwrap(),
+            StorageEngine::try_new(data_folders, wal_mode, &configuration_manager)
+                .await
+                .unwrap(),
         ));
 
-        (storage_engine, write_ahead_log, configuration_manager)
+        (storage_engine, configuration_manager)
     }
 }

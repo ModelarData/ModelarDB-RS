@@ -78,6 +78,9 @@ message Configuration {
 
   // Number of threads to allocate for writing segments to a local and/or remote data folder.
   uint32 writer_threads = 9;
+
+  // Whether the write-ahead log is enabled.
+  bool wal_enabled = 10;
 }
 
 // Request to update the configuration of a ModelarDB node.

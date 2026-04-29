@@ -959,10 +959,9 @@ impl FlightService for FlightServiceHandler {
                 }
                 Ok(protocol::update_configuration::Setting::SegmentSizeThresholdInBytes) => {
                     let new_value = maybe_new_value.ok_or(invalid_null_error)?;
-                    let write_ahead_log = self.context.write_ahead_log.clone();
 
                     configuration_manager
-                        .set_segment_size_threshold_in_bytes(new_value, write_ahead_log)
+                        .set_segment_size_threshold_in_bytes(new_value)
                         .await
                         .map_err(error_to_status_internal)
                 }

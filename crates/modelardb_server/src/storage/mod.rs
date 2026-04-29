@@ -34,13 +34,12 @@ use std::sync::{Arc, LazyLock};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tracing::error;
 
-use crate::configuration::ConfigurationManager;
+use crate::configuration::{ConfigurationManager, WalMode};
 use crate::data_folders::DataFolders;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_manager::CompressedDataManager;
@@ -82,8 +81,8 @@ pub struct StorageEngine {
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
     channels: Arc<Channels>,
-    /// Write-ahead log for persisting data and operations.
-    write_ahead_log: Arc<RwLock<WriteAheadLog>>,
+    /// The mode of the write-ahead log used to determine whether data is logged before ingestion.
+    wal_mode: WalMode,
 }
 
 impl StorageEngine {
@@ -93,7 +92,7 @@ impl StorageEngine {
     /// created.
     pub(super) async fn try_new(
         data_folders: DataFolders,
-        write_ahead_log: Arc<RwLock<WriteAheadLog>>,
+        wal_mode: WalMode,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
     ) -> Result<Self> {
         // Create shared memory pool.
@@ -178,7 +177,7 @@ impl StorageEngine {
             data_folders.local_data_folder,
             channels.clone(),
             memory_pool.clone(),
-            write_ahead_log.clone(),
+            wal_mode.clone(),
         ));
 
         {
@@ -205,7 +204,7 @@ impl StorageEngine {
             memory_pool,
             join_handles,
             channels,
-            write_ahead_log,
+            wal_mode,
         };
 
         // Start the task that transfers data periodically if a remote data folder is given and
@@ -260,29 +259,34 @@ impl StorageEngine {
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         multivariate_data_points: RecordBatch,
     ) -> Result<()> {
-        // Write to the write-ahead log to ensure termination never loses data. We use a read lock
-        // since the specific log file is locked internally before writing.
-        let batch_id = {
-            let write_ahead_log = self.write_ahead_log.read().await;
-            write_ahead_log
-                .append_to_table_log(&time_series_table_metadata.name, &multivariate_data_points)?
-        };
+        // Write to the write-ahead log if enabled to ensure termination never loses data.
+        let maybe_batch_id =
+            if let WalMode::Enabled(write_ahead_log) = &self.wal_mode {
+                // We use a read lock since the specific log file is locked internally before writing.
+                let write_ahead_log = write_ahead_log.read().await;
+                Some(write_ahead_log.append_to_table_log(
+                    &time_series_table_metadata.name,
+                    &multivariate_data_points,
+                )?)
+            } else {
+                None
+            };
 
         self.insert_data_points_with_batch_id(
             time_series_table_metadata,
             multivariate_data_points,
-            batch_id,
+            maybe_batch_id,
         )
     }
 
-    /// Pass `data_points` to [`UncompressedDataManager`] with a batch id given to the data by the
-    /// WAL. Return [`Ok`] if all of the data points were successfully inserted, otherwise return
-    /// [`ModelarDbServerError`].
+    /// Pass `data_points` to [`UncompressedDataManager`] with an optional batch id given to the
+    /// data by the WAL. Return [`Ok`] if all of the data points were successfully inserted,
+    /// otherwise return [`ModelarDbServerError`].
     pub(super) fn insert_data_points_with_batch_id(
         &mut self,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         multivariate_data_points: RecordBatch,
-        batch_id: u64,
+        maybe_batch_id: Option<u64>,
     ) -> Result<()> {
         self.memory_pool
             .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size() as u64);
@@ -292,7 +296,7 @@ impl StorageEngine {
             .send(Message::Data(IngestedDataBuffer::new(
                 time_series_table_metadata,
                 multivariate_data_points,
-                batch_id,
+                maybe_batch_id,
             )))
             .map_err(|error| error.into())
     }

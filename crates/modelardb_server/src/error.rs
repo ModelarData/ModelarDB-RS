@@ -20,6 +20,7 @@ use std::fmt::{Display, Formatter};
 use std::io::Error as IoError;
 use std::num::ParseIntError;
 use std::result::Result as StdResult;
+use std::str::ParseBoolError;
 
 use crossbeam_channel::RecvError as CrossbeamRecvError;
 use crossbeam_channel::SendError as CrossbeamSendError;
@@ -66,6 +67,8 @@ pub enum ModelarDbServerError {
     ObjectStore(ObjectStoreError),
     /// Error returned by ObjectStorePath.
     ObjectStorePath(ObjectStorePathError),
+    /// Error returned when failing to parse a string to a boolean.
+    ParseBool(ParseBoolError),
     /// Error returned when failing to parse a string to an integer.
     ParseInt(ParseIntError),
     /// Error returned by Prost when decoding a message that is not valid.
@@ -95,6 +98,7 @@ impl Display for ModelarDbServerError {
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
+            Self::ParseBool(reason) => write!(f, "Parse Bool Error: {reason}"),
             Self::ParseInt(reason) => write!(f, "Parse Int Error: {reason}"),
             Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
             Self::TomlDeserialize(reason) => write!(f, "TOML Deserialize Error: {reason}"),
@@ -121,6 +125,7 @@ impl Error for ModelarDbServerError {
             Self::ModelarDbTypes(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
             Self::ObjectStorePath(reason) => Some(reason),
+            Self::ParseBool(reason) => Some(reason),
             Self::ParseInt(reason) => Some(reason),
             Self::ProstDecode(reason) => Some(reason),
             Self::TomlDeserialize(reason) => Some(reason),
@@ -188,6 +193,12 @@ impl From<ObjectStoreError> for ModelarDbServerError {
 impl From<ObjectStorePathError> for ModelarDbServerError {
     fn from(error: ObjectStorePathError) -> Self {
         Self::ObjectStorePath(error)
+    }
+}
+
+impl From<ParseBoolError> for ModelarDbServerError {
+    fn from(error: ParseBoolError) -> Self {
+        Self::ParseBool(error)
     }
 }
 

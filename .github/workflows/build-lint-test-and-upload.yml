@@ -56,11 +56,11 @@ jobs:
       run: |
         case $(uname) in
         'Linux')
-          curl https://dl.min.io/server/minio/release/linux-amd64/minio -o minio ;;
+          curl -L https://dl.min.io/server/minio/release/linux-amd64/minio -o minio ;;
         'Darwin')
-          curl https://dl.min.io/server/minio/release/darwin-arm64/minio -o minio ;;
+          curl -L https://dl.min.io/server/minio/release/darwin-arm64/minio -o minio ;;
         *)
-          curl https://dl.min.io/server/minio/release/windows-amd64/minio.exe -o minio ;;
+          curl -L https://dl.min.io/server/minio/release/windows-amd64/minio.exe -o minio ;;
         esac
 
         chmod +x minio

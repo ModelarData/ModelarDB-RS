@@ -1295,6 +1295,7 @@ async fn test_can_get_configuration() {
     assert_eq!(configuration.ingestion_threads, 1);
     assert_eq!(configuration.compression_threads, 1);
     assert_eq!(configuration.writer_threads, 1);
+    assert!(configuration.wal_enabled);
 }
 
 #[tokio::test]
