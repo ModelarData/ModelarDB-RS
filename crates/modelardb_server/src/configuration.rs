@@ -742,11 +742,16 @@ mod tests {
         );
 
         let new_value = 1024;
-        if let WalMode::Enabled(write_ahead_log) = configuration_manager.read().await.wal_mode() {
+        let maybe_write_ahead_log = match configuration_manager.read().await.wal_mode() {
+            WalMode::Enabled(wal) => Some(wal.clone()),
+            WalMode::Disabled => None,
+        };
+
+        if let Some(write_ahead_log) = maybe_write_ahead_log {
             configuration_manager
                 .write()
                 .await
-                .set_segment_size_threshold_in_bytes(new_value, write_ahead_log.clone())
+                .set_segment_size_threshold_in_bytes(new_value, write_ahead_log)
                 .await
                 .unwrap();
         }
