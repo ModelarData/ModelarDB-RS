@@ -256,7 +256,10 @@ impl Context {
         let configuration_manager = self.configuration_manager.read().await;
         let write_ahead_log = match configuration_manager.wal_mode() {
             WalMode::Enabled(write_ahead_log) => write_ahead_log.write().await,
-            WalMode::Disabled => return Ok(()),
+            WalMode::Disabled => {
+                warn!("WAL is disabled.");
+                return Ok(());
+            }
         };
 
         let local_data_folder = &self.data_folders.local_data_folder;
