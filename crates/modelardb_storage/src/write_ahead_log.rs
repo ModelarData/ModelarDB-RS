@@ -194,6 +194,14 @@ impl WriteAheadLog {
         table_log.unpersisted_batches()
     }
 
+    /// Truncate the table log for the given table name, removing all closed segment files and the
+    /// active segment file from disk, and starting a new active segment file. If the table log does
+    /// not exist or the data could not be truncated, return [`ModelarDbStorageError`].
+    pub fn truncate_table_log(&self, table_name: &str) -> Result<()> {
+        let table_log = self.table_log(table_name)?;
+        table_log.truncate()
+    }
+
     /// Get the table log for the table with the given name. If the table log does not exist, return
     /// [`ModelarDbStorageError`].
     fn table_log(&self, table_name: &str) -> Result<&SegmentedLog> {
@@ -563,6 +571,58 @@ impl SegmentedLog {
 
         Ok(all_batches)
     }
+
+    /// Truncate all data in the log by deleting all closed segment files from disk and starting a
+    /// new active segment file. If a closed segment file or the active segment file could not be
+    /// deleted or a new active segment file could not be created, return [`ModelarDbStorageError`].
+    fn truncate(&self) -> Result<()> {
+        // Acquire the mutexes to ensure the log is not being written to while truncating.
+        let mut persisted_batch_ids = self
+            .persisted_batch_ids
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
+        let mut active = self
+            .active_segment
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
+        let mut closed_segments = self
+            .closed_segments
+            .lock()
+            .expect("Mutex should not be poisoned.");
+
+        // Delete all closed segments from disk.
+        for segment in closed_segments.iter() {
+            debug!(
+                path = %segment.path.display(),
+                "Deleting closed WAL segment due to table truncate."
+            );
+
+            std::fs::remove_file(&segment.path)?;
+        }
+
+        // Delete the active segment from disk.
+        debug!(
+            path = %active.path.display(),
+            "Deleting active WAL segment due to table truncate."
+        );
+
+        std::fs::remove_file(&active.path)?;
+
+        // Continue from the next unused batch id instead of resetting to 0. Historical batch
+        // ids may still be referenced by Delta commit metadata, so reusing them could cause
+        // old and new WAL batch ids to collide, for example after a rollback.
+        let next_id = active.next_batch_id;
+        let new_active = ActiveSegment::try_new(self.folder_path.clone(), &self.schema, next_id)?;
+
+        // Commit the in-memory state transition only after all filesystem operations succeed.
+        persisted_batch_ids.clear();
+        closed_segments.clear();
+        *active = new_active;
+
+        Ok(())
+    }
 }
 
 /// If a leftover active segment (`{start_id}-.arrows`) exists in `folder_path`, rename it to
@@ -922,6 +982,59 @@ mod tests {
         let (_temp_dir, wal) = new_empty_write_ahead_log().await;
 
         let result = wal.unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME);
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            format!(
+                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_truncate_table_log_clears_unpersisted_batches_and_preserves_batch_ids() {
+        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
+
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            1
+        );
+
+        let unpersisted = wal
+            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unwrap();
+        assert_eq!(unpersisted.len(), 2);
+
+        wal.truncate_table_log(TIME_SERIES_TABLE_NAME).unwrap();
+
+        let unpersisted = wal
+            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unwrap();
+        assert!(unpersisted.is_empty());
+
+        assert_eq!(
+            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+                .unwrap(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn test_truncate_table_log_fails_if_table_log_does_not_exist() {
+        let (_temp_dir, wal) = new_empty_write_ahead_log().await;
+
+        let result = wal.truncate_table_log(TIME_SERIES_TABLE_NAME);
 
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -1463,6 +1576,87 @@ mod tests {
         assert_eq!(unpersisted.len() as u64, segment_batch_count);
         assert_eq!(unpersisted.first().unwrap(), &(1, batch.clone()));
         assert_eq!(unpersisted.last().unwrap(), &(segment_batch_count, batch));
+    }
+
+    #[test]
+    fn test_truncate_clears_files_and_state() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
+
+        // Fill five full segments and write two more into the active segment.
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+        for _ in 0..5 {
+            fill_segment_to_threshold(&segmented_log, &batch);
+        }
+
+        segmented_log
+            .mark_batches_as_persisted(HashSet::from([0, 1, 2]))
+            .unwrap();
+
+        segmented_log.append_and_sync(&batch).unwrap();
+        segmented_log.append_and_sync(&batch).unwrap();
+
+        // Ensure we have five closed segments in memory and on disk, and one active segment.
+        assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 5);
+        assert_eq!(std::fs::read_dir(&folder_path).unwrap().count(), 6);
+
+        segmented_log.truncate().unwrap();
+
+        // Verify in-memory state is cleared.
+        assert_eq!(segmented_log.closed_segments.lock().unwrap().len(), 0);
+        assert_eq!(segmented_log.persisted_batch_ids.lock().unwrap().len(), 0);
+
+        // Verify the old closed segments and the old active segment were deleted from disk,
+        // and exactly one new active segment was created.
+        assert_eq!(std::fs::read_dir(&folder_path).unwrap().count(), 1);
+
+        let unpersisted = segmented_log.unpersisted_batches().unwrap();
+        assert!(unpersisted.is_empty());
+    }
+
+    #[test]
+    fn test_truncate_preserves_batch_ids() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
+
+        // Fill one full segment and write two more into the active segment.
+        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
+        segmented_log.append_and_sync(&batch).unwrap();
+        segmented_log.append_and_sync(&batch).unwrap();
+
+        let expected_next_id = segment_batch_count + 2;
+
+        // Truncate should reset the state but carry over the next_batch_id.
+        segmented_log.truncate().unwrap();
+
+        let active = segmented_log.active_segment.lock().unwrap();
+        assert_eq!(active.start_id, expected_next_id);
+        assert_eq!(active.next_batch_id, expected_next_id);
+    }
+
+    #[test]
+    fn test_truncate_empty_segmented_log() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
+
+        // Truncate the segmented log before appending any data.
+        segmented_log.truncate().unwrap();
+
+        // Verify in-memory state remains empty.
+        assert!(segmented_log.closed_segments.lock().unwrap().is_empty());
+        assert!(segmented_log.persisted_batch_ids.lock().unwrap().is_empty());
+
+        // Verify the active segment ID is still 0, so it has not artificially incremented.
+        let active = segmented_log.active_segment.lock().unwrap();
+        assert_eq!(active.start_id, 0);
+        assert_eq!(active.next_batch_id, 0);
+        drop(active);
+
+        // Verify the old active segment was successfully replaced and exactly one file remains.
+        assert_eq!(std::fs::read_dir(&folder_path).unwrap().count(), 1);
+        let unpersisted = segmented_log.unpersisted_batches().unwrap();
+        assert!(unpersisted.is_empty());
     }
 
     /// Fill the segment with `batch` until it reaches [`SEGMENT_SIZE_THRESHOLD_IN_BYTES`]. Return
