@@ -394,8 +394,16 @@ impl ConfigurationManager {
     pub(crate) async fn set_segment_size_threshold_in_bytes(
         &mut self,
         new_segment_size_threshold_in_bytes: u64,
-        write_ahead_log: Arc<RwLock<WriteAheadLog>>,
     ) -> Result<()> {
+        let write_ahead_log = match self.wal_mode() {
+            WalMode::Enabled(write_ahead_log) => write_ahead_log.clone(),
+            WalMode::Disabled => {
+                return Err(ModelarDbServerError::InvalidState(
+                    "Cannot set segment size threshold when WAL is disabled.".to_owned(),
+                ));
+            }
+        };
+
         write_ahead_log
             .write()
             .await
@@ -742,19 +750,12 @@ mod tests {
         );
 
         let new_value = 1024;
-        let maybe_write_ahead_log = match configuration_manager.read().await.wal_mode() {
-            WalMode::Enabled(wal) => Some(wal.clone()),
-            WalMode::Disabled => None,
-        };
-
-        if let Some(write_ahead_log) = maybe_write_ahead_log {
-            configuration_manager
-                .write()
-                .await
-                .set_segment_size_threshold_in_bytes(new_value, write_ahead_log)
-                .await
-                .unwrap();
-        }
+        configuration_manager
+            .write()
+            .await
+            .set_segment_size_threshold_in_bytes(new_value)
+            .await
+            .unwrap();
 
         assert_eq!(
             configuration_manager
