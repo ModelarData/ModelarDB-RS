@@ -772,6 +772,24 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_set_segment_size_threshold_in_bytes_with_wal_disabled() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
+        configuration_manager.write().await.wal_mode = WalMode::Disabled;
+
+        let result = configuration_manager
+            .write()
+            .await
+            .set_segment_size_threshold_in_bytes(1)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: Cannot set segment size threshold when WAL is disabled."
+        );
+    }
+
     /// Return the configuration from the configuration file at the root of `temp_dir`.
     async fn configuration_from_file(temp_dir: &TempDir) -> Configuration {
         let configuration_file_path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
