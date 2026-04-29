@@ -337,9 +337,12 @@ impl Context {
         // If the table is a time series table, truncate the table log file from the write-ahead
         // log to ensure data is not retained and replayed upon restart.
         if local_data_folder.is_time_series_table(table_name).await? {
-            // We use a read lock since the specific table log is locked internally before being truncated.
-            let write_ahead_log = self.write_ahead_log.read().await;
-            write_ahead_log.truncate_table_log(table_name)?;
+            let configuration_manager = self.configuration_manager.read().await;
+            if let WalMode::Enabled(write_ahead_log) = configuration_manager.wal_mode() {
+                // We use a read lock since the specific table log is locked internally before being truncated.
+                let write_ahead_log = write_ahead_log.read().await;
+                write_ahead_log.truncate_table_log(table_name)?;
+            }
         }
 
         // Delete the table data from the Delta Lake.
