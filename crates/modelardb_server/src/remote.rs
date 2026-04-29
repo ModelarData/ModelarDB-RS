@@ -58,6 +58,7 @@ use tracing::{debug, error, info};
 
 use crate::ClusterMode;
 use crate::cluster::Cluster;
+use crate::configuration::WalMode;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 
@@ -959,7 +960,14 @@ impl FlightService for FlightServiceHandler {
                 }
                 Ok(protocol::update_configuration::Setting::SegmentSizeThresholdInBytes) => {
                     let new_value = maybe_new_value.ok_or(invalid_null_error)?;
-                    let write_ahead_log = self.context.write_ahead_log.clone();
+                    let write_ahead_log = match configuration_manager.wal_mode() {
+                        WalMode::Enabled(write_ahead_log) => write_ahead_log.clone(),
+                        WalMode::Disabled => {
+                            return Err(Status::invalid_argument(
+                                "Cannot set segment size threshold when WAL is disabled.",
+                            ));
+                        }
+                    };
 
                     configuration_manager
                         .set_segment_size_threshold_in_bytes(new_value, write_ahead_log)
