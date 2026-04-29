@@ -1,11 +1,9 @@
 # ModelarDB Installation and Usage
-
 This document describes how to set up and use ModelarDB. Installation instructions are provided for Linux, macOS,
 FreeBSD, and Windows. To support running ModelarDB in a containerized environment, instructions for setting up a Docker
 environment are also provided. Once installed, using ModelarDB is consistent across all platforms.
 
 ## Installation from Builds
-
 Builds for `aarch64 macOS`, `x86_64 Windows`, and `x86_64 Linux` are created for each commit to the `main` branch using
 GitHub Actions. As these builds are created for each commit, they are not considered stable release builds. Also, since
 they are built using GitHub Actions, they are only available for 90 days, as this is GitHub's maximum artifact retention
@@ -14,29 +12,23 @@ completed
 successfully](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/build-lint-test-and-upload.yml?query=branch%3Amain).
 
 ## Installation from Source
-
 ### Linux
-
 The following commands are for Ubuntu Server. However, equivalent commands should work for other Linux distributions.
 
 1. Install [build-essential](https://packages.ubuntu.com/jammy/build-essential): `sudo apt install build-essential`
 
 ### macOS
-
 1. Install the Xcode Command Line Developer Tools: `xcode-select --install`
 
 ### FreeBSD
-
-1. Install [cURL](https://curl.se/) as the _root_ user: `pkg install curl`
+1. Install [cURL](https://curl.se/) as the *root* user: `pkg install curl`
 
 ### Windows
-
 1. Install the latest versions of the Microsoft Visual C++ Prerequisites for Rust:
    - Microsoft Visual C++ Prerequisites for Rust: see [The rustup
      book](https://rust-lang.github.io/rustup/installation/windows-msvc.html).
 
 ### All
-
 2. Install the latest stable [Rust Toolchain](https://rustup.rs/).
 3. Install the [Protocol Buffer Compiler](https://protobuf.dev/installation/).
 4. Clone the repository: `git clone https://github.com/ModelarData/ModelarDB-RS`
@@ -52,7 +44,6 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
    - Run Tests: `python3 -m unittest`
 
 ## Usage
-
 ModelarDB consists of three binaries and a library with bindings: `modelardbd` is a DBMS server that manages data and
 executes SQL queries, `modelardb` is a command-line client for connecting to a `modelardbd` instance and executing
 commands and SQL queries, `modelardbb` is a command-line bulk loader that operates without `modelardbd` as it reads
@@ -76,7 +67,6 @@ the cloud to use for executing each query, thus providing a workload-balanced in
 in the object store using the `modelardbd` instances in the cloud.
 
 ### Start Server
-
 There are three options available when starting `modelardbd` depending on the desired deployment use case. Each option
 has different requirements and supports different features.
 
@@ -157,7 +147,6 @@ MODELARDBD_PORT=8889  # By default modelardbd uses port 9999.
 ```
 
 ### Ingest Data
-
 Before data can be ingested into `modelardbd`, tables must be created. `modelardbd` supports two types of tables,
 standard relational tables created with `CREATE TABLE` statements and time series tables created with `CREATE TIME SERIES TABLE`
 statements. From a user's perspective, a time series table functions like a standard relational table and can be queried
@@ -246,7 +235,6 @@ in edge mode in a cluster or in cloud mode in a cluster. When `modelardbd` is de
 the ingested data is only stored in local storage.
 
 ### Execute Queries
-
 ModelarDB includes a command-line client in the form of `modelardb`. To interactively execute SQL statements against a
 local instance of `modelardbd` through a REPL, simply run `modelardb`:
 
@@ -358,7 +346,6 @@ for flight_stream_chunk in flight_stream_reader:
 ```
 
 ### Embed Library
-
 ModelarDB includes an embeddable library in the form of `modelardb_embedded`. It allows programming languages to execute
 queries against or write to `modelardbd` or a data folder directly. A C-API allows other programming
 languages than Rust to also use `modelardb_embedded`. The location where queries and writes are executed is specified
@@ -383,7 +370,6 @@ modelardb_node = modelardb.connect(url)
 ```
 
 ## ModelarDB configuration
-
 When the server is started for the first time, a configuration file is created in the root of the data folder named
 `modelardbd.toml`. If the file is changed manually, the changes are only applied when the server is restarted.
 
@@ -407,7 +393,6 @@ Variables marked with ✓ in the **Updatable** column can also be updated while 
 | MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES       | 64 MB       | ✓             | The approximate maximum size, in bytes, of a single WAL segment file before it is closed and a new one is started.                                                                                                                                                                                       |
 
 ## Docker
-
 Two different [Docker](https://docs.docker.com/) environments are included to make it easy to experiment with the
 different use cases of ModelarDB. The first environment sets up a single instance of `modelardbd` that only uses local
 storage. Data can be ingested into this instance, compressed, and saved to local storage. The compressed data in local
@@ -423,7 +408,6 @@ software that utilizes ModelarDB. Downloading [Docker Desktop](https://docs.dock
 make maintenance of the created containers easier.
 
 ### Single edge deployment
-
 Once [Docker](https://docs.docker.com/) is set up, the single edge deployment can be started by running the following
 command from the root of the ModelarDB repository:
 
@@ -445,7 +429,6 @@ Arrow Flight as described above. Tables can be created and data can be ingested,
 The compressed data on local disk can then be queried.
 
 ### Cluster deployment
-
 Once Docker is set up, the cluster deployment can be started by running the following command from the root of the
 ModelarDB repository:
 
