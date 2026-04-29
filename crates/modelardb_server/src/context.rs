@@ -66,7 +66,7 @@ impl Context {
     /// Create a normal table with `name` and `schema`. Returns [`ModelarDbServerError`] if the
     /// table could not be created.
     pub(crate) async fn create_normal_table(&self, name: &str, schema: &Schema) -> Result<()> {
-        self.check_if_table_exists(name).await?;
+        self.check_table_does_not_exist(name).await?;
         self.register_and_save_normal_table(name, schema).await?;
 
         Ok(())
@@ -100,7 +100,7 @@ impl Context {
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<()> {
-        self.check_if_table_exists(&time_series_table_metadata.name)
+        self.check_table_does_not_exist(&time_series_table_metadata.name)
             .await?;
         self.register_and_save_time_series_table(time_series_table_metadata)
             .await?;
@@ -292,7 +292,7 @@ impl Context {
     pub async fn drop_table(&self, table_name: &str) -> Result<()> {
         // Deregistering the table from the Apache DataFusion session context and deleting the table
         // from the storage engine does not require the table to exist, so the table is checked first.
-        if self.check_if_table_exists(table_name).await.is_ok() {
+        if self.check_table_does_not_exist(table_name).await.is_ok() {
             return Err(table_does_not_exist_error(table_name));
         }
 
@@ -326,7 +326,7 @@ impl Context {
     pub async fn truncate_table(&self, table_name: &str) -> Result<()> {
         // Deleting the table from the storage engine does not require the table to exist, so the
         // table is checked first.
-        if self.check_if_table_exists(table_name).await.is_ok() {
+        if self.check_table_does_not_exist(table_name).await.is_ok() {
             return Err(table_does_not_exist_error(table_name));
         }
 
@@ -372,7 +372,7 @@ impl Context {
         maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()> {
         // Check if the table exists first to provide a consistent error message if it does not.
-        if self.check_if_table_exists(table_name).await.is_ok() {
+        if self.check_table_does_not_exist(table_name).await.is_ok() {
             return Err(table_does_not_exist_error(table_name));
         }
 
@@ -410,7 +410,7 @@ impl Context {
     }
 
     /// Return [`ModelarDbServerError`] if a table named `table_name` exists in the default catalog.
-    pub async fn check_if_table_exists(&self, table_name: &str) -> Result<()> {
+    pub async fn check_table_does_not_exist(&self, table_name: &str) -> Result<()> {
         let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.await.is_ok() {
             return Err(ModelarDbServerError::InvalidArgument(format!(
@@ -498,7 +498,7 @@ mod tests {
         );
 
         // The normal table should be registered in the Apache DataFusion catalog.
-        assert_check_if_table_exists_error(&context, NORMAL_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, NORMAL_TABLE_NAME).await;
     }
 
     #[tokio::test]
@@ -549,7 +549,7 @@ mod tests {
         );
 
         // The time series table should be registered in the Apache DataFusion catalog.
-        assert_check_if_table_exists_error(&context, TIME_SERIES_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, TIME_SERIES_TABLE_NAME).await;
     }
 
     #[tokio::test]
@@ -626,14 +626,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_check_if_table_exists_error(&context, NORMAL_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, NORMAL_TABLE_NAME).await;
 
         context.drop_table(NORMAL_TABLE_NAME).await.unwrap();
 
         // The normal table should be deregistered from the Apache DataFusion session context.
         assert!(
             context
-                .check_if_table_exists(NORMAL_TABLE_NAME)
+                .check_table_does_not_exist(NORMAL_TABLE_NAME)
                 .await
                 .is_ok()
         );
@@ -662,14 +662,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_check_if_table_exists_error(&context, TIME_SERIES_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, TIME_SERIES_TABLE_NAME).await;
 
         context.drop_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
         // The time series table should be deregistered from the Apache DataFusion session context.
         assert!(
             context
-                .check_if_table_exists(TIME_SERIES_TABLE_NAME)
+                .check_table_does_not_exist(TIME_SERIES_TABLE_NAME)
                 .await
                 .is_ok()
         );
@@ -965,11 +965,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_check_if_table_exists_error(&context, TIME_SERIES_TABLE_NAME).await;
+        assert_check_table_does_not_exist_error(&context, TIME_SERIES_TABLE_NAME).await;
     }
 
-    async fn assert_check_if_table_exists_error(context: &Arc<Context>, table_name: &str) {
-        let result = context.check_if_table_exists(table_name).await;
+    async fn assert_check_table_does_not_exist_error(context: &Arc<Context>, table_name: &str) {
+        let result = context.check_table_does_not_exist(table_name).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -984,7 +984,7 @@ mod tests {
 
         assert!(
             context
-                .check_if_table_exists(TIME_SERIES_TABLE_NAME)
+                .check_table_does_not_exist(TIME_SERIES_TABLE_NAME)
                 .await
                 .is_ok()
         );
