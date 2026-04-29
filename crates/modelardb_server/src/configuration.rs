@@ -212,7 +212,12 @@ impl ConfigurationManager {
 
         // Create the write-ahead log if enabled. The WAL is enabled by default.
         let wal_mode = if configuration.wal_enabled {
-            let write_ahead_log = WriteAheadLog::try_new(&local_data_folder).await?;
+            let write_ahead_log = WriteAheadLog::try_new(
+                &local_data_folder,
+                configuration.segment_size_threshold_in_bytes,
+            )
+            .await?;
+
             WalMode::Enabled(Arc::new(RwLock::new(write_ahead_log)))
         } else {
             WalMode::Disabled
@@ -378,6 +383,7 @@ impl ConfigurationManager {
             .await
     }
 
+    #[allow(dead_code)]
     pub(crate) fn segment_size_threshold_in_bytes(&self) -> u64 {
         self.configuration.segment_size_threshold_in_bytes
     }
@@ -459,8 +465,7 @@ mod tests {
     #[tokio::test]
     async fn test_configuration_file_is_created_if_it_does_not_exist() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         let configuration_from_manager = configuration_manager.read().await.configuration.clone();
         let configuration_from_file = configuration_from_file(&temp_dir).await;
@@ -489,8 +494,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (_storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         let configuration_from_manager = configuration_manager.read().await.configuration.clone();
         let configuration_from_file = configuration_from_file(&temp_dir).await;
@@ -550,8 +554,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_multivariate_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -587,8 +590,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -624,8 +626,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -661,8 +662,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_batch_size_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -698,8 +698,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_time_in_seconds() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, _write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -732,8 +731,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_segment_size_threshold_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_storage_engine, write_ahead_log, configuration_manager) =
-            create_components(&temp_dir).await;
+        let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -744,12 +742,14 @@ mod tests {
         );
 
         let new_value = 1024;
-        configuration_manager
-            .write()
-            .await
-            .set_segment_size_threshold_in_bytes(new_value, write_ahead_log)
-            .await
-            .unwrap();
+        if let WalMode::Enabled(write_ahead_log) = configuration_manager.read().await.wal_mode() {
+            configuration_manager
+                .write()
+                .await
+                .set_segment_size_threshold_in_bytes(new_value, write_ahead_log.clone())
+                .await
+                .unwrap();
+        }
 
         assert_eq!(
             configuration_manager
@@ -779,7 +779,6 @@ mod tests {
         temp_dir: &TempDir,
     ) -> (
         Arc<RwLock<StorageEngine>>,
-        Arc<RwLock<WriteAheadLog>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
         let local_url = temp_dir.path().to_str().unwrap();
@@ -817,16 +816,6 @@ mod tests {
                 .unwrap(),
         ));
 
-        let storage_engine = Arc::new(RwLock::new(
-            StorageEngine::try_new(
-                data_folders,
-                write_ahead_log.clone(),
-                &configuration_manager,
-            )
-            .await
-            .unwrap(),
-        ));
-
-        (storage_engine, write_ahead_log, configuration_manager)
+        (storage_engine, configuration_manager)
     }
 }
