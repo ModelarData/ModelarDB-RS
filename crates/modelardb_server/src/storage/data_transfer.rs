@@ -24,6 +24,7 @@ use dashmap::DashMap;
 use deltalake::arrow::array::RecordBatch;
 use futures::TryStreamExt;
 use modelardb_storage::data_folder::DataFolder;
+use object_store::ObjectStoreExt;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
@@ -264,7 +265,6 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
-    use deltalake::ObjectStore;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use tempfile::{self, TempDir};
 

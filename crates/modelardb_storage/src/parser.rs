@@ -41,7 +41,7 @@ use modelardb_types::types::{
 use sqlparser::ast::{
     CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, CreateTableOptions,
     DataType as SQLDataType, Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident,
-    ObjectName, ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo,
+    ObjectName, ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo, Truncate,
     TruncateIdentityOption, TruncateTableTarget, Value, ValueWithSpan,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
@@ -114,18 +114,20 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 )?;
                 Ok(ModelarDbStatement::DropTable(table_names))
             }
-            Statement::Truncate {
+            Statement::Truncate(Truncate {
                 table_names,
                 partitions,
                 table,
+                if_exists,
                 identity,
                 cascade,
                 on_cluster,
-            } => {
+            }) => {
                 let (table_names, cluster) = semantic_checks_for_truncate(
                     table_names,
                     partitions,
                     table,
+                    if_exists,
                     identity,
                     cascade,
                     on_cluster,
@@ -427,6 +429,8 @@ impl ModelarDbDialect {
             cluster_by: None,
             clustered_by: None,
             inherits: None,
+            partition_of: None,
+            for_values: None,
             strict: false,
             copy_grants: false,
             enable_schema_evolution: None,
@@ -617,17 +621,19 @@ impl ModelarDbDialect {
             .map(|table_name| TruncateTableTarget {
                 name: ObjectName(vec![ObjectNamePart::Identifier(Ident::new(table_name))]),
                 only: false,
+                has_asterisk: false,
             })
             .collect();
 
-        Ok(Statement::Truncate {
+        Ok(Statement::Truncate(Truncate {
             table_names: truncate_table_targets,
             partitions: None,
             table: true,
+            if_exists: false,
             identity: None,
             cascade: None,
             on_cluster: truncate_cluster,
-        })
+        }))
     }
 
     /// Return a list of table names parsed from the token stream. It is assumed that the table
@@ -933,6 +939,8 @@ fn check_unsupported_features_are_disabled(
         cluster_by,
         clustered_by,
         inherits,
+        partition_of,
+        for_values,
         strict,
         copy_grants,
         enable_schema_evolution,
@@ -998,6 +1006,8 @@ fn check_unsupported_features_are_disabled(
     check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
     check_unsupported_feature_is_disabled(clustered_by.is_some(), "CLUSTERED BY")?;
     check_unsupported_feature_is_disabled(inherits.is_some(), "INHERITS")?;
+    check_unsupported_feature_is_disabled(partition_of.is_some(), "PARTITION OF")?;
+    check_unsupported_feature_is_disabled(for_values.is_some(), "FOR VALUES")?;
     check_unsupported_feature_is_disabled(*strict, "STRICT")?;
     check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;
     check_unsupported_feature_is_disabled(
@@ -1291,11 +1301,12 @@ fn semantic_checks_for_truncate(
     names: Vec<TruncateTableTarget>,
     partitions: Option<Vec<Expr>>,
     table: bool,
+    if_exists: bool,
     identity: Option<TruncateIdentityOption>,
     cascade: Option<CascadeOption>,
     on_cluster: Option<Ident>,
 ) -> StdResult<(Vec<String>, bool), ParserError> {
-    if partitions.is_some() || !table || identity.is_some() || cascade.is_some() {
+    if partitions.is_some() || !table || identity.is_some() || if_exists || cascade.is_some() {
         Err(ParserError::ParserError(
             "Only TRUNCATE [CLUSTER] table_name[, table_name]+ is supported.".to_owned(),
         ))

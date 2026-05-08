@@ -29,8 +29,8 @@ use deltalake::kernel::{Action, Add};
 use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
 use deltalake::protocol::{DeltaOperation, SaveMode};
 use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
-use object_store::ObjectStore;
 use object_store::path::Path;
+use object_store::{ObjectStore, ObjectStoreExt};
 use serde_json::json;
 use uuid::Uuid;
 

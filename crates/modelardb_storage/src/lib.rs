@@ -48,8 +48,8 @@ use deltalake::DeltaTable;
 use deltalake::parquet::file::metadata::SortingColumn;
 use futures::StreamExt;
 use modelardb_types::types::TimeSeriesTableMetadata;
-use object_store::ObjectStore;
 use object_store::path::Path;
+use object_store::{ObjectStore, ObjectStoreExt};
 use sqlparser::ast::Statement;
 
 use crate::error::Result;
@@ -254,7 +254,7 @@ fn apache_parquet_writer_properties(
 ) -> WriterProperties {
     WriterProperties::builder()
         .set_data_page_size_limit(16384)
-        .set_max_row_group_size(65536)
+        .set_max_row_group_row_count(Some(65536))
         .set_encoding(Encoding::PLAIN)
         .set_compression(Compression::ZSTD(ZstdLevel::default()))
         .set_dictionary_enabled(false)

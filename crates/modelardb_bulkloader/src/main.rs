@@ -28,6 +28,7 @@ use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::ListingOptions;
 use datafusion::execution::RecordBatchStream;
+use datafusion::object_store::ObjectStoreExt;
 use datafusion::prelude::SessionContext;
 use delta_kernel::engine::arrow_conversion::TryIntoKernel;
 use deltalake::kernel::StructField;

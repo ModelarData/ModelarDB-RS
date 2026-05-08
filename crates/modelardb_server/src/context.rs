@@ -20,7 +20,6 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::SchemaProvider;
-use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 use tracing::{info, warn};

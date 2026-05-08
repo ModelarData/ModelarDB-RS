@@ -29,8 +29,8 @@ use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_types::types::{
     TimeSeriesTableMetadata, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
 };
-use object_store::ObjectStore;
 use object_store::path::Path;
+use object_store::{ObjectStore, ObjectStoreExt};
 use tracing::debug;
 
 use crate::error::Result;

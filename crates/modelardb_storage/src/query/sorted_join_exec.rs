@@ -34,7 +34,7 @@ use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, ExecutionPlanProperties,
-    PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
+    PlanProperties, RecordBatchStream, SendableRecordBatchStream,
 };
 use futures::stream::{Stream, StreamExt};
 
@@ -63,7 +63,7 @@ pub(crate) struct SortedJoinExec {
     /// Execution plans to read batches of data points from.
     inputs: Vec<Arc<dyn ExecutionPlan>>,
     /// Properties about the plan used in query optimization.
-    plan_properties: PlanProperties,
+    plan_properties: Arc<PlanProperties>,
     /// The sort order that [`SortedJoinExec`] requires for the data points it receives as its input.
     query_requirement_data_point: OrderingRequirements,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
@@ -80,12 +80,12 @@ impl SortedJoinExec {
         // Specify that the record batches produced by the execution plan will have an unknown order.
         let equivalence_properties = EquivalenceProperties::new(schema.clone());
 
-        let plan_properties = PlanProperties::new(
+        let plan_properties = Arc::new(PlanProperties::new(
             equivalence_properties,
             inputs[0].output_partitioning().clone(),
             EmissionType::Incremental,
             Boundedness::Bounded,
-        );
+        ));
 
         Arc::new(SortedJoinExec {
             schema,
@@ -115,7 +115,7 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Return properties of the output of the plan.
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.plan_properties
     }
 
@@ -165,11 +165,6 @@ impl ExecutionPlan for SortedJoinExec {
             streams,
             BaselineMetrics::new(&self.metrics, partition),
         )))
-    }
-
-    /// Specify that [`SortedJoinExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> DataFusionResult<Statistics> {
-        Ok(Statistics::new_unknown(&self.schema))
     }
 
     /// Specify that [`SortedJoinStream`] requires one partition for each input as it assumes that

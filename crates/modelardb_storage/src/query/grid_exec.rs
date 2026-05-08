@@ -42,7 +42,7 @@ use datafusion::physical_plan::metrics::{
 };
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, ExecutionPlanProperties,
-    PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
+    PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream,
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
@@ -63,7 +63,7 @@ pub(crate) struct GridExec {
     /// Execution plan to read batches of segments from.
     input: Arc<dyn ExecutionPlan>,
     /// Properties about the plan used in query optimization.
-    plan_properties: PlanProperties,
+    plan_properties: Arc<PlanProperties>,
     /// The sort order that [`GridExec`] requires for the segments it receives as its input.
     query_requirement_segment: OrderingRequirements,
     /// The sort order [`GridExec`] guarantees for the data points it produces.
@@ -89,12 +89,12 @@ impl GridExec {
             vec![query_order_data_point.clone()],
         );
 
-        let plan_properties = PlanProperties::new(
+        let plan_properties = Arc::new(PlanProperties::new(
             equivalence_properties,
             input.output_partitioning().clone(),
             EmissionType::Incremental,
             Boundedness::Bounded,
-        );
+        ));
 
         Arc::new(GridExec {
             maybe_predicate,
@@ -127,7 +127,7 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Return properties of the output of the plan.
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.plan_properties
     }
 
@@ -179,11 +179,6 @@ impl ExecutionPlan for GridExec {
             batch_size,
             grid_stream_metrics,
         )))
-    }
-
-    /// Specify that [`GridExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> DataFusionResult<Statistics> {
-        Ok(Statistics::new_unknown(&self.schema))
     }
 
     /// Specify that [`GridExec`] requires one partition for each input as it assumes that the

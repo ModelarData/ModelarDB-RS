@@ -475,6 +475,7 @@ fn logical_file_view_to_partitioned_file(
         partition_values: vec![],
         range: None,
         statistics: None,
+        ordering: None,
         extensions: None,
         metadata_size_hint: None,
     };
