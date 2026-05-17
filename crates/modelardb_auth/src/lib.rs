@@ -15,8 +15,7 @@
 
 //! Types to support authentication and authorization in ModelarDB.
 
-use tonic::Status;
-use tonic::metadata::MetadataMap;
+pub mod authenticator;
 
 /// The permission required to perform an operation in a ModelarDB server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,16 +38,5 @@ impl Permission {
     }
 }
 
-/// An [`Authenticator`] that grants all permissions to all callers without any validation. Used in
-/// the open-source version of ModelarDB where authentication is not required.
-pub struct NoAuth;
 
-impl Authenticator for NoAuth {
-    fn authorize(
-        &self,
-        _metadata: &MetadataMap,
-        _required_permission: Permission,
-    ) -> Result<(), Status> {
-        Ok(())
-    }
 }
