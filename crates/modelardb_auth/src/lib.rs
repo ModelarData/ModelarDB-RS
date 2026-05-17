@@ -37,6 +37,3 @@ impl Permission {
         }
     }
 }
-
-
-}
