@@ -33,6 +33,8 @@ dashmap.workspace = true
 datafusion.workspace = true
 deltalake = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
+http-body-util.workspace = true
+modelardb_auth = { path = "../modelardb_auth" }
 modelardb_compression = { path = "../modelardb_compression" }
 modelardb_storage = { path = "../modelardb_storage" }
 modelardb_types = { path = "../modelardb_types" }
