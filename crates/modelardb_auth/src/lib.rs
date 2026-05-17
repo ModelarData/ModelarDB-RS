@@ -13,17 +13,25 @@
  * limitations under the License.
  */
 
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+//! Types to support authentication and authorization in ModelarDB.
+
+/// The permission required to perform an operation in a ModelarDB server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Permission {
+    Read,
+    Write,
+    Admin,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl Permission {
+    /// Return [`true`] if `granted` satisfies this required permission using the
+    /// hierarchy Admin ⊇ Write ⊇ Read, otherwise [`false`] is returned.
+    pub fn is_satisfied_by(&self, granted: &Permission) -> bool {
+        match (self, granted) {
+            (Permission::Read, _) => true,
+            (Permission::Write, Permission::Write | Permission::Admin) => true,
+            (Permission::Admin, Permission::Admin) => true,
+            _ => false,
+        }
     }
 }
