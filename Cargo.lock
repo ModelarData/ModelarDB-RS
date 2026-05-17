@@ -3306,6 +3306,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "modelardb_auth"
+version = "0.1.0"
+dependencies = [
+ "modelardb_storage",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
 name = "modelardb_bulkloader"
 version = "0.1.0"
 dependencies = [
