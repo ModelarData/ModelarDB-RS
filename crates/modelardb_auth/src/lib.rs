@@ -15,6 +15,9 @@
 
 //! Types to support authentication and authorization in ModelarDB.
 
+use tonic::metadata::MetadataMap;
+use tonic::Status;
+
 /// The permission required to perform an operation in a ModelarDB server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Permission {
@@ -24,8 +27,8 @@ pub enum Permission {
 }
 
 impl Permission {
-    /// Return [`true`] if `granted` satisfies this required permission using the
-    /// hierarchy Admin ⊇ Write ⊇ Read, otherwise [`false`] is returned.
+    /// Return [`true`] if `granted` satisfies this required permission using the hierarchy
+    /// Admin ⊇ Write ⊇ Read, otherwise [`false`] is returned.
     pub fn is_satisfied_by(&self, granted: &Permission) -> bool {
         match (self, granted) {
             (Permission::Read, _) => true,
@@ -35,3 +38,18 @@ impl Permission {
         }
     }
 }
+
+/// Validates the credentials in `metadata` and checks that the caller has the `required_permission`.
+/// Implementations must return `Ok(())` if authorized, `Err(Status::unauthenticated(...))` if
+/// credentials are missing or invalid, or `Err(Status::permission_denied(...))` if credentials are
+/// valid but the caller lacks the required permission. Error messages must not reveal the specific
+/// reason for rejection to prevent information leakage.
+pub trait Authenticator: Send + Sync {
+    fn authorize(
+        &self,
+        metadata: &MetadataMap,
+        required_permission: Permission,
+    ) -> Result<(), Status>;
+}
+
+
