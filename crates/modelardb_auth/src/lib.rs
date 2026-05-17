@@ -39,19 +39,6 @@ impl Permission {
     }
 }
 
-/// Validates the credentials in `metadata` and checks that the caller has the `required_permission`.
-/// Implementations must return `Ok(())` if authorized, `Err(Status::unauthenticated(...))` if
-/// credentials are missing or invalid, or `Err(Status::permission_denied(...))` if credentials are
-/// valid but the caller lacks the required permission. Error messages must not reveal the specific
-/// reason for rejection to prevent information leakage.
-pub trait Authenticator: Send + Sync {
-    fn authorize(
-        &self,
-        metadata: &MetadataMap,
-        required_permission: Permission,
-    ) -> Result<(), Status>;
-}
-
 /// An [`Authenticator`] that grants all permissions to all callers without any validation. Used in
 /// the open-source version of ModelarDB where authentication is not required.
 pub struct NoAuth;
