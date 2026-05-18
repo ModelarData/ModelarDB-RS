@@ -976,6 +976,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "buoyant_kernel"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d3ca37afa82755db7b4fd51a4eab9e53eeb0aa1898fae15d373bd6df4bdf0f8"
+dependencies = [
+ "arrow",
+ "buoyant_kernel_derive",
+ "bytes",
+ "chrono",
+ "crc",
+ "indexmap",
+ "itertools",
+ "object_store",
+ "parquet",
+ "percent-encoding",
+ "rand 0.9.4",
+ "roaring",
+ "rustc_version",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "z85",
+]
+
+[[package]]
 name = "buoyant_kernel_derive"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2106,11 +2136,11 @@ dependencies = [
 
 [[package]]
 name = "deltalake"
-version = "0.32.1"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8268de472e1692b47d4a3016d3443fa7aa1f24d5a92337ee867204951959c293"
+checksum = "2b7c2431da87e49b679a9ae8f72251e22ff7eb0e2c57c9631842b1c3ec16aaa9"
 dependencies = [
- "buoyant_kernel",
+ "buoyant_kernel 0.22.0",
  "ctor",
  "deltalake-aws",
  "deltalake-core",
@@ -2161,7 +2191,7 @@ dependencies = [
  "arrow-schema",
  "arrow-select",
  "async-trait",
- "buoyant_kernel",
+ "buoyant_kernel 0.21.103",
  "bytes",
  "cfg-if",
  "chrono",
@@ -3280,7 +3310,7 @@ name = "modelardb_bulkloader"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "buoyant_kernel",
+ "buoyant_kernel 0.21.103",
  "datafusion",
  "deltalake",
  "futures",
@@ -3372,7 +3402,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "async-trait",
- "buoyant_kernel",
+ "buoyant_kernel 0.21.103",
  "bytes",
  "chrono",
  "dashmap",

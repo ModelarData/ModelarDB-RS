@@ -27,8 +27,8 @@ crossbeam-queue = "0.3.12"
 dashmap = "6.1.0"
 datafusion = "53.1.0"
 datafusion-proto = "53.1.0"
-delta_kernel = { package = "buoyant_kernel", version = "=0.21.103" }
-deltalake = "0.32.1"
+delta_kernel = { package = "buoyant_kernel", version = "0.21.103" }
+deltalake = "0.32.2"
 dirs = "6.0.0"
 futures = "0.3.32"
 log = "0.4.29"
