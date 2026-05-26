@@ -26,6 +26,7 @@ mod storage;
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
 
+use modelardb_auth::authenticator::no_auth::NoAuth;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
@@ -90,7 +91,8 @@ async fn main() -> Result<()> {
     context.replay_write_ahead_log().await?;
 
     // Start the Apache Arrow Flight interface.
-    remote::start_apache_arrow_flight_server(context, *PORT).await?;
+    let authenticator = Arc::new(NoAuth);
+    remote::start_apache_arrow_flight_server(context, authenticator, *PORT).await?;
 
     Ok(())
 }

@@ -45,6 +45,7 @@ use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStrea
 use deltalake::arrow::datatypes::Schema;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
+use modelardb_auth::authenticator::Authenticator;
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::flight::protocol;
 use modelardb_types::functions;
@@ -62,16 +63,25 @@ use crate::ClusterMode;
 use crate::cluster::Cluster;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
+use crate::remote::auth_layer::AuthLayer;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
-/// process the requests through [`FlightServiceHandler`].
-pub async fn start_apache_arrow_flight_server(context: Arc<Context>, port: u16) -> Result<()> {
+/// process the requests through [`FlightServiceHandler`]. All requests are passed through the
+/// [`AuthLayer`] that authenticates using `authenticator` before they are passed to the
+/// [`FlightServiceHandler`].
+pub async fn start_apache_arrow_flight_server(
+    context: Arc<Context>,
+    authenticator: Arc<dyn Authenticator>,
+    port: u16,
+) -> Result<()> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse().map_err(|error| {
         ModelarDbServerError::InvalidArgument(format!(
             "Unable to parse {localhost_with_port}: {error}"
         ))
     })?;
+
+    let auth_layer = AuthLayer::new(authenticator, context.configuration_manager.clone());
     let handler = FlightServiceHandler::new(context);
 
     // Increase the maximum message size from 4 MiB to 16 MiB to allow bulk-loading larger batches.
@@ -81,6 +91,7 @@ pub async fn start_apache_arrow_flight_server(context: Arc<Context>, port: u16) 
     info!("Starting Apache Arrow Flight on {}.", localhost_with_port);
 
     Server::builder()
+        .layer(auth_layer)
         .add_service(flight_service_server)
         .serve(localhost_with_port)
         .await
