@@ -29,11 +29,11 @@ impl Permission {
     /// Return [`true`] if `granted` satisfies this required permission using the hierarchy
     /// Admin ⊇ Write ⊇ Read, otherwise [`false`] is returned.
     pub fn is_satisfied_by(&self, granted: &Permission) -> bool {
-        match (self, granted) {
-            (Permission::Read, _) => true,
-            (Permission::Write, Permission::Write | Permission::Admin) => true,
-            (Permission::Admin, Permission::Admin) => true,
-            _ => false,
-        }
+        matches!(
+            (self, granted),
+            (Permission::Read, _)
+                | (Permission::Write, Permission::Write | Permission::Admin)
+                | (Permission::Admin, Permission::Admin)
+        )
     }
 }
