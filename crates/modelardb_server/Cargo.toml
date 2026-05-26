@@ -26,6 +26,7 @@ path = "src/main.rs"
 [dependencies]
 arrow-flight.workspace = true
 async-trait.workspace = true
+axum.workspace = true
 bytes.workspace = true
 crossbeam-channel.workspace = true
 crossbeam-queue.workspace = true
@@ -33,6 +34,7 @@ dashmap.workspace = true
 datafusion.workspace = true
 deltalake = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
+http.workspace = true
 http-body-util.workspace = true
 modelardb_auth = { path = "../modelardb_auth" }
 modelardb_compression = { path = "../modelardb_compression" }
@@ -43,10 +45,12 @@ prost.workspace = true
 rand.workspace = true
 serde.workspace = true
 snmalloc-rs = { workspace = true, features = ["build_cc"] }
+sqlparser.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-stream.workspace = true
 toml.workspace = true
 tonic.workspace = true
+tower.workspace = true
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same values.
 log = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }
