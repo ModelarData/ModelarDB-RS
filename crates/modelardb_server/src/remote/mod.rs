@@ -17,6 +17,8 @@
 //! [`FlightServiceHandler`]. An Apache Arrow Flight server that process requests
 //! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
+mod auth_layer;
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
