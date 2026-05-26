@@ -25,9 +25,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use arrow_flight::Ticket;
-use axum::body::Body;
 use http::{Request, Response};
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Full};
 use modelardb_auth::Permission;
 use modelardb_auth::authenticator::Authenticator;
 use modelardb_storage::parser::{self, ModelarDbStatement};
@@ -35,6 +34,7 @@ use prost::Message;
 use sqlparser::ast::Statement;
 use tokio::sync::RwLock;
 use tonic::Status;
+use tonic::body::Body;
 use tonic::metadata::MetadataMap;
 use tower::{Layer, Service};
 use tracing::warn;
@@ -225,7 +225,7 @@ async fn authorize_do_get(
     authenticator.authorize(metadata, permission_for_statement(&statement))?;
 
     // Reconstruct the request with the original bytes so the server receives it intact.
-    Ok(Request::from_parts(parts, Body::from(bytes)))
+    Ok(Request::from_parts(parts, Body::new(Full::new(bytes))))
 }
 
 /// Map a parsed [`ModelarDbStatement`] to the required [`Permission`].
