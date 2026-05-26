@@ -113,9 +113,9 @@ where
     }
 
     fn call(&mut self, request: Request<Body>) -> Self::Future {
-        // Calling a cloned service that has not been polled for readiness may cause a panic.
-        // Instead, take the service that poll_ready prepared and replace it with a clone for
-        // the next request cycle.
+        // A cloned service may not be ready and panics if called before poll_ready. Use mem::replace
+        // to take the ready service out of self.inner and put a fresh clone in its place, which
+        // will be polled for readiness on the next request.
         //
         // See https://docs.rs/tower/latest/tower/trait.Service.html#be-careful-when-cloning-inner-services.
         let clone = self.inner.clone();
