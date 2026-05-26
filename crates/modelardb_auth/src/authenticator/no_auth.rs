@@ -34,3 +34,35 @@ impl Authenticator for NoAuth {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_no_auth_allows_read() {
+        assert!(
+            NoAuth
+                .authorize(&MetadataMap::new(), Permission::Read)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_no_auth_allows_write() {
+        assert!(
+            NoAuth
+                .authorize(&MetadataMap::new(), Permission::Write)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_no_auth_allows_admin() {
+        assert!(
+            NoAuth
+                .authorize(&MetadataMap::new(), Permission::Admin)
+                .is_ok()
+        );
+    }
+}

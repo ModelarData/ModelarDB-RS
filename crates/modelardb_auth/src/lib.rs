@@ -37,3 +37,53 @@ impl Permission {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_satisfied_by_read() {
+        assert!(Permission::Read.is_satisfied_by(&Permission::Read));
+    }
+
+    #[test]
+    fn test_read_satisfied_by_write() {
+        assert!(Permission::Read.is_satisfied_by(&Permission::Write));
+    }
+
+    #[test]
+    fn test_read_satisfied_by_admin() {
+        assert!(Permission::Read.is_satisfied_by(&Permission::Admin));
+    }
+
+    #[test]
+    fn test_write_not_satisfied_by_read() {
+        assert!(!Permission::Write.is_satisfied_by(&Permission::Read));
+    }
+
+    #[test]
+    fn test_write_satisfied_by_write() {
+        assert!(Permission::Write.is_satisfied_by(&Permission::Write));
+    }
+
+    #[test]
+    fn test_write_satisfied_by_admin() {
+        assert!(Permission::Write.is_satisfied_by(&Permission::Admin));
+    }
+
+    #[test]
+    fn test_admin_not_satisfied_by_read() {
+        assert!(!Permission::Admin.is_satisfied_by(&Permission::Read));
+    }
+
+    #[test]
+    fn test_admin_not_satisfied_by_write() {
+        assert!(!Permission::Admin.is_satisfied_by(&Permission::Write));
+    }
+
+    #[test]
+    fn test_admin_satisfied_by_admin() {
+        assert!(Permission::Admin.is_satisfied_by(&Permission::Admin));
+    }
+}
