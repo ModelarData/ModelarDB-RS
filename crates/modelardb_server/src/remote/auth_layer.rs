@@ -149,8 +149,12 @@ async fn authorize(
         let configuration_manager = configuration_manager.read().await;
         return match configuration_manager.cluster_mode() {
             ClusterMode::MultiNode(cluster) if cluster.key() == request_key => Ok(request),
-            _ => {
+            ClusterMode::MultiNode(_) => {
                 warn!("Request to {path} rejected: invalid cluster key.");
+                Err(Status::unauthenticated("Unauthorized."))
+            }
+            _ => {
+                warn!("Request to {path} rejected: cluster key sent to single-node server.");
                 Err(Status::unauthenticated("Unauthorized."))
             }
         };
