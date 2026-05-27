@@ -60,7 +60,6 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::ClusterMode;
-use crate::cluster::Cluster;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 use crate::remote::auth_layer::AuthLayer;
@@ -265,26 +264,6 @@ pub fn table_name_from_flight_descriptor(
         .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
 }
 
-/// Return `true` if the request contains the cluster key and `false` if not. If the request
-/// contains a key that does not match the cluster key, return [`Status`].
-#[allow(clippy::result_large_err)]
-fn cluster_key_in_request(
-    cluster: &Cluster,
-    request_metadata: &MetadataMap,
-) -> StdResult<bool, Status> {
-    if let Some(request_key) = request_metadata.get("x-cluster-key") {
-        if cluster.key() == request_key {
-            Ok(true)
-        } else {
-            Err(Status::invalid_argument(
-                "The cluster key in the request does not match the cluster key in the configuration.",
-            ))
-        }
-    } else {
-        Ok(false)
-    }
-}
-
 /// Return an empty stream of [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) that
 /// can be returned when a SQL command has been successfully executed but did not produce any rows
 /// to return.
@@ -343,7 +322,7 @@ impl FlightServiceHandler {
         // If the cluster key is in the request, the request is from a peer node, which means the
         // table has already been created in the remote data folder and propagated to all nodes.
         if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
-            && !cluster_key_in_request(cluster, request_metadata)?
+            && request_metadata.get("x-cluster-key").is_none()
         {
             cluster
                 .create_cluster_normal_table(table_name, schema)
@@ -372,7 +351,7 @@ impl FlightServiceHandler {
         // If the cluster key is in the request, the request is from a peer node, which means the
         // table has already been created in the remote data folder and propagated to all nodes.
         if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
-            && !cluster_key_in_request(cluster, request_metadata)?
+            && request_metadata.get("x-cluster-key").is_none()
         {
             cluster
                 .create_cluster_time_series_table(time_series_table_metadata)
@@ -401,7 +380,7 @@ impl FlightServiceHandler {
         // If the cluster key is in the request, the request is from a peer node, which means the
         // tables have already been dropped in the remote data folder and propagated to all nodes.
         if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
-            && !cluster_key_in_request(cluster, request_metadata)?
+            && request_metadata.get("x-cluster-key").is_none()
         {
             cluster
                 .drop_cluster_tables(table_names)
