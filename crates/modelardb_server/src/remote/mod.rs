@@ -80,7 +80,12 @@ pub async fn start_apache_arrow_flight_server(
         ))
     })?;
 
-    let auth_layer = AuthLayer::new(authenticator, context.configuration_manager.clone());
+    let maybe_cluster_key = match context.configuration_manager.read().await.cluster_mode() {
+        ClusterMode::MultiNode(cluster) => Some(cluster.key().clone()),
+        ClusterMode::SingleNode => None,
+    };
+
+    let auth_layer = AuthLayer::new(authenticator, maybe_cluster_key);
     let handler = FlightServiceHandler::new(context);
 
     // Increase the maximum message size from 4 MiB to 16 MiB to allow bulk-loading larger batches.

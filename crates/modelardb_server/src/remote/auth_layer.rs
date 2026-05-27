@@ -32,14 +32,11 @@ use modelardb_auth::authenticator::Authenticator;
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use prost::Message;
 use sqlparser::ast::Statement;
-use tokio::sync::RwLock;
 use tonic::Status;
 use tonic::body::Body;
-use tonic::metadata::MetadataMap;
+use tonic::metadata::{Ascii, MetadataMap, MetadataValue};
 use tower::{Layer, Service};
 
-use crate::ClusterMode;
-use crate::configuration::ConfigurationManager;
 use crate::remote::error_to_status_invalid_argument;
 
 const LIST_FLIGHTS_PATH: &str = "/arrow.flight.protocol.FlightService/ListFlights";
@@ -57,18 +54,19 @@ pub(super) struct AuthLayer {
     /// The [`Authenticator`] to use for authentication once the auth layer has determined the
     /// required permission for a client request.
     authenticator: Arc<dyn Authenticator>,
-    /// The [`ConfigurationManager`] to use for cluster key validation for internal cluster requests.
-    configuration_manager: Arc<RwLock<ConfigurationManager>>,
+    /// The cluster key to use for validating internal cluster requests or [`None`] if running a
+    /// single-node server.
+    maybe_cluster_key: Option<MetadataValue<Ascii>>,
 }
 
 impl AuthLayer {
     pub(super) fn new(
         authenticator: Arc<dyn Authenticator>,
-        configuration_manager: Arc<RwLock<ConfigurationManager>>,
+        maybe_cluster_key: Option<MetadataValue<Ascii>>,
     ) -> Self {
         Self {
             authenticator,
-            configuration_manager,
+            maybe_cluster_key,
         }
     }
 }
@@ -80,7 +78,7 @@ impl<S> Layer<S> for AuthLayer {
         AuthService {
             inner,
             authenticator: self.authenticator.clone(),
-            configuration_manager: self.configuration_manager.clone(),
+            maybe_cluster_key: self.maybe_cluster_key.clone(),
         }
     }
 }
@@ -95,8 +93,9 @@ pub(super) struct AuthService<S> {
     /// The [`Authenticator`] to use for authentication once the auth layer has determined the
     /// required permission for a client request.
     authenticator: Arc<dyn Authenticator>,
-    /// The [`ConfigurationManager`] to use for cluster key validation for internal cluster requests.
-    configuration_manager: Arc<RwLock<ConfigurationManager>>,
+    /// The cluster key to use for validating internal cluster requests or [`None`] if running a
+    /// single-node server.
+    maybe_cluster_key: Option<MetadataValue<Ascii>>,
 }
 
 impl<S> Service<Request<Body>> for AuthService<S>
@@ -122,10 +121,10 @@ where
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
         let authenticator = self.authenticator.clone();
-        let configuration_manager = self.configuration_manager.clone();
+        let maybe_cluster_key = self.maybe_cluster_key.clone();
 
         Box::pin(async move {
-            match authorize(request, &*authenticator, &configuration_manager).await {
+            match authorize(request, &*authenticator, &maybe_cluster_key).await {
                 Ok(request) => inner.call(request).await,
                 Err(status) => Ok(status.into_http()),
             }
@@ -138,7 +137,7 @@ where
 async fn authorize(
     request: Request<Body>,
     authenticator: &dyn Authenticator,
-    configuration_manager: &RwLock<ConfigurationManager>,
+    maybe_cluster_key: &Option<MetadataValue<Ascii>>,
 ) -> Result<Request<Body>, Status> {
     let path = request.uri().path().to_owned();
     let metadata = MetadataMap::from_headers(request.headers().clone());
@@ -146,11 +145,10 @@ async fn authorize(
     // Cluster key check must happen before the Authenticator since internal cluster requests bypass
     // auth entirely.
     if let Some(request_key) = metadata.get("x-cluster-key") {
-        let configuration_manager = configuration_manager.read().await;
-        return match configuration_manager.cluster_mode() {
-            ClusterMode::MultiNode(cluster) if cluster.key() == request_key => Ok(request),
-            ClusterMode::MultiNode(_) => Err(Status::internal("Invalid cluster key.")),
-            _ => Err(Status::internal("Cluster key sent to single-node server.")),
+        return match maybe_cluster_key {
+            Some(key) if key == request_key => Ok(request),
+            Some(_) => Err(Status::internal("Invalid cluster key.")),
+            None => Err(Status::internal("Cluster key sent to single-node server.")),
         };
     }
 
@@ -235,12 +233,6 @@ fn permission_for_statement(statement: &ModelarDbStatement) -> Permission {
 mod tests {
     use super::*;
 
-    use modelardb_storage::data_folder::DataFolder;
-    use modelardb_types::types::{Node, ServerMode};
-    use tempfile::TempDir;
-
-    use crate::cluster::Cluster;
-
     fn empty_request(path: &str) -> Request<Body> {
         Request::builder().uri(path).body(Body::empty()).unwrap()
     }
@@ -251,45 +243,5 @@ mod tests {
             .header("x-cluster-key", key)
             .body(Body::empty())
             .unwrap()
-    }
-
-    async fn single_node_configuration_manager(
-        temp_dir: &TempDir,
-    ) -> Arc<RwLock<ConfigurationManager>> {
-        let local_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
-
-        Arc::new(RwLock::new(
-            ConfigurationManager::try_new(local_data_folder, ClusterMode::SingleNode)
-                .await
-                .unwrap(),
-        ))
-    }
-
-    async fn multi_node_configuration_manager(
-        temp_dir: &TempDir,
-    ) -> (Arc<RwLock<ConfigurationManager>>, String) {
-        let local_url = temp_dir.path().to_str().unwrap();
-
-        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
-        let remote_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
-
-        let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
-        let cluster = Cluster::try_new(edge_node, remote_data_folder)
-            .await
-            .unwrap();
-
-        let key = cluster.key().to_str().unwrap().to_owned();
-
-        let configuration_manager = Arc::new(RwLock::new(
-            ConfigurationManager::try_new(
-                local_data_folder,
-                ClusterMode::MultiNode(Box::new(cluster)),
-            )
-            .await
-            .unwrap(),
-        ));
-
-        (configuration_manager, key)
     }
 }
