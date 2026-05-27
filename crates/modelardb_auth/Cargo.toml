@@ -21,3 +21,6 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
 tonic.workspace = true
+
+[features]
+testing = []

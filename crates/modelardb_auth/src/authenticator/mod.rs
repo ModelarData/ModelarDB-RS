@@ -16,6 +16,8 @@
 //! Defines the [`Authenticator`] trait for validating credentials and authorizing access to
 //! ModelarDB.
 
+#[cfg(feature = "testing")]
+pub mod mock;
 pub mod no_auth;
 
 use tonic::Status;

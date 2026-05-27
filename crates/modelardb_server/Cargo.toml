@@ -58,6 +58,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 modelardb_test = { path = "../modelardb_test" }
+modelardb_auth = { path = "../modelardb_auth", features = ["testing"] }
 proptest.workspace = true
 tempfile.workspace = true
 
