@@ -244,3 +244,66 @@ fn permission_for_statement(statement: &ModelarDbStatement) -> Permission {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use modelardb_storage::data_folder::DataFolder;
+    use modelardb_types::types::{Node, ServerMode};
+    use tempfile::TempDir;
+
+    use crate::cluster::Cluster;
+
+    fn empty_request(path: &str) -> Request<Body> {
+        Request::builder().uri(path).body(Body::empty()).unwrap()
+    }
+
+    fn empty_request_with_cluster_key(path: &str, key: &str) -> Request<Body> {
+        Request::builder()
+            .uri(path)
+            .header("x-cluster-key", key)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    async fn single_node_configuration_manager(
+        temp_dir: &TempDir,
+    ) -> Arc<RwLock<ConfigurationManager>> {
+        let local_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
+
+        Arc::new(RwLock::new(
+            ConfigurationManager::try_new(local_data_folder, ClusterMode::SingleNode)
+                .await
+                .unwrap(),
+        ))
+    }
+
+    async fn multi_node_configuration_manager(
+        temp_dir: &TempDir,
+    ) -> (Arc<RwLock<ConfigurationManager>>, String) {
+        let local_url = temp_dir.path().to_str().unwrap();
+
+        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
+        let remote_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
+
+        let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
+        let cluster = Cluster::try_new(edge_node, remote_data_folder)
+            .await
+            .unwrap();
+
+        let key = cluster.key().to_str().unwrap().to_owned();
+
+        let configuration_manager = Arc::new(RwLock::new(
+            ConfigurationManager::try_new(
+                local_data_folder,
+                ClusterMode::MultiNode(Box::new(cluster)),
+            )
+            .await
+            .unwrap(),
+        ));
+
+        (configuration_manager, key)
+    }
+}
