@@ -37,10 +37,10 @@ use tonic::Status;
 use tonic::body::Body;
 use tonic::metadata::MetadataMap;
 use tower::{Layer, Service};
-use tracing::warn;
 
 use crate::ClusterMode;
 use crate::configuration::ConfigurationManager;
+use crate::remote::error_to_status_invalid_argument;
 
 const LIST_FLIGHTS_PATH: &str = "/arrow.flight.protocol.FlightService/ListFlights";
 const GET_FLIGHT_INFO_PATH: &str = "/arrow.flight.protocol.FlightService/GetFlightInfo";
@@ -134,7 +134,7 @@ where
 }
 
 /// Full authorization flow. Return the (possibly reconstructed) request on success, or a
-/// [`Status`] describing that the request is unauthorized on failure.
+/// [`Status`] on failure.
 async fn authorize(
     request: Request<Body>,
     authenticator: &dyn Authenticator,
@@ -149,14 +149,8 @@ async fn authorize(
         let configuration_manager = configuration_manager.read().await;
         return match configuration_manager.cluster_mode() {
             ClusterMode::MultiNode(cluster) if cluster.key() == request_key => Ok(request),
-            ClusterMode::MultiNode(_) => {
-                warn!("Request to {path} rejected: invalid cluster key.");
-                Err(Status::unauthenticated("Unauthorized."))
-            }
-            _ => {
-                warn!("Request to {path} rejected: cluster key sent to single-node server.");
-                Err(Status::unauthenticated("Unauthorized."))
-            }
+            ClusterMode::MultiNode(_) => Err(Status::internal("Invalid cluster key.")),
+            _ => Err(Status::internal("Cluster key sent to single-node server.")),
         };
     }
 
@@ -176,8 +170,7 @@ async fn authorize(
         DO_PUT_PATH => Permission::Write,
         DO_ACTION_PATH => Permission::Admin,
         _ => {
-            warn!("Request to {path} rejected: invalid path.");
-            return Err(Status::unauthenticated("Unauthorized."));
+            return Err(Status::invalid_argument("Unknown path."));
         }
     };
 
@@ -199,32 +192,21 @@ async fn authorize_do_get(
     let bytes = body
         .collect()
         .await
-        .map_err(|_| Status::unauthenticated("Unauthorized."))?
+        .map_err(|_| Status::invalid_argument("Failed to unpack request body."))?
         .to_bytes();
 
     // gRPC has a 1-byte compression flag, a 4-byte length, and an N bytes protobuf message.
     if bytes.len() < 5 {
-        warn!(
-            "DoGet body too short to be a valid gRPC message ({} bytes).",
-            bytes.len()
-        );
-        return Err(Status::unauthenticated("Unauthorized."));
+        return Err(Status::invalid_argument(
+            "Request body too short to be a valid gRPC message.",
+        ));
     }
 
-    let ticket = Ticket::decode(&bytes[5..]).map_err(|error| {
-        warn!("Failed to decode DoGet Ticket: {}.", error);
-        Status::unauthenticated("Unauthorized.")
-    })?;
+    let ticket = Ticket::decode(&bytes[5..]).map_err(error_to_status_invalid_argument)?;
+    let sql = str::from_utf8(&ticket.ticket).map_err(error_to_status_invalid_argument)?;
 
-    let sql = str::from_utf8(&ticket.ticket).map_err(|error| {
-        warn!("DoGet Ticket is not valid UTF-8: {}.", error);
-        Status::unauthenticated("Unauthorized.")
-    })?;
-
-    let statement = parser::tokenize_and_parse_sql_statement(sql).map_err(|error| {
-        warn!("Failed to parse DoGet SQL for permission check: {}.", error);
-        Status::unauthenticated("Unauthorized.")
-    })?;
+    let statement =
+        parser::tokenize_and_parse_sql_statement(sql).map_err(error_to_status_invalid_argument)?;
 
     authenticator.authorize(metadata, permission_for_statement(&statement))?;
 
