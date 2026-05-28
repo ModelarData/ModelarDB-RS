@@ -453,6 +453,25 @@ mod tests {
         assert_eq!(authenticator.calls(), vec![Permission::Read]);
     }
 
+    #[tokio::test]
+    async fn test_authorize_do_get_body_is_reconstructed_intact() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let sql = "SELECT * FROM test_table";
+
+        // Capture the original body bytes before calling authorize().
+        let original_request = do_get_request(sql);
+        let (_, original_body) = original_request.into_parts();
+        let original_bytes = original_body.collect().await.unwrap().to_bytes();
+
+        let request = do_get_request(sql);
+        let result = authorize(request, &*authenticator, &None).await;
+
+        let (_, reconstructed_body) = result.unwrap().into_parts();
+        let reconstructed_bytes = reconstructed_body.collect().await.unwrap().to_bytes();
+
+        assert_eq!(original_bytes, reconstructed_bytes);
+    }
+
     fn do_get_request(sql: &str) -> Request<Body> {
         let ticket = Ticket {
             ticket: sql.as_bytes().to_vec().into(),
