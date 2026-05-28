@@ -509,6 +509,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_authorize_do_get_with_invalid_protobuf_is_rejected() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+
+        // Valid 5-byte gRPC frame header but invalid protobuf bytes in the message.
+        let mut frame = vec![0u8; 9];
+        frame[1..5].copy_from_slice(&4u32.to_be_bytes());
+        frame[5..].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+
+        let request = Request::builder()
+            .uri(DO_GET_PATH)
+            .body(Body::new(Full::new(bytes::Bytes::from(frame))))
+            .unwrap();
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"failed to decode Protobuf message: invalid varint\""
+        );
+    }
+
+    #[tokio::test]
     async fn test_authorize_unknown_path() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request("/unknown/path");
