@@ -235,6 +235,7 @@ mod tests {
     use super::*;
 
     use modelardb_auth::authenticator::mock::MockAuthenticator;
+    use modelardb_test::table::{NORMAL_TABLE_SQL, TIME_SERIES_TABLE_SQL};
 
     const CLUSTER_KEY: &str = "cluster_key";
 
@@ -351,6 +352,105 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_create_normal_table_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request(NORMAL_TABLE_SQL);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_create_time_series_table_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request(TIME_SERIES_TABLE_SQL);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_drop_table_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request("DROP TABLE test_table");
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_truncate_table_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request("TRUNCATE test_table");
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_vacuum_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request("VACUUM test_table");
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_include_select_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request("INCLUDE 'grpc://192.168.1.2:9999' SELECT * FROM test_table");
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_insert_calls_authenticator_with_write() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request("INSERT INTO test_table VALUES (1, 2, 3)");
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Write]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_select_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request("SELECT * FROM test_table");
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_explain_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request("EXPLAIN SELECT * FROM test_table");
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Read]);
     }
 
     fn do_get_request(sql: &str) -> Request<Body> {
