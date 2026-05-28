@@ -530,7 +530,36 @@ mod tests {
             message: \"failed to decode Protobuf message: invalid varint\""
         );
     }
-    
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_non_utf8_ticket() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+
+        // Encode a Ticket with invalid UTF-8 bytes.
+        let ticket = Ticket {
+            ticket: vec![0xFF, 0xFE].into(),
+        };
+        let ticket_bytes = ticket.encode_to_vec();
+
+        let mut frame = Vec::with_capacity(5 + ticket_bytes.len());
+        frame.push(0u8);
+        frame.extend_from_slice(&(ticket_bytes.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&ticket_bytes);
+
+        let request = Request::builder()
+            .uri(DO_GET_PATH)
+            .body(Body::new(Full::new(bytes::Bytes::from(frame))))
+            .unwrap();
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"invalid utf-8 sequence of 1 bytes from index 0\""
+        );
+    }
+
     #[tokio::test]
     async fn test_authorize_do_get_with_unparseable_sql() {
         let authenticator = Arc::new(MockAuthenticator::new());
