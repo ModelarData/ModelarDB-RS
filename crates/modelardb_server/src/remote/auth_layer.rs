@@ -193,7 +193,8 @@ async fn authorize_do_get(
         .map_err(|_| Status::invalid_argument("Failed to unpack request body."))?
         .to_bytes();
 
-    // gRPC has a 1-byte compression flag, a 4-byte length, and an N bytes protobuf message.
+    // gRPC data frames have a 1-byte compression flag, a 4-byte length, and an N bytes message as
+    // defined in https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md.
     if bytes.len() < 5 {
         return Err(Status::invalid_argument(
             "Request body too short to be a valid gRPC message.",
@@ -350,6 +351,25 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+    }
+
+    fn do_get_request(sql: &str) -> Request<Body> {
+        let ticket = Ticket {
+            ticket: sql.as_bytes().to_vec().into(),
+        };
+        let ticket_bytes = ticket.encode_to_vec();
+
+        // Construct a gRPC frame with the 1-byte compression flag, 4-byte message length, and message.
+        let mut frame = Vec::with_capacity(5 + ticket_bytes.len());
+
+        frame.push(0u8);
+        frame.extend_from_slice(&(ticket_bytes.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&ticket_bytes);
+
+        Request::builder()
+            .uri(DO_GET_PATH)
+            .body(Body::new(Full::new(bytes::Bytes::from(frame))))
+            .unwrap()
     }
 
     #[tokio::test]
