@@ -233,6 +233,52 @@ fn permission_for_statement(statement: &ModelarDbStatement) -> Permission {
 mod tests {
     use super::*;
 
+    use modelardb_auth::authenticator::mock::MockAuthenticator;
+
+    const CLUSTER_KEY: &str = "cluster_key";
+
+    #[tokio::test]
+    async fn test_multi_node_with_valid_cluster_key_bypasses_authenticator() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+
+        let request = empty_request_with_cluster_key(DO_PUT_PATH, CLUSTER_KEY);
+        let cluster_key = Some(MetadataValue::from_static(CLUSTER_KEY));
+
+        let result = authorize(request, &*authenticator, &cluster_key).await;
+
+        assert!(result.is_ok());
+        assert!(authenticator.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_multi_node_with_invalid_cluster_key() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+
+        let request = empty_request_with_cluster_key(LIST_FLIGHTS_PATH, "invalid_key");
+        let cluster_key = Some(MetadataValue::from_static(CLUSTER_KEY));
+
+        let result = authorize(request, &*authenticator, &cluster_key).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Internal error', message: \"Invalid cluster key.\""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_single_node_with_cluster_key() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+
+        let request = empty_request_with_cluster_key(LIST_FLIGHTS_PATH, CLUSTER_KEY);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Internal error', message: \"Cluster key sent to single-node server.\""
+        );
+    }
+
     fn empty_request(path: &str) -> Request<Body> {
         Request::builder().uri(path).body(Body::empty()).unwrap()
     }
