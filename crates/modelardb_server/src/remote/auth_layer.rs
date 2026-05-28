@@ -472,25 +472,6 @@ mod tests {
         assert_eq!(original_bytes, reconstructed_bytes);
     }
 
-    fn do_get_request(sql: &str) -> Request<Body> {
-        let ticket = Ticket {
-            ticket: sql.as_bytes().to_vec().into(),
-        };
-        let ticket_bytes = ticket.encode_to_vec();
-
-        // Construct a gRPC frame with the 1-byte compression flag, 4-byte message length, and message.
-        let mut frame = Vec::with_capacity(5 + ticket_bytes.len());
-
-        frame.push(0u8);
-        frame.extend_from_slice(&(ticket_bytes.len() as u32).to_be_bytes());
-        frame.extend_from_slice(&ticket_bytes);
-
-        Request::builder()
-            .uri(DO_GET_PATH)
-            .body(Body::new(Full::new(bytes::Bytes::from(frame))))
-            .unwrap()
-    }
-
     #[tokio::test]
     async fn test_authorize_do_get_with_body_too_short() {
         let authenticator = Arc::new(MockAuthenticator::new());
@@ -513,14 +494,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
 
         // Valid 5-byte gRPC frame header but invalid protobuf bytes in the message.
-        let mut frame = vec![0u8; 9];
-        frame[1..5].copy_from_slice(&4u32.to_be_bytes());
-        frame[5..].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
-
-        let request = Request::builder()
-            .uri(DO_GET_PATH)
-            .body(Body::new(Full::new(bytes::Bytes::from(frame))))
-            .unwrap();
+        let request = raw_frame_request(&[0xFF, 0xFF, 0xFF, 0xFF]);
 
         let result = authorize(request, &*authenticator, &None).await;
 
@@ -536,20 +510,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
 
         // Encode a Ticket with invalid UTF-8 bytes.
-        let ticket = Ticket {
-            ticket: vec![0xFF, 0xFE].into(),
-        };
-        let ticket_bytes = ticket.encode_to_vec();
-
-        let mut frame = Vec::with_capacity(5 + ticket_bytes.len());
-        frame.push(0u8);
-        frame.extend_from_slice(&(ticket_bytes.len() as u32).to_be_bytes());
-        frame.extend_from_slice(&ticket_bytes);
-
-        let request = Request::builder()
-            .uri(DO_GET_PATH)
-            .body(Body::new(Full::new(bytes::Bytes::from(frame))))
-            .unwrap();
+        let request = ticket_frame_request(vec![0xFF, 0xFE]);
 
         let result = authorize(request, &*authenticator, &None).await;
 
@@ -572,6 +533,31 @@ mod tests {
             "code: 'Client specified an invalid argument', \
             message: \"Parser Error: sql parser error: Expected: an SQL statement, found: invalid at Line: 1, Column: 1\""
         );
+    }
+
+    fn do_get_request(sql: &str) -> Request<Body> {
+        ticket_frame_request(sql.as_bytes().to_vec())
+    }
+
+    fn ticket_frame_request(ticket_bytes: Vec<u8>) -> Request<Body> {
+        let ticket = Ticket {
+            ticket: ticket_bytes.into(),
+        };
+
+        raw_frame_request(&ticket.encode_to_vec())
+    }
+
+    fn raw_frame_request(message_bytes: &[u8]) -> Request<Body> {
+        // Construct a gRPC frame with the 1-byte compression flag, 4-byte message length, and message.
+        let mut frame = Vec::with_capacity(5 + message_bytes.len());
+        frame.push(0u8);
+        frame.extend_from_slice(&(message_bytes.len() as u32).to_be_bytes());
+        frame.extend_from_slice(message_bytes);
+
+        Request::builder()
+            .uri(DO_GET_PATH)
+            .body(Body::new(Full::new(bytes::Bytes::from(frame))))
+            .unwrap()
     }
 
     #[tokio::test]
