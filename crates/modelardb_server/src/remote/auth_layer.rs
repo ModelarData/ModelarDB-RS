@@ -298,6 +298,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_authorize_list_flights_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = empty_request(LIST_FLIGHTS_PATH);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_get_flight_info_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = empty_request(GET_FLIGHT_INFO_PATH);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_get_schema_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = empty_request(GET_SCHEMA_PATH);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_put_calls_authenticator_with_write() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = empty_request(DO_PUT_PATH);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Write]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = empty_request(DO_ACTION_PATH);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
     async fn test_authorize_unknown_path() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request("/unknown/path");
