@@ -238,7 +238,7 @@ mod tests {
     const CLUSTER_KEY: &str = "cluster_key";
 
     #[tokio::test]
-    async fn test_multi_node_with_valid_cluster_key_bypasses_authenticator() {
+    async fn test_authorize_multi_node_with_valid_cluster_key_bypasses_authenticator() {
         let authenticator = Arc::new(MockAuthenticator::new());
 
         let request = empty_request_with_cluster_key(DO_PUT_PATH, CLUSTER_KEY);
@@ -251,7 +251,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multi_node_with_invalid_cluster_key() {
+    async fn test_authorize_multi_node_with_invalid_cluster_key() {
         let authenticator = Arc::new(MockAuthenticator::new());
 
         let request = empty_request_with_cluster_key(LIST_FLIGHTS_PATH, "invalid_key");
@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_single_node_with_cluster_key() {
+    async fn test_authorize_single_node_with_cluster_key() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request_with_cluster_key(LIST_FLIGHTS_PATH, CLUSTER_KEY);
 
@@ -287,7 +287,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_actions_bypasses_authenticator() {
+    async fn test_authorize_list_actions_bypasses_authenticator() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(LIST_ACTIONS_PATH);
 
@@ -295,6 +295,19 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(authenticator.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_authorize_unknown_path() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = empty_request("/unknown/path");
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', message: \"Unknown path.\""
+        );
     }
 
     fn empty_request(path: &str) -> Request<Body> {
