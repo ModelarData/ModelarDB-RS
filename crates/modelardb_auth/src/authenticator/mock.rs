@@ -46,6 +46,12 @@ impl MockAuthenticator {
     }
 }
 
+impl Default for MockAuthenticator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Authenticator for MockAuthenticator {
     fn authorize(
         &self,
