@@ -268,7 +268,6 @@ mod tests {
     #[tokio::test]
     async fn test_single_node_with_cluster_key() {
         let authenticator = Arc::new(MockAuthenticator::new());
-
         let request = empty_request_with_cluster_key(LIST_FLIGHTS_PATH, CLUSTER_KEY);
 
         let result = authorize(request, &*authenticator, &None).await;
@@ -279,15 +278,26 @@ mod tests {
         );
     }
 
-    fn empty_request(path: &str) -> Request<Body> {
-        Request::builder().uri(path).body(Body::empty()).unwrap()
-    }
-
     fn empty_request_with_cluster_key(path: &str, key: &str) -> Request<Body> {
         Request::builder()
             .uri(path)
             .header("x-cluster-key", key)
             .body(Body::empty())
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_list_actions_bypasses_authenticator() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = empty_request(LIST_ACTIONS_PATH);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert!(authenticator.calls().is_empty());
+    }
+
+    fn empty_request(path: &str) -> Request<Body> {
+        Request::builder().uri(path).body(Body::empty()).unwrap()
     }
 }
