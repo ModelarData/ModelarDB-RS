@@ -492,6 +492,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_authorize_do_get_with_body_too_short() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = Request::builder()
+            .uri(DO_GET_PATH)
+            .body(Body::new(Full::new(bytes::Bytes::from(vec![0u8; 4]))))
+            .unwrap();
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"Request body too short to be a valid gRPC message.\""
+        );
+    }
+
+    #[tokio::test]
     async fn test_authorize_unknown_path() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request("/unknown/path");
