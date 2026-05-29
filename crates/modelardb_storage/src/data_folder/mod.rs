@@ -24,8 +24,8 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, Float32Array, Int16Array, RecordBatch,
-    StringArray,
+    ArrayRef, ArrowPrimitiveType, BinaryArray, BinaryViewArray, BinaryViewBuilder, BooleanArray,
+    Float32Array, Int16Array, RecordBatch, StringArray, StringViewArray,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use chrono::TimeDelta;
@@ -406,7 +406,7 @@ impl DataFolder {
     async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
         self.write_columns_to_metadata_table(
             "normal_table_metadata",
-            vec![Arc::new(StringArray::from(vec![name]))],
+            vec![Arc::new(StringViewArray::from(vec![name]))],
         )
         .await?;
 
@@ -452,10 +452,10 @@ impl DataFolder {
         self.write_columns_to_metadata_table(
             "time_series_table_metadata",
             vec![
-                Arc::new(StringArray::from(vec![
+                Arc::new(StringViewArray::from(vec![
                     time_series_table_metadata.name.clone(),
                 ])),
-                Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+                Arc::new(BinaryViewArray::from_iter_values(vec![&query_schema_bytes])),
             ],
         )
         .await?;
@@ -468,15 +468,22 @@ impl DataFolder {
             .enumerate()
         {
             if field.data_type() == &ArrowValue::DATA_TYPE {
-                // Convert the generated column expression to bytes, if it exists.
-                let maybe_generated_column_expr = match time_series_table_metadata
+                // Convert the generated column expression to bytes.
+                let generated_column_expr_array = match time_series_table_metadata
                     .generated_columns
                     .get(query_schema_index)
                 {
                     Some(Some(generated_column)) => {
-                        Some(generated_column.expr.to_bytes()?.to_vec())
+                        let bytes = generated_column.expr.to_bytes()?;
+                        let mut builder = BinaryViewBuilder::with_capacity(bytes.len());
+                        builder.append_block(bytes.into());
+                        builder.finish()
                     }
-                    _ => None,
+                    _ => {
+                        let mut builder = BinaryViewBuilder::new();
+                        builder.append_null();
+                        builder.finish()
+                    }
                 };
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
@@ -497,16 +504,15 @@ impl DataFolder {
                 self.write_columns_to_metadata_table(
                     "time_series_table_field_columns",
                     vec![
-                        Arc::new(StringArray::from(vec![
+                        Arc::new(StringViewArray::from(vec![
                             time_series_table_metadata.name.clone(),
                         ])),
-                        Arc::new(StringArray::from(vec![field.name().clone()])),
+                        Arc::new(StringViewArray::from(vec![field.name().clone()])),
                         Arc::new(Int16Array::from(vec![query_schema_index as i16])),
                         Arc::new(Float32Array::from(vec![error_bound_value])),
                         Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                        Arc::new(BinaryArray::from_opt_vec(vec![
-                            maybe_generated_column_expr.as_deref(),
-                        ])),
+                        // BinaryViewArray is build directly as it does not have from_opt_vec().
+                        Arc::new(generated_column_expr_array),
                     ],
                 )
                 .await?;
@@ -847,7 +853,7 @@ impl DataFolder {
         let sql = format!("SELECT table_name FROM metadata.{table_type}_metadata");
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
-        let table_names = modelardb_types::array!(batch, 0, StringArray);
+        let table_names = modelardb_types::array!(batch, 0, StringViewArray);
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
     }
 
@@ -927,8 +933,8 @@ impl DataFolder {
             )));
         }
 
-        let table_name_array = modelardb_types::array!(batch, 0, StringArray);
-        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryArray);
+        let table_name_array = modelardb_types::array!(batch, 0, StringViewArray);
+        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryViewArray);
 
         let table_name = table_name_array.value(0);
         let query_schema_bytes = query_schema_bytes_array.value(0);
@@ -1034,7 +1040,7 @@ impl DataFolder {
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
-        let generated_column_expr_array = modelardb_types::array!(batch, 1, BinaryArray);
+        let generated_column_expr_array = modelardb_types::array!(batch, 1, BinaryViewArray);
 
         for row_index in 0..batch.num_rows() {
             let generated_column_index = column_index_array.value(row_index);
