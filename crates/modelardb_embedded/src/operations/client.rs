@@ -35,6 +35,7 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt, stream};
+use tonic::codegen::InterceptedService;
 use tonic::metadata::AsciiMetadataValue;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Status};
@@ -70,15 +71,28 @@ impl tonic::service::Interceptor for BearerInterceptor {
 #[derive(Clone)]
 pub struct Client {
     /// Apache Arrow Flight client connected to the Apache Arrow Flight server of the ModelarDB node.
-    pub(crate) flight_client: FlightServiceClient<Channel>,
+    pub(crate) flight_client: FlightServiceClient<InterceptedService<Channel, BearerInterceptor>>,
 }
 
 impl Client {
-    /// Create a new [`Client`] that is connected to the node with `url`. If a connection
-    /// to the node could not be established, [`ModelarDbEmbeddedError`] is returned.
-    pub async fn connect(url: &str) -> Result<Client> {
+    /// Create a new [`Client`] that is connected to the node with `url`. If `maybe_token` is
+    /// provided, it is attached as a bearer token to every request. If a connection to the node
+    /// could not be established, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn connect(url: &str, maybe_token: Option<&str>) -> Result<Client> {
+        let maybe_authorization = maybe_token
+            .map(|token| {
+                format!("Bearer {token}")
+                    .parse::<AsciiMetadataValue>()
+                    .map_err(|error| ModelarDbEmbeddedError::InvalidArgument(error.to_string()))
+            })
+            .transpose()?;
+
+        let interceptor = BearerInterceptor {
+            maybe_authorization,
+        };
+
         let connection = Endpoint::new(url.to_owned())?.connect().await?;
-        let flight_client = FlightServiceClient::new(connection);
+        let flight_client = FlightServiceClient::with_interceptor(connection, interceptor);
 
         Ok(Client { flight_client })
     }
