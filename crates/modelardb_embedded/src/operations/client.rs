@@ -36,7 +36,6 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt, stream};
 use modelardb_auth::BearerInterceptor;
 use tonic::codegen::InterceptedService;
-use tonic::metadata::AsciiMetadataValue;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Status};
 
@@ -59,17 +58,7 @@ impl Client {
     /// provided, it is attached as a bearer token to every request. If a connection to the node
     /// could not be established, [`ModelarDbEmbeddedError`] is returned.
     pub async fn connect(url: &str, maybe_token: Option<&str>) -> Result<Client> {
-        let maybe_authorization = maybe_token
-            .map(|token| {
-                format!("Bearer {token}")
-                    .parse::<AsciiMetadataValue>()
-                    .map_err(|error| ModelarDbEmbeddedError::InvalidArgument(error.to_string()))
-            })
-            .transpose()?;
-
-        let interceptor = BearerInterceptor {
-            maybe_authorization,
-        };
+        let interceptor = BearerInterceptor::try_new(maybe_token)?;
 
         let connection = Endpoint::new(url.to_owned())?.connect().await?;
         let flight_client = FlightServiceClient::with_interceptor(connection, interceptor);

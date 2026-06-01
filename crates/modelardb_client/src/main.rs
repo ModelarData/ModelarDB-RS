@@ -39,7 +39,6 @@ use modelardb_auth::BearerInterceptor;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
 use tonic::codegen::InterceptedService;
-use tonic::metadata::AsciiMetadataValue;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Streaming};
 
@@ -139,17 +138,7 @@ async fn connect(
     port: u16,
     maybe_token: Option<String>,
 ) -> Result<AuthenticatedFlightClient> {
-    let maybe_authorization = maybe_token
-        .map(|token| {
-            format!("Bearer {token}")
-                .parse::<AsciiMetadataValue>()
-                .map_err(|error| ModelarDbClientError::InvalidArgument(error.to_string()))
-        })
-        .transpose()?;
-
-    let interceptor = BearerInterceptor {
-        maybe_authorization,
-    };
+    let interceptor = BearerInterceptor::try_new(maybe_token.as_deref())?;
 
     let address = format!("grpc://{host}:{port}");
     let connection = Endpoint::new(address)?.connect().await?;

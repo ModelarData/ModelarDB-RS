@@ -50,6 +50,25 @@ pub struct BearerInterceptor {
     pub maybe_authorization: Option<AsciiMetadataValue>,
 }
 
+impl BearerInterceptor {
+    /// Create a new [`BearerInterceptor`] that attaches the bearer token in `maybe_token` to every
+    /// outgoing request. If `maybe_token` is [`None`], no token is attached. If `maybe_token` is
+    /// [`Some`] but the token is an invalid ASCII string, [`Status`] is returned.
+    pub fn try_new(maybe_token: Option<&str>) -> Result<Self, Status> {
+        let maybe_authorization = maybe_token
+            .map(|token| {
+                format!("Bearer {token}")
+                    .parse::<AsciiMetadataValue>()
+                    .map_err(|error| Status::invalid_argument(format!("Invalid token: {error}.")))
+            })
+            .transpose()?;
+
+        Ok(Self {
+            maybe_authorization,
+        })
+    }
+}
+
 impl Interceptor for BearerInterceptor {
     fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
         if let Some(authorization) = &self.maybe_authorization {
