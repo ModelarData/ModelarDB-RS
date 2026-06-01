@@ -199,18 +199,23 @@ unsafe fn open_azure(
 
 /// Creates a [`Client`] that is connected to the Apache Arrow Flight server URL in `url_ptr`
 /// and returns a pointer to the [`Client`] or a zero-initialized pointer if an error occurs.
-/// Assumes `url_ptr` points to a valid C string.
+/// Assumes `url_ptr` points to a valid C string and `maybe_token_ptr` points to a valid C string
+/// or is null if no bearer token should be attached to requests.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn modelardb_embedded_connect(url_ptr: *const c_char) -> *const c_void {
-    let maybe_client = unsafe { connect(url_ptr) };
+pub unsafe extern "C" fn modelardb_embedded_connect(
+    url_ptr: *const c_char,
+    maybe_token_ptr: *const c_char,
+) -> *const c_void {
+    let maybe_client = unsafe { connect(url_ptr, maybe_token_ptr) };
     set_error_and_return_value_ptr(maybe_client)
 }
 
 /// See documentation for [`modelardb_embedded_connect()`].
-unsafe fn connect(url_ptr: *const c_char) -> Result<Client> {
+unsafe fn connect(url_ptr: *const c_char, maybe_token_ptr: *const c_char) -> Result<Client> {
     let url_str = unsafe { c_char_ptr_to_str(url_ptr)? };
+    let maybe_token = unsafe { c_char_ptr_to_maybe_str(maybe_token_ptr)? };
 
-    TOKIO_RUNTIME.block_on(Client::connect(url_str))
+    TOKIO_RUNTIME.block_on(Client::connect(url_str, maybe_token))
 }
 
 /// Moves the value in `maybe_value` to a [`Box`] and returns a pointer to it if `maybe_value` is
