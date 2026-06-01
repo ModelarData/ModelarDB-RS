@@ -61,9 +61,18 @@ const TRANSPORT_ERROR: &str = "transport error: no messages received.";
 /// connect to the server, or the file containing the queries cannot be read.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    // Parse the command line arguments.
-    let args = env::args().collect::<Vec<String>>();
-    let (host, port, maybe_query_file) = match &args[1..] {
+    // Extract optional --token <token> from the arguments before positional matching.
+    let mut args = env::args().skip(1).collect::<Vec<String>>();
+    let maybe_token = if let Some(pos) = args.iter().position(|arg| arg == "--token") {
+        let token = args.remove(pos + 1);
+        args.remove(pos);
+        Some(token)
+    } else {
+        None
+    };
+
+    // Parse the remaining command line arguments.
+    let (host, port, maybe_query_file) = match args.as_slice() {
         [] => (DEFAULT_HOST, DEFAULT_PORT, None),
         [query_file] if StdPath::new(&query_file).exists() => {
             let query_file = StdPath::new(&query_file).to_path_buf();
@@ -84,7 +93,7 @@ async fn main() -> Result<()> {
             let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
 
             // Punctuation at the end does not seem to be common in the usage message of Unix tools.
-            eprintln!("Usage: {binary_name} [host or host:port] [query_file]",);
+            eprintln!("Usage: {binary_name} [--token token] [host or host:port] [query_file]");
             process::exit(1);
         }
     };
