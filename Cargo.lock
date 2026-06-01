@@ -3309,8 +3309,6 @@ dependencies = [
 name = "modelardb_auth"
 version = "0.1.0"
 dependencies = [
- "modelardb_storage",
- "tokio",
  "tonic",
 ]
 
@@ -3386,7 +3384,10 @@ dependencies = [
  "datafusion",
  "deltalake",
  "futures",
+ "http 1.4.2",
+ "http-body-util",
  "log",
+ "modelardb_auth",
  "modelardb_compression",
  "modelardb_storage",
  "modelardb_test",
@@ -3397,11 +3398,13 @@ dependencies = [
  "rand 0.10.1",
  "serde",
  "snmalloc-rs",
+ "sqlparser",
  "tempfile",
  "tokio",
  "tokio-stream",
  "toml",
  "tonic",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]
