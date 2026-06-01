@@ -3337,6 +3337,7 @@ dependencies = [
  "arrow-flight",
  "bytes",
  "dirs",
+ "modelardb_auth",
  "rustyline",
  "tokio",
  "tonic",

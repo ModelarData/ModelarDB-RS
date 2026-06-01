@@ -28,6 +28,7 @@ arrow-flight.workspace = true
 arrow = { workspace = true, features = ["prettyprint"] }
 bytes.workspace = true
 dirs.workspace = true
+modelardb_auth = { path = "../modelardb_auth" }
 rustyline.workspace = true
 tokio.workspace = true
 tonic.workspace = true
