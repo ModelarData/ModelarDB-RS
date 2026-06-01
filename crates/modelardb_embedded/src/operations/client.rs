@@ -49,10 +49,10 @@ use crate::{Aggregate, TableType};
 
 /// Tonic interceptor that attaches a bearer token to every outgoing request when one is present.
 #[derive(Clone)]
-struct BearerInterceptor {
+pub(super) struct BearerInterceptor {
     /// The value of the `authorization` header to attach. This is either `Bearer <token>` or
     /// [`None`] if no token has been provided.
-    maybe_authorization: Option<AsciiMetadataValue>,
+    pub(super) maybe_authorization: Option<AsciiMetadataValue>,
 }
 
 impl tonic::service::Interceptor for BearerInterceptor {

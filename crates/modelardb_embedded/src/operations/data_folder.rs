@@ -590,7 +590,7 @@ mod tests {
     use tempfile::TempDir;
     use tonic::transport::Channel;
 
-    use crate::operations::client::Client;
+    use crate::operations::client::{BearerInterceptor, Client};
     use crate::record_batch_stream_to_record_batch;
 
     const NORMAL_TABLE_NAME: &str = "normal_table";
@@ -2744,9 +2744,14 @@ mod tests {
     }
 
     fn lazy_modelardb_client() -> Client {
+        let interceptor = BearerInterceptor {
+            maybe_authorization: None,
+        };
+
         Client {
-            flight_client: FlightServiceClient::new(
+            flight_client: FlightServiceClient::with_interceptor(
                 Channel::from_static("localhost").connect_lazy(),
+                interceptor,
             ),
         }
     }
