@@ -18,6 +18,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::result::Result as StdResult;
 use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -34,6 +35,7 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt, stream};
+use tonic::metadata::AsciiMetadataValue;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Status};
 
@@ -43,6 +45,26 @@ use crate::operations::{
     try_new_time_series_table_metadata,
 };
 use crate::{Aggregate, TableType};
+
+/// Tonic interceptor that attaches a bearer token to every outgoing request when one is present.
+#[derive(Clone)]
+struct BearerInterceptor {
+    /// The value of the `authorization` header to attach. This is either `Bearer <token>` or
+    /// [`None`] if no token has been provided.
+    maybe_authorization: Option<AsciiMetadataValue>,
+}
+
+impl tonic::service::Interceptor for BearerInterceptor {
+    fn call(&mut self, mut request: Request<()>) -> StdResult<Request<()>, Status> {
+        if let Some(authorization) = &self.maybe_authorization {
+            request
+                .metadata_mut()
+                .insert("authorization", authorization.clone());
+        }
+
+        Ok(request)
+    }
+}
 
 /// Client for connecting to ModelarDB Apache Arrow Flight servers.
 #[derive(Clone)]
