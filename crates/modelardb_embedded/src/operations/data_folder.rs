@@ -583,6 +583,7 @@ mod tests {
     use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
     use datafusion::physical_plan::expressions::Column;
     use datafusion::physical_plan::sorts::sort;
+    use modelardb_auth::BearerInterceptor;
     use modelardb_types::types::{
         ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata,
         TimestampArray, ValueArray,
@@ -590,7 +591,7 @@ mod tests {
     use tempfile::TempDir;
     use tonic::transport::Channel;
 
-    use crate::operations::client::{BearerInterceptor, Client};
+    use crate::operations::client::Client;
     use crate::record_batch_stream_to_record_batch;
 
     const NORMAL_TABLE_NAME: &str = "normal_table";

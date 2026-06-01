@@ -15,6 +15,10 @@
 
 //! Types to support authentication and authorization in ModelarDB.
 
+use tonic::metadata::AsciiMetadataValue;
+use tonic::service::Interceptor;
+use tonic::{Request, Status};
+
 pub mod authenticator;
 
 /// The permission required to perform an operation in a ModelarDB server.
@@ -35,6 +39,26 @@ impl Permission {
                 | (Permission::Write, Permission::Write | Permission::Admin)
                 | (Permission::Admin, Permission::Admin)
         )
+    }
+}
+
+/// Tonic interceptor that attaches a bearer token to every outgoing request when one is present.
+#[derive(Clone)]
+pub struct BearerInterceptor {
+    /// The value of the `authorization` header to attach. This is either `Bearer <token>` or
+    /// [`None`] if no token has been provided.
+    pub maybe_authorization: Option<AsciiMetadataValue>,
+}
+
+impl Interceptor for BearerInterceptor {
+    fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
+        if let Some(authorization) = &self.maybe_authorization {
+            request
+                .metadata_mut()
+                .insert("authorization", authorization.clone());
+        }
+
+        Ok(request)
     }
 }
 
