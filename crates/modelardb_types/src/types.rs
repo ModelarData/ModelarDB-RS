@@ -154,7 +154,7 @@ impl TimeSeriesTableMetadata {
             let data_type = field.data_type();
             if data_type != &ArrowTimestamp::DATA_TYPE
                 && data_type != &ArrowValue::DATA_TYPE
-                && data_type != &DataType::Utf8
+                && data_type != &DataType::Utf8View
             {
                 return Err(ModelarDbTypesError::InvalidArgument(format!(
                     "The data type '{data_type}' of column '{}' is not supported in a time series table.",

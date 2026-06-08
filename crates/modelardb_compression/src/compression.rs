@@ -31,7 +31,7 @@ use crate::models::{self, MACAQUE_V_ID, timestamps};
 use crate::types::{CompressedSegmentBatchBuilder, CompressedSegmentBuilder, ModelBuilder};
 
 /// Maximum number of residuals that can be stored as part of a compressed segment. The number of
-/// residuals in a segment is stored as the last value in the `residuals` [`BinaryArray`] so
+/// residuals in a segment is stored as the last value in the `residuals` [`BinaryViewArray`] so
 /// [`GridExec`](crate::query::grid_exec::GridExec) can compute which timestamps are associated
 /// with the residuals, so an [`u8`] is used for simplicity. Longer sub-sequences of data points
 /// that are marked as residuals are stored as separate segments to allow for efficient pruning.
@@ -405,7 +405,7 @@ mod tests {
 
     use super::*;
 
-    use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, Int8Array};
+    use arrow::array::{ArrayBuilder, BinaryViewArray, Float32Array, Int8Array};
     use arrow::datatypes::{DataType, Field};
     use modelardb_test::ERROR_BOUND_FIVE;
     use modelardb_test::data_generation::{self, ValuesStructure};

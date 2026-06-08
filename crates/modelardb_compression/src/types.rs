@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::{debug_assert, iter};
 
 use arrow::array::{
-    ArrayBuilder, ArrayRef, BinaryBuilder, Float32Builder, Int8Builder, Int16Array, StringArray,
+    ArrayBuilder, ArrayRef, BinaryViewBuilder, Float32Builder, Int8Builder, Int16Array, StringArray,
 };
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
@@ -422,7 +422,7 @@ pub(crate) struct CompressedSegmentBatchBuilder {
     end_times: TimestampBuilder,
     /// Data required in addition to `start_times` and `end_times` to
     /// reconstruct the timestamps of each compressed segment in the batch.
-    timestamps: BinaryBuilder,
+    timestamps: BinaryViewBuilder,
     /// Minimum value of each compressed segment in the batch.
     min_values: ValueBuilder,
     /// Maximum value of each compressed segment in the batch.
@@ -430,11 +430,11 @@ pub(crate) struct CompressedSegmentBatchBuilder {
     /// Data required in addition to `min_value` and `max_value` to reconstruct
     /// the values of each compressed segment in the batch within an error
     /// bound.
-    values: BinaryBuilder,
+    values: BinaryViewBuilder,
     /// Values between this and the next segment, compressed using [`MacaqueV`],
     /// that the models could not represent efficiently within the error bound
     /// and which are too few for a new segment due to the amount of metadata.
-    residuals: BinaryBuilder,
+    residuals: BinaryViewBuilder,
     /// Actual error of each compressed segment in the batch.
     error: Float32Builder,
 }
@@ -453,11 +453,11 @@ impl CompressedSegmentBatchBuilder {
             model_type_ids: Int8Builder::with_capacity(capacity),
             start_times: TimestampBuilder::with_capacity(capacity),
             end_times: TimestampBuilder::with_capacity(capacity),
-            timestamps: BinaryBuilder::with_capacity(capacity, capacity),
+            timestamps: BinaryViewBuilder::with_capacity(capacity),
             min_values: ValueBuilder::with_capacity(capacity),
             max_values: ValueBuilder::with_capacity(capacity),
-            values: BinaryBuilder::with_capacity(capacity, capacity),
-            residuals: BinaryBuilder::with_capacity(capacity, capacity),
+            values: BinaryViewBuilder::with_capacity(capacity),
+            residuals: BinaryViewBuilder::with_capacity(capacity),
             error: Float32Builder::with_capacity(capacity),
         }
     }
@@ -518,7 +518,7 @@ impl CompressedSegmentBatchBuilder {
 mod tests {
     use super::*;
 
-    use arrow::array::BinaryArray;
+    use arrow::array::{BinaryArray, BinaryViewArray};
     use arrow::datatypes::{DataType, Field};
     use modelardb_test::ERROR_BOUND_TEN;
     use modelardb_test::data_generation::{self, ValuesStructure};
@@ -842,7 +842,7 @@ mod tests {
 
         let segment_min_value = modelardb_types::array!(batch, 4, ValueArray).value(0);
         let segment_max_value = modelardb_types::array!(batch, 5, ValueArray).value(0);
-        let segment_values = modelardb_types::array!(batch, 6, BinaryArray).value(0);
+        let segment_values = modelardb_types::array!(batch, 6, BinaryViewArray).value(0);
 
         assert_eq!(expected_segment_min_value, segment_min_value);
         assert_eq!(expected_segment_max_value, segment_max_value);

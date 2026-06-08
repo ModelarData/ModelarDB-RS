@@ -28,7 +28,7 @@ use arrow::array::{StringArray, StringBuilder};
 use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, Int8Array,
+    Array, ArrayBuilder, ArrayRef, BinaryViewArray, Float32Array, Int8Array,
 };
 use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -348,11 +348,16 @@ impl GridStream {
                 }
             }
 
+            // Unlike BinaryArray, BinaryViewArray does not currently seem capable of returning all
+            // values as a Buffer, instead only a slice of all internal buffers or an iterator of
+            // can be returned. So since only the first byte is needed, the first buffer is passed.
+            let first_buffer = &timestamps.data_buffers()[0];
+
             self.grid_stream_metrics.add(
                 model_type_ids.value(row_index),
                 created_rows,
                 !residuals.value(row_index).is_empty(),
-                modelardb_compression::are_compressed_timestamps_regular(timestamps.values()),
+                modelardb_compression::are_compressed_timestamps_regular(first_buffer),
             );
         }
 

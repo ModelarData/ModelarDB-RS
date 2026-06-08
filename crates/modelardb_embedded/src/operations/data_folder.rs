@@ -574,7 +574,7 @@ mod tests {
 
     use arrow::array::{
         Array, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
-        StringArray,
+        StringArray, StringViewArray,
     };
     use arrow::compute::SortOptions;
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
@@ -2722,14 +2722,6 @@ mod tests {
             .await
             .unwrap();
 
-        dbg!(
-            data_folder
-                .table_provider(NORMAL_TABLE_NAME)
-                .await
-                .unwrap()
-                .schema()
-        );
-
         (temp_dir, data_folder)
     }
 
@@ -2743,7 +2735,7 @@ mod tests {
 
     fn normal_table_data() -> RecordBatch {
         let ids = Int32Array::from(vec![1, 2, 3, 4, 5, 6]);
-        let names = StringArray::from(vec!["Alice", "Bob", "Charlie", "David", "Eve", "Frank"]);
+        let names = StringViewArray::from(vec!["Alice", "Bob", "Charlie", "David", "Eve", "Frank"]);
         let ages = Int8Array::from(vec![20, 30, 40, 25, 35, 45]);
         let heights = Int16Array::from(vec![160, 170, 180, 165, 175, 185]);
         let weights = Int16Array::from(vec![60, 70, 80, 65, 75, 85]);
@@ -2764,7 +2756,7 @@ mod tests {
     fn normal_table_schema() -> Schema {
         Schema::new(vec![
             Field::new("id", DataType::Int32, false),
-            Field::new("name", DataType::Utf8, false),
+            Field::new("name", DataType::Utf8View, false),
             Field::new("age", DataType::Int8, false),
             Field::new("height", DataType::Int16, false),
             Field::new("weight", DataType::Int16, false),
@@ -2817,8 +2809,10 @@ mod tests {
 
     fn time_series_table_data() -> RecordBatch {
         let timestamps = TimestampArray::from(vec![100, 100, 200, 200, 300, 300]);
-        let tag_1 = StringArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
-        let tag_2 = StringArray::from(vec!["tag_a", "tag_b", "tag_a", "tag_b", "tag_a", "tag_b"]);
+        let tag_1 =
+            StringViewArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
+        let tag_2 =
+            StringViewArray::from(vec!["tag_a", "tag_b", "tag_a", "tag_b", "tag_a", "tag_b"]);
         let field_1 = ValueArray::from(vec![37.0, 73.0, 38.0, 72.0, 39.0, 71.0]);
         let field_2 = ValueArray::from(vec![24.0, 56.0, 25.0, 55.0, 26.0, 54.0]);
 
@@ -2838,8 +2832,8 @@ mod tests {
     fn time_series_table_schema() -> Schema {
         Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("tag_1", DataType::Utf8, false),
-            Field::new("tag_2", DataType::Utf8, false),
+            Field::new("tag_1", DataType::Utf8View, false),
+            Field::new("tag_2", DataType::Utf8View, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
         ])
