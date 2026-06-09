@@ -25,6 +25,7 @@ path = "src/main.rs"
 
 [dependencies]
 arrow = { workspace = true, features = ["ffi"] }
+clap.workspace = true
 datafusion.workspace = true
 delta_kernel.workspace = true
 deltalake.workspace = true
