@@ -23,7 +23,7 @@ use std::convert::TryFrom;
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, IsTerminal, Write};
-use std::path::Path as StdPath;
+use std::path::{Path as StdPath, PathBuf};
 use std::process;
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,6 +35,7 @@ use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, Ticket, utils};
 use bytes::Bytes;
+use clap::Parser;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
 use tonic::transport::{Channel, Endpoint};
@@ -51,6 +52,29 @@ const DEFAULT_PORT: u16 = 9999;
 
 /// Error to emit when the server does not provide a response when one is expected.
 const TRANSPORT_ERROR: &str = "transport error: no messages received.";
+
+/// Command line arguments for the ModelarDB client.
+#[derive(Parser)]
+#[command(
+    about = "ModelarDB command-line client",
+    long_about = "ModelarDB command-line client. Connects to a running instance of modelardbd and \
+    allows executing queries and commands on it. If a file containing queries is provided as an \
+    argument, the queries in the file are executed. Otherwise, an interactive read-eval-print loop \
+    is opened where queries and commands can be executed interactively."
+)]
+struct Args {
+    /// Host of the modelardbd instance to connect to.
+    #[arg(long, default_value = "127.0.0.1", env = "MODELARDB_HOST")]
+    host: String,
+
+    /// Port of the modelardbd instance to connect to.
+    #[arg(long, default_value_t = 9999, env = "MODELARDB_PORT")]
+    port: u16,
+
+    /// Path to a file containing SQL queries to execute. If not provided, an interactive
+    /// read-eval-print loop is opened.
+    query_file: Option<PathBuf>,
+}
 
 /// Parse the command line arguments to extract the host running the server to connect to, the
 /// server port to connect to, and the file containing the queries to execute on the server. If the
