@@ -24,7 +24,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
-use arrow::array::{StringArray, StringBuilder};
+use arrow::array::{StringViewArray, StringViewBuilder};
 use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
@@ -283,7 +283,7 @@ impl GridStream {
         let mut tag_arrays =
             Vec::with_capacity(batch.num_columns() - QUERY_COMPRESSED_SCHEMA.0.fields().len());
         for tag_index in QUERY_COMPRESSED_SCHEMA.0.fields().len()..batch.num_columns() {
-            tag_arrays.push(modelardb_types::array!(batch, tag_index, StringArray));
+            tag_arrays.push(modelardb_types::array!(batch, tag_index, StringViewArray));
         }
 
         // Allocate builders with approximately enough capacity. The builders are allocated with
@@ -296,10 +296,7 @@ impl GridStream {
 
         let mut tag_builders = Vec::with_capacity(tag_arrays.len());
         for _ in 0..tag_arrays.len() {
-            tag_builders.push(StringBuilder::with_capacity(
-                current_rows + new_rows,
-                current_rows + new_rows,
-            ));
+            tag_builders.push(StringViewBuilder::with_capacity(current_rows + new_rows));
         }
 
         // Copy over the data points from the current batch to keep the resulting batch sorted.
@@ -314,9 +311,9 @@ impl GridStream {
         );
 
         for (index, tag_builder) in tag_builders.iter_mut().enumerate() {
-            let tag_array = modelardb_types::array!(current_batch, index + 2, StringArray);
+            let tag_array = modelardb_types::array!(current_batch, index + 2, StringViewArray);
 
-            // Append each value individually since StringBuilder does not have an append_slice() method.
+            // Append each value individually since StringViewBuilder does not have an append_slice() method.
             for i in self.current_batch_offset..current_batch.num_rows() {
                 tag_builder.append_value(tag_array.value(i));
             }

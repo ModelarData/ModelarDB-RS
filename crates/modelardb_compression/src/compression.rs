@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-use arrow::array::StringArray;
+use arrow::array::StringViewArray;
 use arrow::compute::{self, SortColumn, SortOptions};
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
@@ -50,10 +50,10 @@ pub fn try_compress_multivariate_time_series(
     // Split the sorted uncompressed data into time series and compress them separately.
     let mut compressed_data = vec![];
 
-    let tag_column_arrays: Vec<&StringArray> = time_series_table_metadata
+    let tag_column_arrays: Vec<&StringViewArray> = time_series_table_metadata
         .tag_column_indices
         .iter()
-        .map(|index| modelardb_types::array!(sorted_uncompressed_data, *index, StringArray))
+        .map(|index| modelardb_types::array!(sorted_uncompressed_data, *index, StringViewArray))
         .collect();
 
     let mut tag_values = Vec::with_capacity(tag_column_arrays.len());
@@ -979,7 +979,7 @@ mod tests {
 
     pub fn compressed_schema() -> Arc<Schema> {
         let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
-        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
+        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8View, false)));
 
         Arc::new(Schema::new(compressed_schema_fields))
     }

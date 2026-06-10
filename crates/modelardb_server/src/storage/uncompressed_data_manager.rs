@@ -636,8 +636,8 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Arc;
 
-    use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::record_batch::RecordBatch;
+    use deltalake::arrow::array::StringViewBuilder;
     use modelardb_test::table;
     use modelardb_test::{
         COMPRESSED_RESERVED_MEMORY_IN_BYTES, INGESTED_RESERVED_MEMORY_IN_BYTES,
@@ -817,7 +817,7 @@ mod tests {
         let mut field_2 = ValueBuilder::new();
         field_2.append_slice(&[50.0, 100.0, 150.0]);
 
-        let mut tag = StringBuilder::new();
+        let mut tag = StringViewBuilder::new();
         tag.append_value(TAG_VALUE);
         tag.append_value(TAG_VALUE);
         tag.append_value(TAG_VALUE);

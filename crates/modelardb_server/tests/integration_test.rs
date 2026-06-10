@@ -29,7 +29,7 @@ use std::{iter, slice};
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket, utils};
 use bytes::Bytes;
-use datafusion::arrow::array::{Array, Float64Array, StringArray, UInt64Array};
+use datafusion::arrow::array::{Array, Float64Array, StringArray, StringViewArray, UInt64Array};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
 use datafusion::arrow::ipc::convert;
@@ -311,8 +311,8 @@ impl TestContext {
         ];
 
         if let Some(tag) = maybe_tag {
-            fields.push(Field::new("tag", DataType::Utf8, false));
-            columns.push(Arc::new(StringArray::from_iter_values(iter::repeat_n(
+            fields.push(Field::new("tag", DataType::Utf8View, false));
+            columns.push(Arc::new(StringViewArray::from_iter_values(iter::repeat_n(
                 tag,
                 time_series_len,
             ))));
@@ -819,7 +819,7 @@ async fn test_can_get_schema() {
             Field::new("field_three", DataType::Float32, false),
             Field::new("field_four", DataType::Float32, false),
             Field::new("field_five", DataType::Float32, false),
-            Field::new("tag", DataType::Utf8, false)
+            Field::new("tag", DataType::Utf8View, false)
         ])
     );
 }

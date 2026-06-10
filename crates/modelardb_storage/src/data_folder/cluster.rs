@@ -19,7 +19,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow::array::{Array, StringArray};
+use arrow::array::{Array, StringViewArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use deltalake::DeltaTableError;
 use deltalake::datafusion::logical_expr::{col, lit};
@@ -53,7 +53,7 @@ impl ClusterMetadata for DataFolder {
         // Create and register the cluster_metadata table if it does not exist.
         self.create_and_register_metadata_table(
             "cluster_metadata",
-            &Schema::new(vec![Field::new("key", DataType::Utf8, false)]),
+            &Schema::new(vec![Field::new("key", DataType::Utf8View, false)]),
         )
         .await?;
 
@@ -61,8 +61,8 @@ impl ClusterMetadata for DataFolder {
         self.create_and_register_metadata_table(
             "nodes",
             &Schema::new(vec![
-                Field::new("url", DataType::Utf8, false),
-                Field::new("mode", DataType::Utf8, false),
+                Field::new("url", DataType::Utf8View, false),
+                Field::new("mode", DataType::Utf8View, false),
             ]),
         )
         .await?;
@@ -77,14 +77,16 @@ impl ClusterMetadata for DataFolder {
         let sql = "SELECT key FROM metadata.cluster_metadata";
         let batch = sql_and_concat(self.session_context(), sql).await?;
 
-        let keys = modelardb_types::array!(batch, 0, StringArray);
+        let keys = modelardb_types::array!(batch, 0, StringViewArray);
         if keys.is_empty() {
             let cluster_key = Uuid::new_v4();
 
             // Add a new row to the cluster_metadata table to persist the key.
             self.write_columns_to_metadata_table(
                 "cluster_metadata",
-                vec![Arc::new(StringArray::from(vec![cluster_key.to_string()]))],
+                vec![Arc::new(StringViewArray::from(vec![
+                    cluster_key.to_string(),
+                ]))],
             )
             .await?;
 
@@ -104,8 +106,8 @@ impl ClusterMetadata for DataFolder {
         self.write_columns_to_metadata_table(
             "nodes",
             vec![
-                Arc::new(StringArray::from(vec![node.url])),
-                Arc::new(StringArray::from(vec![node.mode.to_string()])),
+                Arc::new(StringViewArray::from(vec![node.url])),
+                Arc::new(StringViewArray::from(vec![node.mode.to_string()])),
             ],
         )
         .await?;
@@ -136,8 +138,8 @@ impl ClusterMetadata for DataFolder {
         let sql = "SELECT url, mode FROM metadata.nodes";
         let batch = sql_and_concat(self.session_context(), sql).await?;
 
-        let url_array = modelardb_types::array!(batch, 0, StringArray);
-        let mode_array = modelardb_types::array!(batch, 1, StringArray);
+        let url_array = modelardb_types::array!(batch, 0, StringViewArray);
+        let mode_array = modelardb_types::array!(batch, 1, StringViewArray);
 
         for row_index in 0..batch.num_rows() {
             let url = url_array.value(row_index).to_owned();
@@ -196,7 +198,7 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![cluster_key.to_string()])
+            StringViewArray::from(vec![cluster_key.to_string()])
         );
     }
 
@@ -235,11 +237,11 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![node_2.url.clone(), node_1.url.clone()])
+            StringViewArray::from(vec![node_2.url.clone(), node_1.url.clone()])
         );
         assert_eq!(
             **batch.column(1),
-            StringArray::from(vec![node_2.mode.to_string(), node_1.mode.to_string()])
+            StringViewArray::from(vec![node_2.mode.to_string(), node_1.mode.to_string()])
         );
     }
 
@@ -263,11 +265,11 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![node_2.url.clone()])
+            StringViewArray::from(vec![node_2.url.clone()])
         );
         assert_eq!(
             **batch.column(1),
-            StringArray::from(vec![node_2.mode.to_string()])
+            StringViewArray::from(vec![node_2.mode.to_string()])
         );
     }
 

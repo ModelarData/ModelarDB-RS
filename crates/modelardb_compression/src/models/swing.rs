@@ -745,7 +745,7 @@ mod tests {
         let values = ValueArray::from_iter_values(values);
 
         let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
-        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
+        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8View, false)));
         let compressed_schema = Arc::new(Schema::new(compressed_schema_fields));
 
         let segments = crate::try_compress_univariate_time_series(

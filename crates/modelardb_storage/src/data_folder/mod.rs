@@ -24,8 +24,8 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, ArrowPrimitiveType, BinaryArray, BinaryViewArray, BinaryViewBuilder, BooleanArray,
-    Float32Array, Int16Array, RecordBatch, StringArray, StringViewArray,
+    ArrayRef, ArrowPrimitiveType, BinaryViewArray, BooleanArray, Float32Array, Int16Array,
+    RecordBatch, StringViewArray,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use chrono::TimeDelta;
@@ -266,7 +266,7 @@ impl DataFolder {
         // Create and register the normal_table_metadata table if it does not exist.
         self.create_and_register_metadata_table(
             "normal_table_metadata",
-            &Schema::new(vec![Field::new("table_name", DataType::Utf8, false)]),
+            &Schema::new(vec![Field::new("table_name", DataType::Utf8View, false)]),
         )
         .await?;
 
@@ -274,7 +274,7 @@ impl DataFolder {
         self.create_and_register_metadata_table(
             "time_series_table_metadata",
             &Schema::new(vec![
-                Field::new("table_name", DataType::Utf8, false),
+                Field::new("table_name", DataType::Utf8View, false),
                 Field::new("query_schema", DataType::Binary, false),
             ]),
         )
@@ -286,8 +286,8 @@ impl DataFolder {
         self.create_and_register_metadata_table(
             "time_series_table_field_columns",
             &Schema::new(vec![
-                Field::new("table_name", DataType::Utf8, false),
-                Field::new("column_name", DataType::Utf8, false),
+                Field::new("table_name", DataType::Utf8View, false),
+                Field::new("column_name", DataType::Utf8View, false),
                 Field::new("column_index", DataType::Int16, false),
                 Field::new("error_bound_value", DataType::Float32, false),
                 Field::new("error_bound_is_relative", DataType::Boolean, false),
@@ -475,15 +475,9 @@ impl DataFolder {
                 {
                     Some(Some(generated_column)) => {
                         let bytes = generated_column.expr.to_bytes()?;
-                        let mut builder = BinaryViewBuilder::with_capacity(bytes.len());
-                        builder.append_block(bytes.into());
-                        builder.finish()
+                        BinaryViewArray::from(vec![bytes.as_ref()])
                     }
-                    _ => {
-                        let mut builder = BinaryViewBuilder::new();
-                        builder.append_null();
-                        builder.finish()
-                    }
+                    _ => BinaryViewArray::from(vec![None]),
                 };
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
@@ -895,8 +889,8 @@ impl DataFolder {
         let batch = sql_and_concat(&self.session_context, sql).await?;
 
         let mut time_series_table_metadata: Vec<Arc<TimeSeriesTableMetadata>> = vec![];
-        let table_name_array = modelardb_types::array!(batch, 0, StringArray);
-        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryArray);
+        let table_name_array = modelardb_types::array!(batch, 0, StringViewArray);
+        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryViewArray);
 
         for row_index in 0..batch.num_rows() {
             let table_name = table_name_array.value(row_index);
@@ -1196,7 +1190,7 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec!["normal_table_1", "normal_table_2"])
+            StringViewArray::from(vec!["normal_table_1", "normal_table_2"])
         );
     }
 
@@ -1233,14 +1227,14 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![TIME_SERIES_TABLE_NAME])
+            StringViewArray::from(vec![TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
-            BinaryArray::from_vec(vec![
-                &try_convert_schema_to_bytes(&test::time_series_table_metadata().query_schema)
-                    .unwrap()
-            ])
+            BinaryViewArray::from_iter_values(&[&try_convert_schema_to_bytes(
+                &test::time_series_table_metadata().query_schema
+            )
+            .unwrap()])
         );
 
         // Check that a row has been added to the time_series_table_field_columns table for each field column.
@@ -1252,19 +1246,16 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![TIME_SERIES_TABLE_NAME, TIME_SERIES_TABLE_NAME])
+            StringViewArray::from(vec![TIME_SERIES_TABLE_NAME, TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
-            StringArray::from(vec!["field_1", "field_2"])
+            StringViewArray::from(vec!["field_1", "field_2"])
         );
         assert_eq!(**batch.column(2), Int16Array::from(vec![1, 2]));
         assert_eq!(**batch.column(3), Float32Array::from(vec![1.0, 5.0]));
         assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
-        assert_eq!(
-            **batch.column(5),
-            BinaryArray::from_opt_vec(vec![None, None])
-        );
+        assert_eq!(**batch.column(5), BinaryViewArray::from(vec![None, None]));
     }
 
     #[tokio::test]
@@ -1288,7 +1279,7 @@ mod tests {
 
         let schema = Schema::new(vec![
             Field::new("id", DataType::UInt32, false),
-            Field::new("name", DataType::Utf8, false),
+            Field::new("name", DataType::Utf8View, false),
         ]);
 
         let result = data_folder.create_normal_table("uint_table", &schema).await;
@@ -1314,7 +1305,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(**batch.column(0), StringArray::from(vec!["normal_table_1"]));
+        assert_eq!(
+            **batch.column(0),
+            StringViewArray::from(vec!["normal_table_1"])
+        );
     }
 
     #[tokio::test]
@@ -1859,7 +1853,7 @@ mod tests {
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("tag", DataType::Utf8, false),
+            Field::new("tag", DataType::Utf8View, false),
             Field::new("generated_column_1", ArrowValue::DATA_TYPE, false),
             Field::new("generated_column_2", ArrowValue::DATA_TYPE, false),
         ]));

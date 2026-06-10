@@ -532,7 +532,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_compressed_memory_in_bytes(),
-            1565
+            1405
         );
 
         // There should no longer be any compressed data in memory.

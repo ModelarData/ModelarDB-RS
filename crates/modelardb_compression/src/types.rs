@@ -19,7 +19,8 @@ use std::sync::Arc;
 use std::{debug_assert, iter};
 
 use arrow::array::{
-    ArrayBuilder, ArrayRef, BinaryViewBuilder, Float32Builder, Int8Builder, Int16Array, StringArray,
+    ArrayBuilder, ArrayRef, BinaryViewBuilder, Float32Builder, Int8Builder, Int16Array,
+    StringViewArray,
 };
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
@@ -506,7 +507,8 @@ impl CompressedSegmentBatchBuilder {
         columns.push(Arc::new(field_column_array));
 
         for tag_value in &self.tag_values {
-            let tag_array: StringArray = iter::repeat_n(Some(tag_value), batch_length).collect();
+            let tag_array: StringViewArray =
+                iter::repeat_n(Some(tag_value), batch_length).collect();
             columns.push(Arc::new(tag_array));
         }
 
@@ -518,7 +520,7 @@ impl CompressedSegmentBatchBuilder {
 mod tests {
     use super::*;
 
-    use arrow::array::{BinaryArray, BinaryViewArray};
+    use arrow::array::BinaryViewArray;
     use arrow::datatypes::{DataType, Field};
     use modelardb_test::ERROR_BOUND_TEN;
     use modelardb_test::data_generation::{self, ValuesStructure};
@@ -823,7 +825,7 @@ mod tests {
         let residuals_end_index = uncompressed_timestamps.len() - 1;
 
         let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
-        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
+        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8View, false)));
         let compressed_schema = Arc::new(Schema::new(compressed_schema_fields));
 
         let mut compressed_segment_batch_builder =

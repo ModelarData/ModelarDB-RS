@@ -2862,8 +2862,8 @@ mod tests {
     fn time_series_table_with_generated_column_schema() -> Schema {
         Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("tag_1", DataType::Utf8, false),
-            Field::new("tag_2", DataType::Utf8, false),
+            Field::new("tag_1", DataType::Utf8View, false),
+            Field::new("tag_2", DataType::Utf8View, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
             Field::new("generated", ArrowValue::DATA_TYPE, false),
@@ -2872,7 +2872,7 @@ mod tests {
 
     fn invalid_table_data() -> RecordBatch {
         let timestamps = TimestampArray::from(vec![100, 100, 200, 200, 300, 300]);
-        let tag = StringArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
+        let tag = StringViewArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
         let field = ValueArray::from(vec![37.0, 73.0, 38.0, 72.0, 39.0, 71.0]);
 
         RecordBatch::try_new(
@@ -2885,7 +2885,7 @@ mod tests {
     fn invalid_table_schema() -> Schema {
         Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("tag", DataType::Utf8, false),
+            Field::new("tag", DataType::Utf8View, false),
             Field::new("field", ArrowValue::DATA_TYPE, false),
         ])
     }

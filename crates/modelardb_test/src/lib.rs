@@ -22,7 +22,7 @@ pub mod table;
 pub const UNCOMPRESSED_BUFFER_SIZE: usize = 1048576;
 
 /// Expected size of the compressed segments produced in the tests.
-pub const COMPRESSED_SEGMENTS_SIZE: u64 = 1565;
+pub const COMPRESSED_SEGMENTS_SIZE: u64 = 1405;
 
 /// Number of bytes reserved for ingested data in tests.
 pub const INGESTED_RESERVED_MEMORY_IN_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB.

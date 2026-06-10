@@ -40,8 +40,8 @@ use modelardb_types::types::{
 };
 use sqlparser::ast::{
     CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, CreateTableOptions,
-    DataType as SQLDataType, Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident,
-    ObjectName, ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo, Truncate,
+    DataType as SQLDataType, Expr, GeneratedAs, HiveDistributionStyle, Ident, ObjectName,
+    ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo, Truncate,
     TruncateIdentityOption, TruncateTableTarget, Value, ValueWithSpan,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
@@ -406,12 +406,7 @@ impl ModelarDbDialect {
             columns,
             constraints: vec![],
             hive_distribution: HiveDistributionStyle::NONE,
-            hive_formats: Some(HiveFormat {
-                row_format: None,
-                serde_properties: None,
-                storage: None,
-                location: None,
-            }),
+            hive_formats: None,
             table_options: CreateTableOptions::None,
             file_format: None,
             location: None,
@@ -976,16 +971,7 @@ fn check_unsupported_features_are_disabled(
         hive_distribution != &HiveDistributionStyle::NONE,
         "Hive distribution",
     )?;
-    check_unsupported_feature_is_disabled(
-        *hive_formats
-            != Some(HiveFormat {
-                row_format: None,
-                serde_properties: None,
-                storage: None,
-                location: None,
-            }),
-        "Hive formats",
-    )?;
+    check_unsupported_feature_is_disabled(hive_formats.is_some(), "Hive formats")?;
     check_unsupported_feature_is_disabled(
         table_options != &CreateTableOptions::None,
         "Table Options",
@@ -1117,7 +1103,7 @@ fn column_defs_to_time_series_table_query_schema(
 
                 Field::new(normalized_name, ArrowValue::DATA_TYPE, false).with_metadata(metadata)
             }
-            SQLDataType::Text => Field::new(normalized_name, DataType::Utf8, false),
+            SQLDataType::Text => Field::new(normalized_name, DataType::Utf8View, false),
             data_type => {
                 return Err(DataFusionError::SQL(
                     Box::new(ParserError::ParserError(format!(
@@ -1382,7 +1368,7 @@ mod tests {
                     );
                     metadata
                 }),
-                Field::new("tag", DataType::Utf8, false),
+                Field::new("tag", DataType::Utf8View, false),
             ]));
             assert_eq!(time_series_table_metadata.query_schema, expected_schema);
 
@@ -1770,7 +1756,7 @@ mod tests {
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("tag_1", DataType::Utf8, false),
+            Field::new("tag_1", DataType::Utf8View, false),
         ])
         .to_dfschema()
         .unwrap();

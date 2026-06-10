@@ -25,7 +25,7 @@ path = "src/main.rs"
 
 [dependencies]
 arrow-flight.workspace = true
-arrow.workspace = true
+arrow = { workspace = true, features = ["prettyprint"] }
 bytes.workspace = true
 dirs.workspace = true
 rustyline.workspace = true
