@@ -25,10 +25,10 @@ path = "src/main.rs"
 
 [dependencies]
 arrow-flight.workspace = true
-arrow.workspace = true
+arrow = { workspace = true, features = ["prettyprint"] }
 bytes.workspace = true
 clap.workspace = true
 dirs.workspace = true
 rustyline.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 tonic.workspace = true
