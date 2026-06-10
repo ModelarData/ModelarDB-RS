@@ -76,13 +76,9 @@ struct Args {
     query_file: Option<PathBuf>,
 }
 
-/// Parse the command line arguments to extract the host running the server to connect to, the
-/// server port to connect to, and the file containing the queries to execute on the server. If the
-/// server host is not provided it defaults to [`DEFAULT_HOST`], if the server port is not provided
-/// it defaults to [`DEFAULT_PORT`], and if the file containing queries is not provided a
-/// read-eval-print loop is opened. Returns [`ModelarDbClientError`] if the command line arguments
-/// cannot be parsed, the client cannot connect to the server, or the file containing the queries
-/// cannot be read.
+/// Connect to the server and execute queries from a file or open a read-eval-print loop. Returns
+/// [`ModelarDbClientError`] if the command-line arguments cannot be parsed, the client cannot
+/// connect to the server, or the file containing the queries cannot be read.
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse the command line arguments.
