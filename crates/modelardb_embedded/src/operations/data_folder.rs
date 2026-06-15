@@ -574,7 +574,7 @@ mod tests {
 
     use arrow::array::{
         Array, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
-        StringArray, StringViewArray,
+        StringViewArray,
     };
     use arrow::compute::SortOptions;
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
@@ -1192,9 +1192,27 @@ mod tests {
         .await
         .unwrap();
 
+        // Sort the actual result by tag_1 before asserting column by column since GROUP BY does
+        // not guarantee the ordering.
+        let sort_options = SortOptions {
+            descending: false,
+            nulls_first: false,
+        };
+
+        let actual_result = sort::sort_batch(
+            &actual_result,
+            &LexOrdering::new(vec![PhysicalSortExpr {
+                expr: Arc::new(Column::new("tag_1", 0)),
+                options: sort_options,
+            }])
+            .unwrap(),
+            None,
+        )
+        .unwrap();
+
         assert_eq!(
             **actual_result.column(0),
-            StringArray::from(vec!["tag_x", "tag_y"])
+            StringViewArray::from(vec!["tag_x", "tag_y"])
         );
         assert_eq!(**actual_result.column(1), Int64Array::from(vec![3, 3]));
         assert_eq!(
@@ -1657,7 +1675,7 @@ mod tests {
         let source_actual_result = data_folder_read(&mut source, &sql).await.unwrap();
         let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
 
-        assert_eq!(source_actual_result, time_series_table_data());
+        assert_eq!(source_actual_result, sorted_time_series_table_data());
         assert_eq!(target_actual_result, time_series_table_data().slice(2, 2));
     }
 
