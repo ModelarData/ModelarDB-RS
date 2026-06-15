@@ -1231,7 +1231,7 @@ mod tests {
         );
         assert_eq!(
             **batch.column(1),
-            BinaryViewArray::from_iter_values(&[&try_convert_schema_to_bytes(
+            BinaryViewArray::from_iter_values([&try_convert_schema_to_bytes(
                 &test::time_series_table_metadata().query_schema
             )
             .unwrap()])

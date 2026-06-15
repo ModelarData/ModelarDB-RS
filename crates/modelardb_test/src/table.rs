@@ -205,7 +205,7 @@ pub fn compressed_segments_record_batch_with_time(
     let min_value = ValueArray::from(min_values);
     let max_value = ValueArray::from(max_values);
     let values = BinaryViewArray::from_iter_values([b"", b"", b""]);
-    let residuals = BinaryViewArray::from_iter_values(&[b"", b"", b""]);
+    let residuals = BinaryViewArray::from_iter_values([b"", b"", b""]);
     let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
     let field_column = Int16Array::from(vec![field_column, field_column, field_column]);
     let tag_column = StringViewArray::from(vec!["tag", "tag", "tag"]);
