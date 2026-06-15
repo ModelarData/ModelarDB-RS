@@ -42,7 +42,6 @@ use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion::scalar::ScalarValue;
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use deltalake::parquet::file::metadata::SortingColumn;
@@ -80,10 +79,7 @@ pub fn create_session_context() -> SessionContext {
     }
 
     // Set all configuration options from: https://datafusion.apache.org/user-guide/configs.html.
-    let session_config = SessionConfig::new().set(
-        "datafusion.execution.parquet.schema_force_view_types",
-        &ScalarValue::Boolean(Some(false)),
-    );
+    let session_config = SessionConfig::new();
     session_state_builder = session_state_builder.with_config(session_config);
 
     let session_state = session_state_builder.build();

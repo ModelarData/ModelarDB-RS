@@ -23,7 +23,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use arrow::compute::SortOptions;
-use arrow::datatypes::DataType::Utf8;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, TimeUnit};
 use datafusion::catalog::Session;
@@ -574,7 +573,7 @@ impl TableProvider for TimeSeriesTable {
             if *query_schema.field(*query_schema_index).data_type() == ArrowTimestamp::DATA_TYPE {
                 // Timestamp.
                 stored_columns_in_projection.push(SortedJoinColumnType::Timestamp);
-            } else if *query_schema.field(*query_schema_index).data_type() == Utf8 {
+            } else if *query_schema.field(*query_schema_index).data_type() == DataType::Utf8View {
                 // Tag.
                 let tag_column_name = query_schema.fields[*query_schema_index].name().clone();
                 stored_columns_in_projection.push(SortedJoinColumnType::Tag(tag_column_name));
