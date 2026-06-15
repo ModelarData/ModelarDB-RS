@@ -318,7 +318,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .starts_with("Delta Lake Error: Attempted to write invalid data to the table:")
+                .starts_with("Delta Lake Error: Generic error: Error partitioning record batch:")
         );
     }
 
@@ -365,7 +365,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .starts_with("Delta Lake Error: Attempted to write invalid data to the table:")
+                .starts_with("Delta Lake Error: Generic error: Error partitioning record batch:")
         );
 
         // Verify no commit was made.

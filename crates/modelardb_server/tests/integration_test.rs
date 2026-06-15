@@ -1071,7 +1071,7 @@ async fn test_cannot_ingest_invalid_time_series() {
 
     assert_eq!(
         response.err().unwrap().message(),
-        "Schema error: Invalid data for schema. Field { \"tag\": Utf8 } refers to node not found in schema"
+        "Ipc error: Missing variadic count for Utf8View column"
     );
 
     test_context.flush_data_to_disk().await;
