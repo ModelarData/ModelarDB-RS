@@ -519,7 +519,7 @@ async fn create_data_folder(data_folder_path: &str) -> Result<DataFolder> {
 }
 
 /// Asks the user for permission to start and return [`true`] if the user agrees and [`false`] if
-/// they do not. If the users permission cannot be read, return [`ModelarDbEmbeddedError`].
+/// they do not. If the user's permission cannot be read, return [`ModelarDbEmbeddedError`].
 fn ask_user_for_confirmation_to_start() -> Result<bool> {
     let mut user_input = String::new();
     loop {
@@ -532,11 +532,9 @@ fn ask_user_for_confirmation_to_start() -> Result<bool> {
             .read_line(&mut user_input)
             .map_err(|error| ModelarDbEmbeddedError::InvalidArgument(error.to_string()))?;
 
-        match user_input.as_str() {
-            "y\n" => return Ok(true),
-            "Y\n" => return Ok(true),
-            "n\n" => return Ok(false),
-            "N\n" => return Ok(false),
+        match user_input.trim() {
+            "y" | "Y" => return Ok(true),
+            "n" | "N" => return Ok(false),
             _ => (),
         }
     }
