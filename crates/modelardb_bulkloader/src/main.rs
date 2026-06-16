@@ -169,12 +169,13 @@ async fn import(
     pre_sql: &[String],
     post_sql: &[String],
     cast_double_to_float: bool,
+    credentials: &CloudCredentials,
 ) -> Result<()> {
     // Create an ExecutionPlan that reads all Apache Parquet files in the input path.
     let input_stream = input_stream(input_path).await?;
 
     // Open DataFolder to write each of the Apache Parquet files to table_name to.
-    let mut data_folder = create_data_folder(output_path).await?;
+    let mut data_folder = create_data_folder(output_path, credentials).await?;
 
     // Ensure the operations that will be performed is as the user expects.
     println!(
@@ -442,9 +443,10 @@ async fn export(
     pre_sql: &[String],
     post_sql: &[String],
     partition_by: Vec<String>,
+    credentials: &CloudCredentials,
 ) -> Result<()> {
     // Open DataFolder to read from and ensure the table exists.
-    let mut data_folder = create_data_folder(input_path).await?;
+    let mut data_folder = create_data_folder(input_path, credentials).await?;
 
     // Ensure the operations that will be performed is as the user expects.
     println!(
