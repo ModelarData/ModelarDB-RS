@@ -3490,6 +3490,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "arrow-flight",
+ "clap",
  "datafusion",
  "datafusion-proto",
  "modelardb_test",
