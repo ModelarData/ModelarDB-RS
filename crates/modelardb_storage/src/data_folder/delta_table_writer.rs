@@ -257,6 +257,7 @@ async fn delete_added_files(object_store: &dyn ObjectStore, added_files: Vec<Add
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::sync::Arc;
 
     use modelardb_test::table as test;

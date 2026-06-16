@@ -345,10 +345,6 @@ impl GridStream {
                 }
             }
 
-            // Unlike BinaryArray, BinaryViewArray does not currently seem capable of returning all
-            // values as a Buffer, instead only a slice of all internal buffers or an iterator of
-            // can be returned. So since only the first byte is needed, the first buffer is passed.
-
             self.grid_stream_metrics.add(
                 model_type_ids.value(row_index),
                 created_rows,
