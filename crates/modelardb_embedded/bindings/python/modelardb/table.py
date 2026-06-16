@@ -39,7 +39,7 @@ class TimeSeriesTable:
     :param schema: The schema of the time series table. It must contain a timestamp
      column with the type :class:`pyarrow.timestamp("us")`, one or more field columns
      with the type :class:`pyarrow.float32()`, and zero or more tag columns with the
-     type :class:`pyarrow.string()`.
+     type :class:`pyarrow.string_view()`.
     :type schema: Schema
     :param error_bounds: Absolute or relative error bounds for the field columns
      with type :class:`pyarrow.float32()` in `schema`. If no error bound is
