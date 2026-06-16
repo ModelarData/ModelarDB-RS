@@ -506,15 +506,30 @@ async fn export(
     Ok(())
 }
 
-/// Returns a [`DataFolder`] for `data_folder_path`. If the necessary environment variables are not
-/// set for S3 and Azure or the [`DataFolder`] cannot access `data_folder_path`, a
-/// [`ModelarDbEmbeddedError`] is returned.
-async fn create_data_folder(data_folder_path: &str) -> Result<DataFolder> {
+/// Returns a [`DataFolder`] for `data_folder_path` using `credentials` to authenticate with cloud
+/// storage providers. If the required credentials for S3 or Azure are not provided or the
+/// [`DataFolder`] cannot access `data_folder_path`, a [`ModelarDbEmbeddedError`] is returned.
+async fn create_data_folder(
+    data_folder_path: &str,
+    credentials: &CloudCredentials,
+) -> Result<DataFolder> {
     match data_folder_path.split_once("://") {
         Some(("s3", bucket_name)) => {
-            let endpoint = env::var("AWS_ENDPOINT")?;
-            let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
-            let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
+            let endpoint = credentials.aws_endpoint.clone().ok_or_else(|| {
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "AWS_ENDPOINT must be set to use S3 storage.".to_owned(),
+                )
+            })?;
+            let access_key_id = credentials.aws_access_key_id.clone().ok_or_else(|| {
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "AWS_ACCESS_KEY_ID must be set to use S3 storage.".to_owned(),
+                )
+            })?;
+            let secret_access_key = credentials.aws_secret_access_key.clone().ok_or_else(|| {
+                ModelarDbEmbeddedError::InvalidArgument(
+                    "AWS_SECRET_ACCESS_KEY must be set to use S3 storage.".to_owned(),
+                )
+            })?;
 
             DataFolder::open_s3(
                 endpoint,
@@ -526,8 +541,22 @@ async fn create_data_folder(data_folder_path: &str) -> Result<DataFolder> {
             .map_err(|error| error.into())
         }
         Some(("az", container_name)) => {
-            let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
-            let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
+            let account_name = credentials
+                .azure_storage_account_name
+                .clone()
+                .ok_or_else(|| {
+                    ModelarDbEmbeddedError::InvalidArgument(
+                        "AZURE_STORAGE_ACCOUNT_NAME must be set to use Azure storage.".to_owned(),
+                    )
+                })?;
+            let access_key = credentials
+                .azure_storage_access_key
+                .clone()
+                .ok_or_else(|| {
+                    ModelarDbEmbeddedError::InvalidArgument(
+                        "AZURE_STORAGE_ACCESS_KEY must be set to use Azure storage.".to_owned(),
+                    )
+                })?;
 
             DataFolder::open_azure(account_name, access_key, container_name.to_owned())
                 .await
