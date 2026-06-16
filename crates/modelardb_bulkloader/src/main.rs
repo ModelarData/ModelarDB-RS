@@ -106,10 +106,77 @@ struct CloudCredentials {
             }
         }
     }
+/// Command line arguments for the ModelarDB bulk loader.
+#[derive(Parser)]
+#[command(
+    about = "ModelarDB bulk loader",
+    long_about = "ModelarDB bulk loader. Imports data from Apache Parquet files into a ModelarDB \
+    data folder, or exports data from a ModelarDB data folder to Apache Parquet files."
+)]
+struct BulkLoaderArgs {
+    #[command(subcommand)]
+    command: Command,
+}
 
     // Either import or export data to or from table_name depending on operation.
     match operation.as_str() {
         "import" => {
+/// The bulk loader operations that can be performed.
+#[derive(Subcommand)]
+enum Command {
+    /// Import data from Apache Parquet files into a table in a ModelarDB data folder.
+    Import {
+        /// Path to the folder containing the Apache Parquet files to import.
+        parquet_folder: String,
+
+        /// Path or URL to the ModelarDB data folder to import data into.
+        data_folder: String,
+
+        /// Name of the table to import data into.
+        table_name: String,
+
+        /// One or more SQL statements to execute before importing, e.g., CREATE TIME SERIES TABLE.
+        #[arg(long, num_args = 1..)]
+        pre_sql: Vec<String>,
+
+        /// Cast double columns to float. This may be lossy but simplifies loading time series tables.
+        #[arg(long)]
+        cast_double_to_float: bool,
+
+        /// One or more SQL statements to execute after a successful import.
+        #[arg(long, num_args = 1..)]
+        post_sql: Vec<String>,
+
+        #[command(flatten)]
+        credentials: CloudCredentials,
+    },
+    /// Export data from a table in a ModelarDB data folder to Apache Parquet files.
+    Export {
+        /// Path or URL to the ModelarDB data folder to export data from.
+        data_folder: String,
+
+        /// Path to the folder to write the exported Apache Parquet files to.
+        parquet_folder: String,
+
+        /// Name of the table to export data from.
+        table_name: String,
+
+        /// One or more SQL statements to execute before exporting.
+        #[arg(long, num_args = 1..)]
+        pre_sql: Vec<String>,
+
+        /// One or more columns to partition the exported Apache Parquet files by.
+        #[arg(long, num_args = 1..)]
+        partition_by: Vec<String>,
+
+        /// One or more SQL statements to execute after a successful export, e.g., DROP TABLE.
+        #[arg(long, num_args = 1..)]
+        post_sql: Vec<String>,
+
+        #[command(flatten)]
+        credentials: CloudCredentials,
+    },
+}
             import(
                 &input_path,
                 &output_path,
