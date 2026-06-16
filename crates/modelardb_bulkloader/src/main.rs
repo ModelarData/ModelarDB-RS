@@ -25,7 +25,7 @@ use arrow::array::RecordBatch;
 use arrow::compute;
 use arrow::compute::kernels;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::ListingOptions;
 use datafusion::execution::RecordBatchStream;
@@ -41,7 +41,7 @@ use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
 use modelardb_embedded::operations::Operations;
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_storage::data_folder::delta_table_writer::DeltaTableWriter;
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::types::{CloudCredentials, TimeSeriesTableMetadata};
 use sysinfo::System;
 
 /// Command line arguments for the ModelarDB bulk loader.
