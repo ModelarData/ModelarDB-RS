@@ -50,6 +50,30 @@ async fn main() -> Result<()> {
     if args.len() < 5 {
         print_usage_and_exit_with_error();
     }
+/// Cloud credentials extracted from either a subcommand's flags or the corresponding environment
+/// variables.
+#[derive(Args)]
+struct CloudCredentials {
+    /// Amazon S3 endpoint URL.
+    #[arg(long, env = "AWS_ENDPOINT")]
+    aws_endpoint: Option<String>,
+
+    /// Amazon S3 access key ID.
+    #[arg(long, env = "AWS_ACCESS_KEY_ID")]
+    aws_access_key_id: Option<String>,
+
+    /// Amazon S3 secret access key.
+    #[arg(long, env = "AWS_SECRET_ACCESS_KEY")]
+    aws_secret_access_key: Option<String>,
+
+    /// Azure Blob Storage account name.
+    #[arg(long, env = "AZURE_STORAGE_ACCOUNT_NAME")]
+    azure_storage_account_name: Option<String>,
+
+    /// Azure Blob Storage access key.
+    #[arg(long, env = "AZURE_STORAGE_ACCESS_KEY")]
+    azure_storage_access_key: Option<String>,
+}
 
     // Drop the path of the binary.
     let expect_five_args = "args should contain at least five arguments.";
