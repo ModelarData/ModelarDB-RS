@@ -15,16 +15,17 @@
 
 //! Bulkloader for reading and writing ModelarDB data folders.
 
+use std::io;
 use std::io::Write;
 use std::path::Path as StdPath;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::{env, io, process};
 
 use arrow::array::RecordBatch;
 use arrow::compute;
 use arrow::compute::kernels;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use clap::{Args, Parser, Subcommand};
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::ListingOptions;
 use datafusion::execution::RecordBatchStream;
@@ -43,13 +44,6 @@ use modelardb_storage::data_folder::delta_table_writer::DeltaTableWriter;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use sysinfo::System;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Parse the command line arguments.
-    let mut args = env::args();
-    if args.len() < 5 {
-        print_usage_and_exit_with_error();
-    }
 /// Cloud credentials extracted from either a subcommand's flags or the corresponding environment
 /// variables.
 #[derive(Args)]
@@ -75,37 +69,6 @@ struct CloudCredentials {
     azure_storage_access_key: Option<String>,
 }
 
-    // Drop the path of the binary.
-    let expect_five_args = "args should contain at least five arguments.";
-    args.next().expect(expect_five_args);
-
-    let operation = args.next().expect(expect_five_args);
-    let input_path = args.next().expect(expect_five_args);
-    let output_path = args.next().expect(expect_five_args);
-    let table_name = args.next().expect(expect_five_args);
-
-    // Collect arguments for flags.
-    let mut pre_sql: Vec<String> = vec![];
-    let mut partition_by: Vec<String> = vec![];
-    let mut post_sql: Vec<String> = vec![];
-    let mut cast_double_to_float = false;
-
-    let mut maybe_arg_values: Option<&mut Vec<String>> = None;
-    for arg in args {
-        match arg.as_str() {
-            "--pre-sql" => maybe_arg_values = Some(&mut pre_sql),
-            "--partition-by" => maybe_arg_values = Some(&mut partition_by),
-            "--post-sql" => maybe_arg_values = Some(&mut post_sql),
-            "--cast-double-to-float" => cast_double_to_float = true,
-            _ => {
-                if let Some(ref mut arg_values) = maybe_arg_values {
-                    arg_values.push(arg);
-                } else {
-                    print_usage_and_exit_with_error();
-                }
-            }
-        }
-    }
 /// Command line arguments for the ModelarDB bulk loader.
 #[derive(Parser)]
 #[command(
@@ -118,9 +81,6 @@ struct BulkLoaderArgs {
     command: Command,
 }
 
-    // Either import or export data to or from table_name depending on operation.
-    match operation.as_str() {
-        "import" => {
 /// The bulk loader operations that can be performed.
 #[derive(Subcommand)]
 enum Command {
@@ -177,50 +137,53 @@ enum Command {
         credentials: CloudCredentials,
     },
 }
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = BulkLoaderArgs::parse();
+
+    match args.command {
+        Command::Import {
+            parquet_folder,
+            data_folder,
+            table_name,
+            pre_sql,
+            cast_double_to_float,
+            post_sql,
+            credentials,
+        } => {
             import(
-                &input_path,
-                &output_path,
+                &parquet_folder,
+                &data_folder,
                 &table_name,
                 &pre_sql,
                 &post_sql,
                 cast_double_to_float,
+                &credentials,
             )
             .await
         }
-        "export" => {
+        Command::Export {
+            data_folder,
+            parquet_folder,
+            table_name,
+            pre_sql,
+            partition_by,
+            post_sql,
+            credentials,
+        } => {
             export(
-                &input_path,
-                &output_path,
+                &data_folder,
+                &parquet_folder,
                 &table_name,
                 &pre_sql,
                 &post_sql,
                 partition_by,
+                &credentials,
             )
             .await
         }
-        _ => Err(ModelarDbEmbeddedError::InvalidArgument(
-            "Operation must be import or export.".to_owned(),
-        )),
     }
-}
-
-/// Print a usage message to stderr and exit with an error status code.
-fn print_usage_and_exit_with_error() -> ! {
-    // The errors are consciously ignored as the client is terminating.
-    let binary_path = env::current_exe().unwrap();
-    let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-    eprintln!(
-        "Usage: {binary_name} operation [flags]\n\n\
-            operations\n \
-            import parquet_folder data_folder table_name   imports data from parquet_folder to the table with table_name in data_folder\n \
-            export data_folder parquet_folder table_name   exports data from the table with table_name in data_folder to parquet_folder\n\n\
-            flags\n \
-            --pre-sql statements                           one or more quoted SQL statements run before any operation, e.g, CREATE TIME SERIES TABLE\n \
-            --partition-by columns                         columns to partition the output data by when exporting to Apache Parquet files\n \
-            --post-sql statements                          one or more quoted SQL statements run after a successful operation, e.g, DROP TABLE\n \
-            --cast-double-to-float                         cast double to float, which may be a lossy cast, to simplify loading time series tables"
-    );
-    process::exit(1);
 }
 
 /// Import data from `input_path` to the table with `table_name` in `output_path`. `pre_sql` is
