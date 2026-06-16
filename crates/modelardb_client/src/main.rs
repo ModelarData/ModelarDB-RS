@@ -55,7 +55,7 @@ const TRANSPORT_ERROR: &str = "transport error: no messages received.";
     argument, the queries in the file are executed. Otherwise, an interactive read-eval-print loop \
     is opened where queries and commands can be executed interactively."
 )]
-struct Args {
+struct ClientArgs {
     /// Host of the modelardbd instance to connect to.
     #[arg(long, default_value = "127.0.0.1", env = "MODELARDB_HOST")]
     host: String,
@@ -75,7 +75,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse the command line arguments.
-    let args = Args::parse();
+    let args = ClientArgs::parse();
 
     // Execute the queries.
     let flight_service_client = connect(&args.host, args.port).await?;
