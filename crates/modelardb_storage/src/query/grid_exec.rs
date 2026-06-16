@@ -348,13 +348,14 @@ impl GridStream {
             // Unlike BinaryArray, BinaryViewArray does not currently seem capable of returning all
             // values as a Buffer, instead only a slice of all internal buffers or an iterator of
             // can be returned. So since only the first byte is needed, the first buffer is passed.
-            let first_buffer = &timestamps.data_buffers()[0];
 
             self.grid_stream_metrics.add(
                 model_type_ids.value(row_index),
                 created_rows,
                 !residuals.value(row_index).is_empty(),
-                modelardb_compression::are_compressed_timestamps_regular(first_buffer),
+                modelardb_compression::are_compressed_timestamps_regular(
+                    timestamps.value(row_index),
+                ),
             );
         }
 

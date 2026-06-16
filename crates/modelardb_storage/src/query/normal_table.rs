@@ -47,7 +47,7 @@ use crate::error::Result;
 pub(crate) struct NormalTable {
     /// Access to the Delta Lake table as a [`DeltaTable`].
     delta_table: DeltaTable,
-    /// Access to the Delta Lake table as a [`TableProvider].
+    /// Access to the Delta Lake table as a [`TableProvider`].
     table_provider: Arc<dyn TableProvider>,
     /// Where data should be written to. [`None`] for metadata tables since they should not support
     /// INSERT as they are managed internally.

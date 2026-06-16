@@ -78,7 +78,7 @@ pub fn create_session_context() -> SessionContext {
             session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
     }
 
-    // Set all configuration options from: https://datafusion.apache.org/user-guide/configs.html.
+    // Use the default configuration: https://datafusion.apache.org/user-guide/configs.html.
     let session_config = SessionConfig::new();
     session_state_builder = session_state_builder.with_config(session_config);
 
