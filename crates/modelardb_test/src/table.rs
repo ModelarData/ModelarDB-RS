@@ -19,7 +19,9 @@ use std::any::Any;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
-use arrow::array::{BinaryArray, Float32Array, Int8Array, Int16Array, RecordBatch, StringArray};
+use arrow::array::{
+    BinaryViewArray, Float32Array, Int8Array, Int16Array, RecordBatch, StringViewArray,
+};
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use async_trait::async_trait;
 use datafusion::datasource::sink::DataSink;
@@ -132,7 +134,7 @@ pub fn time_series_table_metadata() -> TimeSeriesTableMetadata {
         Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
         Field::new("field_1", ArrowValue::DATA_TYPE, false),
         Field::new("field_2", ArrowValue::DATA_TYPE, false),
-        Field::new("tag", DataType::Utf8, false),
+        Field::new("tag", DataType::Utf8View, false),
     ]));
 
     let error_bounds = vec![
@@ -172,7 +174,7 @@ pub fn uncompressed_time_series_table_record_batch(row_count: usize) -> RecordBa
             Arc::new(TimestampArray::from(timestamps)),
             Arc::new(ValueArray::from(values.clone())),
             Arc::new(ValueArray::from(values)),
-            Arc::new(StringArray::from(tags)),
+            Arc::new(StringViewArray::from(tags)),
         ],
     )
     .unwrap()
@@ -199,14 +201,14 @@ pub fn compressed_segments_record_batch_with_time(
     let model_type_id = Int8Array::from(vec![1, 1, 2]);
     let start_time = TimestampArray::from(start_times);
     let end_time = TimestampArray::from(end_times);
-    let timestamps = BinaryArray::from_vec(vec![b"", b"", b""]);
+    let timestamps = BinaryViewArray::from_iter_values([b"", b"", b""]);
     let min_value = ValueArray::from(min_values);
     let max_value = ValueArray::from(max_values);
-    let values = BinaryArray::from_vec(vec![b"", b"", b""]);
-    let residuals = BinaryArray::from_vec(vec![b"", b"", b""]);
+    let values = BinaryViewArray::from_iter_values([b"", b"", b""]);
+    let residuals = BinaryViewArray::from_iter_values([b"", b"", b""]);
     let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
     let field_column = Int16Array::from(vec![field_column, field_column, field_column]);
-    let tag_column = StringArray::from(vec!["tag", "tag", "tag"]);
+    let tag_column = StringViewArray::from(vec!["tag", "tag", "tag"]);
 
     RecordBatch::try_new(
         time_series_table_metadata().compressed_schema,

@@ -42,18 +42,18 @@ pub static QUERY_COMPRESSED_SCHEMA: LazyLock<QueryCompressedSchema> = LazyLock::
         Field::new("model_type_id", DataType::Int8, false),
         Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
         Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("timestamps", DataType::Binary, false),
+        Field::new("timestamps", DataType::BinaryView, false),
         Field::new("min_value", ArrowValue::DATA_TYPE, false),
         Field::new("max_value", ArrowValue::DATA_TYPE, false),
-        Field::new("values", DataType::Binary, false),
-        Field::new("residuals", DataType::Binary, false),
+        Field::new("values", DataType::BinaryView, false),
+        Field::new("residuals", DataType::BinaryView, false),
         Field::new("error", DataType::Float32, false),
     ])))
 });
 
 /// Minimum size of the metadata required for a compressed segment. Meaning that the sizes of
-/// `timestamps` and `values` are not included as they are [`DataType::Binary`] and thus their size
-/// depend on which model is selected to represent the values for that compressed segment.
+/// `timestamps` and `values` are not included as they are [`DataType::BinaryView`] and thus their
+/// size depend on which model is selected to represent the values for that compressed segment.
 pub static COMPRESSED_METADATA_SIZE_IN_BYTES: LazyLock<usize> = LazyLock::new(|| {
     QUERY_COMPRESSED_SCHEMA
         .0

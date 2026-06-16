@@ -34,7 +34,7 @@ use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PhysicalExpr,
-    PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
+    PlanProperties, RecordBatchStream, SendableRecordBatchStream,
 };
 use futures::StreamExt;
 use futures::stream::Stream;
@@ -69,7 +69,7 @@ pub(super) struct GeneratedAsExec {
     /// Execution plan to read batches of segments from.
     input: Arc<dyn ExecutionPlan>,
     /// Properties about the plan used in query optimization.
-    plan_properties: PlanProperties,
+    plan_properties: Arc<PlanProperties>,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
@@ -84,12 +84,12 @@ impl GeneratedAsExec {
         // as the output from its input (SortedJoinExec) does not guarantee a specific output order.
         let equivalence_properties = EquivalenceProperties::new(schema.clone());
 
-        let plan_properties = PlanProperties::new(
+        let plan_properties = Arc::new(PlanProperties::new(
             equivalence_properties,
             input.output_partitioning().clone(),
             EmissionType::Incremental,
             Boundedness::Bounded,
-        );
+        ));
 
         Arc::new(GeneratedAsExec {
             schema,
@@ -118,7 +118,7 @@ impl ExecutionPlan for GeneratedAsExec {
     }
 
     /// Return properties of the output of the plan.
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.plan_properties
     }
 
@@ -159,11 +159,6 @@ impl ExecutionPlan for GeneratedAsExec {
             self.input.execute(partition, task_context)?,
             BaselineMetrics::new(&self.metrics, partition),
         )))
-    }
-
-    /// Specify that [`GeneratedAsExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> DataFusionResult<Statistics> {
-        Ok(Statistics::new_unknown(&self.schema))
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.

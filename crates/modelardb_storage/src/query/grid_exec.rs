@@ -24,11 +24,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
-use arrow::array::{StringArray, StringBuilder};
+use arrow::array::{StringViewArray, StringViewBuilder};
 use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, Int8Array,
+    Array, ArrayBuilder, ArrayRef, BinaryViewArray, Float32Array, Int8Array,
 };
 use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -42,7 +42,7 @@ use datafusion::physical_plan::metrics::{
 };
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, ExecutionPlanProperties,
-    PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
+    PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream,
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
@@ -63,7 +63,7 @@ pub(crate) struct GridExec {
     /// Execution plan to read batches of segments from.
     input: Arc<dyn ExecutionPlan>,
     /// Properties about the plan used in query optimization.
-    plan_properties: PlanProperties,
+    plan_properties: Arc<PlanProperties>,
     /// The sort order that [`GridExec`] requires for the segments it receives as its input.
     query_requirement_segment: OrderingRequirements,
     /// The sort order [`GridExec`] guarantees for the data points it produces.
@@ -89,12 +89,12 @@ impl GridExec {
             vec![query_order_data_point.clone()],
         );
 
-        let plan_properties = PlanProperties::new(
+        let plan_properties = Arc::new(PlanProperties::new(
             equivalence_properties,
             input.output_partitioning().clone(),
             EmissionType::Incremental,
             Boundedness::Bounded,
-        );
+        ));
 
         Arc::new(GridExec {
             maybe_predicate,
@@ -127,7 +127,7 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Return properties of the output of the plan.
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.plan_properties
     }
 
@@ -179,11 +179,6 @@ impl ExecutionPlan for GridExec {
             batch_size,
             grid_stream_metrics,
         )))
-    }
-
-    /// Specify that [`GridExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> DataFusionResult<Statistics> {
-        Ok(Statistics::new_unknown(&self.schema))
     }
 
     /// Specify that [`GridExec`] requires one partition for each input as it assumes that the
@@ -288,7 +283,7 @@ impl GridStream {
         let mut tag_arrays =
             Vec::with_capacity(batch.num_columns() - QUERY_COMPRESSED_SCHEMA.0.fields().len());
         for tag_index in QUERY_COMPRESSED_SCHEMA.0.fields().len()..batch.num_columns() {
-            tag_arrays.push(modelardb_types::array!(batch, tag_index, StringArray));
+            tag_arrays.push(modelardb_types::array!(batch, tag_index, StringViewArray));
         }
 
         // Allocate builders with approximately enough capacity. The builders are allocated with
@@ -301,10 +296,7 @@ impl GridStream {
 
         let mut tag_builders = Vec::with_capacity(tag_arrays.len());
         for _ in 0..tag_arrays.len() {
-            tag_builders.push(StringBuilder::with_capacity(
-                current_rows + new_rows,
-                current_rows + new_rows,
-            ));
+            tag_builders.push(StringViewBuilder::with_capacity(current_rows + new_rows));
         }
 
         // Copy over the data points from the current batch to keep the resulting batch sorted.
@@ -319,9 +311,9 @@ impl GridStream {
         );
 
         for (index, tag_builder) in tag_builders.iter_mut().enumerate() {
-            let tag_array = modelardb_types::array!(current_batch, index + 2, StringArray);
+            let tag_array = modelardb_types::array!(current_batch, index + 2, StringViewArray);
 
-            // Append each value individually since StringBuilder does not have an append_slice() method.
+            // Append each value individually since StringViewBuilder does not have an append_slice() method.
             for i in self.current_batch_offset..current_batch.num_rows() {
                 tag_builder.append_value(tag_array.value(i));
             }
@@ -357,7 +349,9 @@ impl GridStream {
                 model_type_ids.value(row_index),
                 created_rows,
                 !residuals.value(row_index).is_empty(),
-                modelardb_compression::are_compressed_timestamps_regular(timestamps.values()),
+                modelardb_compression::are_compressed_timestamps_regular(
+                    timestamps.value(row_index),
+                ),
             );
         }
 

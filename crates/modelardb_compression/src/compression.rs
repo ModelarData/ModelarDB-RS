@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-use arrow::array::StringArray;
+use arrow::array::StringViewArray;
 use arrow::compute::{self, SortColumn, SortOptions};
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
@@ -31,7 +31,7 @@ use crate::models::{self, MACAQUE_V_ID, timestamps};
 use crate::types::{CompressedSegmentBatchBuilder, CompressedSegmentBuilder, ModelBuilder};
 
 /// Maximum number of residuals that can be stored as part of a compressed segment. The number of
-/// residuals in a segment is stored as the last value in the `residuals` [`BinaryArray`] so
+/// residuals in a segment is stored as the last value in the `residuals` [`BinaryViewArray`] so
 /// [`GridExec`](crate::query::grid_exec::GridExec) can compute which timestamps are associated
 /// with the residuals, so an [`u8`] is used for simplicity. Longer sub-sequences of data points
 /// that are marked as residuals are stored as separate segments to allow for efficient pruning.
@@ -50,10 +50,10 @@ pub fn try_compress_multivariate_time_series(
     // Split the sorted uncompressed data into time series and compress them separately.
     let mut compressed_data = vec![];
 
-    let tag_column_arrays: Vec<&StringArray> = time_series_table_metadata
+    let tag_column_arrays: Vec<&StringViewArray> = time_series_table_metadata
         .tag_column_indices
         .iter()
-        .map(|index| modelardb_types::array!(sorted_uncompressed_data, *index, StringArray))
+        .map(|index| modelardb_types::array!(sorted_uncompressed_data, *index, StringViewArray))
         .collect();
 
     let mut tag_values = Vec::with_capacity(tag_column_arrays.len());
@@ -405,7 +405,7 @@ mod tests {
 
     use super::*;
 
-    use arrow::array::{ArrayBuilder, BinaryArray, Float32Array, Int8Array};
+    use arrow::array::{ArrayBuilder, BinaryViewArray, Float32Array, Int8Array};
     use arrow::datatypes::{DataType, Field};
     use modelardb_test::ERROR_BOUND_FIVE;
     use modelardb_test::data_generation::{self, ValuesStructure};
@@ -979,7 +979,7 @@ mod tests {
 
     pub fn compressed_schema() -> Arc<Schema> {
         let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
-        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8, false)));
+        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8View, false)));
 
         Arc::new(Schema::new(compressed_schema_fields))
     }

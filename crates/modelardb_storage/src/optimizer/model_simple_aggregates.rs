@@ -20,11 +20,11 @@
 use std::mem;
 use std::sync::{Arc, LazyLock};
 
-use datafusion::arrow::array::{ArrayRef, BinaryArray, Int8Array};
+use datafusion::arrow::array::{ArrayRef, BinaryViewArray, Int8Array};
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType};
+use datafusion::catalog::memory::DataSourceExec;
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
-use datafusion::datasource::memory::DataSourceExec;
 use datafusion::datasource::physical_plan::{FileScanConfig, FileSource, ParquetSource};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{self, Volatility};
@@ -345,7 +345,7 @@ impl Accumulator for ModelCountAccumulator {
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
         let start_times = modelardb_types::value!(arrays, 1, TimestampArray);
         let end_times = modelardb_types::value!(arrays, 2, TimestampArray);
-        let timestamps = modelardb_types::value!(arrays, 3, BinaryArray);
+        let timestamps = modelardb_types::value!(arrays, 3, BinaryViewArray);
 
         for row_index in 0..start_times.len() {
             let start_time = start_times.value(row_index);
@@ -482,11 +482,11 @@ impl Accumulator for ModelSumAccumulator {
         let model_type_ids = modelardb_types::value!(arrays, 0, Int8Array);
         let start_times = modelardb_types::value!(arrays, 1, TimestampArray);
         let end_times = modelardb_types::value!(arrays, 2, TimestampArray);
-        let timestamps = modelardb_types::value!(arrays, 3, BinaryArray);
+        let timestamps = modelardb_types::value!(arrays, 3, BinaryViewArray);
         let min_values = modelardb_types::value!(arrays, 4, ValueArray);
         let max_values = modelardb_types::value!(arrays, 5, ValueArray);
-        let values = modelardb_types::value!(arrays, 6, BinaryArray);
-        let residuals = modelardb_types::value!(arrays, 7, BinaryArray);
+        let values = modelardb_types::value!(arrays, 6, BinaryViewArray);
+        let residuals = modelardb_types::value!(arrays, 7, BinaryViewArray);
 
         for row_index in 0..model_type_ids.len() {
             let model_type_id = model_type_ids.value(row_index);
@@ -554,11 +554,11 @@ impl Accumulator for ModelAvgAccumulator {
         let model_type_ids = modelardb_types::value!(arrays, 0, Int8Array);
         let start_times = modelardb_types::value!(arrays, 1, TimestampArray);
         let end_times = modelardb_types::value!(arrays, 2, TimestampArray);
-        let timestamps = modelardb_types::value!(arrays, 3, BinaryArray);
+        let timestamps = modelardb_types::value!(arrays, 3, BinaryViewArray);
         let min_values = modelardb_types::value!(arrays, 4, ValueArray);
         let max_values = modelardb_types::value!(arrays, 5, ValueArray);
-        let values = modelardb_types::value!(arrays, 6, BinaryArray);
-        let residuals = modelardb_types::value!(arrays, 7, BinaryArray);
+        let values = modelardb_types::value!(arrays, 6, BinaryViewArray);
+        let residuals = modelardb_types::value!(arrays, 7, BinaryViewArray);
 
         for row_index in 0..model_type_ids.len() {
             let model_type_id = model_type_ids.value(row_index);
@@ -624,7 +624,6 @@ mod tests {
     use std::any::TypeId;
 
     use datafusion::physical_plan::aggregates::AggregateExec;
-    use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
     use modelardb_test::table::{self, NoOpDataSink, TIME_SERIES_TABLE_NAME};
@@ -686,7 +685,6 @@ mod tests {
             vec![TypeId::of::<AggregateExec>()],
             vec![TypeId::of::<CoalescePartitionsExec>()],
             vec![TypeId::of::<AggregateExec>()],
-            vec![TypeId::of::<CoalesceBatchesExec>()],
             vec![TypeId::of::<FilterExec>()],
             vec![TypeId::of::<RepartitionExec>()],
             vec![TypeId::of::<SortedJoinExec>()],

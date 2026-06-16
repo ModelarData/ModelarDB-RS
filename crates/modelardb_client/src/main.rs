@@ -59,7 +59,7 @@ const TRANSPORT_ERROR: &str = "transport error: no messages received.";
 /// read-eval-print loop is opened. Returns [`ModelarDbClientError`] if the command line arguments
 /// cannot be parsed, the client cannot connect to the server, or the file containing the queries
 /// cannot be read.
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     // Parse the command line arguments.
     let args = env::args().collect::<Vec<String>>();

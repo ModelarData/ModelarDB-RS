@@ -107,7 +107,7 @@ macro_rules! array {
 /// ```
 /// # use std::sync::Arc;
 /// #
-/// # use arrow::array::{BinaryArray, Float32Array, Int8Array, Int16Array};
+/// # use arrow::array::{BinaryViewArray, Float32Array, Int8Array, Int16Array};
 /// # use arrow::record_batch::RecordBatch;
 /// # use modelardb_types::schemas::COMPRESSED_SCHEMA;
 /// # use modelardb_types::types::{Timestamp, TimestampArray, Value, ValueArray};
@@ -118,11 +118,11 @@ macro_rules! array {
 /// #         Arc::new(Int8Array::from(Vec::<i8>::new())),
 /// #         Arc::new(TimestampArray::from(Vec::<Timestamp>::new())),
 /// #         Arc::new(TimestampArray::from(Vec::<Timestamp>::new())),
-/// #         Arc::new(BinaryArray::from(Vec::<&[u8]>::new())),
+/// #         Arc::new(BinaryViewArray::from(Vec::<&[u8]>::new())),
 /// #         Arc::new(ValueArray::from(Vec::<Value>::new())),
 /// #         Arc::new(ValueArray::from(Vec::<Value>::new())),
-/// #         Arc::new(BinaryArray::from(Vec::<&[u8]>::new())),
-/// #         Arc::new(BinaryArray::from(Vec::<&[u8]>::new())),
+/// #         Arc::new(BinaryViewArray::from(Vec::<&[u8]>::new())),
+/// #         Arc::new(BinaryViewArray::from(Vec::<&[u8]>::new())),
 /// #         Arc::new(Float32Array::from(Vec::<f32>::new())),
 /// #         Arc::new(Int16Array::from(Vec::<i16>::new())),
 /// #     ],
@@ -134,31 +134,31 @@ macro_rules! array {
 /// # Panics
 ///
 /// Panics if `batch` does not contain nine columns of type Int8Array, TimestampArray,
-/// TimestampArray, BinaryArray, ValueArray, ValueArray, BinaryArray, BinaryArray, and Float32Array
-/// or ten columns of type Int8Array, TimestampArray, TimestampArray, BinaryArray, ValueArray,
-/// ValueArray, BinaryArray, BinaryArray, Float32Array, and Int16Array.
+/// TimestampArray, BinaryViewArray, ValueArray, ValueArray, BinaryViewArray, BinaryViewArray, and
+/// Float32Array or ten columns of type Int8Array, TimestampArray, TimestampArray, BinaryViewArray,
+/// ValueArray, ValueArray, BinaryViewArray, BinaryViewArray, Float32Array, and Int16Array.
 #[macro_export]
 macro_rules! arrays {
     ($batch:ident, $model_type_ids:ident, $start_times:ident, $end_times:ident, $timestamps:ident, $min_values:ident, $max_values:ident, $values:ident, $residuals:ident, $errors:ident) => {
         let $model_type_ids = $crate::array!($batch, 0, Int8Array);
         let $start_times = $crate::array!($batch, 1, TimestampArray);
         let $end_times = $crate::array!($batch, 2, TimestampArray);
-        let $timestamps = $crate::array!($batch, 3, BinaryArray);
+        let $timestamps = $crate::array!($batch, 3, BinaryViewArray);
         let $min_values = $crate::array!($batch, 4, ValueArray);
         let $max_values = $crate::array!($batch, 5, ValueArray);
-        let $values = $crate::array!($batch, 6, BinaryArray);
-        let $residuals = $crate::array!($batch, 7, BinaryArray);
+        let $values = $crate::array!($batch, 6, BinaryViewArray);
+        let $residuals = $crate::array!($batch, 7, BinaryViewArray);
         let $errors = $crate::array!($batch, 8, Float32Array);
     };
     ($batch:ident, $model_type_ids:ident, $start_times:ident, $end_times:ident, $timestamps:ident, $min_values:ident, $max_values:ident, $values:ident, $residuals:ident, $errors:ident, $field_columns:ident) => {
         let $model_type_ids = $crate::array!($batch, 0, Int8Array);
         let $start_times = $crate::array!($batch, 1, TimestampArray);
         let $end_times = $crate::array!($batch, 2, TimestampArray);
-        let $timestamps = $crate::array!($batch, 3, BinaryArray);
+        let $timestamps = $crate::array!($batch, 3, BinaryViewArray);
         let $min_values = $crate::array!($batch, 4, ValueArray);
         let $max_values = $crate::array!($batch, 5, ValueArray);
-        let $values = $crate::array!($batch, 6, BinaryArray);
-        let $residuals = $crate::array!($batch, 7, BinaryArray);
+        let $values = $crate::array!($batch, 6, BinaryViewArray);
+        let $residuals = $crate::array!($batch, 7, BinaryViewArray);
         let $errors = $crate::array!($batch, 8, Float32Array);
         let $field_columns = $crate::array!($batch, 9, Int16Array);
     };

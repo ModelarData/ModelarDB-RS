@@ -23,14 +23,15 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 use std::{iter, mem};
 
-use datafusion::arrow::array::{Array, ArrayBuilder, StringArray};
+use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
+use deltalake::arrow::array::StringViewArray;
 use modelardb_types::types::{
     TimeSeriesTableMetadata, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
 };
-use object_store::ObjectStore;
 use object_store::path::Path;
+use object_store::{ObjectStore, ObjectStoreExt};
 use tracing::debug;
 
 use crate::error::Result;
@@ -190,7 +191,7 @@ impl UncompressedInMemoryDataBuffer {
             } else if self.time_series_table_metadata.is_tag(column_index) {
                 // The tag value is the same for each data point so it is not sorted.
                 let tag_value = self.tag_values[tag_column_index].clone();
-                let tag_array: StringArray =
+                let tag_array: StringViewArray =
                     iter::repeat_n(Some(tag_value), buffer_length).collect();
                 columns.push(Arc::new(tag_array));
 

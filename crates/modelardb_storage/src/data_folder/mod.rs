@@ -24,8 +24,8 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, Float32Array, Int16Array, RecordBatch,
-    StringArray,
+    ArrayRef, ArrowPrimitiveType, BinaryViewArray, BooleanArray, Float32Array, Int16Array,
+    RecordBatch, StringViewArray,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use chrono::TimeDelta;
@@ -266,7 +266,7 @@ impl DataFolder {
         // Create and register the normal_table_metadata table if it does not exist.
         self.create_and_register_metadata_table(
             "normal_table_metadata",
-            &Schema::new(vec![Field::new("table_name", DataType::Utf8, false)]),
+            &Schema::new(vec![Field::new("table_name", DataType::Utf8View, false)]),
         )
         .await?;
 
@@ -274,7 +274,7 @@ impl DataFolder {
         self.create_and_register_metadata_table(
             "time_series_table_metadata",
             &Schema::new(vec![
-                Field::new("table_name", DataType::Utf8, false),
+                Field::new("table_name", DataType::Utf8View, false),
                 Field::new("query_schema", DataType::Binary, false),
             ]),
         )
@@ -286,8 +286,8 @@ impl DataFolder {
         self.create_and_register_metadata_table(
             "time_series_table_field_columns",
             &Schema::new(vec![
-                Field::new("table_name", DataType::Utf8, false),
-                Field::new("column_name", DataType::Utf8, false),
+                Field::new("table_name", DataType::Utf8View, false),
+                Field::new("column_name", DataType::Utf8View, false),
                 Field::new("column_index", DataType::Int16, false),
                 Field::new("error_bound_value", DataType::Float32, false),
                 Field::new("error_bound_is_relative", DataType::Boolean, false),
@@ -319,7 +319,7 @@ impl DataFolder {
             .await?;
 
         let table_reference = TableReference::partial("metadata", table_name);
-        let metadata_table = Arc::new(NormalTable::new(delta_table, None));
+        let metadata_table = Arc::new(NormalTable::try_new(delta_table, None).await?);
         self.session_context
             .register_table(table_reference, metadata_table)?;
 
@@ -357,7 +357,8 @@ impl DataFolder {
                 &normal_table_name,
                 delta_table,
                 data_sink.clone(),
-            )?;
+            )
+            .await?;
         }
 
         // Register time series tables.
@@ -405,7 +406,7 @@ impl DataFolder {
     async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
         self.write_columns_to_metadata_table(
             "normal_table_metadata",
-            vec![Arc::new(StringArray::from(vec![name]))],
+            vec![Arc::new(StringViewArray::from(vec![name]))],
         )
         .await?;
 
@@ -451,10 +452,10 @@ impl DataFolder {
         self.write_columns_to_metadata_table(
             "time_series_table_metadata",
             vec![
-                Arc::new(StringArray::from(vec![
+                Arc::new(StringViewArray::from(vec![
                     time_series_table_metadata.name.clone(),
                 ])),
-                Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+                Arc::new(BinaryViewArray::from_iter_values(vec![&query_schema_bytes])),
             ],
         )
         .await?;
@@ -467,15 +468,16 @@ impl DataFolder {
             .enumerate()
         {
             if field.data_type() == &ArrowValue::DATA_TYPE {
-                // Convert the generated column expression to bytes, if it exists.
-                let maybe_generated_column_expr = match time_series_table_metadata
+                // Convert the generated column expression to bytes.
+                let generated_column_expr_array = match time_series_table_metadata
                     .generated_columns
                     .get(query_schema_index)
                 {
                     Some(Some(generated_column)) => {
-                        Some(generated_column.expr.to_bytes()?.to_vec())
+                        let bytes = generated_column.expr.to_bytes()?;
+                        BinaryViewArray::from(vec![bytes.as_ref()])
                     }
-                    _ => None,
+                    _ => BinaryViewArray::from(vec![None]),
                 };
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
@@ -496,16 +498,15 @@ impl DataFolder {
                 self.write_columns_to_metadata_table(
                     "time_series_table_field_columns",
                     vec![
-                        Arc::new(StringArray::from(vec![
+                        Arc::new(StringViewArray::from(vec![
                             time_series_table_metadata.name.clone(),
                         ])),
-                        Arc::new(StringArray::from(vec![field.name().clone()])),
+                        Arc::new(StringViewArray::from(vec![field.name().clone()])),
                         Arc::new(Int16Array::from(vec![query_schema_index as i16])),
                         Arc::new(Float32Array::from(vec![error_bound_value])),
                         Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                        Arc::new(BinaryArray::from_opt_vec(vec![
-                            maybe_generated_column_expr.as_deref(),
-                        ])),
+                        // BinaryViewArray is build directly as it does not have from_opt_vec().
+                        Arc::new(generated_column_expr_array),
                     ],
                 )
                 .await?;
@@ -674,9 +675,9 @@ impl DataFolder {
         let delta_table = self.delta_table(table_name).await?;
 
         if is_time_series_delta_table(&delta_table)? {
-            DeltaTableWriter::try_new_for_time_series_table(delta_table)
+            DeltaTableWriter::try_new_for_time_series_table(delta_table).await
         } else {
-            DeltaTableWriter::try_new_for_normal_table(delta_table)
+            DeltaTableWriter::try_new_for_normal_table(delta_table).await
         }
     }
 
@@ -725,8 +726,9 @@ impl DataFolder {
         columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable> {
         let delta_table = self.metadata_delta_table(table_name).await?;
-        let record_batch = RecordBatch::try_new(TableProvider::schema(&delta_table), columns)?;
-        let delta_table_writer = DeltaTableWriter::try_new_for_normal_table(delta_table)?;
+        let schema = delta_table.table_provider().await?.schema();
+        let record_batch = RecordBatch::try_new(schema, columns)?;
+        let delta_table_writer = DeltaTableWriter::try_new_for_normal_table(delta_table).await?;
 
         delta_table_writer
             .write_all_and_commit(&[record_batch])
@@ -747,6 +749,17 @@ impl DataFolder {
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable> {
         let table_path = self.location_of_table(table_name);
         self.delta_table_from_path(&table_path).await
+    }
+
+    /// Return a [`TableProvider`] for manipulating the table with `table_name` in the Delta Lake,
+    /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
+    /// the table does not exist.
+    pub async fn table_provider(&self, table_name: &str) -> Result<Arc<dyn TableProvider>> {
+        self.delta_table(table_name)
+            .await?
+            .table_provider()
+            .await
+            .map_err(|error| error.into())
     }
 
     /// Return a [`DeltaTable`] for manipulating the table at `table_path` in the Delta Lake, or a
@@ -834,7 +847,7 @@ impl DataFolder {
         let sql = format!("SELECT table_name FROM metadata.{table_type}_metadata");
         let batch = sql_and_concat(&self.session_context, &sql).await?;
 
-        let table_names = modelardb_types::array!(batch, 0, StringArray);
+        let table_names = modelardb_types::array!(batch, 0, StringViewArray);
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
     }
 
@@ -847,7 +860,7 @@ impl DataFolder {
             .is_ok_and(|is_normal_table| is_normal_table)
         {
             let schema = self
-                .delta_table(table_name)
+                .table_provider(table_name)
                 .await
                 .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
                 .schema();
@@ -876,8 +889,8 @@ impl DataFolder {
         let batch = sql_and_concat(&self.session_context, sql).await?;
 
         let mut time_series_table_metadata: Vec<Arc<TimeSeriesTableMetadata>> = vec![];
-        let table_name_array = modelardb_types::array!(batch, 0, StringArray);
-        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryArray);
+        let table_name_array = modelardb_types::array!(batch, 0, StringViewArray);
+        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryViewArray);
 
         for row_index in 0..batch.num_rows() {
             let table_name = table_name_array.value(row_index);
@@ -914,8 +927,8 @@ impl DataFolder {
             )));
         }
 
-        let table_name_array = modelardb_types::array!(batch, 0, StringArray);
-        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryArray);
+        let table_name_array = modelardb_types::array!(batch, 0, StringViewArray);
+        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryViewArray);
 
         let table_name = table_name_array.value(0);
         let query_schema_bytes = query_schema_bytes_array.value(0);
@@ -1021,7 +1034,7 @@ impl DataFolder {
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
         let column_index_array = modelardb_types::array!(batch, 0, Int16Array);
-        let generated_column_expr_array = modelardb_types::array!(batch, 1, BinaryArray);
+        let generated_column_expr_array = modelardb_types::array!(batch, 1, BinaryViewArray);
 
         for row_index in 0..batch.num_rows() {
             let generated_column_index = column_index_array.value(row_index);
@@ -1177,7 +1190,7 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec!["normal_table_1", "normal_table_2"])
+            StringViewArray::from(vec!["normal_table_1", "normal_table_2"])
         );
     }
 
@@ -1214,14 +1227,14 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![TIME_SERIES_TABLE_NAME])
+            StringViewArray::from(vec![TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
-            BinaryArray::from_vec(vec![
-                &try_convert_schema_to_bytes(&test::time_series_table_metadata().query_schema)
-                    .unwrap()
-            ])
+            BinaryViewArray::from_iter_values([&try_convert_schema_to_bytes(
+                &test::time_series_table_metadata().query_schema
+            )
+            .unwrap()])
         );
 
         // Check that a row has been added to the time_series_table_field_columns table for each field column.
@@ -1233,19 +1246,16 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            StringArray::from(vec![TIME_SERIES_TABLE_NAME, TIME_SERIES_TABLE_NAME])
+            StringViewArray::from(vec![TIME_SERIES_TABLE_NAME, TIME_SERIES_TABLE_NAME])
         );
         assert_eq!(
             **batch.column(1),
-            StringArray::from(vec!["field_1", "field_2"])
+            StringViewArray::from(vec!["field_1", "field_2"])
         );
         assert_eq!(**batch.column(2), Int16Array::from(vec![1, 2]));
         assert_eq!(**batch.column(3), Float32Array::from(vec![1.0, 5.0]));
         assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
-        assert_eq!(
-            **batch.column(5),
-            BinaryArray::from_opt_vec(vec![None, None])
-        );
+        assert_eq!(**batch.column(5), BinaryViewArray::from(vec![None, None]));
     }
 
     #[tokio::test]
@@ -1269,7 +1279,7 @@ mod tests {
 
         let schema = Schema::new(vec![
             Field::new("id", DataType::UInt32, false),
-            Field::new("name", DataType::Utf8, false),
+            Field::new("name", DataType::Utf8View, false),
         ]);
 
         let result = data_folder.create_normal_table("uint_table", &schema).await;
@@ -1295,7 +1305,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(**batch.column(0), StringArray::from(vec!["normal_table_1"]));
+        assert_eq!(
+            **batch.column(0),
+            StringViewArray::from(vec!["normal_table_1"])
+        );
     }
 
     #[tokio::test]
@@ -1530,9 +1543,10 @@ mod tests {
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
 
         // Read the data back and verify the content.
+        let table_provider = delta_table.table_provider().build().await.unwrap();
         data_folder
             .session_context
-            .register_table("normal_table_1", Arc::new(delta_table))
+            .register_table("normal_table_1", Arc::new(table_provider))
             .unwrap();
 
         let read_batch =
@@ -1561,9 +1575,10 @@ mod tests {
         let schema = test::time_series_table_metadata().compressed_schema.clone();
         let column_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
 
+        let table_provider = delta_table.table_provider().build().await.unwrap();
         data_folder
             .session_context
-            .register_table(TIME_SERIES_TABLE_NAME, Arc::new(delta_table))
+            .register_table(TIME_SERIES_TABLE_NAME, Arc::new(table_provider))
             .unwrap();
 
         let read_batch = sql_and_concat(
@@ -1838,7 +1853,7 @@ mod tests {
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("tag", DataType::Utf8, false),
+            Field::new("tag", DataType::Utf8View, false),
             Field::new("generated_column_1", ArrowValue::DATA_TYPE, false),
             Field::new("generated_column_2", ArrowValue::DATA_TYPE, false),
         ]));
