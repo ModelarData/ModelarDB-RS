@@ -58,7 +58,7 @@ jobs:
         'Linux')
           curl -L -O https://github.com/pgsty/minio/releases/download/RELEASE.2026-06-18T00-00-00Z/minio_20260618000000.0.0_linux_amd64.tar.gz ;;
         'Darwin')
-          curl -L -O https://github.com/pgsty/minio/releases/download/RELEASE.2026-06-18T00-00-00Z/minio_20260618000000.0.0_darwin_amd64.tar.gz ;;
+          curl -L -O https://github.com/pgsty/minio/releases/download/RELEASE.2026-06-18T00-00-00Z/minio_20260618000000.0.0_darwin_arm64.tar.gz ;;
         *)
           curl -L -O https://github.com/pgsty/minio/releases/download/RELEASE.2026-06-18T00-00-00Z/minio_20260618000000.0.0_windows_amd64.tar.gz ;;
         esac
