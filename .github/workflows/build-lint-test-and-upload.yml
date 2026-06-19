@@ -65,6 +65,7 @@ jobs:
 
         tar -xf minio_*.tar.gz
         ./minio server minio_data_folder --console-address :9001 &
+        sleep 5 # Ensure minio has fully finished creating the endpoint.
         aws s3 mb s3://modelardb --endpoint-url http://localhost:9000
 
     # Setup Azurite.
@@ -73,6 +74,7 @@ jobs:
       run: |
         npm install azurite
         node_modules/.bin/azurite --skipApiVersionCheck --location azurite_data_folder &
+        sleep 5 # Ensure azurite has fully finished creating the endpoint.
         az storage container create -n modelardb --connection-string 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;'
 
     # Setup Protobuf Compiler.
