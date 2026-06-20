@@ -126,6 +126,7 @@ impl TestContext {
                 "dev-release",
                 "--bin",
                 "modelardbd",
+                "edge",
                 local_data_folder,
             ])
             .kill_on_drop(true)
