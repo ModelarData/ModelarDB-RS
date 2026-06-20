@@ -162,7 +162,7 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            "Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
+            "ModelarDB Storage Error: Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
         );
     }
 
@@ -181,7 +181,7 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            "Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
+            "ModelarDB Storage Error: Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
         );
     }
 

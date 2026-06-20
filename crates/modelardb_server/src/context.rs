@@ -476,6 +476,7 @@ fn table_does_not_exist_error(table_name: &str) -> ModelarDbServerError {
 mod tests {
     use super::*;
 
+    use clap::Parser;
     use modelardb_storage::data_folder::DataFolder;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
@@ -1046,6 +1047,7 @@ mod tests {
             Context::try_new(
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode,
+                &ServerArgs::parse_from(["modelardbd", "edge", "/tmp"]),
             )
             .await
             .unwrap(),

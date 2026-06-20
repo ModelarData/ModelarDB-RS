@@ -451,13 +451,14 @@ async fn validate_time_series_tables(
 mod test {
     use super::*;
 
+    use clap::Parser;
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
     use modelardb_test::table::{NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ServerMode};
     use tempfile::TempDir;
 
-    use crate::ClusterMode;
     use crate::data_folders::DataFolders;
+    use crate::{ClusterMode, ServerArgs};
 
     // Tests for Cluster.
     #[tokio::test]
@@ -708,6 +709,7 @@ mod test {
                     local_data_folder,
                 ),
                 ClusterMode::MultiNode(Box::new(cluster)),
+                &ServerArgs::parse_from(["modelardbd", "edge", "/tmp", "s3://bucket"]),
             )
             .await
             .unwrap(),

@@ -465,6 +465,7 @@ mod tests {
 
     use std::sync::Arc;
 
+    use clap::Parser;
     use modelardb_storage::data_folder::DataFolder;
     use modelardb_types::types::{Node, ServerMode};
     use tempfile::TempDir;
@@ -533,8 +534,12 @@ mod tests {
             .await
             .unwrap();
 
-        let result =
-            ConfigurationManager::try_new(local_data_folder, ClusterMode::SingleNode).await;
+        let result = ConfigurationManager::try_new(
+            local_data_folder,
+            ClusterMode::SingleNode,
+            &default_args(),
+        )
+        .await;
 
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -552,8 +557,12 @@ mod tests {
         let path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
         std::fs::write(path, "invalid_toml").unwrap();
 
-        let result =
-            ConfigurationManager::try_new(local_data_folder, ClusterMode::SingleNode).await;
+        let result = ConfigurationManager::try_new(
+            local_data_folder,
+            ClusterMode::SingleNode,
+            &default_args(),
+        )
+        .await;
 
         assert!(
             result
@@ -832,6 +841,7 @@ mod tests {
             ConfigurationManager::try_new(
                 local_data_folder.clone(),
                 ClusterMode::MultiNode(Box::new(cluster)),
+                &default_args(),
             )
             .await
             .unwrap(),
@@ -846,5 +856,9 @@ mod tests {
         ));
 
         (storage_engine, configuration_manager)
+    }
+
+    fn default_args() -> ServerArgs {
+        ServerArgs::parse_from(["modelardbd", "edge", "/tmp"])
     }
 }
