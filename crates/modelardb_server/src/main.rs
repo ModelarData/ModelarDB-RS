@@ -26,6 +26,8 @@ mod storage;
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
 
+use clap::Subcommand;
+use modelardb_types::types::CloudCredentials;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
@@ -46,6 +48,30 @@ pub static PORT: LazyLock<u16> =
 pub(crate) enum ClusterMode {
     SingleNode,
     MultiNode(Box<Cluster>),
+}
+
+/// The mode and data folders a ModelarDB server is started with.
+#[derive(Subcommand)]
+pub(crate) enum ServerMode {
+    /// Run as an edge node. Optionally connects to a remote object store to form a cluster.
+    Edge {
+        /// Path to the local data folder.
+        local_data_folder: String,
+        /// URL of the remote data folder (e.g., s3://bucket or azureblobstorage://container).
+        /// If provided, this node joins a cluster and transfers data to the remote object store.
+        remote_data_folder: Option<String>,
+        #[command(flatten)]
+        credentials: CloudCredentials,
+    },
+    /// Run as a cloud node in a cluster. Queries are executed against the remote object store.
+    Cloud {
+        /// Path to the local data folder.
+        local_data_folder: String,
+        /// URL of the remote data folder (e.g., s3://bucket or azureblobstorage://container).
+        remote_data_folder: String,
+        #[command(flatten)]
+        credentials: CloudCredentials,
+    },
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to extract
