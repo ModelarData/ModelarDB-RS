@@ -48,8 +48,9 @@ impl DataFolders {
     }
 
     /// Parse the given [`ServerModeArg`] and connection parameters into a [`ClusterMode`] and an
-    /// instance of [`DataFolders`]. Returns [`ModelarDbServerError`] if the arguments are
-    /// malformed, required credentials are missing, or the data folders cannot be opened.
+    /// instance of [`DataFolders`]. Returns [`ModelarDbServerError`](crate::error::ModelarDbServerError)
+    /// if the arguments are malformed, required credentials are missing, or the data folders cannot
+    /// be opened.
     pub async fn try_from_args(
         server_mode: &ServerModeArg,
         host: &str,
