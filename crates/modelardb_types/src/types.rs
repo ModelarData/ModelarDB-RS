@@ -405,7 +405,7 @@ impl fmt::Display for ServerMode {
 
 /// Cloud credentials extracted from either a subcommand's flags or the corresponding environment
 /// variables.
-#[derive(Args)]
+#[derive(Args, Default)]
 pub struct CloudCredentials {
     /// Amazon S3 endpoint URL.
     #[arg(long, env = "AWS_ENDPOINT")]

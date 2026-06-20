@@ -125,35 +125,21 @@ impl DataFolders {
 mod tests {
     use super::*;
 
-    // Tests for try_from_command_line_arguments().
-    #[tokio::test]
-    async fn test_try_from_empty_command_line_arguments() {
-        let result = DataFolders::try_from_command_line_arguments(&[]).await;
+    use modelardb_types::types::CloudCredentials;
 
-        assert_eq!(
-            result.err().unwrap().to_string(),
-            "Invalid Argument Error: Too few, too many, or malformed arguments.".to_owned()
-        );
-    }
-
+    // Tests for try_from_args().
     #[tokio::test]
-    async fn test_try_from_edge_command_line_arguments_without_remote_url() {
+    async fn test_try_from_edge_without_remote_args() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_node_without_remote_data_folder(&["edge", temp_dir_str]).await;
-    }
+        let mode = ServerModeArg::Edge {
+            local_data_folder: temp_dir_str.to_owned(),
+            remote_data_folder: None,
+            credentials: no_credentials(),
+        };
 
-    #[tokio::test]
-    async fn test_try_from_edge_command_line_arguments_without_server_mode_and_remote_url() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert_single_node_without_remote_data_folder(&[temp_dir_str]).await;
-    }
-
-    async fn assert_single_node_without_remote_data_folder(input: &[&str]) {
-        let (cluster_mode, data_folders) = DataFolders::try_from_command_line_arguments(input)
+        let (cluster_mode, data_folders) = DataFolders::try_from_args(&mode, "127.0.0.1", 9999)
             .await
             .unwrap();
 
@@ -162,16 +148,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_try_from_incomplete_cloud_command_line_arguments() {
+    async fn test_try_from_cloud_without_credentials_args() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        let result = DataFolders::try_from_command_line_arguments(&["cloud", temp_dir_str]).await;
+        let mode = ServerModeArg::Cloud {
+            local_data_folder: temp_dir_str.to_owned(),
+            remote_data_folder: "s3://my-bucket".to_owned(),
+            credentials: no_credentials(),
+        };
+
+        let result = DataFolders::try_from_args(&mode, "127.0.0.1", 9999).await;
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            "ModelarDB Storage Error: Invalid Argument Error: Remote data folder URL must be \
-             s3://bucket-name or azureblobstorage://container-name.",
+            "Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
         );
+    }
+
+    #[tokio::test]
+    async fn test_try_from_cloud_with_invalid_remote_url_args() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        let mode = ServerModeArg::Cloud {
+            local_data_folder: temp_dir_str.to_owned(),
+            remote_data_folder: "invalid://bucket".to_owned(),
+            credentials: no_credentials(),
+        };
+
+        let result = DataFolders::try_from_args(&mode, "127.0.0.1", 9999).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "Invalid Argument Error: Remote data folder URL must be s3://bucket-name or \
+             azureblobstorage://container-name."
+        );
+    }
+
+    fn no_credentials() -> CloudCredentials {
+        CloudCredentials::default()
     }
 }
