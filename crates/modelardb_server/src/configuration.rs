@@ -74,39 +74,37 @@ struct Configuration {
 }
 
 impl Configuration {
-    /// If the corresponding environment variable is set, update the configuration with the value
-    /// from the environment variable. If the value could not be parsed, return
-    /// [`ModelarDbServerError`].
-    fn update_from_env(&mut self) -> Result<()> {
-        if let Ok(value) = env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES") {
-            self.multivariate_reserved_memory_in_bytes = value.parse()?;
-        };
-
-        if let Ok(value) = env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES") {
-            self.uncompressed_reserved_memory_in_bytes = value.parse()?;
-        };
-
-        if let Ok(value) = env::var("MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES") {
-            self.compressed_reserved_memory_in_bytes = value.parse()?;
-        };
-
-        if let Ok(value) = env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES") {
-            self.transfer_batch_size_in_bytes = Some(value.parse()?);
+    /// Override the configuration with the flags or environment variables from the command line.
+    /// The precedence for each configuration is default value < configuration file < environment
+    /// variable < CLI flag.
+    fn apply_arg_overrides(&mut self, args: &ServerArgs) {
+        if let Some(value) = args.multivariate_reserved_memory_in_bytes {
+            self.multivariate_reserved_memory_in_bytes = value;
         }
 
-        if let Ok(value) = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS") {
-            self.transfer_time_in_seconds = Some(value.parse()?);
+        if let Some(value) = args.uncompressed_reserved_memory_in_bytes {
+            self.uncompressed_reserved_memory_in_bytes = value;
         }
 
-        if let Ok(value) = env::var("MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES") {
-            self.segment_size_threshold_in_bytes = value.parse()?;
+        if let Some(value) = args.compressed_reserved_memory_in_bytes {
+            self.compressed_reserved_memory_in_bytes = value;
         }
 
-        if let Ok(value) = env::var("MODELARDBD_WAL_ENABLED") {
-            self.wal_enabled = value.parse()?;
+        if let Some(value) = args.transfer_batch_size_in_bytes {
+            self.transfer_batch_size_in_bytes = Some(value);
         }
 
-        Ok(())
+        if let Some(value) = args.transfer_time_in_seconds {
+            self.transfer_time_in_seconds = Some(value);
+        }
+
+        if let Some(value) = args.segment_size_threshold_in_bytes {
+            self.segment_size_threshold_in_bytes = value;
+        }
+
+        if let Some(value) = args.wal_enabled {
+            self.wal_enabled = value;
+        }
     }
 
     /// Validate the fields in the configuration and return [`Ok`] if they are valid. If the
