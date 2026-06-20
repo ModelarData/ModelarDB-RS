@@ -15,8 +15,13 @@
 
 //! Management of the system's configuration. The configuration consists of various parameters that
 //! determine the behavior of the storage engine, write-ahead log, and data transfer component.
+//! The value for each configuration is determined according to the following precedence order:
+//!
+//! 1. CLI flag.
+//! 2. Environment variable.
+//! 3. Configuration file.
+//! 4. Default value.
 
-use std::env;
 use std::sync::Arc;
 
 use modelardb_storage::data_folder::DataFolder;
@@ -75,8 +80,6 @@ struct Configuration {
 
 impl Configuration {
     /// Override the configuration with the flags or environment variables from the command line.
-    /// The precedence for each configuration is default value < configuration file < environment
-    /// variable < CLI flag.
     fn apply_arg_overrides(&mut self, args: &ServerArgs) {
         if let Some(value) = args.multivariate_reserved_memory_in_bytes {
             self.multivariate_reserved_memory_in_bytes = value;
@@ -208,7 +211,7 @@ impl ConfigurationManager {
             },
         };
 
-        configuration.update_from_env()?;
+        configuration.apply_arg_overrides(args);
         configuration.validate()?;
         configuration.save_to_toml(&local_data_folder).await?;
 
