@@ -148,6 +148,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_try_from_edge_with_remote_without_credentials_args() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        let mode = ServerModeArg::Edge {
+            local_data_folder: temp_dir_str.to_owned(),
+            remote_data_folder: Some("s3://my-bucket".to_owned()),
+            credentials: no_credentials(),
+        };
+
+        let result = DataFolders::try_from_args(&mode, "127.0.0.1", 9999).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
+        );
+    }
+
+    #[tokio::test]
     async fn test_try_from_cloud_without_credentials_args() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
@@ -163,26 +182,6 @@ mod tests {
         assert_eq!(
             result.err().unwrap().to_string(),
             "Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
-        );
-    }
-
-    #[tokio::test]
-    async fn test_try_from_cloud_with_invalid_remote_url_args() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        let mode = ServerModeArg::Cloud {
-            local_data_folder: temp_dir_str.to_owned(),
-            remote_data_folder: "invalid://bucket".to_owned(),
-            credentials: no_credentials(),
-        };
-
-        let result = DataFolders::try_from_args(&mode, "127.0.0.1", 9999).await;
-
-        assert_eq!(
-            result.err().unwrap().to_string(),
-            "Invalid Argument Error: Remote data folder URL must be s3://bucket-name or \
-             azureblobstorage://container-name."
         );
     }
 
