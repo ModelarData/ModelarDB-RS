@@ -26,7 +26,7 @@ mod storage;
 use std::sync::{Arc, LazyLock};
 use std::{env, process};
 
-use clap::Subcommand;
+use clap::{Parser, Subcommand};
 use modelardb_types::types::CloudCredentials;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -48,6 +48,56 @@ pub static PORT: LazyLock<u16> =
 pub(crate) enum ClusterMode {
     SingleNode,
     MultiNode(Box<Cluster>),
+}
+
+/// Command line arguments for the ModelarDB server.
+#[derive(Parser)]
+#[command(
+    about = "ModelarDB server",
+    long_about = "ModelarDB server. Ingests and compresses data, stores it in a local data folder, \
+    and optionally transfers it to a remote object store."
+)]
+struct ServerArgs {
+    /// Host address the Apache Arrow Flight server listens on.
+    #[arg(long, default_value = "127.0.0.1", env = "MODELARDBD_HOST")]
+    host: String,
+
+    /// Port the Apache Arrow Flight server listens on.
+    #[arg(long, default_value_t = 9999, env = "MODELARDBD_PORT")]
+    port: u16,
+
+    /// Amount of memory in bytes to reserve for storing multivariate time series.
+    #[arg(long, env = "MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")]
+    multivariate_reserved_memory_in_bytes: Option<u64>,
+
+    /// Amount of memory in bytes to reserve for storing uncompressed data buffers.
+    #[arg(long, env = "MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")]
+    uncompressed_reserved_memory_in_bytes: Option<u64>,
+
+    /// Amount of memory in bytes to reserve for storing compressed data buffers.
+    #[arg(long, env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES")]
+    compressed_reserved_memory_in_bytes: Option<u64>,
+
+    /// Number of bytes required before transferring a batch of data to the remote object store.
+    /// If not set, data is not transferred based on batch size.
+    #[arg(long, env = "MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")]
+    transfer_batch_size_in_bytes: Option<u64>,
+
+    /// Number of seconds between each transfer of data to the remote object store. If not set,
+    /// data is not transferred based on time.
+    #[arg(long, env = "MODELARDBD_TRANSFER_TIME_IN_SECONDS")]
+    transfer_time_in_seconds: Option<u64>,
+
+    /// Approximate maximum size in bytes of a single WAL segment file before a new one is started.
+    #[arg(long, env = "MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES")]
+    segment_size_threshold_in_bytes: Option<u64>,
+
+    /// Whether the write-ahead log is enabled.
+    #[arg(long, env = "MODELARDBD_WAL_ENABLED")]
+    wal_enabled: Option<bool>,
+
+    #[command(subcommand)]
+    mode: ServerMode,
 }
 
 /// The mode and data folders a ModelarDB server is started with.
