@@ -28,7 +28,7 @@ use crate::configuration::{ConfigurationManager, WalMode};
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
 use crate::storage::data_sinks::{NormalTableDataSink, TimeSeriesTableDataSink};
-use crate::{ClusterMode, DataFolders};
+use crate::{ClusterMode, DataFolders, ServerArgs};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
@@ -44,10 +44,18 @@ impl Context {
     /// Create the components needed in the [`Context`] and use them to create the [`Context`]. If the
     /// configuration manager or storage engine could not be created, [`ModelarDbServerError`] is
     /// returned.
-    pub async fn try_new(data_folders: DataFolders, cluster_mode: ClusterMode) -> Result<Self> {
+    pub async fn try_new(
+        data_folders: DataFolders,
+        cluster_mode: ClusterMode,
+        args: &ServerArgs,
+    ) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(
-            ConfigurationManager::try_new(data_folders.local_data_folder.clone(), cluster_mode)
-                .await?,
+            ConfigurationManager::try_new(
+                data_folders.local_data_folder.clone(),
+                cluster_mode,
+                args,
+            )
+            .await?,
         ));
 
         let wal_mode = configuration_manager.read().await.wal_mode().clone();

@@ -28,9 +28,9 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::ClusterMode;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
+use crate::{ClusterMode, ServerArgs};
 
 const CONFIGURATION_FILE_NAME: &str = "modelardbd.toml";
 
@@ -180,9 +180,13 @@ impl ConfigurationManager {
     /// Create a new [`ConfigurationManager`] using the [`CONFIGURATION_FILE_NAME`] configuration
     /// file in the local data folder. If the file does not exist, a configuration file is created
     /// with the default values. Note that the configuration file and default values are overwritten
-    /// if the corresponding environment variables are set. If the configuration file could not be
-    /// read or created, [`ModelarDbServerError`] is returned.
-    pub async fn try_new(local_data_folder: DataFolder, cluster_mode: ClusterMode) -> Result<Self> {
+    /// if the corresponding CLI flags or environment variables are set. If the configuration file
+    /// could not be read or created, [`ModelarDbServerError`] is returned.
+    pub async fn try_new(
+        local_data_folder: DataFolder,
+        cluster_mode: ClusterMode,
+        args: &ServerArgs,
+    ) -> Result<Self> {
         // Check if there is a configuration file in the local data folder.
         let object_store = local_data_folder.object_store();
         let maybe_conf_file = object_store.get(&Path::from(CONFIGURATION_FILE_NAME)).await;

@@ -52,7 +52,7 @@ pub(crate) enum ClusterMode {
     long_about = "ModelarDB server. Ingests and compresses data, stores it in a local data folder, \
     and optionally transfers it to a remote object store."
 )]
-struct ServerArgs {
+pub(crate) struct ServerArgs {
     /// Host address the Apache Arrow Flight server listens on.
     #[arg(long, default_value = "127.0.0.1", env = "MODELARDBD_HOST")]
     host: String,
@@ -137,7 +137,7 @@ async fn main() -> Result<()> {
     let (cluster_mode, data_folders) =
         DataFolders::try_from_args(&args.mode, &args.host, args.port).await?;
 
-    let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone()).await?);
+    let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone(), &args).await?);
 
     // Register normal tables and time series tables.
     context.register_normal_tables().await?;
