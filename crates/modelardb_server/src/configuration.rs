@@ -79,8 +79,9 @@ struct Configuration {
 }
 
 impl Configuration {
-    /// Override the configuration with the flags or environment variables from the command line.
-    fn apply_arg_overrides(&mut self, args: &ServerArgs) {
+    /// Update the configuration with the corresponding flags or environment variables from the
+    /// command line if they are set.
+    fn update_from_args(&mut self, args: &ServerArgs) {
         if let Some(value) = args.multivariate_reserved_memory_in_bytes {
             self.multivariate_reserved_memory_in_bytes = value;
         }
@@ -211,7 +212,7 @@ impl ConfigurationManager {
             },
         };
 
-        configuration.apply_arg_overrides(args);
+        configuration.update_from_args(args);
         configuration.validate()?;
         configuration.save_to_toml(&local_data_folder).await?;
 

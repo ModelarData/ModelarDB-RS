@@ -137,7 +137,7 @@ mod tests {
         let mode = ServerModeArg::Edge {
             local_data_folder: temp_dir_str.to_owned(),
             remote_data_folder: None,
-            credentials: no_credentials(),
+            credentials: CloudCredentials::default(),
         };
 
         let (cluster_mode, data_folders) = DataFolders::try_from_args(&mode, "127.0.0.1", 9999)
@@ -156,7 +156,7 @@ mod tests {
         let mode = ServerModeArg::Edge {
             local_data_folder: temp_dir_str.to_owned(),
             remote_data_folder: Some("s3://my-bucket".to_owned()),
-            credentials: no_credentials(),
+            credentials: CloudCredentials::default(),
         };
 
         let result = DataFolders::try_from_args(&mode, "127.0.0.1", 9999).await;
@@ -175,7 +175,7 @@ mod tests {
         let mode = ServerModeArg::Cloud {
             local_data_folder: temp_dir_str.to_owned(),
             remote_data_folder: "s3://my-bucket".to_owned(),
-            credentials: no_credentials(),
+            credentials: CloudCredentials::default(),
         };
 
         let result = DataFolders::try_from_args(&mode, "127.0.0.1", 9999).await;
@@ -184,9 +184,5 @@ mod tests {
             result.err().unwrap().to_string(),
             "ModelarDB Storage Error: Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
         );
-    }
-
-    fn no_credentials() -> CloudCredentials {
-        CloudCredentials::default()
     }
 }

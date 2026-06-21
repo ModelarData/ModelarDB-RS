@@ -30,5 +30,5 @@ bytes.workspace = true
 clap.workspace = true
 dirs.workspace = true
 rustyline.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio.workspace = true
 tonic.workspace = true
