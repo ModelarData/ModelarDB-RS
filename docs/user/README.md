@@ -377,9 +377,9 @@ When the server is started for the first time, a configuration file is created i
 
 `modelardbd` can be configured before the server is started using command line flags or environment variables. Flags take 
 precedence over environment variables, which take precedence over the configuration file, which takes precedence over 
-the built-in defaults. Variables marked with ✓ in the **Updatable** column can also be updated while the server is 
-running using the `UpdateConfiguration` action without requiring a restart. The update is persisted in the configuration 
-file.
+the built-in defaults. Note that the connection settings `--host` and `--port` are not persisted in the configuration 
+file. Variables marked with ✓ in the **Updatable** column can also be updated while the server is running using the 
+`UpdateConfiguration` action without requiring a restart. The update is persisted in the configuration file.
 
 | **CLI Flag**                              | **Environment Variable**                           | **Default** | **Updatable** | **Description**                                                                                                                |
 |-------------------------------------------|----------------------------------------------------|-------------|---------------|--------------------------------------------------------------------------------------------------------------------------------|
