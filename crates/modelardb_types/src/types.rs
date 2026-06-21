@@ -24,7 +24,7 @@ use std::result::Result as StdResult;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow::array::{RecordBatch, StringArray};
+use arrow::array::{RecordBatch, StringViewArray};
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
 use clap::Args;
 use datafusion::common::{DFSchema, DataFusionError};
@@ -155,7 +155,7 @@ impl TimeSeriesTableMetadata {
             let data_type = field.data_type();
             if data_type != &ArrowTimestamp::DATA_TYPE
                 && data_type != &ArrowValue::DATA_TYPE
-                && data_type != &DataType::Utf8
+                && data_type != &DataType::Utf8View
             {
                 return Err(ModelarDbTypesError::InvalidArgument(format!(
                     "The data type '{data_type}' of column '{}' is not supported in a time series table.",
@@ -208,8 +208,10 @@ impl TimeSeriesTableMetadata {
             ));
         }
 
-        let tag_column_indices =
-            compute_indices_of_columns_with_data_type(&schema_without_generated, DataType::Utf8);
+        let tag_column_indices = compute_indices_of_columns_with_data_type(
+            &schema_without_generated,
+            DataType::Utf8View,
+        );
 
         // Add the tag columns to the base schema for compressed segments.
         let mut compressed_schema_fields =
@@ -254,7 +256,7 @@ impl TimeSeriesTableMetadata {
     ) -> Result<(
         &'a TimestampArray,
         Vec<&'a ValueArray>,
-        Vec<&'a StringArray>,
+        Vec<&'a StringViewArray>,
     )> {
         if record_batch.schema() != self.schema {
             return Err(ModelarDbTypesError::InvalidArgument(
@@ -274,7 +276,7 @@ impl TimeSeriesTableMetadata {
         let tag_column_arrays: Vec<_> = self
             .tag_column_indices
             .iter()
-            .map(|index| crate::array!(record_batch, *index, StringArray))
+            .map(|index| crate::array!(record_batch, *index, StringViewArray))
             .collect();
 
         Ok((
@@ -457,7 +459,7 @@ mod tests {
     #[test]
     fn test_cannot_create_time_series_table_metadata_with_invalid_timestamp_type() {
         let schema = Schema::new(vec![
-            Field::new("tag", DataType::Utf8, false),
+            Field::new("tag", DataType::Utf8View, false),
             Field::new("timestamp", TimestampMillisecondType::DATA_TYPE, false),
             Field::new("value", ArrowValue::DATA_TYPE, false),
         ]);
@@ -489,7 +491,7 @@ mod tests {
     #[test]
     fn test_cannot_create_time_series_table_metadata_with_no_fields() {
         let schema = Schema::new(vec![
-            Field::new("tag", DataType::Utf8, false),
+            Field::new("tag", DataType::Utf8View, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
         ]);
 
@@ -504,7 +506,7 @@ mod tests {
     #[test]
     fn test_cannot_create_time_series_table_metadata_with_invalid_field_type() {
         let schema = Schema::new(vec![
-            Field::new("tag", DataType::Utf8, false),
+            Field::new("tag", DataType::Utf8View, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("value", DataType::UInt8, false),
         ]);
@@ -599,9 +601,9 @@ mod tests {
     -> (Arc<Schema>, Vec<ErrorBound>, Vec<Option<GeneratedColumn>>) {
         (
             Arc::new(Schema::new(vec![
-                Field::new("location", DataType::Utf8, false),
-                Field::new("install_year", DataType::Utf8, false),
-                Field::new("model", DataType::Utf8, false),
+                Field::new("location", DataType::Utf8View, false),
+                Field::new("install_year", DataType::Utf8View, false),
+                Field::new("model", DataType::Utf8View, false),
                 Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
                 Field::new("power_output", ArrowValue::DATA_TYPE, false),
                 Field::new("wind_speed", ArrowValue::DATA_TYPE, false),
@@ -663,7 +665,7 @@ mod tests {
             field_column_arrays[1]
         );
         assert_eq!(
-            crate::array!(record_batch, 3, StringArray),
+            crate::array!(record_batch, 3, StringViewArray),
             tag_column_arrays[0]
         );
     }

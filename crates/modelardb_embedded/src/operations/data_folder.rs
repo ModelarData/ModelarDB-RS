@@ -132,7 +132,8 @@ impl Operations for DataFolder {
                     table_name,
                     delta_table,
                     data_sink.clone(),
-                )?;
+                )
+                .await?;
             }
             TableType::TimeSeriesTable(schema, error_bounds, generated_columns) => {
                 let time_series_table_metadata = Arc::new(try_new_time_series_table_metadata(
@@ -397,7 +398,7 @@ impl Operations for DataFolder {
         let sql = format!("SELECT * FROM {source_table_name} {where_clause}");
 
         // Read data to copy from source_table_name in source.
-        let source_table = Arc::new(self.delta_table(source_table_name).await?);
+        let source_table = self.table_provider(source_table_name).await?;
 
         let session_context = modelardb_storage::create_session_context();
         session_context.register_table(source_table_name, source_table)?;
@@ -573,12 +574,11 @@ mod tests {
 
     use arrow::array::{
         Array, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
-        StringArray,
+        StringViewArray,
     };
     use arrow::compute::SortOptions;
     use arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
     use arrow_flight::flight_service_client::FlightServiceClient;
-    use datafusion::datasource::TableProvider;
     use datafusion::logical_expr::col;
     use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
     use datafusion::physical_plan::expressions::Column;
@@ -1192,9 +1192,27 @@ mod tests {
         .await
         .unwrap();
 
+        // Sort the actual result by tag_1 before asserting column by column since GROUP BY does
+        // not guarantee the ordering.
+        let sort_options = SortOptions {
+            descending: false,
+            nulls_first: false,
+        };
+
+        let actual_result = sort::sort_batch(
+            &actual_result,
+            &LexOrdering::new(vec![PhysicalSortExpr {
+                expr: Arc::new(Column::new("tag_1", 0)),
+                options: sort_options,
+            }])
+            .unwrap(),
+            None,
+        )
+        .unwrap();
+
         assert_eq!(
             **actual_result.column(0),
-            StringArray::from(vec!["tag_x", "tag_y"])
+            StringViewArray::from(vec!["tag_x", "tag_y"])
         );
         assert_eq!(**actual_result.column(1), Int64Array::from(vec![3, 3]));
         assert_eq!(
@@ -1657,7 +1675,7 @@ mod tests {
         let source_actual_result = data_folder_read(&mut source, &sql).await.unwrap();
         let target_actual_result = data_folder_read(&mut target, &sql).await.unwrap();
 
-        assert_eq!(source_actual_result, time_series_table_data());
+        assert_eq!(source_actual_result, sorted_time_series_table_data());
         assert_eq!(target_actual_result, time_series_table_data().slice(2, 2));
     }
 
@@ -2298,10 +2316,10 @@ mod tests {
         expected_schema: Schema,
     ) {
         // Verify that the normal table exists in the Delta Lake.
-        let delta_table = data_folder.delta_table(table_name).await.unwrap();
+        let table_provider = data_folder.table_provider(table_name).await.unwrap();
 
-        let actual_schema = TableProvider::schema(&delta_table);
-        assert_eq!(actual_schema, Arc::new(expected_schema));
+        let actual_schema = table_provider.schema();
+        assert_eq!(*actual_schema, expected_schema);
 
         // Verify that the normal table exists in the Delta Lake.
         assert!(data_folder.is_normal_table(table_name).await.unwrap());
@@ -2735,7 +2753,7 @@ mod tests {
 
     fn normal_table_data() -> RecordBatch {
         let ids = Int32Array::from(vec![1, 2, 3, 4, 5, 6]);
-        let names = StringArray::from(vec!["Alice", "Bob", "Charlie", "David", "Eve", "Frank"]);
+        let names = StringViewArray::from(vec!["Alice", "Bob", "Charlie", "David", "Eve", "Frank"]);
         let ages = Int8Array::from(vec![20, 30, 40, 25, 35, 45]);
         let heights = Int16Array::from(vec![160, 170, 180, 165, 175, 185]);
         let weights = Int16Array::from(vec![60, 70, 80, 65, 75, 85]);
@@ -2756,7 +2774,7 @@ mod tests {
     fn normal_table_schema() -> Schema {
         Schema::new(vec![
             Field::new("id", DataType::Int32, false),
-            Field::new("name", DataType::Utf8, false),
+            Field::new("name", DataType::Utf8View, false),
             Field::new("age", DataType::Int8, false),
             Field::new("height", DataType::Int16, false),
             Field::new("weight", DataType::Int16, false),
@@ -2809,8 +2827,10 @@ mod tests {
 
     fn time_series_table_data() -> RecordBatch {
         let timestamps = TimestampArray::from(vec![100, 100, 200, 200, 300, 300]);
-        let tag_1 = StringArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
-        let tag_2 = StringArray::from(vec!["tag_a", "tag_b", "tag_a", "tag_b", "tag_a", "tag_b"]);
+        let tag_1 =
+            StringViewArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
+        let tag_2 =
+            StringViewArray::from(vec!["tag_a", "tag_b", "tag_a", "tag_b", "tag_a", "tag_b"]);
         let field_1 = ValueArray::from(vec![37.0, 73.0, 38.0, 72.0, 39.0, 71.0]);
         let field_2 = ValueArray::from(vec![24.0, 56.0, 25.0, 55.0, 26.0, 54.0]);
 
@@ -2830,8 +2850,8 @@ mod tests {
     fn time_series_table_schema() -> Schema {
         Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("tag_1", DataType::Utf8, false),
-            Field::new("tag_2", DataType::Utf8, false),
+            Field::new("tag_1", DataType::Utf8View, false),
+            Field::new("tag_2", DataType::Utf8View, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
         ])
@@ -2860,8 +2880,8 @@ mod tests {
     fn time_series_table_with_generated_column_schema() -> Schema {
         Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("tag_1", DataType::Utf8, false),
-            Field::new("tag_2", DataType::Utf8, false),
+            Field::new("tag_1", DataType::Utf8View, false),
+            Field::new("tag_2", DataType::Utf8View, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
             Field::new("generated", ArrowValue::DATA_TYPE, false),
@@ -2870,7 +2890,7 @@ mod tests {
 
     fn invalid_table_data() -> RecordBatch {
         let timestamps = TimestampArray::from(vec![100, 100, 200, 200, 300, 300]);
-        let tag = StringArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
+        let tag = StringViewArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
         let field = ValueArray::from(vec![37.0, 73.0, 38.0, 72.0, 39.0, 71.0]);
 
         RecordBatch::try_new(
@@ -2883,7 +2903,7 @@ mod tests {
     fn invalid_table_schema() -> Schema {
         Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("tag", DataType::Utf8, false),
+            Field::new("tag", DataType::Utf8View, false),
             Field::new("field", ArrowValue::DATA_TYPE, false),
         ])
     }

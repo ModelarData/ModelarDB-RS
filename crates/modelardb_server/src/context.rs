@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
-use datafusion::catalog::{SchemaProvider, TableProvider};
+use datafusion::catalog::SchemaProvider;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -182,9 +182,11 @@ impl Context {
             .delta_table(table_name)
             .await?;
 
+        let table_provider = delta_table.table_provider().await?;
+
         let normal_table_data_sink = Arc::new(NormalTableDataSink::new(
             table_name.to_owned(),
-            TableProvider::schema(&delta_table),
+            table_provider.schema(),
             self.storage_engine.clone(),
         ));
 
@@ -193,7 +195,8 @@ impl Context {
             table_name,
             delta_table,
             normal_table_data_sink,
-        )?;
+        )
+        .await?;
 
         info!("Registered normal table '{table_name}'.");
 

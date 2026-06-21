@@ -40,8 +40,8 @@ use modelardb_types::types::{
 };
 use sqlparser::ast::{
     CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, CreateTableOptions,
-    DataType as SQLDataType, Expr, GeneratedAs, HiveDistributionStyle, HiveFormat, Ident,
-    ObjectName, ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo,
+    DataType as SQLDataType, Expr, GeneratedAs, HiveDistributionStyle, Ident, ObjectName,
+    ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo, Truncate,
     TruncateIdentityOption, TruncateTableTarget, Value, ValueWithSpan,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
@@ -114,18 +114,20 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
                 )?;
                 Ok(ModelarDbStatement::DropTable(table_names))
             }
-            Statement::Truncate {
+            Statement::Truncate(Truncate {
                 table_names,
                 partitions,
                 table,
+                if_exists,
                 identity,
                 cascade,
                 on_cluster,
-            } => {
+            }) => {
                 let (table_names, cluster) = semantic_checks_for_truncate(
                     table_names,
                     partitions,
                     table,
+                    if_exists,
                     identity,
                     cascade,
                     on_cluster,
@@ -404,12 +406,7 @@ impl ModelarDbDialect {
             columns,
             constraints: vec![],
             hive_distribution: HiveDistributionStyle::NONE,
-            hive_formats: Some(HiveFormat {
-                row_format: None,
-                serde_properties: None,
-                storage: None,
-                location: None,
-            }),
+            hive_formats: None,
             table_options: CreateTableOptions::None,
             file_format: None,
             location: None,
@@ -427,6 +424,8 @@ impl ModelarDbDialect {
             cluster_by: None,
             clustered_by: None,
             inherits: None,
+            partition_of: None,
+            for_values: None,
             strict: false,
             copy_grants: false,
             enable_schema_evolution: None,
@@ -617,17 +616,19 @@ impl ModelarDbDialect {
             .map(|table_name| TruncateTableTarget {
                 name: ObjectName(vec![ObjectNamePart::Identifier(Ident::new(table_name))]),
                 only: false,
+                has_asterisk: false,
             })
             .collect();
 
-        Ok(Statement::Truncate {
+        Ok(Statement::Truncate(Truncate {
             table_names: truncate_table_targets,
             partitions: None,
             table: true,
+            if_exists: false,
             identity: None,
             cascade: None,
             on_cluster: truncate_cluster,
-        })
+        }))
     }
 
     /// Return a list of table names parsed from the token stream. It is assumed that the table
@@ -933,6 +934,8 @@ fn check_unsupported_features_are_disabled(
         cluster_by,
         clustered_by,
         inherits,
+        partition_of,
+        for_values,
         strict,
         copy_grants,
         enable_schema_evolution,
@@ -968,16 +971,7 @@ fn check_unsupported_features_are_disabled(
         hive_distribution != &HiveDistributionStyle::NONE,
         "Hive distribution",
     )?;
-    check_unsupported_feature_is_disabled(
-        *hive_formats
-            != Some(HiveFormat {
-                row_format: None,
-                serde_properties: None,
-                storage: None,
-                location: None,
-            }),
-        "Hive formats",
-    )?;
+    check_unsupported_feature_is_disabled(hive_formats.is_some(), "Hive formats")?;
     check_unsupported_feature_is_disabled(
         table_options != &CreateTableOptions::None,
         "Table Options",
@@ -998,6 +992,8 @@ fn check_unsupported_features_are_disabled(
     check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
     check_unsupported_feature_is_disabled(clustered_by.is_some(), "CLUSTERED BY")?;
     check_unsupported_feature_is_disabled(inherits.is_some(), "INHERITS")?;
+    check_unsupported_feature_is_disabled(partition_of.is_some(), "PARTITION OF")?;
+    check_unsupported_feature_is_disabled(for_values.is_some(), "FOR VALUES")?;
     check_unsupported_feature_is_disabled(*strict, "STRICT")?;
     check_unsupported_feature_is_disabled(*copy_grants, "COPY_GRANTS")?;
     check_unsupported_feature_is_disabled(
@@ -1107,7 +1103,7 @@ fn column_defs_to_time_series_table_query_schema(
 
                 Field::new(normalized_name, ArrowValue::DATA_TYPE, false).with_metadata(metadata)
             }
-            SQLDataType::Text => Field::new(normalized_name, DataType::Utf8, false),
+            SQLDataType::Text => Field::new(normalized_name, DataType::Utf8View, false),
             data_type => {
                 return Err(DataFusionError::SQL(
                     Box::new(ParserError::ParserError(format!(
@@ -1291,11 +1287,12 @@ fn semantic_checks_for_truncate(
     names: Vec<TruncateTableTarget>,
     partitions: Option<Vec<Expr>>,
     table: bool,
+    if_exists: bool,
     identity: Option<TruncateIdentityOption>,
     cascade: Option<CascadeOption>,
     on_cluster: Option<Ident>,
 ) -> StdResult<(Vec<String>, bool), ParserError> {
-    if partitions.is_some() || !table || identity.is_some() || cascade.is_some() {
+    if partitions.is_some() || !table || identity.is_some() || if_exists || cascade.is_some() {
         Err(ParserError::ParserError(
             "Only TRUNCATE [CLUSTER] table_name[, table_name]+ is supported.".to_owned(),
         ))
@@ -1371,7 +1368,7 @@ mod tests {
                     );
                     metadata
                 }),
-                Field::new("tag", DataType::Utf8, false),
+                Field::new("tag", DataType::Utf8View, false),
             ]));
             assert_eq!(time_series_table_metadata.query_schema, expected_schema);
 
@@ -1759,7 +1756,7 @@ mod tests {
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("tag_1", DataType::Utf8, false),
+            Field::new("tag_1", DataType::Utf8View, false),
         ])
         .to_dfschema()
         .unwrap();

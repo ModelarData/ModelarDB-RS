@@ -72,7 +72,7 @@ struct ClientArgs {
 /// Connect to the server and execute queries from a file or open a read-eval-print loop. Returns
 /// [`ModelarDbClientError`] if the command-line arguments cannot be parsed, the client cannot
 /// connect to the server, or the file containing the queries cannot be read.
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     // Parse the command line arguments.
     let args = ClientArgs::parse();

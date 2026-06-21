@@ -23,7 +23,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use arrow::compute::SortOptions;
-use arrow::datatypes::DataType::Utf8;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, TimeUnit};
 use datafusion::catalog::Session;
@@ -438,16 +437,15 @@ async fn new_data_source_exec(
     table_parquet_options.global.pushdown_filters = true;
     table_parquet_options.global.reorder_filters = true;
     let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
-        Arc::new(ParquetSource::default().with_predicate(parquet_filters.to_owned()))
+        Arc::new(ParquetSource::new(file_schema).with_predicate(parquet_filters.to_owned()))
     } else {
-        Arc::new(ParquetSource::default())
+        Arc::new(ParquetSource::new(file_schema))
     };
 
-    let file_scan_config =
-        FileScanConfigBuilder::new(log_store.object_store_url(), file_schema, file_source)
-            .with_file_group(file_group)
-            .with_limit(maybe_limit)
-            .with_output_ordering(output_ordering);
+    let file_scan_config = FileScanConfigBuilder::new(log_store.object_store_url(), file_source)
+        .with_file_group(file_group)
+        .with_limit(maybe_limit)
+        .with_output_ordering(output_ordering);
 
     Ok(DataSourceExec::from_data_source(file_scan_config.build()))
 }
@@ -476,6 +474,7 @@ fn logical_file_view_to_partitioned_file(
         partition_values: vec![],
         range: None,
         statistics: None,
+        ordering: None,
         extensions: None,
         metadata_size_hint: None,
     };
@@ -574,7 +573,7 @@ impl TableProvider for TimeSeriesTable {
             if *query_schema.field(*query_schema_index).data_type() == ArrowTimestamp::DATA_TYPE {
                 // Timestamp.
                 stored_columns_in_projection.push(SortedJoinColumnType::Timestamp);
-            } else if *query_schema.field(*query_schema_index).data_type() == Utf8 {
+            } else if *query_schema.field(*query_schema_index).data_type() == DataType::Utf8View {
                 // Tag.
                 let tag_column_name = query_schema.fields[*query_schema_index].name().clone();
                 stored_columns_in_projection.push(SortedJoinColumnType::Tag(tag_column_name));

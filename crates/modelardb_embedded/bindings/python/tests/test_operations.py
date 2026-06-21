@@ -136,7 +136,8 @@ class TestOperations(unittest.TestCase):
             time_series_table_folder = os.path.join(temp_dir, "tables", TIME_SERIES_TABLE_NAME)
             self.assertEqual(len(os.listdir(time_series_table_folder)), 1)
 
-            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME,
+                              unsorted_time_series_table_data_without_generated_column())
             self.assertEqual(len(os.listdir(time_series_table_folder)), 3)
 
     def test_data_folder_write_error(self):
@@ -144,7 +145,8 @@ class TestOperations(unittest.TestCase):
             data_folder = Operations.open_local(temp_dir)
 
             with self.assertRaises(RuntimeError) as context:
-                data_folder.write(MISSING_TABLE_NAME, time_series_table_data())
+                data_folder.write(MISSING_TABLE_NAME,
+                                  unsorted_time_series_table_data_without_generated_column())
 
             error_message = (
                 f"Invalid Argument Error: {MISSING_TABLE_NAME} is not a table."
@@ -156,7 +158,8 @@ class TestOperations(unittest.TestCase):
             data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME,
+                              unsorted_time_series_table_data_without_generated_column())
 
             actual_result = data_folder.read(f"SELECT * FROM {TIME_SERIES_TABLE_NAME}")
             self.assertEqual(
@@ -217,7 +220,8 @@ class TestOperations(unittest.TestCase):
             data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME,
+                              unsorted_time_series_table_data_without_generated_column())
 
             actual_result = data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME)
             self.assertEqual(
@@ -229,7 +233,8 @@ class TestOperations(unittest.TestCase):
             data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME,
+                              unsorted_time_series_table_data_without_generated_column())
 
             end_time = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
             actual_result = data_folder.read_time_series_table(
@@ -249,7 +254,8 @@ class TestOperations(unittest.TestCase):
             data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME,
+                              unsorted_time_series_table_data_without_generated_column())
 
             columns = [
                 ("tag", Aggregate.NONE),
@@ -286,7 +292,8 @@ class TestOperations(unittest.TestCase):
                 source_data_folder = Operations.open_local(source_temp_dir)
                 create_tables_in_data_folder(source_data_folder)
 
-                source_data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+                source_data_folder.write(TIME_SERIES_TABLE_NAME,
+                                         unsorted_time_series_table_data_without_generated_column())
 
                 target_data_folder = Operations.open_local(target_temp_dir)
                 create_tables_in_data_folder(target_data_folder)
@@ -297,6 +304,7 @@ class TestOperations(unittest.TestCase):
 
                 # After copying the data it should also be in target_table.
                 expected_result = sorted_time_series_table_data_with_generated_column()
+
                 self.assertEqual(
                     source_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
                 )
@@ -313,7 +321,8 @@ class TestOperations(unittest.TestCase):
                 # Force the physical data to have multiple segments by writing the data in three parts.
                 for i in range(3):
                     source_data_folder.write(
-                        TIME_SERIES_TABLE_NAME, time_series_table_data().slice(i * 2, 2)
+                        TIME_SERIES_TABLE_NAME,
+                        unsorted_time_series_table_data_without_generated_column().slice(i * 2, 2)
                     )
 
                 target_data_folder = Operations.open_local(target_temp_dir)
@@ -329,12 +338,13 @@ class TestOperations(unittest.TestCase):
                 )
 
                 # After copying the data it should also be in target_table.
-                source_expected_result = time_series_table_data_with_generated_column()
+                source_expected_result = sorted_time_series_table_data_with_generated_column()
                 self.assertEqual(
                     source_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
                     source_expected_result,
                 )
 
+                source_expected_result = unsorted_time_series_table_data_with_generated_column()
                 target_expected_result = source_expected_result.slice(2, 2)
                 self.assertEqual(
                     target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
@@ -361,7 +371,8 @@ class TestOperations(unittest.TestCase):
                 source_data_folder = Operations.open_local(source_temp_dir)
                 create_tables_in_data_folder(source_data_folder)
 
-                source_data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+                source_data_folder.write(TIME_SERIES_TABLE_NAME,
+                                         unsorted_time_series_table_data_without_generated_column())
 
                 target_data_folder = Operations.open_local(target_temp_dir)
                 create_tables_in_data_folder(target_data_folder)
@@ -401,7 +412,8 @@ class TestOperations(unittest.TestCase):
             data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME,
+                              unsorted_time_series_table_data_without_generated_column())
 
             data_folder.truncate(TIME_SERIES_TABLE_NAME)
 
@@ -449,7 +461,8 @@ class TestOperations(unittest.TestCase):
             data_folder = Operations.open_local(temp_dir)
             create_tables_in_data_folder(data_folder)
 
-            data_folder.write(TIME_SERIES_TABLE_NAME, time_series_table_data())
+            data_folder.write(TIME_SERIES_TABLE_NAME,
+                              unsorted_time_series_table_data_without_generated_column())
             data_folder.truncate(TIME_SERIES_TABLE_NAME)
 
             # The files should still exist on disk even though they are no longer active.
@@ -493,7 +506,7 @@ def normal_table_schema() -> Schema:
     return pyarrow.schema(
         [
             ("id", pyarrow.int32()),
-            ("name", pyarrow.string()),
+            ("name", pyarrow.string_view()),
             ("age", pyarrow.int8()),
             ("height", pyarrow.int16()),
             ("weight", pyarrow.int16()),
@@ -513,7 +526,7 @@ def time_series_table_schema() -> Schema:
     return pyarrow.schema(
         [
             ("timestamp", pyarrow.timestamp("us")),
-            ("tag", pyarrow.string()),
+            ("tag", pyarrow.string_view()),
             ("field_one", pyarrow.float32()),
             ("field_two", pyarrow.float32()),
         ]
@@ -524,7 +537,7 @@ def time_series_table_query_schema() -> Schema:
     return pyarrow.schema(
         [
             ("timestamp", pyarrow.timestamp("us")),
-            ("tag", pyarrow.string()),
+            ("tag", pyarrow.string_view()),
             ("field_one", pyarrow.float32()),
             ("field_two", pyarrow.float32()),
             ("field_three", pyarrow.float32()),
@@ -533,58 +546,63 @@ def time_series_table_query_schema() -> Schema:
 
 
 def sorted_time_series_table_data_with_generated_column() -> RecordBatch:
-    unsorted_data = time_series_table_data_with_generated_column()
-    return unsorted_data.sort_by([("tag", "ascending"), ("timestamp", "ascending")])
+    unsorted_data = time_series_table_data()
+    sorted_data = sorted(unsorted_data, key=lambda row: (row["tag"], row["timestamp"]))
+    return pyarrow.RecordBatch.from_pylist(sorted_data,
+                                           time_series_table_query_schema())
 
+def unsorted_time_series_table_data_with_generated_column() -> RecordBatch:
+    unsorted_data = time_series_table_data()
+    return pyarrow.RecordBatch.from_pylist(unsorted_data,
+                                           time_series_table_query_schema())
 
-def time_series_table_data_with_generated_column() -> RecordBatch:
-    data = time_series_table_data()
-
-    generated_column_array = pyarrow.array(
-        [74, 146, 74, 146, 74, 146], pyarrow.float32()
-    )
-    return data.append_column("field_three", generated_column_array)
-
+def unsorted_time_series_table_data_without_generated_column() -> RecordBatch:
+    unsorted_data = time_series_table_data()
+    return pyarrow.RecordBatch.from_pylist(unsorted_data,
+                                           time_series_table_schema())
 
 def time_series_table_data() -> RecordBatch:
-    return pyarrow.RecordBatch.from_pylist(
-        [
+    return [
             {
                 "timestamp": 100,
                 "field_one": 37.0,
                 "field_two": 37.0,
                 "tag": "tag_one",
-            },
+                "field_three": 74.0,
+                },
             {
                 "timestamp": 100,
                 "field_one": 73.0,
                 "field_two": 73.0,
                 "tag": "tag_two",
-            },
+                "field_three": 146.0,
+                },
             {
                 "timestamp": 200,
                 "field_one": 37.0,
                 "field_two": 37.0,
                 "tag": "tag_one",
-            },
+                "field_three": 74.0,
+                },
             {
                 "timestamp": 200,
                 "field_one": 73.0,
                 "field_two": 73.0,
                 "tag": "tag_two",
-            },
+                "field_three": 146.0,
+                },
             {
                 "timestamp": 300,
                 "field_one": 37.0,
                 "field_two": 37.0,
                 "tag": "tag_one",
-            },
+                "field_three": 74.0,
+                },
             {
                 "timestamp": 300,
                 "field_one": 73.0,
                 "field_two": 73.0,
                 "tag": "tag_two",
-            },
-        ],
-        time_series_table_schema(),
-    )
+                "field_three": 146.0,
+                },
+            ]

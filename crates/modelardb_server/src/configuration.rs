@@ -28,7 +28,7 @@ use modelardb_storage::data_folder::DataFolder;
 use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::flight::protocol;
 use object_store::path::Path;
-use object_store::{Error, ObjectStore, PutPayload};
+use object_store::{Error, ObjectStoreExt, PutPayload};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;

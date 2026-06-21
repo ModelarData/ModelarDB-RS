@@ -41,14 +41,14 @@ use datafusion::parquet::arrow::{AsyncArrowWriter, ParquetRecordBatchStreamBuild
 use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
-use datafusion::prelude::SessionContext;
+use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
 use deltalake::parquet::file::metadata::SortingColumn;
 use futures::StreamExt;
 use modelardb_types::types::TimeSeriesTableMetadata;
-use object_store::ObjectStore;
 use object_store::path::Path;
+use object_store::{ObjectStore, ObjectStoreExt};
 use sqlparser::ast::Statement;
 
 use crate::error::Result;
@@ -78,6 +78,10 @@ pub fn create_session_context() -> SessionContext {
             session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
     }
 
+    // Use the default configuration: https://datafusion.apache.org/user-guide/configs.html.
+    let session_config = SessionConfig::new();
+    session_state_builder = session_state_builder.with_config(session_config);
+
     let session_state = session_state_builder.build();
     let session_context = SessionContext::new_with_state(session_state);
     let default_catalog = session_context
@@ -93,13 +97,13 @@ pub fn create_session_context() -> SessionContext {
 /// Register the normal table stored in `delta_table` with `table_name` and `data_sink` in
 /// `session_context`. If the normal table could not be registered with Apache DataFusion, return
 /// [`ModelarDbStorageError`](error::ModelarDbStorageError).
-pub fn register_normal_table(
+pub async fn register_normal_table(
     session_context: &SessionContext,
     table_name: &str,
     delta_table: DeltaTable,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
-    let normal_table = Arc::new(NormalTable::new(delta_table, Some(data_sink)));
+    let normal_table = Arc::new(NormalTable::try_new(delta_table, Some(data_sink)).await?);
     session_context.register_table(table_name, normal_table)?;
 
     Ok(())
@@ -246,7 +250,7 @@ fn apache_parquet_writer_properties(
 ) -> WriterProperties {
     WriterProperties::builder()
         .set_data_page_size_limit(16384)
-        .set_max_row_group_size(65536)
+        .set_max_row_group_row_count(Some(65536))
         .set_encoding(Encoding::PLAIN)
         .set_compression(Compression::ZSTD(ZstdLevel::default()))
         .set_dictionary_enabled(false)
