@@ -55,7 +55,7 @@ services:
       - "9999:9999"
     environment:
       <<: *aws-variables
-      MODELARDBD_IP_ADDRESS: modelardb-edge-1
+      MODELARDBD_HOST: modelardb-edge-1
       MODELARDBD_PORT: 9999
     depends_on:
       create-bucket:
@@ -73,7 +73,7 @@ services:
     environment:
       <<: *aws-variables
       MODELARDBD_PORT: 9998
-      MODELARDBD_IP_ADDRESS: modelardb-edge-2
+      MODELARDBD_HOST: modelardb-edge-2
     depends_on:
       modelardb-edge-1:
         condition: service_healthy
@@ -90,7 +90,7 @@ services:
     environment:
       <<: *aws-variables
       MODELARDBD_PORT: 9997
-      MODELARDBD_IP_ADDRESS: modelardb-cloud-1
+      MODELARDBD_HOST: modelardb-cloud-1
     depends_on:
       modelardb-edge-2:
         condition: service_healthy
@@ -107,7 +107,7 @@ services:
     environment:
       <<: *aws-variables
       MODELARDBD_PORT: 9996
-      MODELARDBD_IP_ADDRESS: modelardb-cloud-2
+      MODELARDBD_HOST: modelardb-cloud-2
     depends_on:
       modelardb-cloud-1:
         condition: service_healthy
