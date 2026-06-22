@@ -54,7 +54,7 @@ use prost::Message;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::metadata::MetadataMap;
+use tonic::metadata::{AsciiMetadataValue, MetadataMap};
 use tonic::transport::{Endpoint, Server};
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
@@ -108,6 +108,7 @@ pub async fn start_apache_arrow_flight_server(
 async fn execute_query_at_addresses_and_union(
     sql: &str,
     addresses: Vec<String>,
+    maybe_authorization: Option<AsciiMetadataValue>,
     local_sendable_record_batch_stream: Pin<Box<dyn RecordBatchStream + Send>>,
 ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
     // Remove INCLUDE address+ as sqlparser seems incapable of doing so.
@@ -124,8 +125,12 @@ async fn execute_query_at_addresses_and_union(
     unioned_sendable_record_batch_streams.push(local_sendable_record_batch_stream);
 
     for address in addresses {
-        let remote_sendable_record_batch_stream =
-            execute_query_at_address(sql_select.to_owned(), address.to_owned()).await?;
+        let remote_sendable_record_batch_stream = execute_query_at_address(
+            sql_select.to_owned(),
+            address.to_owned(),
+            maybe_authorization.clone(),
+        )
+        .await?;
         unioned_sendable_record_batch_streams.push(remote_sendable_record_batch_stream);
     }
 
@@ -140,13 +145,22 @@ async fn execute_query_at_addresses_and_union(
 async fn execute_query_at_address(
     sql: String,
     address: String,
+    maybe_authorization: Option<AsciiMetadataValue>,
 ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
     // Connect and execute query.
     let connection = Endpoint::new(address.clone())?.connect().await?;
     let mut flight_client = FlightServiceClient::new(connection);
 
-    let ticket = Ticket { ticket: sql.into() };
-    let mut stream = flight_client.do_get(ticket).await?.into_inner();
+    // Insert the authorization header if it is present. The header is added directly to avoid
+    // extracting the token from the authorization header.
+    let mut request = Request::new(Ticket { ticket: sql.into() });
+    if let Some(authorization) = maybe_authorization {
+        request
+            .metadata_mut()
+            .insert("authorization", authorization);
+    }
+
+    let mut stream = flight_client.do_get(request).await?.into_inner();
 
     // Read schema of record batches.
     let flight_data = stream.message().await?.ok_or_else(|| {
@@ -684,9 +698,12 @@ impl FlightService for FlightServiceHandler {
                         .await
                         .map_err(error_to_status_internal)?;
 
+                let maybe_authorization = request.metadata().get("authorization").cloned();
+
                 execute_query_at_addresses_and_union(
                     &sql,
                     addresses,
+                    maybe_authorization,
                     local_sendable_record_batch_stream,
                 )
                 .await
