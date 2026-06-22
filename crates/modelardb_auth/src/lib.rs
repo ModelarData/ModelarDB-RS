@@ -85,6 +85,7 @@ impl Interceptor for BearerInterceptor {
 mod tests {
     use super::*;
 
+    // Tests for Permission.
     #[test]
     fn test_read_satisfied_by_read() {
         assert!(Permission::Read.is_satisfied_by(&Permission::Read));
@@ -128,5 +129,41 @@ mod tests {
     #[test]
     fn test_admin_satisfied_by_admin() {
         assert!(Permission::Admin.is_satisfied_by(&Permission::Admin));
+    }
+
+    // Tests for BearerInterceptor.
+    #[test]
+    fn test_try_new_bearer_interceptor_with_invalid_token() {
+        let result = BearerInterceptor::try_new(Some("sec\nret"));
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"Invalid token: failed to parse metadata value.\""
+        );
+    }
+
+    #[test]
+    fn test_bearer_interceptor_call_attaches_authorization_header() {
+        let mut interceptor = BearerInterceptor::try_new(Some("secret")).unwrap();
+        let request = interceptor.call(Request::new(())).unwrap();
+
+        assert_eq!(
+            request
+                .metadata()
+                .get("authorization")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "Bearer secret"
+        );
+    }
+
+    #[test]
+    fn test_bearer_interceptor_call_without_token_attaches_nothing() {
+        let mut interceptor = BearerInterceptor::try_new(None).unwrap();
+        let request = interceptor.call(Request::new(())).unwrap();
+
+        assert!(request.metadata().get("authorization").is_none());
     }
 }
