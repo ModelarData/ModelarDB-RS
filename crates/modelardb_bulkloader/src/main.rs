@@ -82,6 +82,7 @@ enum Command {
         #[arg(long, num_args = 1..)]
         post_sql: Vec<String>,
 
+        /// Credentials for connecting to cloud storage if the data folder is in the cloud.
         #[command(flatten)]
         credentials: CloudCredentials,
     },
@@ -108,6 +109,7 @@ enum Command {
         #[arg(long, num_args = 1..)]
         post_sql: Vec<String>,
 
+        /// Credentials for connecting to cloud storage if the data folder is in the cloud.
         #[command(flatten)]
         credentials: CloudCredentials,
     },

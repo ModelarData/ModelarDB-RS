@@ -84,6 +84,8 @@ pub(crate) struct ServerArgs {
     transfer_time_in_seconds: Option<u64>,
 
     /// Approximate maximum size in bytes of a single WAL segment file before a new one is started.
+    /// The size is approximate since the in-memory size of each batch is used instead of its
+    /// on-disk size to avoid the overhead of reading the file size after each write.
     #[arg(long, env = "MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES")]
     segment_size_threshold_in_bytes: Option<u64>,
 
@@ -91,6 +93,7 @@ pub(crate) struct ServerArgs {
     #[arg(long, env = "MODELARDBD_WAL_ENABLED")]
     wal_enabled: Option<bool>,
 
+    /// Subcommand specifying the mode the server is started in and the required data folders.
     #[command(subcommand)]
     mode: ServerMode,
 }
@@ -105,6 +108,7 @@ pub(crate) enum ServerMode {
         /// URL of the remote data folder (e.g., s3://bucket or azureblobstorage://container).
         /// If provided, this node joins a cluster and transfers data to the remote object store.
         remote_data_folder: Option<String>,
+        /// Credentials for connecting to the remote data folder if it is provided.
         #[command(flatten)]
         credentials: CloudCredentials,
     },
@@ -114,6 +118,7 @@ pub(crate) enum ServerMode {
         local_data_folder: String,
         /// URL of the remote data folder (e.g., s3://bucket or azureblobstorage://container).
         remote_data_folder: String,
+        /// Credentials for connecting to the remote data folder.
         #[command(flatten)]
         credentials: CloudCredentials,
     },

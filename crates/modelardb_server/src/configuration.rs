@@ -79,8 +79,8 @@ struct Configuration {
 }
 
 impl Configuration {
-    /// Update the configuration with the corresponding flags or environment variables from the
-    /// command line if they are set.
+    /// Update the configuration parameters with the corresponding flags or environment variables
+    /// from the command line if they are set.
     fn update_from_args(&mut self, args: &ServerArgs) {
         if let Some(value) = args.multivariate_reserved_memory_in_bytes {
             self.multivariate_reserved_memory_in_bytes = value;
@@ -860,6 +860,6 @@ mod tests {
     }
 
     fn default_args() -> ServerArgs {
-        ServerArgs::parse_from(["modelardbd", "edge", "/tmp"])
+        ServerArgs::parse_from(["modelardbd", "edge", "data"])
     }
 }
