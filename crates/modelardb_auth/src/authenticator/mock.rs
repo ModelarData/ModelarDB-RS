@@ -19,6 +19,7 @@
 
 use std::sync::Mutex;
 
+use async_trait::async_trait;
 use tonic::Status;
 use tonic::metadata::MetadataMap;
 
@@ -52,8 +53,9 @@ impl Default for MockAuthenticator {
     }
 }
 
+#[async_trait]
 impl Authenticator for MockAuthenticator {
-    fn authorize(
+    async fn authorize(
         &self,
         _metadata: &MetadataMap,
         required_permission: Permission,

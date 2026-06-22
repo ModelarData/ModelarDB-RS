@@ -172,7 +172,7 @@ async fn authorize(
         }
     };
 
-    authenticator.authorize(&metadata, required_permission)?;
+    authenticator.authorize(&metadata, required_permission).await?;
 
     Ok(request)
 }
@@ -207,7 +207,7 @@ async fn authorize_do_get(
     let statement =
         parser::tokenize_and_parse_sql_statement(sql).map_err(error_to_status_invalid_argument)?;
 
-    authenticator.authorize(metadata, permission_for_statement(&statement))?;
+    authenticator.authorize(metadata, permission_for_statement(&statement)).await?;
 
     // Reconstruct the request with the original bytes so the server receives it intact.
     Ok(Request::from_parts(parts, Body::new(Full::new(bytes))))

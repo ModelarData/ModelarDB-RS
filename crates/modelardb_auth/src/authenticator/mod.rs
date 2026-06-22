@@ -20,6 +20,7 @@
 pub mod mock;
 pub mod no_auth;
 
+use async_trait::async_trait;
 use tonic::Status;
 use tonic::metadata::MetadataMap;
 
@@ -30,8 +31,9 @@ use crate::Permission;
 /// credentials are missing or invalid, or `Err(Status::permission_denied(...))` if credentials are
 /// valid but the caller lacks the required permission. Error messages must not reveal the specific
 /// reason for rejection to prevent information leakage.
+#[async_trait]
 pub trait Authenticator: Send + Sync {
-    fn authorize(
+    async fn authorize(
         &self,
         metadata: &MetadataMap,
         required_permission: Permission,

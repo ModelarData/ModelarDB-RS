@@ -16,6 +16,7 @@
 //! An [`Authenticator`] that grants all permissions to all callers without any validation. Used in
 //! the open-source version of ModelarDB where authentication is not required.
 
+use async_trait::async_trait;
 use tonic::Status;
 use tonic::metadata::MetadataMap;
 
@@ -25,8 +26,9 @@ use crate::authenticator::Authenticator;
 /// An [`Authenticator`] that grants all permissions to all callers without any validation.
 pub struct NoAuth;
 
+#[async_trait]
 impl Authenticator for NoAuth {
-    fn authorize(
+    async fn authorize(
         &self,
         _metadata: &MetadataMap,
         _required_permission: Permission,
@@ -39,29 +41,32 @@ impl Authenticator for NoAuth {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_no_auth_allows_read() {
+    #[tokio::test]
+    async fn test_no_auth_allows_read() {
         assert!(
             NoAuth
                 .authorize(&MetadataMap::new(), Permission::Read)
+                .await
                 .is_ok()
         );
     }
 
-    #[test]
-    fn test_no_auth_allows_write() {
+    #[tokio::test]
+    async fn test_no_auth_allows_write() {
         assert!(
             NoAuth
                 .authorize(&MetadataMap::new(), Permission::Write)
+                .await
                 .is_ok()
         );
     }
 
-    #[test]
-    fn test_no_auth_allows_admin() {
+    #[tokio::test]
+    async fn test_no_auth_allows_admin() {
         assert!(
             NoAuth
                 .authorize(&MetadataMap::new(), Permission::Admin)
+                .await
                 .is_ok()
         );
     }
