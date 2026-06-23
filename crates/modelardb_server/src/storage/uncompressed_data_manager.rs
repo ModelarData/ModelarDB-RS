@@ -871,7 +871,7 @@ mod tests {
         let (mut data_manager, time_series_table_metadata) = create_managers(&temp_dir).await;
 
         insert_data_points(
-            *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             &time_series_table_metadata,
             TAG_VALUE,
@@ -893,7 +893,7 @@ mod tests {
         let (mut data_manager, time_series_table_metadata) = create_managers(&temp_dir).await;
 
         insert_data_points(
-            *UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
             &mut data_manager,
             &time_series_table_metadata,
             TAG_VALUE,
@@ -1019,7 +1019,7 @@ mod tests {
             runtime.block_on(create_managers(&temp_dir));
 
         runtime.block_on(insert_data_points(
-            *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             &time_series_table_metadata,
             TAG_VALUE,

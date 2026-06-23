@@ -27,6 +27,7 @@ path = "src/main.rs"
 arrow-flight.workspace = true
 arrow = { workspace = true, features = ["prettyprint"] }
 bytes.workspace = true
+clap.workspace = true
 dirs.workspace = true
 modelardb_auth = { path = "../modelardb_auth" }
 rustyline.workspace = true

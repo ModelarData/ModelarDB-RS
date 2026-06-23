@@ -101,9 +101,9 @@ impl UncompressedInMemoryDataBuffer {
         current_batch_index: u64,
         batch_ids: HashSet<u64>,
     ) -> Self {
-        let timestamps = TimestampBuilder::with_capacity(*UNCOMPRESSED_DATA_BUFFER_CAPACITY);
+        let timestamps = TimestampBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY);
         let values = (0..time_series_table_metadata.field_column_indices.len())
-            .map(|_| ValueBuilder::with_capacity(*UNCOMPRESSED_DATA_BUFFER_CAPACITY))
+            .map(|_| ValueBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY))
             .collect();
 
         Self {
@@ -259,8 +259,8 @@ impl Debug for UncompressedInMemoryDataBuffer {
 /// Return the total amount of memory in bytes an [`UncompressedInMemoryDataBuffer`] storing data
 /// points from a time series table with `number_of_fields` field columns will require.
 pub(super) fn compute_memory_size(number_of_fields: usize) -> usize {
-    (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Timestamp>())
-        + (number_of_fields * (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>()))
+    (UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Timestamp>())
+        + (number_of_fields * (UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>()))
 }
 
 /// A read only uncompressed buffer containing data points from a time series that has been spilled
@@ -444,10 +444,10 @@ mod tests {
 
         assert_eq!(
             uncompressed_buffer.timestamps.capacity(),
-            *UNCOMPRESSED_DATA_BUFFER_CAPACITY
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY
         );
         for values in &uncompressed_buffer.values {
-            assert_eq!(values.capacity(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
+            assert_eq!(values.capacity(), UNCOMPRESSED_DATA_BUFFER_CAPACITY);
         }
 
         let number_of_fields = table::time_series_table_metadata()
@@ -667,7 +667,7 @@ mod tests {
         let data = uncompressed_on_disk_buffer.record_batch().await.unwrap();
 
         assert_eq!(data.schema(), table::time_series_table_metadata().schema);
-        assert_eq!(data.num_rows(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
+        assert_eq!(data.num_rows(), UNCOMPRESSED_DATA_BUFFER_CAPACITY);
 
         assert!(!spilled_buffer_path.exists());
     }
