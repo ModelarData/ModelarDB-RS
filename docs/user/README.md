@@ -286,7 +286,7 @@ necessary to specify a port:
 modelardb --host 10.0.0.37
 ```
 
-If `modelardbd` is running on a non-default port, the same port must be passed to the client:
+If `modelardbd` is running on a non-default port, the port number must be passed to the client:
 
 ```shell
 modelardb --host 10.0.0.37 --port 9998
@@ -383,8 +383,8 @@ file. Variables marked with ✓ in the **Updatable** column can also be updated 
 
 | **CLI Flag**                              | **Environment Variable**                           | **Default** | **Updatable** | **Description**                                                                                                                |
 |-------------------------------------------|----------------------------------------------------|-------------|---------------|--------------------------------------------------------------------------------------------------------------------------------|
-| `--host`                                  | `MODELARDBD_HOST`                                  | 127.0.0.1   |               | The host address of the Apache Arrow Flight server.                                                                            |
-| `--port`                                  | `MODELARDBD_PORT`                                  | 9999        |               | The port of the Apache Arrow Flight server.                                                                                    |
+| `--host`                                  | `MODELARDBD_HOST`                                  | 127.0.0.1   |               | The host address of the `modelardbd` server.                                                                                   |
+| `--port`                                  | `MODELARDBD_PORT`                                  | 9999        |               | The port of the `modelardbd` server.                                                                                           |
 | `--wal-enabled`                           | `MODELARDBD_WAL_ENABLED`                           | true        |               | Whether the write-ahead log is enabled.                                                                                        |
 | `--multivariate-reserved-memory-in-bytes` | `MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES` | 512 MB      | ✓             | The amount of memory to reserve for storing multivariate time series.                                                          |
 | `--uncompressed-reserved-memory-in-bytes` | `MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES` | 512 MB      | ✓             | The amount of memory to reserve for storing uncompressed data buffers.                                                         |
