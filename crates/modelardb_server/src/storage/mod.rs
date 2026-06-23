@@ -29,8 +29,7 @@ mod types;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
-use std::env;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::record_batch::RecordBatch;
@@ -56,17 +55,7 @@ const UNCOMPRESSED_DATA_FOLDER: &str = "buffers";
 /// [`Value`](modelardb_types::types::Value). Note that the resulting size of the buffer has to be a
 /// multiple of 64 bytes to avoid the actual capacity being larger than the requested due to
 /// internal alignment when allocating memory for the two array builders.
-pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: LazyLock<usize> = LazyLock::new(|| {
-    env::var("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY").map_or(64 * 1024, |value| {
-        let parsed = value.parse::<usize>().unwrap();
-
-        if parsed >= 64 && parsed % 64 == 0 {
-            parsed
-        } else {
-            panic!("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY must be a multiple of 64.")
-        }
-    })
-});
+pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: usize = 64 * 1024;
 
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterward.

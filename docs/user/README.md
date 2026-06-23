@@ -36,8 +36,8 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
    - Debug Build: `cargo build`
    - Release Build: `cargo build --release`
    - Run Tests: `cargo test`
-   - Run DBMS Server: `cargo run --bin modelardbd path_to_local_data_folder`
-   - Run Client: `cargo run --bin modelardb [server_address] [query_file]`
+   - Run DBMS Server: `cargo run --bin modelardbd edge path_to_local_data_folder`
+   - Run Client: `cargo run --bin modelardb [options] [query_file]`
 6. Move `modelardbd`, `modelardb`, and `modelardbb` from the `target` directory to any directory.
 7. Install and test the Python bindings for `modelardb_embedded` using Python:
    - Install: `python3 -m pip install .`
@@ -78,8 +78,6 @@ has different requirements and supports different features.
    as its data folder:
 
 ```shell
-modelardbd path_to_local_data_folder
-# or
 modelardbd edge path_to_local_data_folder
 ```
 
@@ -90,13 +88,13 @@ modelardbd edge path_to_local_data_folder
    is required. This configuration supports ingesting data to a local folder in the cloud, transferring data in the local
    data folder to the object store, and querying the data in the object store in the cloud.
 
-The following environment variables must be set to appropriate values if an Amazon S3-compatible object store is used so
-`modelardbd` know how to connect to it:
+The following flags (or the corresponding environment variables) must be provided if an Amazon S3-compatible object 
+store is used:
 
 ```shell
-AWS_ENDPOINT
-AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY
+--aws-endpoint / AWS_ENDPOINT
+--aws-access-key-id / AWS_ACCESS_KEY_ID
+--aws-secret-access-key / AWS_SECRET_ACCESS_KEY
 ```
 
 For example, to use a local instance of [MinIO](https://github.com/pgsty/minio), assuming the access key id `KURo1eQeMhDeVsrz` and the
@@ -118,11 +116,12 @@ modelardbd edge path_to_local_data_folder s3://wind-turbine
 ```
 
 `modelardbd` also supports using [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/)
-for the remote object store. To use Azure Blob Storage, set the following environment variables:
+for the remote object store. To use Azure Blob Storage, provide the following flags or the corresponding environment 
+variables:
 
 ```shell
-AZURE_STORAGE_ACCOUNT_NAME
-AZURE_STORAGE_ACCESS_KEY
+--azure-storage-account-name / AZURE_STORAGE_ACCOUNT_NAME
+--azure-storage-access-key / AZURE_STORAGE_ACCESS_KEY
 ```
 
 Then, assuming a container named `wind-turbine` has been created, `modelardbd` can be started with the following
@@ -139,11 +138,15 @@ mode the `modelardbd` instance will execute queries against the object store and
 modelardbd cloud path_to_local_data_folder s3://wind-turbine
 ```
 
-Note that `modelardbd` uses `9999` as the default port. The port can be changed by specifying a different port with
-the following environment variable:
+Note that `modelardbd` uses `127.0.0.1` and `9999` as the default host and port. Both can be changed using flags or the 
+corresponding environment variables:
 
 ```shell
-MODELARDBD_PORT=8889  # By default modelardbd uses port 9999.
+modelardbd --port 8889 edge path_to_local_data_folder
+modelardbd --host 0.0.0.0 edge path_to_local_data_folder
+# Or equivalently via environment variables:
+MODELARDBD_PORT=8889 modelardbd edge path_to_local_data_folder
+MODELARDBD_HOST=0.0.0.0 modelardbd edge path_to_local_data_folder
 ```
 
 ### Ingest Data
@@ -280,20 +283,19 @@ If `modelardbd` is not running on the same host, the host `modelardb` should con
 necessary to specify a port:
 
 ```shell
-modelardb 10.0.0.37
+modelardb --host 10.0.0.37
 ```
 
-Also, if `modelardbd` has been configured to use another port using the environment variable `MODELARDBD_PORT`, the same
-port must also be passed to the client:
+If `modelardbd` is running on a non-default port, the port number must be passed to the client:
 
 ```shell
-modelardb 10.0.0.37:9998
+modelardb --host 10.0.0.37 --port 9998
 ```
 
 `modelardb` can also execute SQL statements from a file passed as a command-line argument:
 
 ```shell
-modelardb 10.0.0.37 path_to_file_with_sql_statements.sql
+modelardb --host 10.0.0.37 path_to_file_with_sql_statements.sql
 ```
 
 `modelardbd` can also be queried programmatically [from many different programming
@@ -373,24 +375,23 @@ modelardb_node = modelardb.connect(url)
 When the server is started for the first time, a configuration file is created in the root of the data folder named
 `modelardbd.toml`. If the file is changed manually, the changes are only applied when the server is restarted.
 
-`ModelarDB` can be configured before the server is started using environment variables. A full list of the environment
-variables is provided here. If an environment variable is not set, the configuration file will be used. If neither the
-environment variable nor the configuration file contains the variable, the specified default value will be used.
-Variables marked with ✓ in the **Updatable** column can also be updated while the server is running using the
+`modelardbd` can be configured before the server is started using command line flags or environment variables. Flags take 
+precedence over environment variables, which take precedence over the configuration file, which takes precedence over 
+the built-in defaults. Note that the connection settings `--host` and `--port` are not persisted in the configuration 
+file. Variables marked with ✓ in the **Updatable** column can also be updated while the server is running using the 
 `UpdateConfiguration` action without requiring a restart. The update is persisted in the configuration file.
 
-| **Variable**                                     | **Default** | **Updatable** | **Description**                                                                                                                                                                                                                                                                                          |
-|--------------------------------------------------|-------------|---------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| MODELARDBD_PORT                                  | 9999        |               | The port of the server Apache Arrow Flight Server.                                                                                                                                                                                                                                                       |
-| MODELARDBD_IP_ADDRESS                            | 127.0.0.1   |               | The IP address of the Apache Arrow Flight Server.                                                                                                                                                                                                                                                        |
-| MODELARDBD_WAL_ENABLED                           | true        |               | Whether the write-ahead log is enabled. If enabled, data is logged before ingestion and the log is replayed on crash recovery.                                                                                                                                                                           |
-| MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY     | 65536       |               | The capacity of each uncompressed data buffer as the number of elements in the buffer where each element is a timestamp and a value. Note that the resulting size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger than the requested due to internal alignment. |
-| MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES | 512 MB      | ✓             | The amount of memory to reserve for storing multivariate time series.                                                                                                                                                                                                                                    |
-| MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES | 512 MB      | ✓             | The amount of memory to reserve for storing uncompressed data buffers.                                                                                                                                                                                                                                   |
-| MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES   | 512 MB      | ✓             | The amount of memory to reserve for storing compressed data buffers.                                                                                                                                                                                                                                     |
-| MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES          | 64 MB       | ✓             | The amount of data that must be collected before transferring a batch of data to the remote object store.                                                                                                                                                                                                |
-| MODELARDBD_TRANSFER_TIME_IN_SECONDS              | Disabled    | ✓             | The number of seconds between each transfer of data to the remote object store.                                                                                                                                                                                                                          |
-| MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES       | 64 MB       | ✓             | The approximate maximum size, in bytes, of a single WAL segment file before it is closed and a new one is started. Note that this setting is only updatable when the WAL is enabled.                                                                                                                     |
+| **CLI Flag**                              | **Environment Variable**                           | **Default** | **Updatable** | **Description**                                                                                                                |
+|-------------------------------------------|----------------------------------------------------|-------------|---------------|--------------------------------------------------------------------------------------------------------------------------------|
+| `--host`                                  | `MODELARDBD_HOST`                                  | 127.0.0.1   |               | The host address of the `modelardbd` server.                                                                                   |
+| `--port`                                  | `MODELARDBD_PORT`                                  | 9999        |               | The port of the `modelardbd` server.                                                                                           |
+| `--wal-enabled`                           | `MODELARDBD_WAL_ENABLED`                           | true        |               | Whether the write-ahead log is enabled.                                                                                        |
+| `--multivariate-reserved-memory-in-bytes` | `MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES` | 512 MB      | ✓             | The amount of memory to reserve for storing multivariate time series.                                                          |
+| `--uncompressed-reserved-memory-in-bytes` | `MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES` | 512 MB      | ✓             | The amount of memory to reserve for storing uncompressed data buffers.                                                         |
+| `--compressed-reserved-memory-in-bytes`   | `MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES`   | 512 MB      | ✓             | The amount of memory to reserve for storing compressed data buffers.                                                           |
+| `--transfer-batch-size-in-bytes`          | `MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES`          | 64 MB       | ✓             | The amount of data that must be collected before transferring a batch to the remote object store.                              |
+| `--transfer-time-in-seconds`              | `MODELARDBD_TRANSFER_TIME_IN_SECONDS`              | Disabled    | ✓             | The number of seconds between each transfer of data to the remote object store.                                                |
+| `--segment-size-threshold-in-bytes`       | `MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES`       | 64 MB       | ✓             | The approximate maximum size of a single WAL segment file before a new one is started. Only updatable when the WAL is enabled. |
 
 ## Docker
 Two different [Docker](https://docs.docker.com/) environments are included to make it easy to experiment with the

@@ -20,10 +20,9 @@ mod helper;
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, IsTerminal, Write};
-use std::path::Path as StdPath;
+use std::path::{Path as StdPath, PathBuf};
 use std::process;
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,6 +34,7 @@ use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, Ticket, utils};
 use bytes::Bytes;
+use clap::Parser;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
 use tonic::transport::{Channel, Endpoint};
@@ -43,76 +43,47 @@ use tonic::{Request, Streaming};
 use crate::error::{ModelarDbClientError, Result};
 use crate::helper::ClientHelper;
 
-/// Default host to connect to.
-const DEFAULT_HOST: &str = "127.0.0.1";
-
-/// Default port to connect to.
-const DEFAULT_PORT: u16 = 9999;
-
 /// Error to emit when the server does not provide a response when one is expected.
 const TRANSPORT_ERROR: &str = "transport error: no messages received.";
 
-/// Parse the command line arguments to extract the host running the server to connect to, the
-/// server port to connect to, and the file containing the queries to execute on the server. If the
-/// server host is not provided it defaults to [`DEFAULT_HOST`], if the server port is not provided
-/// it defaults to [`DEFAULT_PORT`], and if the file containing queries is not provided a
-/// read-eval-print loop is opened. Returns [`ModelarDbClientError`] if the command line arguments
-/// cannot be parsed, the client cannot connect to the server, or the file containing the queries
-/// cannot be read.
+/// Command line arguments for the ModelarDB client.
+#[derive(Parser)]
+#[command(
+    about = "ModelarDB command-line client",
+    long_about = "ModelarDB command-line client. Connects to a running instance of modelardbd and \
+    allows executing queries and commands on it. If a file containing queries is provided as an \
+    argument, the queries in the file are executed. Otherwise, an interactive read-eval-print loop \
+    is opened where queries and commands can be executed interactively."
+)]
+struct ClientArgs {
+    /// Host of the modelardbd instance to connect to.
+    #[arg(long, default_value = "127.0.0.1", env = "MODELARDB_HOST")]
+    host: String,
+
+    /// Port of the modelardbd instance to connect to.
+    #[arg(long, default_value_t = 9999, env = "MODELARDB_PORT")]
+    port: u16,
+
+    /// Path to a file containing SQL queries to execute. If not provided, an interactive
+    /// read-eval-print loop is opened.
+    query_file: Option<PathBuf>,
+}
+
+/// Connect to the server and execute queries from a file or open a read-eval-print loop. Returns
+/// [`ModelarDbClientError`] if the command-line arguments cannot be parsed, the client cannot
+/// connect to the server, or the file containing the queries cannot be read.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     // Parse the command line arguments.
-    let args = env::args().collect::<Vec<String>>();
-    let (host, port, maybe_query_file) = match &args[1..] {
-        [] => (DEFAULT_HOST, DEFAULT_PORT, None),
-        [query_file] if StdPath::new(&query_file).exists() => {
-            let query_file = StdPath::new(&query_file).to_path_buf();
-            (DEFAULT_HOST, DEFAULT_PORT, Some(query_file))
-        }
-        [host_port] if !host_port.starts_with(['.', '/']) => {
-            let (host, port) = parse_host_port(host_port)?;
-            (host, port, None)
-        }
-        [host_port, query_file] if StdPath::new(&query_file).exists() => {
-            let (host, port) = parse_host_port(host_port)?;
-            let query_file = StdPath::new(&query_file).to_path_buf();
-            (host, port, Some(query_file))
-        }
-        _ => {
-            // The errors are consciously ignored as the client is terminating.
-            let binary_path = env::current_exe().unwrap();
-            let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-
-            // Punctuation at the end does not seem to be common in the usage message of Unix tools.
-            eprintln!("Usage: {binary_name} [host or host:port] [query_file]",);
-            process::exit(1);
-        }
-    };
+    let args = ClientArgs::parse();
 
     // Execute the queries.
-    let flight_service_client = connect(host, port).await?;
-    if let Some(query_file) = maybe_query_file {
+    let flight_service_client = connect(&args.host, args.port).await?;
+    if let Some(query_file) = args.query_file {
         execute_queries_from_a_file(flight_service_client, &query_file).await
     } else {
         execute_queries_from_a_repl(flight_service_client).await
     }
-}
-
-/// Parse the host and port in `maybe_host_port` and return a pair with the host of the server to
-/// connect to and the port to connect to. If the host is not included `DEFAULT_HOST` is used and if
-/// port is not included `DEFAULT_PORT` is used. Returns [`ModelarDbClientError`] if the port is not
-/// valid.
-fn parse_host_port(maybe_host_port: &str) -> Result<(&str, u16)> {
-    let mut parts = maybe_host_port.splitn(2, ':');
-    let host = parts.next().unwrap_or(DEFAULT_HOST);
-    let port = parts
-        .next()
-        .map_or(Ok(DEFAULT_PORT.to_owned()), |part| part.parse())
-        .map_err(|_| {
-            ModelarDbClientError::InvalidArgument("Port must be between 1 and 65535.".to_owned())
-        })?;
-
-    Ok((host, port))
 }
 
 /// Connect to the server at `host`:`port`. Returns [`ModelarDbClientError`] if a connection to the

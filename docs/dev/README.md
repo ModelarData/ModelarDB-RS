@@ -130,6 +130,7 @@ To avoid confusion and unnecessary dependencies, a list of crates used in the pr
 includes crates used for purposes such as logging, where multiple crates provide similar functionality.
 
 - Async Runtime - [tokio](https://crates.io/crates/tokio)
+- CLI Argument Parsing - [clap](https://crates.io/crates/clap)
 - Logging - [tracing](https://crates.io/crates/tracing)
 - Memory Allocation - [snmalloc-rs](https://crates.io/crates/snmalloc-rs)
 - Object Store Access - [deltalake](https://crates.io/crates/deltalake)

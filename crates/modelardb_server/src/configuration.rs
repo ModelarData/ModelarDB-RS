@@ -15,8 +15,13 @@
 
 //! Management of the system's configuration. The configuration consists of various parameters that
 //! determine the behavior of the storage engine, write-ahead log, and data transfer component.
+//! The value for each configuration is determined according to the following precedence order:
+//!
+//! 1. CLI flag.
+//! 2. Environment variable.
+//! 3. Configuration file.
+//! 4. Default value.
 
-use std::env;
 use std::sync::Arc;
 
 use modelardb_storage::data_folder::DataFolder;
@@ -28,9 +33,9 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::ClusterMode;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
+use crate::{ClusterMode, ServerArgs};
 
 const CONFIGURATION_FILE_NAME: &str = "modelardbd.toml";
 
@@ -74,39 +79,36 @@ struct Configuration {
 }
 
 impl Configuration {
-    /// If the corresponding environment variable is set, update the configuration with the value
-    /// from the environment variable. If the value could not be parsed, return
-    /// [`ModelarDbServerError`].
-    fn update_from_env(&mut self) -> Result<()> {
-        if let Ok(value) = env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES") {
-            self.multivariate_reserved_memory_in_bytes = value.parse()?;
-        };
-
-        if let Ok(value) = env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES") {
-            self.uncompressed_reserved_memory_in_bytes = value.parse()?;
-        };
-
-        if let Ok(value) = env::var("MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES") {
-            self.compressed_reserved_memory_in_bytes = value.parse()?;
-        };
-
-        if let Ok(value) = env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES") {
-            self.transfer_batch_size_in_bytes = Some(value.parse()?);
+    /// Update the configuration parameters with the corresponding flags or environment variables
+    /// from the command line if they are set.
+    fn update_from_args(&mut self, args: &ServerArgs) {
+        if let Some(value) = args.multivariate_reserved_memory_in_bytes {
+            self.multivariate_reserved_memory_in_bytes = value;
         }
 
-        if let Ok(value) = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS") {
-            self.transfer_time_in_seconds = Some(value.parse()?);
+        if let Some(value) = args.uncompressed_reserved_memory_in_bytes {
+            self.uncompressed_reserved_memory_in_bytes = value;
         }
 
-        if let Ok(value) = env::var("MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES") {
-            self.segment_size_threshold_in_bytes = value.parse()?;
+        if let Some(value) = args.compressed_reserved_memory_in_bytes {
+            self.compressed_reserved_memory_in_bytes = value;
         }
 
-        if let Ok(value) = env::var("MODELARDBD_WAL_ENABLED") {
-            self.wal_enabled = value.parse()?;
+        if let Some(value) = args.transfer_batch_size_in_bytes {
+            self.transfer_batch_size_in_bytes = Some(value);
         }
 
-        Ok(())
+        if let Some(value) = args.transfer_time_in_seconds {
+            self.transfer_time_in_seconds = Some(value);
+        }
+
+        if let Some(value) = args.segment_size_threshold_in_bytes {
+            self.segment_size_threshold_in_bytes = value;
+        }
+
+        if let Some(value) = args.wal_enabled {
+            self.wal_enabled = value;
+        }
     }
 
     /// Validate the fields in the configuration and return [`Ok`] if they are valid. If the
@@ -180,9 +182,13 @@ impl ConfigurationManager {
     /// Create a new [`ConfigurationManager`] using the [`CONFIGURATION_FILE_NAME`] configuration
     /// file in the local data folder. If the file does not exist, a configuration file is created
     /// with the default values. Note that the configuration file and default values are overwritten
-    /// if the corresponding environment variables are set. If the configuration file could not be
-    /// read or created, [`ModelarDbServerError`] is returned.
-    pub async fn try_new(local_data_folder: DataFolder, cluster_mode: ClusterMode) -> Result<Self> {
+    /// if the corresponding CLI flags or environment variables are set. If the configuration file
+    /// could not be read or created, [`ModelarDbServerError`] is returned.
+    pub async fn try_new(
+        local_data_folder: DataFolder,
+        cluster_mode: ClusterMode,
+        args: &ServerArgs,
+    ) -> Result<Self> {
         // Check if there is a configuration file in the local data folder.
         let object_store = local_data_folder.object_store();
         let maybe_conf_file = object_store.get(&Path::from(CONFIGURATION_FILE_NAME)).await;
@@ -206,7 +212,7 @@ impl ConfigurationManager {
             },
         };
 
-        configuration.update_from_env()?;
+        configuration.update_from_args(args);
         configuration.validate()?;
         configuration.save_to_toml(&local_data_folder).await?;
 
@@ -460,6 +466,7 @@ mod tests {
 
     use std::sync::Arc;
 
+    use clap::Parser;
     use modelardb_storage::data_folder::DataFolder;
     use modelardb_types::types::{Node, ServerMode};
     use tempfile::TempDir;
@@ -528,8 +535,12 @@ mod tests {
             .await
             .unwrap();
 
-        let result =
-            ConfigurationManager::try_new(local_data_folder, ClusterMode::SingleNode).await;
+        let result = ConfigurationManager::try_new(
+            local_data_folder,
+            ClusterMode::SingleNode,
+            &default_args(),
+        )
+        .await;
 
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -547,8 +558,12 @@ mod tests {
         let path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
         std::fs::write(path, "invalid_toml").unwrap();
 
-        let result =
-            ConfigurationManager::try_new(local_data_folder, ClusterMode::SingleNode).await;
+        let result = ConfigurationManager::try_new(
+            local_data_folder,
+            ClusterMode::SingleNode,
+            &default_args(),
+        )
+        .await;
 
         assert!(
             result
@@ -827,6 +842,7 @@ mod tests {
             ConfigurationManager::try_new(
                 local_data_folder.clone(),
                 ClusterMode::MultiNode(Box::new(cluster)),
+                &default_args(),
             )
             .await
             .unwrap(),
@@ -841,5 +857,9 @@ mod tests {
         ));
 
         (storage_engine, configuration_manager)
+    }
+
+    fn default_args() -> ServerArgs {
+        ServerArgs::parse_from(["modelardbd", "edge", "data"])
     }
 }

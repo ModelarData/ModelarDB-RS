@@ -15,16 +15,16 @@
 
 //! Bulkloader for reading and writing ModelarDB data folders.
 
+use std::io;
 use std::io::Write;
-use std::path::Path as StdPath;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::{env, io, process};
 
 use arrow::array::RecordBatch;
 use arrow::compute;
 use arrow::compute::kernels;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use clap::{Parser, Subcommand};
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::ListingOptions;
 use datafusion::execution::RecordBatchStream;
@@ -41,96 +41,126 @@ use modelardb_embedded::error::{ModelarDbEmbeddedError, Result};
 use modelardb_embedded::operations::Operations;
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_storage::data_folder::delta_table_writer::DeltaTableWriter;
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::types::{CloudCredentials, TimeSeriesTableMetadata};
 use sysinfo::System;
+
+/// Command line arguments for the ModelarDB bulk loader.
+#[derive(Parser)]
+#[command(
+    about = "ModelarDB bulk loader",
+    long_about = "ModelarDB bulk loader. Imports data from Apache Parquet files into a ModelarDB \
+    data folder, or exports data from a ModelarDB data folder to Apache Parquet files."
+)]
+struct BulkLoaderArgs {
+    #[command(subcommand)]
+    command: Command,
+}
+
+/// The bulk loader operations that can be performed.
+#[derive(Subcommand)]
+enum Command {
+    /// Import data from Apache Parquet files into a table in a ModelarDB data folder.
+    Import {
+        /// Path to the folder containing the Apache Parquet files to import.
+        parquet_folder: String,
+
+        /// Path or URL to the ModelarDB data folder to import data into.
+        data_folder: String,
+
+        /// Name of the table to import data into.
+        table_name: String,
+
+        /// One or more SQL statements to execute before importing, e.g., CREATE TIME SERIES TABLE.
+        #[arg(long, num_args = 1..)]
+        pre_sql: Vec<String>,
+
+        /// Cast double columns to float. This may be lossy but simplifies loading time series tables.
+        #[arg(long)]
+        cast_double_to_float: bool,
+
+        /// One or more SQL statements to execute after a successful import.
+        #[arg(long, num_args = 1..)]
+        post_sql: Vec<String>,
+
+        /// Credentials for connecting to cloud storage if the data folder is in the cloud.
+        #[command(flatten)]
+        credentials: CloudCredentials,
+    },
+    /// Export data from a table in a ModelarDB data folder to Apache Parquet files.
+    Export {
+        /// Path or URL to the ModelarDB data folder to export data from.
+        data_folder: String,
+
+        /// Path to the folder to write the exported Apache Parquet files to.
+        parquet_folder: String,
+
+        /// Name of the table to export data from.
+        table_name: String,
+
+        /// One or more SQL statements to execute before exporting.
+        #[arg(long, num_args = 1..)]
+        pre_sql: Vec<String>,
+
+        /// One or more columns to partition the exported Apache Parquet files by.
+        #[arg(long, num_args = 1..)]
+        partition_by: Vec<String>,
+
+        /// One or more SQL statements to execute after a successful export, e.g., DROP TABLE.
+        #[arg(long, num_args = 1..)]
+        post_sql: Vec<String>,
+
+        /// Credentials for connecting to cloud storage if the data folder is in the cloud.
+        #[command(flatten)]
+        credentials: CloudCredentials,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse the command line arguments.
-    let mut args = env::args();
-    if args.len() < 5 {
-        print_usage_and_exit_with_error();
-    }
+    let args = BulkLoaderArgs::parse();
 
-    // Drop the path of the binary.
-    let expect_five_args = "args should contain at least five arguments.";
-    args.next().expect(expect_five_args);
-
-    let operation = args.next().expect(expect_five_args);
-    let input_path = args.next().expect(expect_five_args);
-    let output_path = args.next().expect(expect_five_args);
-    let table_name = args.next().expect(expect_five_args);
-
-    // Collect arguments for flags.
-    let mut pre_sql: Vec<String> = vec![];
-    let mut partition_by: Vec<String> = vec![];
-    let mut post_sql: Vec<String> = vec![];
-    let mut cast_double_to_float = false;
-
-    let mut maybe_arg_values: Option<&mut Vec<String>> = None;
-    for arg in args {
-        match arg.as_str() {
-            "--pre-sql" => maybe_arg_values = Some(&mut pre_sql),
-            "--partition-by" => maybe_arg_values = Some(&mut partition_by),
-            "--post-sql" => maybe_arg_values = Some(&mut post_sql),
-            "--cast-double-to-float" => cast_double_to_float = true,
-            _ => {
-                if let Some(ref mut arg_values) = maybe_arg_values {
-                    arg_values.push(arg);
-                } else {
-                    print_usage_and_exit_with_error();
-                }
-            }
-        }
-    }
-
-    // Either import or export data to or from table_name depending on operation.
-    match operation.as_str() {
-        "import" => {
+    match args.command {
+        Command::Import {
+            parquet_folder,
+            data_folder,
+            table_name,
+            pre_sql,
+            cast_double_to_float,
+            post_sql,
+            credentials,
+        } => {
             import(
-                &input_path,
-                &output_path,
+                &parquet_folder,
+                &data_folder,
                 &table_name,
                 &pre_sql,
                 &post_sql,
                 cast_double_to_float,
+                &credentials,
             )
             .await
         }
-        "export" => {
+        Command::Export {
+            data_folder,
+            parquet_folder,
+            table_name,
+            pre_sql,
+            partition_by,
+            post_sql,
+            credentials,
+        } => {
             export(
-                &input_path,
-                &output_path,
+                &data_folder,
+                &parquet_folder,
                 &table_name,
                 &pre_sql,
                 &post_sql,
                 partition_by,
+                &credentials,
             )
             .await
         }
-        _ => Err(ModelarDbEmbeddedError::InvalidArgument(
-            "Operation must be import or export.".to_owned(),
-        )),
     }
-}
-
-/// Print a usage message to stderr and exit with an error status code.
-fn print_usage_and_exit_with_error() -> ! {
-    // The errors are consciously ignored as the client is terminating.
-    let binary_path = env::current_exe().unwrap();
-    let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-    eprintln!(
-        "Usage: {binary_name} operation [flags]\n\n\
-            operations\n \
-            import parquet_folder data_folder table_name   imports data from parquet_folder to the table with table_name in data_folder\n \
-            export data_folder parquet_folder table_name   exports data from the table with table_name in data_folder to parquet_folder\n\n\
-            flags\n \
-            --pre-sql statements                           one or more quoted SQL statements run before any operation, e.g, CREATE TIME SERIES TABLE\n \
-            --partition-by columns                         columns to partition the output data by when exporting to Apache Parquet files\n \
-            --post-sql statements                          one or more quoted SQL statements run after a successful operation, e.g, DROP TABLE\n \
-            --cast-double-to-float                         cast double to float, which may be a lossy cast, to simplify loading time series tables"
-    );
-    process::exit(1);
 }
 
 /// Import data from `input_path` to the table with `table_name` in `output_path`. `pre_sql` is
@@ -146,12 +176,13 @@ async fn import(
     pre_sql: &[String],
     post_sql: &[String],
     cast_double_to_float: bool,
+    credentials: &CloudCredentials,
 ) -> Result<()> {
     // Create an ExecutionPlan that reads all Apache Parquet files in the input path.
     let input_stream = input_stream(input_path).await?;
 
     // Open DataFolder to write each of the Apache Parquet files to table_name to.
-    let mut data_folder = create_data_folder(output_path).await?;
+    let mut data_folder = create_data_folder(output_path, credentials).await?;
 
     // Ensure the operations that will be performed is as the user expects.
     println!(
@@ -419,9 +450,10 @@ async fn export(
     pre_sql: &[String],
     post_sql: &[String],
     partition_by: Vec<String>,
+    credentials: &CloudCredentials,
 ) -> Result<()> {
     // Open DataFolder to read from and ensure the table exists.
-    let mut data_folder = create_data_folder(input_path).await?;
+    let mut data_folder = create_data_folder(input_path, credentials).await?;
 
     // Ensure the operations that will be performed is as the user expects.
     println!(
@@ -483,44 +515,27 @@ async fn export(
     Ok(())
 }
 
-/// Returns a [`DataFolder`] for `data_folder_path`. If the necessary environment variables are not
-/// set for S3 and Azure or the [`DataFolder`] cannot access `data_folder_path`, a
-/// [`ModelarDbEmbeddedError`] is returned.
-async fn create_data_folder(data_folder_path: &str) -> Result<DataFolder> {
+/// Returns a [`DataFolder`] for `data_folder_path` using `credentials` to authenticate with cloud
+/// storage providers. If the required credentials for S3 or Azure are not provided or the
+/// [`DataFolder`] cannot access `data_folder_path`, a [`ModelarDbEmbeddedError`] is returned.
+async fn create_data_folder(
+    data_folder_path: &str,
+    credentials: &CloudCredentials,
+) -> Result<DataFolder> {
     match data_folder_path.split_once("://") {
-        Some(("s3", bucket_name)) => {
-            let endpoint = env::var("AWS_ENDPOINT")?;
-            let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
-            let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
-
-            DataFolder::open_s3(
-                endpoint,
-                bucket_name.to_owned(),
-                access_key_id,
-                secret_access_key,
-            )
+        Some(("s3", _)) | Some(("azureblobstorage", _)) => {
+            DataFolder::open_remote_url(data_folder_path, credentials)
+                .await
+                .map_err(|error| error.into())
+        }
+        _ => DataFolder::open_local_url(data_folder_path)
             .await
-            .map_err(|error| error.into())
-        }
-        Some(("az", container_name)) => {
-            let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
-            let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
-
-            DataFolder::open_azure(account_name, access_key, container_name.to_owned())
-                .await
-                .map_err(|error| error.into())
-        }
-        _ => {
-            let data_folder_path = StdPath::new(data_folder_path);
-            DataFolder::open_local(data_folder_path)
-                .await
-                .map_err(|error| error.into())
-        }
+            .map_err(|error| error.into()),
     }
 }
 
 /// Asks the user for permission to start and return [`true`] if the user agrees and [`false`] if
-/// they do not. If the users permission cannot be read, return [`ModelarDbEmbeddedError`].
+/// they do not. If the user's permission cannot be read, return [`ModelarDbEmbeddedError`].
 fn ask_user_for_confirmation_to_start() -> Result<bool> {
     let mut user_input = String::new();
     loop {
@@ -533,11 +548,9 @@ fn ask_user_for_confirmation_to_start() -> Result<bool> {
             .read_line(&mut user_input)
             .map_err(|error| ModelarDbEmbeddedError::InvalidArgument(error.to_string()))?;
 
-        match user_input.as_str() {
-            "y\n" => return Ok(true),
-            "Y\n" => return Ok(true),
-            "n\n" => return Ok(false),
-            "N\n" => return Ok(false),
+        match user_input.trim() {
+            "y" | "Y" => return Ok(true),
+            "n" | "N" => return Ok(false),
             _ => (),
         }
     }

@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use arrow::array::{RecordBatch, StringViewArray};
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
+use clap::Args;
 use datafusion::common::{DFSchema, DataFusionError};
 use datafusion::logical_expr::Expr;
 
@@ -402,6 +403,31 @@ impl fmt::Display for ServerMode {
             ServerMode::Edge => write!(f, "edge"),
         }
     }
+}
+
+/// Cloud credentials extracted from either a subcommand's flags or the corresponding environment
+/// variables.
+#[derive(Args, Default)]
+pub struct CloudCredentials {
+    /// Amazon S3 endpoint URL.
+    #[arg(long, env = "AWS_ENDPOINT")]
+    pub aws_endpoint: Option<String>,
+
+    /// Amazon S3 access key ID.
+    #[arg(long, env = "AWS_ACCESS_KEY_ID")]
+    pub aws_access_key_id: Option<String>,
+
+    /// Amazon S3 secret access key.
+    #[arg(long, env = "AWS_SECRET_ACCESS_KEY")]
+    pub aws_secret_access_key: Option<String>,
+
+    /// Azure Blob Storage account name.
+    #[arg(long, env = "AZURE_STORAGE_ACCOUNT_NAME")]
+    pub azure_storage_account_name: Option<String>,
+
+    /// Azure Blob Storage access key.
+    #[arg(long, env = "AZURE_STORAGE_ACCESS_KEY")]
+    pub azure_storage_access_key: Option<String>,
 }
 
 #[cfg(test)]

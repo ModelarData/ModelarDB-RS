@@ -19,7 +19,6 @@ pub mod cluster;
 pub mod delta_table_writer;
 
 use std::collections::{HashMap, HashSet};
-use std::env;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
@@ -45,7 +44,7 @@ use futures::{StreamExt, TryStreamExt};
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use modelardb_types::schemas::FIELD_COLUMN;
 use modelardb_types::types::{
-    ArrowValue, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
+    ArrowValue, CloudCredentials, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
     TimeSeriesTableMetadata,
 };
 use object_store::ObjectStore;
@@ -132,14 +131,26 @@ impl DataFolder {
     /// Create a new [`DataFolder`] that manages Delta tables in the remote object store given by
     /// `remote_url`. If `remote_url` has the schema `s3`, the object store is an Amazon S3 bucket.
     /// If `remote_url` has the schema `azureblobstorage`, the object store is an Azure Blob Storage
-    /// container. The remaining parameters are retrieved from environment variables. Returns
-    /// [`ModelarDbStorageError`] if a connection to the specified object store could not be created.
-    pub async fn open_remote_url(remote_url: &str) -> Result<Self> {
+    /// container. Returns [`ModelarDbStorageError`] if required credentials are missing or a
+    /// connection to the specified object store could not be created.
+    pub async fn open_remote_url(remote_url: &str, credentials: &CloudCredentials) -> Result<Self> {
         match remote_url.split_once("://") {
             Some(("s3", bucket_name)) => {
-                let endpoint = env::var("AWS_ENDPOINT")?;
-                let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
-                let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
+                let endpoint = credentials.aws_endpoint.clone().ok_or_else(|| {
+                    ModelarDbStorageError::InvalidArgument(
+                        "Amazon S3 requires --aws-endpoint or AWS_ENDPOINT.".to_owned(),
+                    )
+                })?;
+                let access_key_id = credentials.aws_access_key_id.clone().ok_or_else(|| {
+                    ModelarDbStorageError::InvalidArgument(
+                        "Amazon S3 requires --aws-access-key-id or AWS_ACCESS_KEY_ID.".to_owned(),
+                    )
+                })?;
+                let secret_access_key = credentials.aws_secret_access_key.clone().ok_or_else(|| {
+                    ModelarDbStorageError::InvalidArgument(
+                        "Amazon S3 requires --aws-secret-access-key or AWS_SECRET_ACCESS_KEY.".to_owned(),
+                    )
+                })?;
 
                 // Register the S3 storage handlers to allow the use of Amazon S3 object stores. This is
                 // required at runtime to initialize the S3 storage implementation in the deltalake_aws
@@ -147,17 +158,19 @@ impl DataFolder {
                 // stored in a DashMap, thus, the handlers are simply overwritten with the same each time.
                 deltalake::aws::register_handlers(None);
 
-                Self::open_s3(
-                    endpoint,
-                    bucket_name.to_owned(),
-                    access_key_id,
-                    secret_access_key,
-                )
-                .await
+                Self::open_s3(endpoint, bucket_name.to_owned(), access_key_id, secret_access_key).await
             }
             Some(("azureblobstorage", container_name)) => {
-                let account_name = env::var("AZURE_STORAGE_ACCOUNT_NAME")?;
-                let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")?;
+                let account_name = credentials.azure_storage_account_name.clone().ok_or_else(|| {
+                    ModelarDbStorageError::InvalidArgument(
+                        "Azure Blob Storage requires --azure-storage-account-name or AZURE_STORAGE_ACCOUNT_NAME.".to_owned(),
+                    )
+                })?;
+                let access_key = credentials.azure_storage_access_key.clone().ok_or_else(|| {
+                    ModelarDbStorageError::InvalidArgument(
+                        "Azure Blob Storage requires --azure-storage-access-key or AZURE_STORAGE_ACCESS_KEY.".to_owned(),
+                    )
+                })?;
 
                 Self::open_azure(account_name, access_key, container_name.to_owned()).await
             }

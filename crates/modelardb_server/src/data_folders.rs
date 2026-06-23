@@ -15,15 +15,11 @@
 
 //! Implementation of a struct that provides access to the local and remote data storage components.
 
-use std::env;
-
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::types::{Node, ServerMode};
 
-use crate::Result;
 use crate::cluster::Cluster;
-use crate::error::ModelarDbServerError;
-use crate::{ClusterMode, PORT};
+use crate::{ClusterMode, Result, ServerMode as ServerModeArg};
 
 /// Folders for storing metadata and data in Apache Parquet files locally and remotely.
 #[derive(Clone)]
@@ -32,9 +28,9 @@ pub struct DataFolders {
     pub local_data_folder: DataFolder,
     /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
     pub maybe_remote_data_folder: Option<DataFolder>,
-    /// Folder from which metadata and data in Apache Parquet files will be read during query execution.
-    /// It is equivalent to `local_data_folder` when deployed on the edge and `remote_data_folder`
-    /// when deployed in the cloud.
+    /// Folder from which metadata and data in Apache Parquet files will be read during query
+    /// execution. It is equivalent to `local_data_folder` when deployed on the edge and
+    /// `remote_data_folder` when deployed in the cloud.
     pub query_data_folder: DataFolder,
 }
 
@@ -51,21 +47,25 @@ impl DataFolders {
         }
     }
 
-    /// Parse the given command line arguments into a [`ClusterMode`] and an instance of
-    /// [`DataFolders`]. If the necessary command line arguments are not provided, too many
-    /// arguments are provided, or if the arguments are malformed, [`ModelarDbServerError`] is
-    /// returned.
-    pub async fn try_from_command_line_arguments(
-        arguments: &[&str],
+    /// Parse the given [`ServerModeArg`] and connection parameters into a [`ClusterMode`] and an
+    /// instance of [`DataFolders`]. Returns [`ModelarDbServerError`](crate::error::ModelarDbServerError)
+    /// if the arguments are malformed, required credentials are missing, or the data folders cannot
+    /// be opened.
+    pub async fn try_from_args(
+        server_mode: &ServerModeArg,
+        host: &str,
+        port: u16,
     ) -> Result<(ClusterMode, Self)> {
-        let ip_address = env::var("MODELARDBD_IP_ADDRESS").unwrap_or("127.0.0.1".to_string());
-        let url_with_port = format!("grpc://{ip_address}:{}", &PORT.to_string());
+        let url_with_port = format!("grpc://{host}:{port}");
 
-        // Match the provided command line arguments to the supported inputs.
-        match arguments {
-            // Single edge without a cluster.
-            &["edge", local_data_folder_url] | &[local_data_folder_url] => {
-                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
+        match server_mode {
+            // Single edge node without a cluster.
+            ServerModeArg::Edge {
+                local_data_folder,
+                remote_data_folder: None,
+                ..
+            } => {
+                let local_data_folder = DataFolder::open_local_url(local_data_folder).await?;
 
                 Ok((
                     ClusterMode::SingleNode,
@@ -73,12 +73,15 @@ impl DataFolders {
                 ))
             }
             // Edge node in a cluster.
-            &["edge", local_data_folder_url, remote_data_folder_url]
-            | &[local_data_folder_url, remote_data_folder_url] => {
+            ServerModeArg::Edge {
+                local_data_folder,
+                remote_data_folder: Some(remote_data_folder),
+                credentials,
+            } => {
                 let remote_data_folder =
-                    DataFolder::open_remote_url(remote_data_folder_url).await?;
+                    DataFolder::open_remote_url(remote_data_folder, credentials).await?;
 
-                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
+                let local_data_folder = DataFolder::open_local_url(local_data_folder).await?;
 
                 let node = Node::new(url_with_port, ServerMode::Edge);
                 let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
@@ -93,11 +96,15 @@ impl DataFolders {
                 ))
             }
             // Cloud node in a cluster.
-            &["cloud", local_data_folder_url, remote_data_folder_url] => {
+            ServerModeArg::Cloud {
+                local_data_folder,
+                remote_data_folder,
+                credentials,
+            } => {
                 let remote_data_folder =
-                    DataFolder::open_remote_url(remote_data_folder_url).await?;
+                    DataFolder::open_remote_url(remote_data_folder, credentials).await?;
 
-                let local_data_folder = DataFolder::open_local_url(local_data_folder_url).await?;
+                let local_data_folder = DataFolder::open_local_url(local_data_folder).await?;
 
                 let node = Node::new(url_with_port, ServerMode::Cloud);
                 let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
@@ -111,9 +118,6 @@ impl DataFolders {
                     ),
                 ))
             }
-            _ => Err(ModelarDbServerError::InvalidArgument(
-                "Too few, too many, or malformed arguments.".to_owned(),
-            )),
         }
     }
 }
@@ -122,35 +126,21 @@ impl DataFolders {
 mod tests {
     use super::*;
 
-    // Tests for try_from_command_line_arguments().
-    #[tokio::test]
-    async fn test_try_from_empty_command_line_arguments() {
-        let result = DataFolders::try_from_command_line_arguments(&[]).await;
+    use modelardb_types::types::CloudCredentials;
 
-        assert_eq!(
-            result.err().unwrap().to_string(),
-            "Invalid Argument Error: Too few, too many, or malformed arguments.".to_owned()
-        );
-    }
-
+    // Tests for try_from_args().
     #[tokio::test]
-    async fn test_try_from_edge_command_line_arguments_without_remote_url() {
+    async fn test_try_from_edge_without_remote_args() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_node_without_remote_data_folder(&["edge", temp_dir_str]).await;
-    }
+        let mode = ServerModeArg::Edge {
+            local_data_folder: temp_dir_str.to_owned(),
+            remote_data_folder: None,
+            credentials: CloudCredentials::default(),
+        };
 
-    #[tokio::test]
-    async fn test_try_from_edge_command_line_arguments_without_server_mode_and_remote_url() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert_single_node_without_remote_data_folder(&[temp_dir_str]).await;
-    }
-
-    async fn assert_single_node_without_remote_data_folder(input: &[&str]) {
-        let (cluster_mode, data_folders) = DataFolders::try_from_command_line_arguments(input)
+        let (cluster_mode, data_folders) = DataFolders::try_from_args(&mode, "127.0.0.1", 9999)
             .await
             .unwrap();
 
@@ -159,16 +149,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_try_from_incomplete_cloud_command_line_arguments() {
+    async fn test_try_from_edge_with_remote_without_credentials_args() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        let result = DataFolders::try_from_command_line_arguments(&["cloud", temp_dir_str]).await;
+        let mode = ServerModeArg::Edge {
+            local_data_folder: temp_dir_str.to_owned(),
+            remote_data_folder: Some("s3://my-bucket".to_owned()),
+            credentials: CloudCredentials::default(),
+        };
+
+        let result = DataFolders::try_from_args(&mode, "127.0.0.1", 9999).await;
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            "ModelarDB Storage Error: Invalid Argument Error: Remote data folder URL must be \
-             s3://bucket-name or azureblobstorage://container-name.",
+            "ModelarDB Storage Error: Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_from_cloud_without_credentials_args() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        let mode = ServerModeArg::Cloud {
+            local_data_folder: temp_dir_str.to_owned(),
+            remote_data_folder: "s3://my-bucket".to_owned(),
+            credentials: CloudCredentials::default(),
+        };
+
+        let result = DataFolders::try_from_args(&mode, "127.0.0.1", 9999).await;
+
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "ModelarDB Storage Error: Invalid Argument Error: Amazon S3 requires --aws-endpoint or AWS_ENDPOINT."
         );
     }
 }
