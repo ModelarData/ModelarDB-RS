@@ -97,7 +97,7 @@ store is used:
 --aws-secret-access-key / AWS_SECRET_ACCESS_KEY
 ```
 
-For example, to use a local instance of [MinIO](https://min.io/), assuming the access key id `KURo1eQeMhDeVsrz` and the
+For example, to use a local instance of [MinIO](https://github.com/pgsty/minio), assuming the access key id `KURo1eQeMhDeVsrz` and the
 secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` have been created through MinIO's command line tool or web
 interface, set the environment variables as follows:
 

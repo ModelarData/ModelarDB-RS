@@ -22,7 +22,7 @@ x-aws-variables: &aws-variables
 services:
   # Object store services.
   minio-server:
-    image: minio/minio
+    image: pgsty/minio
     container_name: minio-server
     ports:
       - "9000:9000"
@@ -33,7 +33,7 @@ services:
     command: server --console-address ":9001" /data
 
   create-bucket:
-    image: minio/mc
+    image: pgsty/mc
     container_name: create-bucket
     depends_on:
       - minio-server
