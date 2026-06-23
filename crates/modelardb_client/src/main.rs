@@ -34,8 +34,8 @@ use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, Ticket, utils};
 use bytes::Bytes;
-use modelardb_auth::BearerInterceptor;
 use clap::Parser;
+use modelardb_auth::BearerInterceptor;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
 use tonic::codegen::InterceptedService;
@@ -47,6 +47,10 @@ use crate::helper::ClientHelper;
 
 /// Error to emit when the server does not provide a response when one is expected.
 const TRANSPORT_ERROR: &str = "transport error: no messages received.";
+
+/// [`FlightServiceClient`] with a [`BearerInterceptor`] that attaches an authorization header.
+type AuthenticatedFlightClient =
+    FlightServiceClient<InterceptedService<Channel, BearerInterceptor>>;
 
 /// Command line arguments for the ModelarDB client.
 #[derive(Parser)]
@@ -66,6 +70,11 @@ struct ClientArgs {
     #[arg(long, default_value_t = 9999, env = "MODELARDB_PORT")]
     port: u16,
 
+    /// Bearer token for authenticating requests sent to the modelardbd instance. If not provided,
+    /// requests are sent without an authorization header.
+    #[arg(long, env = "MODELARDB_TOKEN")]
+    token: Option<String>,
+
     /// Path to a file containing SQL queries to execute. If not provided, an interactive
     /// read-eval-print loop is opened.
     query_file: Option<PathBuf>,
@@ -80,7 +89,7 @@ async fn main() -> Result<()> {
     let args = ClientArgs::parse();
 
     // Execute the queries.
-    let flight_service_client = connect(&args.host, args.port).await?;
+    let flight_service_client = connect(&args.host, args.port, args.token).await?;
     if let Some(query_file) = args.query_file {
         execute_queries_from_a_file(flight_service_client, &query_file).await
     } else {
@@ -88,9 +97,16 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Connect to the server at `host`:`port`. Returns [`ModelarDbClientError`] if a connection to the
-/// server cannot be established.
-async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>> {
+/// Connect to the server at `host`:`port` with an optional bearer `maybe_token`. Returns
+/// [`ModelarDbClientError`] if a connection to the server cannot be established or the token is
+/// not a valid ASCII metadata value.
+async fn connect(
+    host: &str,
+    port: u16,
+    maybe_token: Option<String>,
+) -> Result<AuthenticatedFlightClient> {
+    let interceptor = BearerInterceptor::try_new(maybe_token.as_deref())?;
+
     let address = format!("grpc://{host}:{port}");
     let connection = Endpoint::new(address)?.connect().await?;
 
