@@ -135,7 +135,7 @@ class RustBuildExt(build_ext):
 
         :param ext: Information about the extension setuptools expects.
         """
-        dependencies = ["cargo", "rustc", "protoc"]
+        dependencies = ["cargo", "rustc"]
         for dependency in dependencies:
             if not shutil.which(dependency):
                 raise FileNotFoundError(
