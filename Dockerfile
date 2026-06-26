@@ -20,8 +20,6 @@ WORKDIR /usr/src/app
 
 COPY . .
 
-RUN apt-get update && apt-get install -y protobuf-compiler
-
 RUN cargo build --profile $BUILD_PROFILE
 
 CMD ["target/release/modelardbd", "edge", "data"]
