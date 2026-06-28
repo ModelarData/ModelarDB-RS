@@ -39,6 +39,7 @@ object_store = "0.13.2"
 proptest = "1.11.0"
 prost = "0.14.3"
 prost-build = "0.14.3"
+protox = "0.9.1"
 rand = "0.10.1"
 rustyline = "18.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
