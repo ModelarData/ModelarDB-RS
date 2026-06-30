@@ -2319,7 +2319,9 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_optimize_multiple_tables_with_target_size() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
-            parse_optimize_and_extract_table_names("OPTIMIZE table_name_1, table_name_2 TARGET 1024");
+            parse_optimize_and_extract_table_names(
+                "OPTIMIZE table_name_1, table_name_2 TARGET 1024",
+            );
 
         assert_eq!(
             table_names,
@@ -2388,6 +2390,36 @@ mod tests {
             }
             _ => panic!("Expected ModelarDbStatement::Optimize."),
         }
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_trailing_comma() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE table_name,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_leading_comma() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE ,table_name");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: , at Line: 1, Column: 10"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_only_comma() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: , at Line: 1, Column: 9"
+        );
     }
 
     #[test]
