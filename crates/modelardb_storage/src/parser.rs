@@ -195,7 +195,8 @@ pub fn tokenize_and_parse_sql_expression(
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
 /// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements,
-/// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements, and
+/// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements,
+/// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\] statements, and
 /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
@@ -577,6 +578,78 @@ impl ModelarDbDialect {
         })
     }
 
+    /// Return [`true`] if the token stream starts with OPTIMIZE, otherwise [`false`] is returned.
+    /// The method does not consume tokens.
+    fn next_token_is_optimize(&self, parser: &Parser) -> bool {
+        // OPTIMIZE.
+        if let Token::Word(word) = parser.peek_nth_token(0).token {
+            word.keyword == Keyword::OPTIMIZE
+        } else {
+            false
+        }
+    }
+
+    /// Parse OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\] to a
+    /// [`Statement::CreateSecret`] with the table names in the `name` field, the cluster flag in
+    /// the `if_not_exists` field, and the optional target file size in the `storage_specifier`
+    /// field. Note that [`Statement::CreateSecret`] is used since [`Statement`] does not have an
+    /// `Optimize` variant with the required fields. A [`ParserError`] is returned if OPTIMIZE is
+    /// not the first word, the table names cannot be extracted, or the target file size is not a
+    /// valid positive integer.
+    fn parse_optimize(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
+        // OPTIMIZE.
+        parser.expect_keyword(Keyword::OPTIMIZE)?;
+
+        // If the next token is CLUSTER, consume it and set the flag to optimize the entire cluster.
+        let optimize_cluster = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::CLUSTER
+        {
+            parser.expect_keyword(Keyword::CLUSTER)?;
+            true
+        } else {
+            false
+        };
+
+        // If the next token is a word that is not TARGET, attempt to parse table names.
+        let table_names = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword != Keyword::TARGET
+        {
+            self.parse_table_names(parser)?
+        } else {
+            vec![]
+        };
+
+        // If the next token is TARGET, attempt to parse the target file size in bytes.
+        let maybe_target_size_in_bytes = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::TARGET
+        {
+            parser.expect_keyword(Keyword::TARGET)?;
+            let target_size_in_bytes = self.parse_unsigned_literal_u64(parser)?;
+
+            if target_size_in_bytes == 0 {
+                return Err(ParserError::ParserError(
+                    "Target file size must be a positive integer.".to_owned(),
+                ));
+            }
+
+            Some(target_size_in_bytes)
+        } else {
+            None
+        };
+
+        // Return Statement::CreateSecret as a substitute for Optimize.
+        Ok(Statement::CreateSecret {
+            if_not_exists: optimize_cluster,
+            name: Some(Ident::new(table_names.join(";"))),
+            storage_specifier: maybe_target_size_in_bytes
+                .map(|target| Ident::new(target.to_string())),
+            secret_type: Ident::new(""),
+            options: vec![],
+            or_replace: false,
+            temporary: None,
+        })
+    }
+
     /// Return its value as a [`u64`] if the next [`Token`] is a [`Token::Number`], otherwise a
     /// [`ParserError`] is returned.
     fn parse_unsigned_literal_u64(&self, parser: &mut Parser) -> StdResult<u64, ParserError> {
@@ -704,6 +777,8 @@ impl Dialect for ModelarDbDialect {
     /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
     /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
     /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If not,
+    /// check if the next token is OPTIMIZE, if so, attempt to parse the token stream as an
+    /// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\] statement. If not,
     /// check if the next token is TRUNCATE, if so, attempt to parse the token stream as a
     /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statement. If all checks fail, [`None`] is
     /// returned so [`sqlparser`] uses its parsing methods for all other statements. If parsing
@@ -715,6 +790,8 @@ impl Dialect for ModelarDbDialect {
             Some(self.parse_include_query(parser))
         } else if self.next_token_is_vacuum(parser) {
             Some(self.parse_vacuum(parser))
+        } else if self.next_token_is_optimize(parser) {
+            Some(self.parse_optimize(parser))
         } else if self.next_token_is_truncate(parser) {
             Some(self.parse_truncate(parser))
         } else {
