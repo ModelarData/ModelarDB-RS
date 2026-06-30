@@ -1569,6 +1569,20 @@ mod tests {
         );
     }
 
+    async fn active_file_count(data_folder: &DataFolder, table_name: &str) -> usize {
+        let delta_table = data_folder.delta_table(table_name).await.unwrap();
+
+        delta_table.get_file_uris().unwrap().count()
+    }
+
+    async fn row_count(data_folder: &DataFolder, table_name: &str) -> usize {
+        let delta_table = data_folder.delta_table(table_name).await.unwrap();
+        let (_table, stream) = delta_table.scan_table().await.unwrap();
+
+        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+        batches.iter().map(|batch| batch.num_rows()).sum()
+    }
+
     #[tokio::test]
     async fn test_write_record_batches_to_normal_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
