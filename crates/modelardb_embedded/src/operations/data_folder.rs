@@ -2297,6 +2297,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_optimize_normal_table() {
+        let (_temp_dir, mut data_folder) = create_data_folder_with_normal_table().await;
+
+        // Each write is a separate commit, so four writes produce four small files.
+        for _ in 0..4 {
+            data_folder
+                .write(NORMAL_TABLE_NAME, normal_table_data())
+                .await
+                .unwrap();
+        }
+
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
+
+        data_folder.optimize(NORMAL_TABLE_NAME, None).await.unwrap();
+
+        // The small files should be compacted into a single active file.
+        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+    }
+
+    #[tokio::test]
     async fn test_move_normal_table_to_normal_table() {
         let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
         let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
