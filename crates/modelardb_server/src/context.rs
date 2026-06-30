@@ -1007,6 +1007,36 @@ mod tests {
 
         delta_table.get_file_uris().unwrap().count()
     }
+
+    #[tokio::test]
+    async fn test_optimize_table_with_zero_target_file_size() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context_with_time_series_table(&temp_dir).await;
+
+        let result = context
+            .optimize_table(TIME_SERIES_TABLE_NAME, Some(0))
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "ModelarDB Storage Error: Invalid Argument Error: \
+            Optimize target file size must be greater than zero."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_optimize_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(&temp_dir).await;
+
+        let result = context.optimize_table("missing_table", None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            table_does_not_exist_error("missing_table").to_string()
+        );
+    }
+
     #[tokio::test]
     async fn test_time_series_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
