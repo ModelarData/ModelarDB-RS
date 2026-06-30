@@ -942,6 +942,16 @@ mod tests {
         );
     }
 
+    async fn active_file_count(context: &Context, table_name: &str) -> usize {
+        let delta_table = context
+            .data_folders
+            .local_data_folder
+            .delta_table(table_name)
+            .await
+            .unwrap();
+
+        delta_table.get_file_uris().unwrap().count()
+    }
     #[tokio::test]
     async fn test_time_series_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
