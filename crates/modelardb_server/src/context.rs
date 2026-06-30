@@ -968,6 +968,35 @@ mod tests {
         assert_eq!(active_file_count(&context, NORMAL_TABLE_NAME).await, 1);
     }
 
+    #[tokio::test]
+    async fn test_optimize_time_series_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context_with_time_series_table(&temp_dir).await;
+
+        // create_context_with_time_series_table() writes one batch. Write three more so there are
+        // four separate commits, each producing a small file.
+        let local_data_folder = &context.data_folders.local_data_folder;
+        for _ in 0..3 {
+            local_data_folder
+                .write_record_batches(
+                    TIME_SERIES_TABLE_NAME,
+                    vec![table::compressed_segments_record_batch()],
+                )
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(active_file_count(&context, TIME_SERIES_TABLE_NAME).await, 4);
+
+        context
+            .optimize_table(TIME_SERIES_TABLE_NAME, None)
+            .await
+            .unwrap();
+
+        // The small files should be compacted into a single active file.
+        assert_eq!(active_file_count(&context, TIME_SERIES_TABLE_NAME).await, 1);
+    }
+
     async fn active_file_count(context: &Context, table_name: &str) -> usize {
         let delta_table = context
             .data_folders
