@@ -1585,7 +1585,7 @@ mod tests {
         assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 4);
 
         data_folder
-            .optimize_table("normal_table_1", Some(64 * 1024 * 1024))
+            .optimize_table("normal_table_1", None)
             .await
             .unwrap();
 
@@ -1615,7 +1615,7 @@ mod tests {
         );
 
         data_folder
-            .optimize_table(TIME_SERIES_TABLE_NAME, Some(64 * 1024 * 1024))
+            .optimize_table(TIME_SERIES_TABLE_NAME, None)
             .await
             .unwrap();
 
@@ -1626,6 +1626,18 @@ mod tests {
         assert_eq!(
             row_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
             rows_before
+        );
+    }
+
+    #[tokio::test]
+    async fn test_optimize_table_with_zero_target_file_size() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder.optimize_table("normal_table_1", Some(0)).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: Optimize target file size must be greater than zero."
         );
     }
 
