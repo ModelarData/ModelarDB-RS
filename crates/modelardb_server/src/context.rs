@@ -401,6 +401,28 @@ impl Context {
         Ok(())
     }
 
+    /// Optimize the table with `table_name` if it exists by compacting its small files into larger
+    /// files of approximately `maybe_target_size_in_bytes` bytes. If a target size is not given, a
+    /// default target size of 64 MiB is used. If the target size is zero, the table does not exist,
+    /// or it could not be optimized, [`ModelarDbServerError`] is returned.
+    pub async fn optimize_table(
+        &self,
+        table_name: &str,
+        maybe_target_size_in_bytes: Option<u64>,
+    ) -> Result<()> {
+        // Check if the table exists first to provide a consistent error message if it does not.
+        if self.check_table_does_not_exist(table_name).await.is_ok() {
+            return Err(table_does_not_exist_error(table_name));
+        }
+
+        self.data_folders
+            .local_data_folder
+            .optimize_table(table_name, maybe_target_size_in_bytes)
+            .await?;
+
+        Ok(())
+    }
+
     /// Lookup the [`TimeSeriesTableMetadata`] of the time series table with name `table_name` if it
     /// exists. Specifically, the method returns:
     /// * [`TimeSeriesTableMetadata`] if a time series table with the name `table_name` exists.
