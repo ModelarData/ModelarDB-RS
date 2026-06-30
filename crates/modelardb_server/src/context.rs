@@ -839,25 +839,6 @@ mod tests {
         assert_eq!(files.count(), 1);
     }
 
-    /// Create a [`Context`] with a normal table named `NORMAL_TABLE_NAME` and write data to it.
-    async fn create_context_with_normal_table(temp_dir: &TempDir) -> Arc<Context> {
-        let context = create_context(temp_dir).await;
-
-        context
-            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
-            .await
-            .unwrap();
-
-        // Write data to the normal table.
-        let local_data_folder = &context.data_folders.local_data_folder;
-        local_data_folder
-            .write_record_batches(NORMAL_TABLE_NAME, vec![table::normal_table_record_batch()])
-            .await
-            .unwrap();
-
-        context
-    }
-
     #[tokio::test]
     async fn test_vacuum_time_series_table() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -906,29 +887,6 @@ mod tests {
         );
     }
 
-    /// Create a [`Context`] with a time series table named `TIME_SERIES_TABLE_NAME` and write data
-    /// to it.
-    async fn create_context_with_time_series_table(temp_dir: &TempDir) -> Arc<Context> {
-        let context = create_context(temp_dir).await;
-
-        context
-            .create_time_series_table(&table::time_series_table_metadata())
-            .await
-            .unwrap();
-
-        // Write data to the time series table.
-        let local_data_folder = &context.data_folders.local_data_folder;
-        local_data_folder
-            .write_record_batches(
-                TIME_SERIES_TABLE_NAME,
-                vec![table::compressed_segments_record_batch()],
-            )
-            .await
-            .unwrap();
-
-        context
-    }
-
     #[tokio::test]
     async fn test_vacuum_missing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -966,6 +924,25 @@ mod tests {
 
         // The small files should be compacted into a single active file.
         assert_eq!(active_file_count(&context, NORMAL_TABLE_NAME).await, 1);
+    }
+
+    /// Create a [`Context`] with a normal table named `NORMAL_TABLE_NAME` and write data to it.
+    async fn create_context_with_normal_table(temp_dir: &TempDir) -> Arc<Context> {
+        let context = create_context(temp_dir).await;
+
+        context
+            .create_normal_table(NORMAL_TABLE_NAME, &table::normal_table_schema())
+            .await
+            .unwrap();
+
+        // Write data to the normal table.
+        let local_data_folder = &context.data_folders.local_data_folder;
+        local_data_folder
+            .write_record_batches(NORMAL_TABLE_NAME, vec![table::normal_table_record_batch()])
+            .await
+            .unwrap();
+
+        context
     }
 
     #[tokio::test]
@@ -1022,6 +999,29 @@ mod tests {
             "ModelarDB Storage Error: Invalid Argument Error: \
             Optimize target file size must be greater than zero."
         );
+    }
+
+    /// Create a [`Context`] with a time series table named `TIME_SERIES_TABLE_NAME` and write data
+    /// to it.
+    async fn create_context_with_time_series_table(temp_dir: &TempDir) -> Arc<Context> {
+        let context = create_context(temp_dir).await;
+
+        context
+            .create_time_series_table(&table::time_series_table_metadata())
+            .await
+            .unwrap();
+
+        // Write data to the time series table.
+        let local_data_folder = &context.data_folders.local_data_folder;
+        local_data_folder
+            .write_record_batches(
+                TIME_SERIES_TABLE_NAME,
+                vec![table::compressed_segments_record_batch()],
+            )
+            .await
+            .unwrap();
+
+        context
     }
 
     #[tokio::test]
