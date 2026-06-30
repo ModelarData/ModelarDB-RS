@@ -1569,6 +1569,32 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_optimize_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        // Each write is a separate commit, so four writes produce four small files.
+        for _ in 0..4 {
+            data_folder
+                .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+                .await
+                .unwrap();
+        }
+
+        let files_before = active_file_count(&data_folder, "normal_table_1").await;
+        let rows_before = row_count(&data_folder, "normal_table_1").await;
+        assert_eq!(files_before, 4);
+
+        data_folder
+            .optimize_table("normal_table_1", Some(64 * 1024 * 1024))
+            .await
+            .unwrap();
+
+        // The small files should be compacted into a single file with no rows lost or duplicated.
+        assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 1);
+        assert_eq!(row_count(&data_folder, "normal_table_1").await, rows_before);
+    }
+
     async fn active_file_count(data_folder: &DataFolder, table_name: &str) -> usize {
         let delta_table = data_folder.delta_table(table_name).await.unwrap();
 
