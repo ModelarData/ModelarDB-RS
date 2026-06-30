@@ -1581,9 +1581,8 @@ mod tests {
                 .unwrap();
         }
 
-        let files_before = active_file_count(&data_folder, "normal_table_1").await;
         let rows_before = row_count(&data_folder, "normal_table_1").await;
-        assert_eq!(files_before, 4);
+        assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 4);
 
         data_folder
             .optimize_table("normal_table_1", Some(64 * 1024 * 1024))
@@ -1593,6 +1592,41 @@ mod tests {
         // The small files should be compacted into a single file with no rows lost or duplicated.
         assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 1);
         assert_eq!(row_count(&data_folder, "normal_table_1").await, rows_before);
+    }
+
+    #[tokio::test]
+    async fn test_optimize_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        for _ in 0..4 {
+            data_folder
+                .write_record_batches(
+                    TIME_SERIES_TABLE_NAME,
+                    vec![test::compressed_segments_record_batch()],
+                )
+                .await
+                .unwrap();
+        }
+
+        let rows_before = row_count(&data_folder, TIME_SERIES_TABLE_NAME).await;
+        assert_eq!(
+            active_file_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
+            4
+        );
+
+        data_folder
+            .optimize_table(TIME_SERIES_TABLE_NAME, Some(64 * 1024 * 1024))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            active_file_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
+            1
+        );
+        assert_eq!(
+            row_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
+            rows_before
+        );
     }
 
     async fn active_file_count(data_folder: &DataFolder, table_name: &str) -> usize {
