@@ -2306,6 +2306,77 @@ mod tests {
         assert!(!cluster)
     }
 
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1024");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_multiple_tables_with_target_size() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE table_name_1, table_name_2 TARGET 1024");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE CLUSTER");
+
+        assert!(table_names.is_empty());
+        assert!(maybe_target_size_in_bytes.is_none());
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_with_multiple_tables() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE CLUSTER table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert!(maybe_target_size_in_bytes.is_none());
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_with_target_size() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE CLUSTER TARGET 1024");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_with_multiple_tables_and_target_size() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names(
+                "OPTIMIZE CLUSTER table_name_1, table_name_2 TARGET 1024",
+            );
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(cluster)
+    }
+
     fn parse_optimize_and_extract_table_names(
         sql_statement: &str,
     ) -> (Vec<String>, Option<u64>, bool) {
