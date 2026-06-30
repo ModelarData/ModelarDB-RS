@@ -2431,6 +2431,56 @@ mod tests {
             "Parser Error: sql parser error: Expected: end of statement, found: 'table_name' at Line: 1, Column: 10"
         );
     }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_without_number() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_number_without_target() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE 1024");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: 1024 at Line: 1, Column: 10"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_float() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET 1024.5");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Failed to parse '1024.5' into a u64 due to: invalid digit found in string"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_non_numeric() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET thousand");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: thousand at Line: 1, Column: 17"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_negative() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET -1024");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: - at Line: 1, Column: 17"
+        );
+    }
     #[test]
     fn test_tokenize_and_parse_truncate_single_table() {
         let (table_names, cluster) = parse_truncate_and_extract_table_names("TRUNCATE table_name");
