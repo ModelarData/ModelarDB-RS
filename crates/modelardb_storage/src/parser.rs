@@ -2483,6 +2483,16 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_optimize_target_with_zero() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET 0");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Target file size must be a positive integer."
+        );
+    }
+
+    #[test]
     fn test_tokenize_and_parse_optimize_target_twice() {
         let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET 1024 TARGET 1024");
 
