@@ -682,10 +682,13 @@ impl DataFolder {
         Ok(())
     }
 
-    /// Optimize the Delta Lake table with `table_name` by compacting its small files into larger
-    /// files of approximately `maybe_target_size_in_bytes` bytes. If a target size is not given, a
-    /// default target size of 64 MiB is used. If the target size is zero, the table does not exist,
-    /// or the files could not be compacted, a [`ModelarDbStorageError`] is returned.
+    /// Optimize the Delta Lake table with `table_name` by compacting its many small files into
+    /// fewer larger files of approximately `maybe_target_size_in_bytes` bytes. If a target size is
+    /// not given, a default target size of 64 MiB is used. Compaction only rewrites files smaller
+    /// than the target, so it is safe to call repeatedly. Note that the small files are only marked
+    /// as removed and are not deleted from disk until the table is vacuumed. If the target size is
+    /// zero, the table does not exist, or the files could not be compacted, a
+    /// [`ModelarDbStorageError`] is returned.
     pub async fn optimize_table(
         &self,
         table_name: &str,
