@@ -19,6 +19,7 @@ pub mod cluster;
 pub mod delta_table_writer;
 
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU64;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
@@ -677,6 +678,29 @@ impl DataFolder {
             .with_retention_period(retention_period)
             .with_enforce_retention_duration(false)
             .await?;
+
+        Ok(())
+    }
+
+    /// Optimize the Delta Lake table with `table_name` by compacting its small files into larger
+    /// files of approximately `maybe_target_size_in_bytes` bytes. If a target size is not given, a
+    /// default target size of 64 MiB is used. If the target size is zero, the table does not exist,
+    /// or the files could not be compacted, a [`ModelarDbStorageError`] is returned.
+    pub async fn optimize_table(
+        &self,
+        table_name: &str,
+        maybe_target_size_in_bytes: Option<u64>,
+    ) -> Result<()> {
+        let delta_table = self.delta_table(table_name).await?;
+
+        let target_size_in_bytes = maybe_target_size_in_bytes.unwrap_or(64 * 1024 * 1024);
+        let target_size = NonZeroU64::new(target_size_in_bytes).ok_or_else(|| {
+            ModelarDbStorageError::InvalidArgument(
+                "Optimize target file size must be greater than zero.".to_owned(),
+            )
+        })?;
+
+        delta_table.optimize().with_target_size(target_size).await?;
 
         Ok(())
     }
