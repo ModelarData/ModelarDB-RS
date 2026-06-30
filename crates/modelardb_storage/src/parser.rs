@@ -2423,6 +2423,15 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_optimize_quoted_table_name() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE 'table_name'");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: 'table_name' at Line: 1, Column: 10"
+        );
+    }
+    #[test]
     fn test_tokenize_and_parse_truncate_single_table() {
         let (table_names, cluster) = parse_truncate_and_extract_table_names("TRUNCATE table_name");
 
