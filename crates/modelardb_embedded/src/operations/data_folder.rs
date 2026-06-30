@@ -539,6 +539,26 @@ impl Operations for DataFolder {
             )))
         }
     }
+
+    /// Optimize the table with the name in `table_name` by compacting its many small files into
+    /// fewer larger files of approximately `maybe_target_size_in_bytes` bytes. If a target size is
+    /// not given, the default target size of 64 MiB is used. If the table does not exist, the table
+    /// could not be optimized, or the target size is zero, [`ModelarDbEmbeddedError`] is returned.
+    async fn optimize(
+        &mut self,
+        table_name: &str,
+        maybe_target_size_in_bytes: Option<u64>,
+    ) -> Result<()> {
+        if self.tables().await?.contains(&table_name.to_owned()) {
+            self.optimize_table(table_name, maybe_target_size_in_bytes)
+                .await
+                .map_err(|error| error.into())
+        } else {
+            Err(ModelarDbEmbeddedError::InvalidArgument(format!(
+                "Table with name '{table_name}' does not exist."
+            )))
+        }
+    }
 }
 
 /// Compare `source_schema` and `target_schema` and return [`true`] if they have the same number of
