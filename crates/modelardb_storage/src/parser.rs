@@ -51,8 +51,8 @@ use sqlparser::tokenizer::{Span, Token};
 
 use crate::error::{ModelarDbStorageError, Result};
 
-/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, VACUUM etc.) that has been
-/// tokenized, parsed, and for which semantic checks have verified that it is compatible with
+/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, VACUUM, OPTIMIZE etc.) that has
+/// been tokenized, parsed, and for which semantic checks have verified that it is compatible with
 /// ModelarDB.
 #[derive(Debug)]
 pub enum ModelarDbStatement {
@@ -70,12 +70,14 @@ pub enum ModelarDbStatement {
     TruncateTable(Vec<String>, bool),
     /// VACUUM.
     Vacuum(Vec<String>, Option<u64>, bool),
+    /// OPTIMIZE.
+    Optimize(Vec<String>, Option<u64>, bool),
 }
 
 /// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
 /// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contains
 /// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE TIME SERIES
-/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE, DROP TABLE, and VACUUM are supported.
+/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE, DROP TABLE, VACUUM, and OPTIMIZE are supported.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
 
@@ -138,10 +140,23 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
             // DropSecret is used as a substitute for VACUUM since Statement does not have a
             // Vacuum enum variant.
             Statement::DropSecret { name, storage_specifier, if_exists, .. } => Ok(ModelarDbStatement::Vacuum(
-                name.value.split_terminator(';').map(|s| s.to_owned()).collect(),
-                storage_specifier.and_then(|p| p.value.parse::<u64>().ok()),
+                name.value.split_terminator(';').map(|table| table.to_owned()).collect(),
+                storage_specifier.and_then(|retain| retain.value.parse::<u64>().ok()),
                 if_exists,
             )),
+            // CreateSecret is used as a substitute for OPTIMIZE since Statement does not have an
+            // Optimize variant with the required fields.
+            Statement::CreateSecret { name, storage_specifier, if_not_exists, .. } => {
+                let table_names = name
+                    .map(|name| name.value.split_terminator(';').map(|table| table.to_owned()).collect())
+                    .unwrap_or_default();
+
+                Ok(ModelarDbStatement::Optimize(
+                    table_names,
+                    storage_specifier.and_then(|target| target.value.parse::<u64>().ok()),
+                    if_not_exists,
+                ))
+            }
             Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
             Statement::Query(ref boxed_query) => {
                 if let Some(addresses) = extract_include_addresses(boxed_query) {
@@ -152,7 +167,8 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
             }
             Statement::Insert(ref _insert) => Ok(ModelarDbStatement::Statement(statement)),
             _ => Err(ModelarDbStorageError::InvalidArgument(
-                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, INSERT, and VACUUM are supported."
+                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, INSERT, VACUUM, and OPTIMIZE \
+                 are supported."
                     .to_owned(),
             )),
         }
