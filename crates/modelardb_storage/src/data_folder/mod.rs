@@ -1641,6 +1641,21 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_optimize_missing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder.optimize_table("missing_table", None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Delta table cannot be found at '{}'.",
+                data_folder.location_of_table("missing_table")
+            )
+        );
+    }
+
     async fn active_file_count(data_folder: &DataFolder, table_name: &str) -> usize {
         let delta_table = data_folder.delta_table(table_name).await.unwrap();
 
