@@ -1629,6 +1629,47 @@ mod tests {
         );
     }
 
+    async fn row_count(data_folder: &DataFolder, table_name: &str) -> usize {
+        let delta_table = data_folder.delta_table(table_name).await.unwrap();
+        let (_table, stream) = delta_table.scan_table().await.unwrap();
+
+        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+        batches.iter().map(|batch| batch.num_rows()).sum()
+    }
+
+    #[tokio::test]
+    async fn test_optimize_table_with_small_target_file_size() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        for _ in 0..4 {
+            data_folder
+                .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+                .await
+                .unwrap();
+        }
+
+        let files_before = active_file_count(&data_folder, "normal_table_1").await;
+        assert_eq!(files_before, 4);
+
+        // A one-byte target is smaller than every existing file, so none of them are candidates for
+        // compaction, and the files should be left untouched.
+        data_folder
+            .optimize_table("normal_table_1", Some(1))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            active_file_count(&data_folder, "normal_table_1").await,
+            files_before
+        );
+    }
+
+    async fn active_file_count(data_folder: &DataFolder, table_name: &str) -> usize {
+        let delta_table = data_folder.delta_table(table_name).await.unwrap();
+
+        delta_table.get_file_uris().unwrap().count()
+    }
+
     #[tokio::test]
     async fn test_optimize_table_with_zero_target_file_size() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
@@ -1654,20 +1695,6 @@ mod tests {
                 data_folder.location_of_table("missing_table")
             )
         );
-    }
-
-    async fn active_file_count(data_folder: &DataFolder, table_name: &str) -> usize {
-        let delta_table = data_folder.delta_table(table_name).await.unwrap();
-
-        delta_table.get_file_uris().unwrap().count()
-    }
-
-    async fn row_count(data_folder: &DataFolder, table_name: &str) -> usize {
-        let delta_table = data_folder.delta_table(table_name).await.unwrap();
-        let (_table, stream) = delta_table.scan_table().await.unwrap();
-
-        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
-        batches.iter().map(|batch| batch.num_rows()).sum()
     }
 
     #[tokio::test]
