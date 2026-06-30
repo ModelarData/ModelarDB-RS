@@ -2351,6 +2351,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_optimize_missing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let result = data_folder.optimize(MISSING_TABLE_NAME, None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' does not exist."
+            )
+        );
+    }
+
+    #[tokio::test]
     async fn test_move_normal_table_to_normal_table() {
         let (_temp_dir, mut source) = create_data_folder_with_normal_table().await;
         let (_temp_dir, mut target) = create_data_folder_with_normal_table().await;
