@@ -927,6 +927,19 @@ async fn test_can_optimize_time_series_table() {
     let files = std::fs::read_dir(&column_path).unwrap();
     assert_eq!(files.count(), 1);
 }
+
+#[tokio::test]
+async fn test_cannot_optimize_missing_table() {
+    let mut test_context = TestContext::new().await;
+
+    let response = test_context.optimize_table(NORMAL_TABLE_NAME, None).await;
+
+    assert_eq!(
+        response.err().unwrap().message(),
+        format!("Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist.")
+    );
+}
+
 #[tokio::test]
 async fn test_can_get_schema() {
     let mut test_context = TestContext::new().await;
