@@ -861,8 +861,7 @@ async fn test_can_optimize_normal_table() {
         .await
         .unwrap();
 
-    // Optimize compacts the four files into one but leaves the originals on disk until they are
-    // vacuumed, so we vacuum the now-stale files.
+    // Vacuum to remove the stale files.
     test_context
         .vacuum_table(NORMAL_TABLE_NAME, Some(0))
         .await
@@ -916,8 +915,7 @@ async fn test_can_optimize_time_series_table() {
         .await
         .unwrap();
 
-    // Optimize compacts the four files in the partition into one but leaves the originals on disk
-    // until they are vacuumed, so we vacuum the now-stale files.
+    // Vacuum to remove the stale files.
     test_context
         .vacuum_table(TIME_SERIES_TABLE_NAME, Some(0))
         .await

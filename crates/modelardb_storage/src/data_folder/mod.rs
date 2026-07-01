@@ -1598,6 +1598,7 @@ mod tests {
     async fn test_optimize_time_series_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
+        // Each write is a separate commit, so four writes produce four small files.
         for _ in 0..4 {
             data_folder
                 .write_record_batches(
@@ -1619,6 +1620,7 @@ mod tests {
             .await
             .unwrap();
 
+        // The small files should be compacted into a single file with no rows lost or duplicated.
         assert_eq!(
             active_file_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
             1
@@ -1641,6 +1643,7 @@ mod tests {
     async fn test_optimize_table_with_small_target_file_size() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
+        // Each write is a separate commit, so four writes produce four small files.
         for _ in 0..4 {
             data_folder
                 .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
