@@ -835,7 +835,7 @@ async fn test_can_optimize_normal_table() {
     for _ in 0..3 {
         let flight_data = TestContext::create_flight_data_from_time_series(
             NORMAL_TABLE_NAME.to_owned(),
-            &[time_series.clone()],
+            slice::from_ref(&time_series),
         );
 
         test_context
@@ -891,7 +891,7 @@ async fn test_can_optimize_time_series_table() {
     for _ in 0..3 {
         let flight_data = TestContext::create_flight_data_from_time_series(
             TIME_SERIES_TABLE_NAME.to_owned(),
-            &[time_series.clone()],
+            slice::from_ref(&time_series),
         );
 
         test_context
