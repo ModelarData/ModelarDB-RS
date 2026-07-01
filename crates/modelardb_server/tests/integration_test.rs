@@ -818,6 +818,61 @@ async fn test_cannot_vacuum_missing_table() {
 }
 
 #[tokio::test]
+async fn test_can_optimize_normal_table() {
+    let mut test_context = TestContext::new().await;
+
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        slice::from_ref(&time_series),
+        NORMAL_TABLE_NAME,
+        TableType::NormalTable,
+    )
+    .await;
+
+    // ingest_time_series_and_flush_data() writes one file. Ingest and flush three more times so
+    // there are four small files to compact.
+    for _ in 0..3 {
+        let flight_data = TestContext::create_flight_data_from_time_series(
+            NORMAL_TABLE_NAME.to_owned(),
+            &[time_series.clone()],
+        );
+
+        test_context
+            .send_time_series_to_server(flight_data)
+            .await
+            .unwrap();
+
+        test_context.flush_data_to_disk().await;
+    }
+
+    let table_path = format!(
+        "{}/tables/{}",
+        test_context.temp_dir.path().to_str().unwrap(),
+        NORMAL_TABLE_NAME
+    );
+
+    // Four data files plus the _delta_log folder.
+    let files = std::fs::read_dir(&table_path).unwrap();
+    assert_eq!(files.count(), 5);
+
+    test_context
+        .optimize_table(NORMAL_TABLE_NAME, None)
+        .await
+        .unwrap();
+
+    // Optimize compacts the four files into one but leaves the originals on disk until they are
+    // vacuumed, so we vacuum the now-stale files.
+    test_context
+        .vacuum_table(NORMAL_TABLE_NAME, Some(0))
+        .await
+        .unwrap();
+
+    // The compacted file plus the _delta_log folder should remain.
+    let files = std::fs::read_dir(&table_path).unwrap();
+    assert_eq!(files.count(), 2);
+}
+#[tokio::test]
 async fn test_can_get_schema() {
     let mut test_context = TestContext::new().await;
 
