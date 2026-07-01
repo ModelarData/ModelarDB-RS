@@ -272,6 +272,22 @@ impl TestContext {
         self.client.do_get(ticket).await
     }
 
+    /// Optimize a table in the server through the `do_get()` method.
+    async fn optimize_table(
+        &mut self,
+        table_name: &str,
+        maybe_target_size_in_bytes: Option<u64>,
+    ) -> Result<Response<Streaming<FlightData>>, Status> {
+        let sql = if let Some(target_size_in_bytes) = maybe_target_size_in_bytes {
+            format!("OPTIMIZE {table_name} TARGET {target_size_in_bytes}")
+        } else {
+            format!("OPTIMIZE {table_name}")
+        };
+
+        let ticket = Ticket::new(sql);
+        self.client.do_get(ticket).await
+    }
+
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
     /// depending on `generate_irregular_timestamps`, generated values with noise depending on
     /// `multiply_noise_range`, and an optional tag.
