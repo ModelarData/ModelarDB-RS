@@ -872,6 +872,61 @@ async fn test_can_optimize_normal_table() {
     let files = std::fs::read_dir(&table_path).unwrap();
     assert_eq!(files.count(), 2);
 }
+
+#[tokio::test]
+async fn test_can_optimize_time_series_table() {
+    let mut test_context = TestContext::new().await;
+
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        slice::from_ref(&time_series),
+        TIME_SERIES_TABLE_NAME,
+        TableType::TimeSeriesTable,
+    )
+    .await;
+
+    // ingest_time_series_and_flush_data() writes one file per field column partition. ingest and
+    // flush three more times so each partition has four small files to compact.
+    for _ in 0..3 {
+        let flight_data = TestContext::create_flight_data_from_time_series(
+            TIME_SERIES_TABLE_NAME.to_owned(),
+            &[time_series.clone()],
+        );
+
+        test_context
+            .send_time_series_to_server(flight_data)
+            .await
+            .unwrap();
+
+        test_context.flush_data_to_disk().await;
+    }
+
+    let column_path = format!(
+        "{}/tables/{}/field_column=1",
+        test_context.temp_dir.path().to_str().unwrap(),
+        TIME_SERIES_TABLE_NAME
+    );
+
+    let files = std::fs::read_dir(&column_path).unwrap();
+    assert_eq!(files.count(), 4);
+
+    test_context
+        .optimize_table(TIME_SERIES_TABLE_NAME, None)
+        .await
+        .unwrap();
+
+    // Optimize compacts the four files in the partition into one but leaves the originals on disk
+    // until they are vacuumed, so we vacuum the now-stale files.
+    test_context
+        .vacuum_table(TIME_SERIES_TABLE_NAME, Some(0))
+        .await
+        .unwrap();
+
+    // The four files in the partition should be compacted into a single file.
+    let files = std::fs::read_dir(&column_path).unwrap();
+    assert_eq!(files.count(), 1);
+}
 #[tokio::test]
 async fn test_can_get_schema() {
     let mut test_context = TestContext::new().await;
