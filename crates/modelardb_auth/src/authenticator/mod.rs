@@ -27,10 +27,14 @@ use tonic::metadata::MetadataMap;
 use crate::Permission;
 
 /// Validates the credentials in `metadata` and checks that the caller has the `required_permission`.
-/// Implementations must return `Ok(())` if authorized, `Err(Status::unauthenticated(...))` if
-/// credentials are missing or invalid, or `Err(Status::permission_denied(...))` if credentials are
-/// valid but the caller lacks the required permission. Error messages must not reveal the specific
-/// reason for rejection to prevent information leakage.
+/// Implementations must return:
+///
+/// - `Ok(())` if authorized.
+/// - `Err(Status::unauthenticated(...))` if credentials are missing or invalid.
+/// - `Err(Status::permission_denied(...))` if credentials are valid but the caller lacks the
+///   required permission.
+///
+/// Error messages must not reveal the specific reason for rejection to prevent information leakage.
 #[async_trait]
 pub trait Authenticator: Send + Sync {
     async fn authorize(

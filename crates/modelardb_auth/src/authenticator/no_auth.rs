@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! An [`Authenticator`] that grants all permissions to all callers without any validation. Used in
-//! the open-source version of ModelarDB where authentication is not required.
+//! An [`Authenticator`] that grants all permissions to all callers without any validation. Used
+//! when authentication is not required.
 
 use async_trait::async_trait;
 use tonic::Status;

@@ -253,7 +253,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &cluster_key).await;
 
         assert!(result.is_ok());
-        assert!(authenticator.calls().is_empty());
+        assert!(authenticator.permissions().is_empty());
     }
 
     #[tokio::test]
@@ -300,7 +300,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert!(authenticator.calls().is_empty());
+        assert!(authenticator.permissions().is_empty());
     }
 
     #[tokio::test]
@@ -311,7 +311,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
     }
 
     #[tokio::test]
@@ -322,7 +322,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
     }
 
     #[tokio::test]
@@ -333,7 +333,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
     }
 
     #[tokio::test]
@@ -344,7 +344,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Write]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Write]);
     }
 
     #[tokio::test]
@@ -355,7 +355,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
     }
 
     #[tokio::test]
@@ -366,7 +366,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
     }
 
     #[tokio::test]
@@ -377,7 +377,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
     }
 
     #[tokio::test]
@@ -388,7 +388,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
     }
 
     #[tokio::test]
@@ -399,7 +399,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
     }
 
     #[tokio::test]
@@ -410,7 +410,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Admin]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
     }
 
     #[tokio::test]
@@ -421,7 +421,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
     }
 
     #[tokio::test]
@@ -432,7 +432,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Write]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Write]);
     }
 
     #[tokio::test]
@@ -443,7 +443,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
     }
 
     #[tokio::test]
@@ -454,7 +454,7 @@ mod tests {
         let result = authorize(request, &*authenticator, &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.calls(), vec![Permission::Read]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
     }
 
     #[tokio::test]

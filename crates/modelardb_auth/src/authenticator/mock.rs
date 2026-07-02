@@ -29,25 +29,28 @@ use crate::authenticator::Authenticator;
 /// An [`Authenticator`] for use in tests that always grants access and records every
 /// [`Permission`] passed to [`authorize`](Authenticator::authorize).
 pub struct MockAuthenticator {
-    /// Every [`Permission`] passed to [`authorize`](Authenticator::authorize).
-    calls: Mutex<Vec<Permission>>,
+    /// Every [`Permission`] passed to [`authorize`](Authenticator::authorize). A [`Mutex`] is used
+    /// because [`authorize`](Authenticator::authorize) records through `&self`, which requires
+    /// interior mutability.
+    permissions: Mutex<Vec<Permission>>,
 }
 
 impl MockAuthenticator {
     pub fn new() -> Self {
         Self {
-            calls: Mutex::new(vec![]),
+            permissions: Mutex::new(vec![]),
         }
     }
 
     /// Return a copy of all permissions passed to [`authorize`](Authenticator::authorize)
     /// in the order they were received.
-    pub fn calls(&self) -> Vec<Permission> {
-        self.calls.lock().unwrap().clone()
+    pub fn permissions(&self) -> Vec<Permission> {
+        self.permissions.lock().unwrap().clone()
     }
 }
 
 impl Default for MockAuthenticator {
+    // Trait implemented to silence clippy warning.
     fn default() -> Self {
         Self::new()
     }
@@ -60,7 +63,7 @@ impl Authenticator for MockAuthenticator {
         _metadata: &MetadataMap,
         required_permission: Permission,
     ) -> Result<(), Status> {
-        self.calls.lock().unwrap().push(required_permission);
+        self.permissions.lock().unwrap().push(required_permission);
         Ok(())
     }
 }
