@@ -963,11 +963,11 @@ unsafe fn drop(
 
 /// Vacuums the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
 /// `maybe_operations_ptr` by deleting stale files that are older than `retention_period_in_seconds_ptr`
-/// seconds. Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`] and
-/// `table_name_ptr` points to a valid C string. `retention_period_in_seconds_ptr` points to a valid
-/// C string, or is null to use the default retention period. A C string is used for the retention
-/// period to avoid issues with different platforms using an inconsistent amount of bits for integer
-/// types. The string is converted directly to an unsigned 64-bit integer in Rust.
+/// seconds. Assumes `maybe_operations_ptr` points to a [`DataFolder`] or [`Client`];
+/// `table_name_ptr` points to a valid C string; and `retention_period_in_seconds_ptr` points to a
+/// valid C string, or is null to use the default retention period. A C string is used for the
+/// retention period to avoid issues with different platforms using an inconsistent amount of bits
+/// for integer types. The string is converted directly to an unsigned 64-bit integer in Rust.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn modelardb_embedded_vacuum(
     maybe_operations_ptr: *mut c_void,
@@ -1016,7 +1016,7 @@ unsafe fn vacuum(
 /// Optimizes the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
 /// `maybe_operations_ptr` by compacting its many small files into fewer larger files of
 /// approximately `target_size_in_bytes_ptr` bytes. Assumes `maybe_operations_ptr` points to a
-/// [`DataFolder`] or [`Client`] and `table_name_ptr` points to a valid C string.
+/// [`DataFolder`] or [`Client`]; `table_name_ptr` points to a valid C string; and
 /// `target_size_in_bytes_ptr` points to a valid C string, or is null to use the default target
 /// size. A C string is used for the target size to avoid issues with different platforms using an
 /// inconsistent amount of bits for integer types. The string is converted directly to an unsigned
