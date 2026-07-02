@@ -159,7 +159,7 @@ async fn main() -> Result<()> {
     context.replay_write_ahead_log().await?;
 
     // Start the Apache Arrow Flight interface.
-    remote::start_apache_arrow_flight_server(context, args.port).await?;
+    remote::start_apache_arrow_flight_server(context, None, args.port).await?;
 
     Ok(())
 }

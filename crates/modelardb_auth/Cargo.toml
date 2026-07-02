@@ -1,4 +1,4 @@
-# Copyright 2025 The ModelarDB Contributors
+# Copyright 2026 The ModelarDB Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,30 +13,15 @@
 # limitations under the License.
 
 [package]
-name = "modelardb_embedded"
+name = "modelardb_auth"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2024"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
-[lib]
-# cdylib is for dynamically linking with process that use bindings.
-# lib is for statically linking with a Rust crate like bulkloader.
-crate-type = ["cdylib", "lib"]
-
 [dependencies]
-arrow = { workspace = true, features = ["ffi"] }
-arrow-flight.workspace = true
 async-trait.workspace = true
-datafusion.workspace = true
-deltalake = { workspace = true, features = ["datafusion", "s3"] }
-futures.workspace = true
-modelardb_auth = { path = "../modelardb_auth" }
-modelardb_compression = { path = "../modelardb_compression" }
-modelardb_storage = { path = "../modelardb_storage" }
-modelardb_types = { path = "../modelardb_types" }
-tokio.workspace = true
 tonic.workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true
+[features]
+testing = []

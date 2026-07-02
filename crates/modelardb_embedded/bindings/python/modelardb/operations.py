@@ -221,17 +221,20 @@ class Operations:
         return self
 
     @classmethod
-    def connect(cls, url: str):
+    def connect(cls, url: str, token: None | str = None):
         """Create a connection to an :obj:`Operations` node.
 
         :param url: The URL of the ModelarDB node to connect to.
         :type url: str
+        :param token: A bearer token to attach to every request, or ``None`` if no authentication is required.
+        :type token: str, optional
         """
         self: Operations = cls()
 
         url_ptr = ffi.new("char[]", bytes(url, "UTF-8"))
+        maybe_token_ptr = ffi.new("char[]", bytes(token, "UTF-8")) if token else ffi.NULL
 
-        self.__operations_ptr = self.__library.modelardb_embedded_connect(url_ptr)
+        self.__operations_ptr = self.__library.modelardb_embedded_connect(url_ptr, maybe_token_ptr)
         self.__is_data_folder = False
 
         if self.__operations_ptr == ffi.NULL:
@@ -756,10 +759,12 @@ def open_azure(account_name: str, access_key: str, container_name: str) -> Opera
     return Operations.open_azure(account_name, access_key, container_name)
 
 
-def connect(url: str) -> Operations:
+def connect(url: str, token: None | str = None) -> Operations:
     """Create a connection to an :obj:`Operations` node.
 
     :param url: The URL of the ModelarDB node to connect to.
     :type url: str
+    :param token: A bearer token to attach to every request, or ``None`` if no authentication is required.
+    :type token: str, optional
     """
-    return Operations.connect(url)
+    return Operations.connect(url, token)

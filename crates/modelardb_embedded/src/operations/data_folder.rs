@@ -583,6 +583,7 @@ mod tests {
     use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
     use datafusion::physical_plan::expressions::Column;
     use datafusion::physical_plan::sorts::sort;
+    use modelardb_auth::BearerInterceptor;
     use modelardb_types::types::{
         ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, TimeSeriesTableMetadata,
         TimestampArray, ValueArray,
@@ -2744,9 +2745,14 @@ mod tests {
     }
 
     fn lazy_modelardb_client() -> Client {
+        let interceptor = BearerInterceptor {
+            maybe_authorization: None,
+        };
+
         Client {
-            flight_client: FlightServiceClient::new(
+            flight_client: FlightServiceClient::with_interceptor(
                 Channel::from_static("localhost").connect_lazy(),
+                interceptor,
             ),
         }
     }

@@ -34,6 +34,8 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt, stream};
+use modelardb_auth::BearerInterceptor;
+use tonic::codegen::InterceptedService;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Status};
 
@@ -48,15 +50,18 @@ use crate::{Aggregate, TableType};
 #[derive(Clone)]
 pub struct Client {
     /// Apache Arrow Flight client connected to the Apache Arrow Flight server of the ModelarDB node.
-    pub(crate) flight_client: FlightServiceClient<Channel>,
+    pub(crate) flight_client: FlightServiceClient<InterceptedService<Channel, BearerInterceptor>>,
 }
 
 impl Client {
-    /// Create a new [`Client`] that is connected to the node with `url`. If a connection
-    /// to the node could not be established, [`ModelarDbEmbeddedError`] is returned.
-    pub async fn connect(url: &str) -> Result<Client> {
+    /// Create a new [`Client`] that is connected to the node with `url`. If `maybe_token` is
+    /// provided, it is attached as a bearer token to every request. If a connection to the node
+    /// could not be established, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn connect(url: &str, maybe_token: Option<&str>) -> Result<Client> {
+        let interceptor = BearerInterceptor::try_new(maybe_token)?;
+
         let connection = Endpoint::new(url.to_owned())?.connect().await?;
-        let flight_client = FlightServiceClient::new(connection);
+        let flight_client = FlightServiceClient::with_interceptor(connection, interceptor);
 
         Ok(Client { flight_client })
     }

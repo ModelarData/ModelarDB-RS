@@ -17,6 +17,8 @@
 //! [`FlightServiceHandler`]. An Apache Arrow Flight server that process requests
 //! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
+mod auth_layer;
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -43,6 +45,7 @@ use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStrea
 use deltalake::arrow::datatypes::Schema;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
+use modelardb_auth::authenticator::Authenticator;
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::flight::protocol;
 use modelardb_types::functions;
@@ -51,25 +54,39 @@ use prost::Message;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::metadata::MetadataMap;
+use tonic::metadata::{AsciiMetadataValue, MetadataMap};
 use tonic::transport::{Endpoint, Server};
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::ClusterMode;
-use crate::cluster::Cluster;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
+use crate::remote::auth_layer::AuthLayer;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
-/// process the requests through [`FlightServiceHandler`].
-pub async fn start_apache_arrow_flight_server(context: Arc<Context>, port: u16) -> Result<()> {
+/// process the requests through [`FlightServiceHandler`]. All requests are passed through the
+/// [`AuthLayer`], which authenticates them using `maybe_authenticator` before they are passed to
+/// the [`FlightServiceHandler`]. If `maybe_authenticator` is [`None`], authentication is disabled, 
+/// and every request that is not an internal cluster request is allowed.
+pub async fn start_apache_arrow_flight_server(
+    context: Arc<Context>,
+    maybe_authenticator: Option<Arc<dyn Authenticator>>,
+    port: u16,
+) -> Result<()> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse().map_err(|error| {
         ModelarDbServerError::InvalidArgument(format!(
             "Unable to parse {localhost_with_port}: {error}"
         ))
     })?;
+
+    let maybe_cluster_key = match context.configuration_manager.read().await.cluster_mode() {
+        ClusterMode::MultiNode(cluster) => Some(cluster.key().clone()),
+        ClusterMode::SingleNode => None,
+    };
+
+    let auth_layer = AuthLayer::new(maybe_authenticator, maybe_cluster_key);
     let handler = FlightServiceHandler::new(context);
 
     // Increase the maximum message size from 4 MiB to 16 MiB to allow bulk-loading larger batches.
@@ -79,6 +96,7 @@ pub async fn start_apache_arrow_flight_server(context: Arc<Context>, port: u16) 
     info!("Starting Apache Arrow Flight on {}.", localhost_with_port);
 
     Server::builder()
+        .layer(auth_layer)
         .add_service(flight_service_server)
         .serve(localhost_with_port)
         .await
@@ -91,6 +109,7 @@ pub async fn start_apache_arrow_flight_server(context: Arc<Context>, port: u16) 
 async fn execute_query_at_addresses_and_union(
     sql: &str,
     addresses: Vec<String>,
+    maybe_authorization: Option<AsciiMetadataValue>,
     local_sendable_record_batch_stream: Pin<Box<dyn RecordBatchStream + Send>>,
 ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
     // Remove INCLUDE address+ as sqlparser seems incapable of doing so.
@@ -107,8 +126,12 @@ async fn execute_query_at_addresses_and_union(
     unioned_sendable_record_batch_streams.push(local_sendable_record_batch_stream);
 
     for address in addresses {
-        let remote_sendable_record_batch_stream =
-            execute_query_at_address(sql_select.to_owned(), address.to_owned()).await?;
+        let remote_sendable_record_batch_stream = execute_query_at_address(
+            sql_select.to_owned(),
+            address.to_owned(),
+            maybe_authorization.clone(),
+        )
+        .await?;
         unioned_sendable_record_batch_streams.push(remote_sendable_record_batch_stream);
     }
 
@@ -123,13 +146,22 @@ async fn execute_query_at_addresses_and_union(
 async fn execute_query_at_address(
     sql: String,
     address: String,
+    maybe_authorization: Option<AsciiMetadataValue>,
 ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>> {
     // Connect and execute query.
     let connection = Endpoint::new(address.clone())?.connect().await?;
     let mut flight_client = FlightServiceClient::new(connection);
 
-    let ticket = Ticket { ticket: sql.into() };
-    let mut stream = flight_client.do_get(ticket).await?.into_inner();
+    // Insert the authorization header if it is present. The header is added directly to avoid
+    // extracting the token from the authorization header.
+    let mut request = Request::new(Ticket { ticket: sql.into() });
+    if let Some(authorization) = maybe_authorization {
+        request
+            .metadata_mut()
+            .insert("authorization", authorization);
+    }
+
+    let mut stream = flight_client.do_get(request).await?.into_inner();
 
     // Read schema of record batches.
     let flight_data = stream.message().await?.ok_or_else(|| {
@@ -252,26 +284,6 @@ pub fn table_name_from_flight_descriptor(
         .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
 }
 
-/// Return `true` if the request contains the cluster key and `false` if not. If the request
-/// contains a key that does not match the cluster key, return [`Status`].
-#[allow(clippy::result_large_err)]
-fn cluster_key_in_request(
-    cluster: &Cluster,
-    request_metadata: &MetadataMap,
-) -> StdResult<bool, Status> {
-    if let Some(request_key) = request_metadata.get("x-cluster-key") {
-        if cluster.key() == request_key {
-            Ok(true)
-        } else {
-            Err(Status::invalid_argument(
-                "The cluster key in the request does not match the cluster key in the configuration.",
-            ))
-        }
-    } else {
-        Ok(false)
-    }
-}
-
 /// Return an empty stream of [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) that
 /// can be returned when a SQL command has been successfully executed but did not produce any rows
 /// to return.
@@ -330,7 +342,7 @@ impl FlightServiceHandler {
         // If the cluster key is in the request, the request is from a peer node, which means the
         // table has already been created in the remote data folder and propagated to all nodes.
         if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
-            && !cluster_key_in_request(cluster, request_metadata)?
+            && request_metadata.get("x-cluster-key").is_none()
         {
             cluster
                 .create_cluster_normal_table(table_name, schema)
@@ -359,7 +371,7 @@ impl FlightServiceHandler {
         // If the cluster key is in the request, the request is from a peer node, which means the
         // table has already been created in the remote data folder and propagated to all nodes.
         if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
-            && !cluster_key_in_request(cluster, request_metadata)?
+            && request_metadata.get("x-cluster-key").is_none()
         {
             cluster
                 .create_cluster_time_series_table(time_series_table_metadata)
@@ -388,7 +400,7 @@ impl FlightServiceHandler {
         // If the cluster key is in the request, the request is from a peer node, which means the
         // tables have already been dropped in the remote data folder and propagated to all nodes.
         if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode()
-            && !cluster_key_in_request(cluster, request_metadata)?
+            && request_metadata.get("x-cluster-key").is_none()
         {
             cluster
                 .drop_cluster_tables(table_names)
@@ -687,9 +699,12 @@ impl FlightService for FlightServiceHandler {
                         .await
                         .map_err(error_to_status_internal)?;
 
+                let maybe_authorization = request.metadata().get("authorization").cloned();
+
                 execute_query_at_addresses_and_union(
                     &sql,
                     addresses,
+                    maybe_authorization,
                     local_sendable_record_batch_stream,
                 )
                 .await
