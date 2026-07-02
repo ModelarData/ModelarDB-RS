@@ -18,7 +18,6 @@
 
 #[cfg(feature = "testing")]
 pub mod mock;
-pub mod no_auth;
 
 use async_trait::async_trait;
 use tonic::Status;

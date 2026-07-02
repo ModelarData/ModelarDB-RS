@@ -3506,7 +3506,6 @@ name = "modelardb_auth"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "tokio",
  "tonic",
 ]
 

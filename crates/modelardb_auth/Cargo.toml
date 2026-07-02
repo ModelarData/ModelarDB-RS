@@ -23,8 +23,5 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 async-trait.workspace = true
 tonic.workspace = true
 
-[dev-dependencies]
-tokio.workspace = true
-
 [features]
 testing = []
