@@ -272,6 +272,22 @@ impl TestContext {
         self.client.do_get(ticket).await
     }
 
+    /// Optimize a table in the server through the `do_get()` method.
+    async fn optimize_table(
+        &mut self,
+        table_name: &str,
+        maybe_target_size_in_bytes: Option<u64>,
+    ) -> Result<Response<Streaming<FlightData>>, Status> {
+        let sql = if let Some(target_size_in_bytes) = maybe_target_size_in_bytes {
+            format!("OPTIMIZE {table_name} TARGET {target_size_in_bytes}")
+        } else {
+            format!("OPTIMIZE {table_name}")
+        };
+
+        let ticket = Ticket::new(sql);
+        self.client.do_get(ticket).await
+    }
+
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
     /// depending on `generate_irregular_timestamps`, generated values with noise depending on
     /// `multiply_noise_range`, and an optional tag.
@@ -794,6 +810,127 @@ async fn test_cannot_vacuum_missing_table() {
     let mut test_context = TestContext::new().await;
 
     let response = test_context.vacuum_table(NORMAL_TABLE_NAME, None).await;
+
+    assert_eq!(
+        response.err().unwrap().message(),
+        format!("Invalid Argument Error: Table with name '{NORMAL_TABLE_NAME}' does not exist.")
+    );
+}
+
+#[tokio::test]
+async fn test_can_optimize_normal_table() {
+    let mut test_context = TestContext::new().await;
+
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        slice::from_ref(&time_series),
+        NORMAL_TABLE_NAME,
+        TableType::NormalTable,
+    )
+    .await;
+
+    // ingest_time_series_and_flush_data() writes one file. Ingest and flush three more times so
+    // there are four small files to compact.
+    for _ in 0..3 {
+        let flight_data = TestContext::create_flight_data_from_time_series(
+            NORMAL_TABLE_NAME.to_owned(),
+            slice::from_ref(&time_series),
+        );
+
+        test_context
+            .send_time_series_to_server(flight_data)
+            .await
+            .unwrap();
+
+        test_context.flush_data_to_disk().await;
+    }
+
+    let table_path = format!(
+        "{}/tables/{}",
+        test_context.temp_dir.path().to_str().unwrap(),
+        NORMAL_TABLE_NAME
+    );
+
+    // Four data files plus the _delta_log folder.
+    let files = std::fs::read_dir(&table_path).unwrap();
+    assert_eq!(files.count(), 5);
+
+    test_context
+        .optimize_table(NORMAL_TABLE_NAME, None)
+        .await
+        .unwrap();
+
+    // Vacuum to remove the stale files.
+    test_context
+        .vacuum_table(NORMAL_TABLE_NAME, Some(0))
+        .await
+        .unwrap();
+
+    // The compacted file plus the _delta_log folder should remain.
+    let files = std::fs::read_dir(&table_path).unwrap();
+    assert_eq!(files.count(), 2);
+}
+
+#[tokio::test]
+async fn test_can_optimize_time_series_table() {
+    let mut test_context = TestContext::new().await;
+
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    ingest_time_series_and_flush_data(
+        &mut test_context,
+        slice::from_ref(&time_series),
+        TIME_SERIES_TABLE_NAME,
+        TableType::TimeSeriesTable,
+    )
+    .await;
+
+    // ingest_time_series_and_flush_data() writes one file per field column partition. ingest and
+    // flush three more times so each partition has four small files to compact.
+    for _ in 0..3 {
+        let flight_data = TestContext::create_flight_data_from_time_series(
+            TIME_SERIES_TABLE_NAME.to_owned(),
+            slice::from_ref(&time_series),
+        );
+
+        test_context
+            .send_time_series_to_server(flight_data)
+            .await
+            .unwrap();
+
+        test_context.flush_data_to_disk().await;
+    }
+
+    let column_path = format!(
+        "{}/tables/{}/field_column=1",
+        test_context.temp_dir.path().to_str().unwrap(),
+        TIME_SERIES_TABLE_NAME
+    );
+
+    let files = std::fs::read_dir(&column_path).unwrap();
+    assert_eq!(files.count(), 4);
+
+    test_context
+        .optimize_table(TIME_SERIES_TABLE_NAME, None)
+        .await
+        .unwrap();
+
+    // Vacuum to remove the stale files.
+    test_context
+        .vacuum_table(TIME_SERIES_TABLE_NAME, Some(0))
+        .await
+        .unwrap();
+
+    // The four files in the partition should be compacted into a single file.
+    let files = std::fs::read_dir(&column_path).unwrap();
+    assert_eq!(files.count(), 1);
+}
+
+#[tokio::test]
+async fn test_cannot_optimize_missing_table() {
+    let mut test_context = TestContext::new().await;
+
+    let response = test_context.optimize_table(NORMAL_TABLE_NAME, None).await;
 
     assert_eq!(
         response.err().unwrap().message(),

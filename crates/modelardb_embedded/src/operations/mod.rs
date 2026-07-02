@@ -145,6 +145,15 @@ pub trait Operations: Sync + Send {
         table_name: &str,
         maybe_retention_period_in_seconds: Option<u64>,
     ) -> Result<()>;
+
+    /// Optimize the table with the name in `table_name` by compacting its many small files into
+    /// fewer larger files of approximately `maybe_target_size_in_bytes` bytes. If a target size is
+    /// not given, the default target size of 64 MiB is used.
+    async fn optimize(
+        &mut self,
+        table_name: &str,
+        maybe_target_size_in_bytes: Option<u64>,
+    ) -> Result<()>;
 }
 
 /// Use the time series table metadata in `table_name`, `schema`, `error_bounds`, and `generated_columns`

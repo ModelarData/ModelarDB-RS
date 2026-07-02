@@ -19,6 +19,7 @@ pub mod cluster;
 pub mod delta_table_writer;
 
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU64;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
@@ -677,6 +678,32 @@ impl DataFolder {
             .with_retention_period(retention_period)
             .with_enforce_retention_duration(false)
             .await?;
+
+        Ok(())
+    }
+
+    /// Optimize the Delta Lake table with `table_name` by compacting its many small files into
+    /// fewer larger files of approximately `maybe_target_size_in_bytes` bytes. If a target size is
+    /// not given, a default target size of 64 MiB is used. Compaction only rewrites files smaller
+    /// than the target, so it is safe to call repeatedly. Note that the small files are only marked
+    /// as removed and are not deleted from disk until the table is vacuumed. If the target size is
+    /// zero, the table does not exist, or the files could not be compacted, a
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn optimize_table(
+        &self,
+        table_name: &str,
+        maybe_target_size_in_bytes: Option<u64>,
+    ) -> Result<()> {
+        let delta_table = self.delta_table(table_name).await?;
+
+        let target_size_in_bytes = maybe_target_size_in_bytes.unwrap_or(64 * 1024 * 1024);
+        let target_size = NonZeroU64::new(target_size_in_bytes).ok_or_else(|| {
+            ModelarDbStorageError::InvalidArgument(
+                "Optimize target file size must be greater than zero.".to_owned(),
+            )
+        })?;
+
+        delta_table.optimize().with_target_size(target_size).await?;
 
         Ok(())
     }
@@ -1532,6 +1559,137 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         let result = data_folder.vacuum_table("missing_table", None).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Delta table cannot be found at '{}'.",
+                data_folder.location_of_table("missing_table")
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_optimize_normal_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        // Each write is a separate commit, so four writes produce four small files.
+        for _ in 0..4 {
+            data_folder
+                .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+                .await
+                .unwrap();
+        }
+
+        let rows_before = row_count(&data_folder, "normal_table_1").await;
+        assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 4);
+
+        data_folder
+            .optimize_table("normal_table_1", None)
+            .await
+            .unwrap();
+
+        // The small files should be compacted into a single file with no rows lost or duplicated.
+        assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 1);
+        assert_eq!(row_count(&data_folder, "normal_table_1").await, rows_before);
+    }
+
+    #[tokio::test]
+    async fn test_optimize_time_series_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+
+        // Each write is a separate commit, so four writes produce four small files.
+        for _ in 0..4 {
+            data_folder
+                .write_record_batches(
+                    TIME_SERIES_TABLE_NAME,
+                    vec![test::compressed_segments_record_batch()],
+                )
+                .await
+                .unwrap();
+        }
+
+        let rows_before = row_count(&data_folder, TIME_SERIES_TABLE_NAME).await;
+        assert_eq!(
+            active_file_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
+            4
+        );
+
+        data_folder
+            .optimize_table(TIME_SERIES_TABLE_NAME, None)
+            .await
+            .unwrap();
+
+        // The small files should be compacted into a single file with no rows lost or duplicated.
+        assert_eq!(
+            active_file_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
+            1
+        );
+        assert_eq!(
+            row_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
+            rows_before
+        );
+    }
+
+    async fn row_count(data_folder: &DataFolder, table_name: &str) -> usize {
+        let delta_table = data_folder.delta_table(table_name).await.unwrap();
+        let (_table, stream) = delta_table.scan_table().await.unwrap();
+
+        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+        batches.iter().map(|batch| batch.num_rows()).sum()
+    }
+
+    #[tokio::test]
+    async fn test_optimize_table_with_small_target_file_size() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        // Each write is a separate commit, so four writes produce four small files.
+        for _ in 0..4 {
+            data_folder
+                .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+                .await
+                .unwrap();
+        }
+
+        let files_before = active_file_count(&data_folder, "normal_table_1").await;
+        assert_eq!(files_before, 4);
+
+        // A one-byte target is smaller than every existing file, so none of them are candidates for
+        // compaction, and the files should be left untouched.
+        data_folder
+            .optimize_table("normal_table_1", Some(1))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            active_file_count(&data_folder, "normal_table_1").await,
+            files_before
+        );
+    }
+
+    async fn active_file_count(data_folder: &DataFolder, table_name: &str) -> usize {
+        let delta_table = data_folder.delta_table(table_name).await.unwrap();
+
+        delta_table.get_file_uris().unwrap().count()
+    }
+
+    #[tokio::test]
+    async fn test_optimize_table_with_zero_target_file_size() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder.optimize_table("normal_table_1", Some(0)).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: Optimize target file size must be greater than zero."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_optimize_missing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+
+        let result = data_folder.optimize_table("missing_table", None).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),

@@ -486,6 +486,41 @@ class TestOperations(unittest.TestCase):
             error_message = f"Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' does not exist."
             self.assertEqual(error_message, str(context.exception))
 
+    def test_data_folder_optimize(self):
+        with TemporaryDirectory() as temp_dir:
+            data_folder = Operations.open_local(temp_dir)
+            create_tables_in_data_folder(data_folder)
+
+            # Each write is a separate commit, so four writes produce multiple small files.
+            for _ in range(4):
+                data_folder.write(
+                    TIME_SERIES_TABLE_NAME,
+                    unsorted_time_series_table_data_without_generated_column(),
+                )
+
+            folder_path = os.path.join(temp_dir, "tables", TIME_SERIES_TABLE_NAME, "field_column=2")
+            file_count = len(os.listdir(folder_path))
+            self.assertEqual(file_count, 4)
+
+            data_folder.optimize(TIME_SERIES_TABLE_NAME)
+
+            # Vacuum to remove the compacted files.
+            data_folder.vacuum(TIME_SERIES_TABLE_NAME, retention_period_in_seconds=0)
+
+            # There should only be a single file left.
+            file_count = len(os.listdir(folder_path))
+            self.assertEqual(file_count, 1)
+
+    def test_data_folder_optimize_error(self):
+        with TemporaryDirectory() as temp_dir:
+            data_folder = Operations.open_local(temp_dir)
+
+            with self.assertRaises(RuntimeError) as context:
+                data_folder.optimize(MISSING_TABLE_NAME)
+
+            error_message = f"Invalid Argument Error: Table with name '{MISSING_TABLE_NAME}' does not exist."
+            self.assertEqual(error_message, str(context.exception))
+
 
 def create_tables_in_data_folder(data_folder: Operations):
     table_type = NormalTable(normal_table_schema())

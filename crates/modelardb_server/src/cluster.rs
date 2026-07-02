@@ -248,6 +248,35 @@ impl Cluster {
         Ok(())
     }
 
+    /// Optimize the tables in `table_names` in the remote data folder and in each peer node. If the
+    /// tables could not be optimized, return [`ModelarDbServerError`].
+    pub(crate) async fn optimize_cluster_tables(
+        &self,
+        table_names: &[String],
+        maybe_target_size_in_bytes: Option<u64>,
+    ) -> Result<()> {
+        // Optimize the tables in the remote data folder.
+        for table_name in table_names {
+            self.remote_data_folder
+                .optimize_table(table_name, maybe_target_size_in_bytes)
+                .await?;
+        }
+
+        // Optimize the tables in each peer node.
+        let optimize_sql = if let Some(target_size_in_bytes) = maybe_target_size_in_bytes {
+            format!(
+                "OPTIMIZE {} TARGET {target_size_in_bytes}",
+                table_names.join(", ")
+            )
+        } else {
+            format!("OPTIMIZE {}", table_names.join(", "))
+        };
+
+        self.cluster_do_get(&optimize_sql).await?;
+
+        Ok(())
+    }
+
     /// For each peer node in the cluster, execute the given `sql` statement with the cluster key
     /// as metadata. If the statement was successfully executed for each node, return [`Ok`],
     /// otherwise return [`ModelarDbServerError`].
