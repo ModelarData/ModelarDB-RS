@@ -32,34 +32,36 @@ pub enum Permission {
 impl Permission {
     /// Return [`true`] if `granted` satisfies this required permission using the hierarchy
     /// Admin ⊇ Write ⊇ Read, otherwise [`false`] is returned.
+    #[allow(clippy::match_like_matches_macro)]
     pub fn is_satisfied_by(&self, granted: &Permission) -> bool {
-        matches!(
-            (self, granted),
-            (Permission::Read, _)
-                | (Permission::Write, Permission::Write | Permission::Admin)
-                | (Permission::Admin, Permission::Admin)
-        )
+        match (self, granted) {
+            (Permission::Read, _) => true,
+            (Permission::Write, Permission::Write | Permission::Admin) => true,
+            (Permission::Admin, Permission::Admin) => true,
+            _ => false,
+        }
     }
 }
 
 /// Tonic interceptor that attaches a bearer token to every outgoing request when one is present.
 #[derive(Clone)]
 pub struct BearerInterceptor {
-    /// The value of the `authorization` header to attach. This is either `Bearer <token>` or
-    /// [`None`] if no token has been provided.
+    /// The value of the `authorization` header. This is either `Bearer <token>` or [`None`] if no
+    /// token has been provided. The header is only attached to an outgoing request if this is not
+    /// [`None`].
     pub maybe_authorization: Option<AsciiMetadataValue>,
 }
 
 impl BearerInterceptor {
     /// Create a new [`BearerInterceptor`] that attaches the bearer token in `maybe_token` to every
-    /// outgoing request. If `maybe_token` is [`None`], no token is attached. If `maybe_token` is
-    /// [`Some`] but the token is an invalid ASCII string, [`Status`] is returned.
+    /// outgoing request if `maybe_token` is not [`None`]. If `maybe_token` is [`Some`] but the
+    /// token is not ASCII, [`Status`] is returned.
     pub fn try_new(maybe_token: Option<&str>) -> Result<Self, Status> {
         let maybe_authorization = maybe_token
             .map(|token| {
                 format!("Bearer {token}")
                     .parse::<AsciiMetadataValue>()
-                    .map_err(|error| Status::invalid_argument(format!("Invalid token: {error}.")))
+                    .map_err(|error| Status::invalid_argument(format!("Token is not ASCII: {error}.")))
             })
             .transpose()?;
 
@@ -139,7 +141,7 @@ mod tests {
         assert_eq!(
             result.err().unwrap().to_string(),
             "code: 'Client specified an invalid argument', \
-            message: \"Invalid token: failed to parse metadata value.\""
+            message: \"Token is not ASCII: failed to parse metadata value.\""
         );
     }
 

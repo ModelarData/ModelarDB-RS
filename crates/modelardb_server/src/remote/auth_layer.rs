@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Tower middleware layer that enforces authentication and authorization on all incoming Apache
+//! Tower middleware layer that enforces authentication and authorization for all incoming Apache
 //! Arrow Flight requests. The layer runs before [`FlightServiceHandler`](super::FlightServiceHandler)
 //! and checks the cluster key or bearer token before the request reaches the handler. For DoGet
 //! requests the SQL ticket is decoded, and the required permission is determined from the parsed
@@ -34,7 +34,7 @@ use prost::Message;
 use sqlparser::ast::Statement;
 use tonic::Status;
 use tonic::body::Body;
-use tonic::metadata::{Ascii, MetadataMap, MetadataValue};
+use tonic::metadata::{AsciiMetadataValue, MetadataMap};
 use tower::{Layer, Service};
 
 use crate::remote::error_to_status_invalid_argument;
@@ -56,13 +56,13 @@ pub(super) struct AuthLayer {
     authenticator: Arc<dyn Authenticator>,
     /// The cluster key to use for validating internal cluster requests or [`None`] if running a
     /// single-node server.
-    maybe_cluster_key: Option<MetadataValue<Ascii>>,
+    maybe_cluster_key: Option<AsciiMetadataValue>,
 }
 
 impl AuthLayer {
     pub(super) fn new(
         authenticator: Arc<dyn Authenticator>,
-        maybe_cluster_key: Option<MetadataValue<Ascii>>,
+        maybe_cluster_key: Option<AsciiMetadataValue>,
     ) -> Self {
         Self {
             authenticator,
@@ -95,7 +95,7 @@ pub(super) struct AuthService<S> {
     authenticator: Arc<dyn Authenticator>,
     /// The cluster key to use for validating internal cluster requests or [`None`] if running a
     /// single-node server.
-    maybe_cluster_key: Option<MetadataValue<Ascii>>,
+    maybe_cluster_key: Option<AsciiMetadataValue>,
 }
 
 impl<S> Service<Request<Body>> for AuthService<S>
@@ -137,7 +137,7 @@ where
 async fn authorize(
     request: Request<Body>,
     authenticator: &dyn Authenticator,
-    maybe_cluster_key: &Option<MetadataValue<Ascii>>,
+    maybe_cluster_key: &Option<AsciiMetadataValue>,
 ) -> Result<Request<Body>, Status> {
     let path = request.uri().path().to_owned();
     let metadata = MetadataMap::from_headers(request.headers().clone());
@@ -248,7 +248,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
 
         let request = empty_request_with_cluster_key(DO_PUT_PATH, CLUSTER_KEY);
-        let cluster_key = Some(MetadataValue::from_static(CLUSTER_KEY));
+        let cluster_key = Some(AsciiMetadataValue::from_static(CLUSTER_KEY));
 
         let result = authorize(request, &*authenticator, &cluster_key).await;
 
@@ -261,7 +261,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
 
         let request = empty_request_with_cluster_key(LIST_FLIGHTS_PATH, "invalid_key");
-        let cluster_key = Some(MetadataValue::from_static(CLUSTER_KEY));
+        let cluster_key = Some(AsciiMetadataValue::from_static(CLUSTER_KEY));
 
         let result = authorize(request, &*authenticator, &cluster_key).await;
 

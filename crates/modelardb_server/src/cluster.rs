@@ -30,7 +30,7 @@ use modelardb_types::types::{Node, TimeSeriesTableMetadata};
 use rand::rng;
 use rand::seq::IteratorRandom;
 use tonic::Request;
-use tonic::metadata::{Ascii, MetadataValue};
+use tonic::metadata::AsciiMetadataValue;
 use tonic::transport::Endpoint;
 
 use crate::context::Context;
@@ -44,7 +44,7 @@ pub(crate) struct Cluster {
     node: Node,
     /// Key identifying the cluster. The key is used to validate communication within the cluster
     /// between nodes.
-    key: MetadataValue<Ascii>,
+    key: AsciiMetadataValue,
     /// The remote data folder that each node in the cluster should be synchronized with.
     /// When a table is created, dropped, vacuumed, or truncated, it is done in the
     /// remote data folder first.
@@ -66,7 +66,8 @@ impl Cluster {
         let key = remote_data_folder.cluster_key().await?.to_string();
 
         // Convert the key to a MetadataValue since it is used in tonic requests.
-        let key = MetadataValue::from_str(&key).expect("UUID Version 4 should be valid ASCII.");
+        let key =
+            AsciiMetadataValue::from_str(&key).expect("UUID Version 4 should be valid ASCII.");
 
         Ok(Self {
             node,
@@ -81,7 +82,7 @@ impl Cluster {
     }
 
     /// Return the key identifying the cluster.
-    pub(crate) fn key(&self) -> &MetadataValue<Ascii> {
+    pub(crate) fn key(&self) -> &AsciiMetadataValue {
         &self.key
     }
 
