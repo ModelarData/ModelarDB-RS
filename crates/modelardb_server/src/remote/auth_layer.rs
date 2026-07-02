@@ -51,9 +51,9 @@ const LIST_ACTIONS_PATH: &str = "/arrow.flight.protocol.FlightService/ListAction
 /// requests.
 #[derive(Clone)]
 pub(super) struct AuthLayer {
-    /// The [`Authenticator`] to use for authentication once the auth layer has determined the
-    /// required permission for a client request.
-    authenticator: Arc<dyn Authenticator>,
+    /// The [`Authenticator`] to use once the required permission has been determined, or [`None`]
+    /// if authentication is disabled and every non-cluster request should be allowed.
+    maybe_authenticator: Option<Arc<dyn Authenticator>>,
     /// The cluster key to use for validating internal cluster requests or [`None`] if running a
     /// single-node server.
     maybe_cluster_key: Option<AsciiMetadataValue>,
@@ -61,11 +61,11 @@ pub(super) struct AuthLayer {
 
 impl AuthLayer {
     pub(super) fn new(
-        authenticator: Arc<dyn Authenticator>,
+        maybe_authenticator: Option<Arc<dyn Authenticator>>,
         maybe_cluster_key: Option<AsciiMetadataValue>,
     ) -> Self {
         Self {
-            authenticator,
+            maybe_authenticator,
             maybe_cluster_key,
         }
     }
@@ -77,7 +77,7 @@ impl<S> Layer<S> for AuthLayer {
     fn layer(&self, inner: S) -> AuthService<S> {
         AuthService {
             inner,
-            authenticator: self.authenticator.clone(),
+            maybe_authenticator: self.maybe_authenticator.clone(),
             maybe_cluster_key: self.maybe_cluster_key.clone(),
         }
     }
@@ -90,9 +90,9 @@ pub(super) struct AuthService<S> {
     /// The [`FlightServiceHandler`](super::FlightServiceHandler) that processes the request after
     /// authorization succeeds.
     inner: S,
-    /// The [`Authenticator`] to use for authentication once the auth layer has determined the
-    /// required permission for a client request.
-    authenticator: Arc<dyn Authenticator>,
+    /// The [`Authenticator`] to use once the required permission has been determined, or [`None`]
+    /// if authentication is disabled and every non-cluster request should be allowed.
+    maybe_authenticator: Option<Arc<dyn Authenticator>>,
     /// The cluster key to use for validating internal cluster requests or [`None`] if running a
     /// single-node server.
     maybe_cluster_key: Option<AsciiMetadataValue>,
@@ -120,11 +120,11 @@ where
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
-        let authenticator = self.authenticator.clone();
+        let maybe_authenticator = self.maybe_authenticator.clone();
         let maybe_cluster_key = self.maybe_cluster_key.clone();
 
         Box::pin(async move {
-            match authorize(request, &*authenticator, &maybe_cluster_key).await {
+            match authorize(request, maybe_authenticator.as_deref(), &maybe_cluster_key).await {
                 Ok(request) => inner.call(request).await,
                 Err(status) => Ok(status.into_http()),
             }
@@ -136,10 +136,9 @@ where
 /// [`Status`] on failure.
 async fn authorize(
     request: Request<Body>,
-    authenticator: &dyn Authenticator,
+    maybe_authenticator: Option<&dyn Authenticator>,
     maybe_cluster_key: &Option<AsciiMetadataValue>,
 ) -> Result<Request<Body>, Status> {
-    let path = request.uri().path().to_owned();
     let metadata = MetadataMap::from_headers(request.headers().clone());
 
     // Cluster key check must happen before the Authenticator since internal cluster requests bypass
@@ -152,7 +151,14 @@ async fn authorize(
         };
     }
 
+    // When no Authenticator is configured, authentication is disabled and every non-cluster request
+    // is allowed.
+    let Some(authenticator) = maybe_authenticator else {
+        return Ok(request);
+    };
+
     // Decode the ticket and parse the SQL to determine the required permission.
+    let path = request.uri().path().to_owned();
     if path == DO_GET_PATH {
         return authorize_do_get(request, authenticator, &metadata).await;
     }
@@ -245,7 +251,7 @@ mod tests {
         let request = empty_request_with_cluster_key(DO_PUT_PATH, CLUSTER_KEY);
         let cluster_key = Some(AsciiMetadataValue::from_static(CLUSTER_KEY));
 
-        let result = authorize(request, &*authenticator, &cluster_key).await;
+        let result = authorize(request, Some(&*authenticator), &cluster_key).await;
 
         assert!(result.is_ok());
         assert!(authenticator.permissions().is_empty());
@@ -258,7 +264,7 @@ mod tests {
         let request = empty_request_with_cluster_key(LIST_FLIGHTS_PATH, "invalid_key");
         let cluster_key = Some(AsciiMetadataValue::from_static(CLUSTER_KEY));
 
-        let result = authorize(request, &*authenticator, &cluster_key).await;
+        let result = authorize(request, Some(&*authenticator), &cluster_key).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -271,7 +277,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request_with_cluster_key(LIST_FLIGHTS_PATH, CLUSTER_KEY);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -288,11 +294,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_authorize_without_authenticator_allows_request_without_parsing() {
+        // A body that would fail ticket decoding if authorize_do_get() ran.
+        let request = raw_frame_request(&[0xFF, 0xFF, 0xFF, 0xFF]);
+
+        let result = authorize(request, None, &None).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
     async fn test_authorize_list_flights_calls_authenticator_with_read() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(LIST_FLIGHTS_PATH);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Read]);
@@ -303,7 +319,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(GET_FLIGHT_INFO_PATH);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Read]);
@@ -314,7 +330,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(GET_SCHEMA_PATH);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Read]);
@@ -325,7 +341,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(DO_PUT_PATH);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Write]);
@@ -336,7 +352,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(DO_ACTION_PATH);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
@@ -347,7 +363,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(LIST_ACTIONS_PATH);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
@@ -358,7 +374,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request(NORMAL_TABLE_SQL);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
@@ -369,7 +385,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request(TIME_SERIES_TABLE_SQL);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
@@ -380,7 +396,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request("DROP TABLE test_table");
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
@@ -391,7 +407,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request("TRUNCATE test_table");
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
@@ -402,7 +418,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request("VACUUM test_table");
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
@@ -413,7 +429,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request("INCLUDE 'grpc://192.168.1.2:9999' SELECT * FROM test_table");
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Read]);
@@ -424,7 +440,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request("INSERT INTO test_table VALUES (1, 2, 3)");
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Write]);
@@ -435,7 +451,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request("SELECT * FROM test_table");
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Read]);
@@ -446,7 +462,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request("EXPLAIN SELECT * FROM test_table");
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
         assert_eq!(authenticator.permissions(), vec![Permission::Read]);
@@ -463,7 +479,7 @@ mod tests {
         let original_bytes = original_body.collect().await.unwrap().to_bytes();
 
         let request = do_get_request(sql);
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         let (_, reconstructed_body) = result.unwrap().into_parts();
         let reconstructed_bytes = reconstructed_body.collect().await.unwrap().to_bytes();
@@ -479,7 +495,7 @@ mod tests {
             .body(Body::new(Full::new(bytes::Bytes::from(vec![0u8; 4]))))
             .unwrap();
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -495,7 +511,7 @@ mod tests {
         // Valid 5-byte gRPC frame header but invalid protobuf bytes in the message.
         let request = raw_frame_request(&[0xFF, 0xFF, 0xFF, 0xFF]);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -511,7 +527,7 @@ mod tests {
         // Encode a Ticket with invalid UTF-8 bytes.
         let request = ticket_frame_request(vec![0xFF, 0xFE]);
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -525,7 +541,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request("invalid sql");
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -564,7 +580,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request("/unknown/path");
 
-        let result = authorize(request, &*authenticator, &None).await;
+        let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),

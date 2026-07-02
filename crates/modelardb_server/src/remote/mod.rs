@@ -66,11 +66,12 @@ use crate::remote::auth_layer::AuthLayer;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
 /// process the requests through [`FlightServiceHandler`]. All requests are passed through the
-/// [`AuthLayer`] that authenticates using `authenticator` before they are passed to the
-/// [`FlightServiceHandler`].
+/// [`AuthLayer`], which authenticates them using `maybe_authenticator` before they are passed to
+/// the [`FlightServiceHandler`]. If `maybe_authenticator` is [`None`], authentication is disabled, 
+/// and every request that is not an internal cluster request is allowed.
 pub async fn start_apache_arrow_flight_server(
     context: Arc<Context>,
-    authenticator: Arc<dyn Authenticator>,
+    maybe_authenticator: Option<Arc<dyn Authenticator>>,
     port: u16,
 ) -> Result<()> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
@@ -85,7 +86,7 @@ pub async fn start_apache_arrow_flight_server(
         ClusterMode::SingleNode => None,
     };
 
-    let auth_layer = AuthLayer::new(authenticator, maybe_cluster_key);
+    let auth_layer = AuthLayer::new(maybe_authenticator, maybe_cluster_key);
     let handler = FlightServiceHandler::new(context);
 
     // Increase the maximum message size from 4 MiB to 16 MiB to allow bulk-loading larger batches.
