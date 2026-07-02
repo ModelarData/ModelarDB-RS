@@ -152,11 +152,6 @@ async fn authorize(
         };
     }
 
-    // ListActions is a public discovery endpoint.
-    if path == LIST_ACTIONS_PATH {
-        return Ok(request);
-    }
-
     // Decode the ticket and parse the SQL to determine the required permission.
     if path == DO_GET_PATH {
         return authorize_do_get(request, authenticator, &metadata).await;
@@ -166,7 +161,7 @@ async fn authorize(
     let required_permission = match path.as_str() {
         LIST_FLIGHTS_PATH | GET_FLIGHT_INFO_PATH | GET_SCHEMA_PATH => Permission::Read,
         DO_PUT_PATH => Permission::Write,
-        DO_ACTION_PATH => Permission::Admin,
+        DO_ACTION_PATH | LIST_ACTIONS_PATH => Permission::Admin,
         _ => {
             return Err(Status::invalid_argument("Unknown path."));
         }
@@ -180,7 +175,7 @@ async fn authorize(
 }
 
 /// Buffer the DoGet body, decode the gRPC [`Ticket`] protobuf, parse the SQL, determine the
-/// required permission, authorize, then reconstruct the request with the original bytes.
+/// required permission, authorize, then reconstruct the request byte-for-byte.
 async fn authorize_do_get(
     request: Request<Body>,
     authenticator: &dyn Authenticator,
@@ -293,17 +288,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_authorize_list_actions_bypasses_authenticator() {
-        let authenticator = Arc::new(MockAuthenticator::new());
-        let request = empty_request(LIST_ACTIONS_PATH);
-
-        let result = authorize(request, &*authenticator, &None).await;
-
-        assert!(result.is_ok());
-        assert!(authenticator.permissions().is_empty());
-    }
-
-    #[tokio::test]
     async fn test_authorize_list_flights_calls_authenticator_with_read() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(LIST_FLIGHTS_PATH);
@@ -351,6 +335,17 @@ mod tests {
     async fn test_authorize_do_action_calls_authenticator_with_admin() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(DO_ACTION_PATH);
+
+        let result = authorize(request, &*authenticator, &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_list_actions_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = empty_request(LIST_ACTIONS_PATH);
 
         let result = authorize(request, &*authenticator, &None).await;
 
