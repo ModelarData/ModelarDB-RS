@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Tests for the data folder operations exposed through the Python bindings.
+
+Test methods suffixed with ``_error`` only verify that errors from the
+underlying Rust implementation are propagated through the bindings and surface
+as Python exceptions. The errors themselves are already tested in the Rust
+implementation, so the specific error raised does not matter.
+"""
+
 import datetime
 import os
 import unittest
@@ -507,7 +515,7 @@ class TestOperations(unittest.TestCase):
             # Vacuum to remove the compacted files.
             data_folder.vacuum(TIME_SERIES_TABLE_NAME, retention_period_in_seconds=0)
 
-            # There should only be a single file left.
+            # The small files should be compacted into a single active file.
             file_count = len(os.listdir(folder_path))
             self.assertEqual(file_count, 1)
 

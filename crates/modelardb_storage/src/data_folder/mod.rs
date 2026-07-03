@@ -1589,7 +1589,8 @@ mod tests {
             .await
             .unwrap();
 
-        // The small files should be compacted into a single file with no rows lost or duplicated.
+        // The small files should be compacted into a single active file with no rows lost or
+        // duplicated.
         assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 1);
         assert_eq!(row_count(&data_folder, "normal_table_1").await, rows_before);
     }
@@ -1620,7 +1621,8 @@ mod tests {
             .await
             .unwrap();
 
-        // The small files should be compacted into a single file with no rows lost or duplicated.
+        // The small files should be compacted into a single active file with no rows lost or
+        // duplicated.
         assert_eq!(
             active_file_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
             1

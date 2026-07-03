@@ -867,7 +867,7 @@ async fn test_can_optimize_normal_table() {
         .await
         .unwrap();
 
-    // The compacted file plus the _delta_log folder should remain.
+    // The active file plus the _delta_log folder should remain.
     let files = std::fs::read_dir(&table_path).unwrap();
     assert_eq!(files.count(), 2);
 }
@@ -921,7 +921,7 @@ async fn test_can_optimize_time_series_table() {
         .await
         .unwrap();
 
-    // The four files in the partition should be compacted into a single file.
+    // The four files in the partition should be compacted into a single active file.
     let files = std::fs::read_dir(&column_path).unwrap();
     assert_eq!(files.count(), 1);
 }
