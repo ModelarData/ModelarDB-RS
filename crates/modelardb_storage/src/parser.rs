@@ -51,8 +51,8 @@ use sqlparser::tokenizer::{Span, Token};
 
 use crate::error::{ModelarDbStorageError, Result};
 
-/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, VACUUM etc.) that has been
-/// tokenized, parsed, and for which semantic checks have verified that it is compatible with
+/// A top-level statement (CREATE, INSERT, SELECT, TRUNCATE, DROP, VACUUM, OPTIMIZE etc.) that has
+/// been tokenized, parsed, and for which semantic checks have verified that it is compatible with
 /// ModelarDB.
 #[derive(Debug)]
 pub enum ModelarDbStatement {
@@ -70,12 +70,14 @@ pub enum ModelarDbStatement {
     TruncateTable(Vec<String>, bool),
     /// VACUUM.
     Vacuum(Vec<String>, Option<u64>, bool),
+    /// OPTIMIZE.
+    Optimize(Vec<String>, Option<u64>, bool),
 }
 
 /// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
 /// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contains
 /// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE TIME SERIES
-/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE, DROP TABLE, and VACUUM are supported.
+/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE, DROP TABLE, VACUUM, and OPTIMIZE are supported.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
 
@@ -138,10 +140,23 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
             // DropSecret is used as a substitute for VACUUM since Statement does not have a
             // Vacuum enum variant.
             Statement::DropSecret { name, storage_specifier, if_exists, .. } => Ok(ModelarDbStatement::Vacuum(
-                name.value.split_terminator(';').map(|s| s.to_owned()).collect(),
-                storage_specifier.and_then(|p| p.value.parse::<u64>().ok()),
+                name.value.split_terminator(';').map(|table| table.to_owned()).collect(),
+                storage_specifier.and_then(|retain| retain.value.parse::<u64>().ok()),
                 if_exists,
             )),
+            // CreateSecret is used as a substitute for OPTIMIZE since Statement does not have an
+            // Optimize variant with the required fields.
+            Statement::CreateSecret { name, storage_specifier, if_not_exists, .. } => {
+                let table_names = name
+                    .map(|name| name.value.split_terminator(';').map(|table| table.to_owned()).collect())
+                    .unwrap_or_default();
+
+                Ok(ModelarDbStatement::Optimize(
+                    table_names,
+                    storage_specifier.and_then(|target| target.value.parse::<u64>().ok()),
+                    if_not_exists,
+                ))
+            }
             Statement::Explain { .. } => Ok(ModelarDbStatement::Statement(statement)),
             Statement::Query(ref boxed_query) => {
                 if let Some(addresses) = extract_include_addresses(boxed_query) {
@@ -152,7 +167,8 @@ pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDb
             }
             Statement::Insert(ref _insert) => Ok(ModelarDbStatement::Statement(statement)),
             _ => Err(ModelarDbStorageError::InvalidArgument(
-                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, INSERT, and VACUUM are supported."
+                "Only CREATE, DROP, TRUNCATE, EXPLAIN, INCLUDE, SELECT, INSERT, VACUUM, and OPTIMIZE \
+                 are supported."
                     .to_owned(),
             )),
         }
@@ -179,7 +195,8 @@ pub fn tokenize_and_parse_sql_expression(
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
 /// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements,
-/// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements, and
+/// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements,
+/// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\] statements, and
 /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements.
 #[derive(Debug)]
 struct ModelarDbDialect {
@@ -561,6 +578,78 @@ impl ModelarDbDialect {
         })
     }
 
+    /// Return [`true`] if the token stream starts with OPTIMIZE, otherwise [`false`] is returned.
+    /// The method does not consume tokens.
+    fn next_token_is_optimize(&self, parser: &Parser) -> bool {
+        // OPTIMIZE.
+        if let Token::Word(word) = parser.peek_nth_token(0).token {
+            word.keyword == Keyword::OPTIMIZE
+        } else {
+            false
+        }
+    }
+
+    /// Parse OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\] to a
+    /// [`Statement::CreateSecret`] with the table names in the `name` field, the cluster flag in
+    /// the `if_not_exists` field, and the optional target file size in the `storage_specifier`
+    /// field. Note that [`Statement::CreateSecret`] is used since [`Statement`] does not have an
+    /// `Optimize` variant with the required fields. A [`ParserError`] is returned if OPTIMIZE is
+    /// not the first word, the table names cannot be extracted, or the target file size is not a
+    /// valid positive integer.
+    fn parse_optimize(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
+        // OPTIMIZE.
+        parser.expect_keyword(Keyword::OPTIMIZE)?;
+
+        // If the next token is CLUSTER, consume it and set the flag to optimize the entire cluster.
+        let optimize_cluster = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::CLUSTER
+        {
+            parser.expect_keyword(Keyword::CLUSTER)?;
+            true
+        } else {
+            false
+        };
+
+        // If the next token is a word that is not TARGET, attempt to parse table names.
+        let table_names = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword != Keyword::TARGET
+        {
+            self.parse_table_names(parser)?
+        } else {
+            vec![]
+        };
+
+        // If the next token is TARGET, attempt to parse the target file size in bytes.
+        let maybe_target_size_in_bytes = if let Token::Word(word) = parser.peek_nth_token(0).token
+            && word.keyword == Keyword::TARGET
+        {
+            parser.expect_keyword(Keyword::TARGET)?;
+            let target_size_in_bytes = self.parse_unsigned_literal_u64(parser)?;
+
+            if target_size_in_bytes == 0 {
+                return Err(ParserError::ParserError(
+                    "Target file size must be a positive integer.".to_owned(),
+                ));
+            }
+
+            Some(target_size_in_bytes)
+        } else {
+            None
+        };
+
+        // Return Statement::CreateSecret as a substitute for Optimize.
+        Ok(Statement::CreateSecret {
+            if_not_exists: optimize_cluster,
+            name: Some(Ident::new(table_names.join(";"))),
+            storage_specifier: maybe_target_size_in_bytes
+                .map(|target| Ident::new(target.to_string())),
+            secret_type: Ident::new(""),
+            options: vec![],
+            or_replace: false,
+            temporary: None,
+        })
+    }
+
     /// Return its value as a [`u64`] if the next [`Token`] is a [`Token::Number`], otherwise a
     /// [`ParserError`] is returned.
     fn parse_unsigned_literal_u64(&self, parser: &mut Parser) -> StdResult<u64, ParserError> {
@@ -688,6 +777,8 @@ impl Dialect for ModelarDbDialect {
     /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
     /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
     /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If not,
+    /// check if the next token is OPTIMIZE, if so, attempt to parse the token stream as an
+    /// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\] statement. If not,
     /// check if the next token is TRUNCATE, if so, attempt to parse the token stream as a
     /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statement. If all checks fail, [`None`] is
     /// returned so [`sqlparser`] uses its parsing methods for all other statements. If parsing
@@ -699,6 +790,8 @@ impl Dialect for ModelarDbDialect {
             Some(self.parse_include_query(parser))
         } else if self.next_token_is_vacuum(parser) {
             Some(self.parse_vacuum(parser))
+        } else if self.next_token_is_optimize(parser) {
+            Some(self.parse_optimize(parser))
         } else if self.next_token_is_truncate(parser) {
             Some(self.parse_truncate(parser))
         } else {
@@ -2177,6 +2270,307 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "Parser Error: sql parser error: Expected: literal integer, found: CLUSTER at Line: 1, Column: 15"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_all_tables() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE");
+
+        assert!(table_names.is_empty());
+        assert!(maybe_target_size_in_bytes.is_none());
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_single_table() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE table_name");
+
+        assert_eq!(table_names, vec!["table_name".to_owned()]);
+        assert!(maybe_target_size_in_bytes.is_none());
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_multiple_tables() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert!(maybe_target_size_in_bytes.is_none());
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1024");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_multiple_tables_with_target_size() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names(
+                "OPTIMIZE table_name_1, table_name_2 TARGET 1024",
+            );
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE CLUSTER");
+
+        assert!(table_names.is_empty());
+        assert!(maybe_target_size_in_bytes.is_none());
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_with_multiple_tables() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE CLUSTER table_name_1, table_name_2");
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert!(maybe_target_size_in_bytes.is_none());
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_with_target_size() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE CLUSTER TARGET 1024");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_with_multiple_tables_and_target_size() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names(
+                "OPTIMIZE CLUSTER table_name_1, table_name_2 TARGET 1024",
+            );
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(cluster)
+    }
+
+    fn parse_optimize_and_extract_table_names(
+        sql_statement: &str,
+    ) -> (Vec<String>, Option<u64>, bool) {
+        let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
+
+        match modelardb_statement {
+            ModelarDbStatement::Optimize(table_names, maybe_target_size_in_bytes, cluster) => {
+                (table_names, maybe_target_size_in_bytes, cluster)
+            }
+            _ => panic!("Expected ModelarDbStatement::Optimize."),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_trailing_comma() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE table_name,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: word, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_leading_comma() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE ,table_name");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: , at Line: 1, Column: 10"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_only_comma() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE,");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: , at Line: 1, Column: 9"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_quoted_table_name() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE 'table_name'");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: 'table_name' at Line: 1, Column: 10"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_without_number() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_number_without_target() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE 1024");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: 1024 at Line: 1, Column: 10"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_float() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET 1024.5");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Failed to parse '1024.5' into a u64 due to: invalid digit found in string"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_non_numeric() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET thousand");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: thousand at Line: 1, Column: 17"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_negative() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET -1024");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: - at Line: 1, Column: 17"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_zero() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET 0");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Target file size must be a positive integer."
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_twice() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET 1024 TARGET 1024");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: TARGET at Line: 1, Column: 22"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_multiple_tables_target_without_number() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE table_1, table_2 TARGET");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: EOF"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_tables_and_target_mixed() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE table_1, TARGET 1024, table_2");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: 1024 at Line: 1, Column: 26"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_first() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET 1024 table_1, table_2");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: table_1 at Line: 1, Column: 22"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_last() {
+        let result =
+            tokenize_and_parse_sql_statement("OPTIMIZE table_1, table_2 TARGET 1024 CLUSTER");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: CLUSTER at Line: 1, Column: 39"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_after_tables_before_target() {
+        let result =
+            tokenize_and_parse_sql_statement("OPTIMIZE table_1, table_2 CLUSTER TARGET 1024");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: CLUSTER at Line: 1, Column: 27"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_trailing_comma() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE CLUSTER, table_1");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: , at Line: 1, Column: 17"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_and_cluster_mixed() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET CLUSTER 1024");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: literal integer, found: CLUSTER at Line: 1, Column: 17"
         );
     }
 
