@@ -95,7 +95,7 @@ void* modelardb_embedded_open_azure(const char* account_name_ptr,
                                     const char* container_name_ptr);
 
 // Connect to a ModelarDB server at the given Arrow Flight URL.
-void* modelardb_embedded_connect(const char* url_ptr);
+void* modelardb_embedded_connect(const char* url_ptr, const char* maybe_token_ptr);
 
 // Close and deallocate the data folder or client.
 int modelardb_embedded_close(void* maybe_operations_ptr,

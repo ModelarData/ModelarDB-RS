@@ -35,8 +35,10 @@ use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, Ticket, utils};
 use bytes::Bytes;
 use clap::Parser;
+use modelardb_auth::BearerInterceptor;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
+use tonic::codegen::InterceptedService;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Streaming};
 
@@ -45,6 +47,10 @@ use crate::helper::ClientHelper;
 
 /// Error to emit when the server does not provide a response when one is expected.
 const TRANSPORT_ERROR: &str = "transport error: no messages received.";
+
+/// [`FlightServiceClient`] with a [`BearerInterceptor`] that attaches an authorization header.
+type AuthenticatedFlightClient =
+    FlightServiceClient<InterceptedService<Channel, BearerInterceptor>>;
 
 /// Command line arguments for the ModelarDB client.
 #[derive(Parser)]
@@ -64,6 +70,11 @@ struct ClientArgs {
     #[arg(long, default_value_t = 9999, env = "MODELARDB_PORT")]
     port: u16,
 
+    /// Bearer token for authenticating requests sent to the modelardbd instance. If not provided,
+    /// requests are sent without an authorization header.
+    #[arg(long, env = "MODELARDB_TOKEN")]
+    token: Option<String>,
+
     /// Path to a file containing SQL queries to execute. If not provided, an interactive
     /// read-eval-print loop is opened.
     query_file: Option<PathBuf>,
@@ -78,7 +89,7 @@ async fn main() -> Result<()> {
     let args = ClientArgs::parse();
 
     // Execute the queries.
-    let flight_service_client = connect(&args.host, args.port).await?;
+    let flight_service_client = connect(&args.host, args.port, args.token).await?;
     if let Some(query_file) = args.query_file {
         execute_queries_from_a_file(flight_service_client, &query_file).await
     } else {
@@ -86,17 +97,28 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Connect to the server at `host`:`port`. Returns [`ModelarDbClientError`] if a connection to the
-/// server cannot be established.
-async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>> {
+/// Connect to the server at `host`:`port` with an optional bearer `maybe_token`. Returns
+/// [`ModelarDbClientError`] if a connection to the server cannot be established or the token is
+/// not a valid ASCII metadata value.
+async fn connect(
+    host: &str,
+    port: u16,
+    maybe_token: Option<String>,
+) -> Result<AuthenticatedFlightClient> {
+    let interceptor = BearerInterceptor::try_new(maybe_token.as_deref())?;
+
     let address = format!("grpc://{host}:{port}");
     let connection = Endpoint::new(address)?.connect().await?;
-    Ok(FlightServiceClient::new(connection))
+
+    Ok(FlightServiceClient::with_interceptor(
+        connection,
+        interceptor,
+    ))
 }
 
 /// Execute the commands and queries in `query_file`.
 async fn execute_queries_from_a_file(
-    mut flight_service_client: FlightServiceClient<Channel>,
+    mut flight_service_client: AuthenticatedFlightClient,
     query_file: &StdPath,
 ) -> Result<()> {
     let file = File::open(query_file)?;
@@ -123,7 +145,7 @@ async fn execute_queries_from_a_file(
 
 /// Execute commands and queries in a read-eval-print loop.
 async fn execute_queries_from_a_repl(
-    mut flight_service_client: FlightServiceClient<Channel>,
+    mut flight_service_client: AuthenticatedFlightClient,
 ) -> Result<()> {
     // Create the read-eval-print loop.
     let mut editor = Editor::<ClientHelper, FileHistory>::new()?;
@@ -158,7 +180,7 @@ async fn execute_queries_from_a_repl(
 /// Execute a command or a query. Returns [`ModelarDbClientError`] if the command or query could not
 /// be executed or their result could not be retrieved.
 async fn execute_and_print_command_or_query(
-    flight_service_client: &mut FlightServiceClient<Channel>,
+    flight_service_client: &mut AuthenticatedFlightClient,
     command_or_query: &str,
 ) {
     let start_time = Instant::now();
@@ -182,7 +204,7 @@ async fn execute_and_print_command_or_query(
 /// * The command could not be executed.
 /// * The result could not be retrieved.
 async fn execute_command(
-    flight_service_client: &mut FlightServiceClient<Channel>,
+    flight_service_client: &mut AuthenticatedFlightClient,
     command_and_argument: &str,
 ) -> Result<()> {
     let mut command_and_argument = command_and_argument.split(' ');
@@ -255,7 +277,7 @@ async fn execute_command(
 /// Retrieve the names of the tables available on the server. Returns [`ModelarDbClientError`] if
 /// the request could not be performed or the tables names could not be retrieved.
 async fn retrieve_table_names(
-    flight_service_client: &mut FlightServiceClient<Channel>,
+    flight_service_client: &mut AuthenticatedFlightClient,
 ) -> Result<Vec<String>> {
     let criteria = Criteria {
         expression: Bytes::new(),
@@ -286,7 +308,7 @@ async fn retrieve_table_names(
 
 /// Execute an action. Returns [`ModelarDbClientError`] if the action could not be executed.
 async fn execute_action(
-    flight_service_client: &mut FlightServiceClient<Channel>,
+    flight_service_client: &mut AuthenticatedFlightClient,
     action_type: &str,
     action_body: &str,
 ) -> Result<()> {
@@ -310,7 +332,7 @@ async fn execute_action(
 /// Execute a query and print each batch in the result set. Returns [`ModelarDbClientError`] if the
 /// query could not be executed or the batches in the result set could not be printed.
 async fn execute_query_and_print_result(
-    flight_service_client: &mut FlightServiceClient<Channel>,
+    flight_service_client: &mut AuthenticatedFlightClient,
     query: &str,
 ) -> Result<()> {
     // Execute the query.
