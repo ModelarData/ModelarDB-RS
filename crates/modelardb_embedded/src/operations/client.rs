@@ -310,4 +310,25 @@ impl Operations for Client {
 
         Ok(())
     }
+
+    /// Optimize the table with the name in `table_name` by compacting its many small files into
+    /// fewer larger files of approximately `maybe_target_size_in_bytes` bytes. If a target size is
+    /// not given, the default target size of 64 MiB is used. If the table does not exist, the table
+    /// could not be optimized, or the target size is zero, [`ModelarDbEmbeddedError`] is returned.
+    async fn optimize(
+        &mut self,
+        table_name: &str,
+        maybe_target_size_in_bytes: Option<u64>,
+    ) -> Result<()> {
+        let sql = if let Some(target_size_in_bytes) = maybe_target_size_in_bytes {
+            format!("OPTIMIZE {table_name} TARGET {target_size_in_bytes}")
+        } else {
+            format!("OPTIMIZE {table_name}")
+        };
+
+        let ticket = Ticket::new(sql);
+        self.flight_client.do_get(ticket).await?;
+
+        Ok(())
+    }
 }

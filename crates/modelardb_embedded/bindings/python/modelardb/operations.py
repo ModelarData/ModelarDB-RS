@@ -682,6 +682,37 @@ class Operations:
         )
         self.__check_return_code_and_raise_error(return_code)
 
+    def optimize(self, table_name: str, target_size_in_bytes: None | int = None):
+        """Optimize the table with `table_name`.
+
+        :param table_name: The name of the table to optimize.
+        :type table_name: str
+        :param target_size_in_bytes: The target file size in bytes. Many small files are compacted
+         into fewer larger files of approximately this size. If `None`, the default target size of
+         64 MiB is used.
+        :type target_size_in_bytes: int, optional
+        :raises ValueError: If incorrect arguments are provided.
+        """
+        table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
+
+        if target_size_in_bytes is not None:
+            # Convert the target size to a string to avoid issues with converting an int to a C type that uses
+            # an inconsistent amount of bits across platforms and then converting that to a 64-bit integer in Rust.
+            # The string is converted directly to an unsigned 64-bit integer in Rust.
+            target_size_in_bytes_ptr = ffi.new(
+                "char[]", bytes(str(target_size_in_bytes), "UTF-8")
+            )
+        else:
+            target_size_in_bytes_ptr = ffi.NULL
+
+        return_code = self.__library.modelardb_embedded_optimize(
+            self.__operations_ptr,
+            self.__is_data_folder,
+            table_name_ptr,
+            target_size_in_bytes_ptr,
+        )
+        self.__check_return_code_and_raise_error(return_code)
+
     def __check_return_code_and_raise_error(self, return_code: int):
         """Raises an appropriate exception based on the return code.
 

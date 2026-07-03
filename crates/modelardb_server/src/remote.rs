@@ -469,6 +469,38 @@ impl FlightServiceHandler {
         Ok(())
     }
 
+    /// Optimize the tables in `table_names`. If the node is running in a cluster and
+    /// `optimize_cluster` is `true`, the tables are optimized in the remote data folder and locally
+    /// in each node in the cluster. If not, the tables are only optimized locally.
+    async fn optimize_tables(
+        &self,
+        table_names: &[String],
+        maybe_target_size_in_bytes: Option<u64>,
+        optimize_cluster: bool,
+    ) -> StdResult<(), Status> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        if optimize_cluster {
+            if let ClusterMode::MultiNode(cluster) = configuration_manager.cluster_mode() {
+                cluster
+                    .optimize_cluster_tables(table_names, maybe_target_size_in_bytes)
+                    .await
+                    .map_err(error_to_status_invalid_argument)?;
+            } else {
+                return Err(Status::internal("The node is not running in a cluster."));
+            }
+        }
+
+        for table_name in table_names {
+            self.context
+                .optimize_table(table_name, maybe_target_size_in_bytes)
+                .await
+                .map_err(error_to_status_invalid_argument)?;
+        }
+
+        Ok(())
+    }
+
     /// While there is still more data to receive, ingest the data into the normal table.
     async fn ingest_into_normal_table(
         &self,
@@ -632,7 +664,7 @@ impl FlightService for FlightServiceHandler {
 
     /// Execute a SQL statement provided in UTF-8 and return the schema of the result followed by
     /// the result itself. Currently, CREATE TABLE, CREATE TIME SERIES TABLE, EXPLAIN, INCLUDE,
-    /// SELECT, INSERT, TRUNCATE, DROP TABLE, and VACUUM are supported.
+    /// SELECT, INSERT, TRUNCATE, DROP TABLE, VACUUM, and OPTIMIZE are supported.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -719,6 +751,21 @@ impl FlightService for FlightServiceHandler {
                 };
 
                 self.vacuum_tables(&table_names, maybe_retention_period_in_seconds, cluster)
+                    .await?;
+
+                Ok(empty_record_batch_stream())
+            }
+            ModelarDbStatement::Optimize(mut table_names, maybe_target_size_in_bytes, cluster) => {
+                // Optimize all tables if no table names are provided.
+                if table_names.is_empty() {
+                    table_names = self
+                        .context
+                        .default_database_schema()
+                        .map_err(error_to_status_internal)?
+                        .table_names();
+                };
+
+                self.optimize_tables(&table_names, maybe_target_size_in_bytes, cluster)
                     .await?;
 
                 Ok(empty_record_batch_stream())
