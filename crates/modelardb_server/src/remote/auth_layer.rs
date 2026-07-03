@@ -226,6 +226,7 @@ fn permission_for_statement(statement: &ModelarDbStatement) -> Permission {
         ModelarDbStatement::DropTable(_) => Permission::Admin,
         ModelarDbStatement::TruncateTable(_, _) => Permission::Admin,
         ModelarDbStatement::Vacuum(_, _, _) => Permission::Admin,
+        ModelarDbStatement::Optimize(_, _, _) => Permission::Admin,
         ModelarDbStatement::IncludeSelect(_, _) => Permission::Read,
         ModelarDbStatement::Statement(statement) => match statement {
             Statement::Insert(_) => Permission::Write,
@@ -417,6 +418,17 @@ mod tests {
     async fn test_authorize_do_get_with_vacuum_calls_authenticator_with_admin() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = do_get_request("VACUUM test_table");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_get_with_optimize_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_get_request("OPTIMIZE test_table");
 
         let result = authorize(request, Some(&*authenticator), &None).await;
 
