@@ -1425,7 +1425,6 @@ async fn test_can_get_configuration() {
         configuration.transfer_batch_size_in_bytes,
         Some(64 * 1024 * 1024)
     );
-    assert_eq!(configuration.transfer_time_in_seconds, None);
     assert_eq!(
         configuration.segment_size_threshold_in_bytes,
         64 * 1024 * 1024
@@ -1499,18 +1498,6 @@ async fn test_cannot_update_transfer_batch_size_in_bytes() {
     // remote data folder.
     update_configuration_and_assert_error(
         protocol::update_configuration::Setting::TransferBatchSizeInBytes as i32,
-        Some(1),
-        "Invalid State Error: Storage engine is not configured to transfer data.",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn test_cannot_update_transfer_time_in_seconds() {
-    // It is only possible to test that this fails since we cannot start the server with a
-    // remote data folder.
-    update_configuration_and_assert_error(
-        protocol::update_configuration::Setting::TransferTimeInSeconds as i32,
         Some(1),
         "Invalid State Error: Storage engine is not configured to transfer data.",
     )

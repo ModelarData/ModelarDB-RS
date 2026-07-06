@@ -1013,12 +1013,6 @@ impl FlightService for FlightServiceHandler {
                         .await
                         .map_err(error_to_status_internal)
                 }
-                Ok(protocol::update_configuration::Setting::TransferTimeInSeconds) => {
-                    configuration_manager
-                        .set_transfer_time_in_seconds(maybe_new_value, storage_engine)
-                        .await
-                        .map_err(error_to_status_internal)
-                }
                 Ok(protocol::update_configuration::Setting::SegmentSizeThresholdInBytes) => {
                     let new_value = maybe_new_value.ok_or(invalid_null_error)?;
 
