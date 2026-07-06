@@ -389,7 +389,6 @@ file. Variables marked with ✓ in the **Updatable** column can also be updated 
 | `--uncompressed-reserved-memory-in-bytes` | `MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES` | 512 MB      | ✓             | The amount of memory to reserve for storing uncompressed data buffers.                                                         |
 | `--compressed-reserved-memory-in-bytes`   | `MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES`   | 512 MB      | ✓             | The amount of memory to reserve for storing compressed data buffers.                                                           |
 | `--transfer-batch-size-in-bytes`          | `MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES`          | 64 MB       | ✓             | The amount of data that must be collected before transferring a batch to the remote object store.                              |
-| `--transfer-time-in-seconds`              | `MODELARDBD_TRANSFER_TIME_IN_SECONDS`              | Disabled    | ✓             | The number of seconds between each transfer of data to the remote object store.                                                |
 | `--segment-size-threshold-in-bytes`       | `MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES`       | 64 MB       | ✓             | The approximate maximum size of a single WAL segment file before a new one is started. Only updatable when the WAL is enabled. |
 
 ## Docker
