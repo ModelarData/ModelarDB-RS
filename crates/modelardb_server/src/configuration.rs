@@ -58,7 +58,7 @@ struct Configuration {
     /// Amount of memory to reserve for storing compressed data buffers.
     compressed_reserved_memory_in_bytes: u64,
     /// The number of bytes that are required before transferring a batch of data to the remote
-    /// object store. If [`None`], data is not transferred based on batch size.
+    /// object store. If [`None`], data is only transferred on an explicit flush or on shutdown.
     transfer_batch_size_in_bytes: Option<u64>,
     /// The number of seconds between each transfer of data to the remote object store. If [`None`],
     /// data is not transferred based on time.

@@ -61,7 +61,8 @@ message Configuration {
   // Amount of memory to reserve for storing compressed data buffers.
   uint64 compressed_reserved_memory_in_bytes = 3;
 
-  // The number of bytes that are required before transferring a batch of data to the remote object store.
+  // The number of bytes that are required before transferring a batch of data to the remote object store. If not set,
+  // data is only transferred on an explicit flush or on shutdown.
   optional uint64 transfer_batch_size_in_bytes = 4;
 
   // The number of seconds between each transfer of data to the remote object store.

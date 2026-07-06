@@ -44,7 +44,7 @@ pub struct DataTransfer {
     /// Map from table names to the current size of the table in bytes.
     table_size_in_bytes: DashMap<String, u64>,
     /// The number of bytes that are required before transferring a batch of data to the remote
-    /// Delta Lake. If [`None`], data is not transferred based on batch size.
+    /// Delta Lake. If [`None`], data is only transferred on an explicit flush or on shutdown.
     transfer_batch_size_in_bytes: Option<u64>,
     /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
     /// data is not transferred based on time.
