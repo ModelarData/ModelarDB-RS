@@ -197,13 +197,13 @@ int modelardb_embedded_drop(void* maybe_operations_ptr,
 int modelardb_embedded_vacuum(void* maybe_operations_ptr,
                               bool is_data_folder,
                               const char* table_name_ptr,
-                              const char* retention_period_in_seconds_ptr);
+                              const uint64_t* retention_period_in_seconds_ptr);
 
 // Optimize the table by compacting its many small files into fewer larger files.
 int modelardb_embedded_optimize(void* maybe_operations_ptr,
                                 bool is_data_folder,
                                 const char* table_name_ptr,
-                                const char* target_size_in_bytes_ptr);
+                                const uint64_t* target_size_in_bytes_ptr);
 
 // Return a human-readable representation of the last error on this thread.
 const char* modelardb_embedded_error();
