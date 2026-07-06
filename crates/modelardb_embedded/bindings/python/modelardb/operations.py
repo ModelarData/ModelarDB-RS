@@ -668,12 +668,7 @@ class Operations:
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
 
         if retention_period_in_seconds is not None:
-            # Convert the retention period to a string to avoid issues with converting an int to a C type that uses
-            # an inconsistent amount of bits across platforms and then converting that to a 64-bit integer in Rust.
-            # The string is converted directly to an unsigned 64-bit integer in Rust.
-            retention_period_in_seconds_ptr = ffi.new(
-                "char[]", bytes(str(retention_period_in_seconds), "UTF-8")
-            )
+            retention_period_in_seconds_ptr = ffi.new("uint64_t*", retention_period_in_seconds)
         else:
             retention_period_in_seconds_ptr = ffi.NULL
 
@@ -699,12 +694,7 @@ class Operations:
         table_name_ptr = ffi.new("char[]", bytes(table_name, "UTF-8"))
 
         if target_size_in_bytes is not None:
-            # Convert the target size to a string to avoid issues with converting an int to a C type that uses
-            # an inconsistent amount of bits across platforms and then converting that to a 64-bit integer in Rust.
-            # The string is converted directly to an unsigned 64-bit integer in Rust.
-            target_size_in_bytes_ptr = ffi.new(
-                "char[]", bytes(str(target_size_in_bytes), "UTF-8")
-            )
+            target_size_in_bytes_ptr = ffi.new("uint64_t*", target_size_in_bytes)
         else:
             target_size_in_bytes_ptr = ffi.NULL
 
