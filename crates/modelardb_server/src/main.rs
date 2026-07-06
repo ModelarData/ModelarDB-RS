@@ -78,11 +78,6 @@ pub(crate) struct ServerArgs {
     #[arg(long, env = "MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")]
     transfer_batch_size_in_bytes: Option<u64>,
 
-    /// Number of seconds between each transfer of data to the remote object store. If not set,
-    /// data is not transferred based on time.
-    #[arg(long, env = "MODELARDBD_TRANSFER_TIME_IN_SECONDS")]
-    transfer_time_in_seconds: Option<u64>,
-
     /// Approximate maximum size in bytes of a single WAL segment file before a new one is started.
     /// The size is approximate since the in-memory size of each batch is used instead of its
     /// on-disk size to avoid the overhead of reading the file size after each write.
