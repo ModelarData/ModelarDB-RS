@@ -58,7 +58,7 @@ struct Configuration {
     /// Amount of memory to reserve for storing compressed data buffers.
     compressed_reserved_memory_in_bytes: u64,
     /// The number of bytes that are required before transferring a batch of data to the remote
-    /// object store. If [`None`], data is only transferred on an explicit flush or on shutdown.
+    /// object store. If [`None`], data is only transferred on an explicit flush.
     transfer_batch_size_in_bytes: Option<u64>,
     /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and
     /// a new one is started.

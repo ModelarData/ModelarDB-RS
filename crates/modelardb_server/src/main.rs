@@ -74,7 +74,7 @@ pub(crate) struct ServerArgs {
     compressed_reserved_memory_in_bytes: Option<u64>,
 
     /// Number of bytes required before transferring a batch of data to the remote object store.
-    /// If not set, data is only transferred on an explicit flush or on shutdown.
+    /// If not set, data is only transferred on an explicit flush.
     #[arg(long, env = "MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")]
     transfer_batch_size_in_bytes: Option<u64>,
 
