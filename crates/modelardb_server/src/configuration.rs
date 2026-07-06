@@ -60,9 +60,6 @@ struct Configuration {
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store. If [`None`], data is only transferred on an explicit flush or on shutdown.
     transfer_batch_size_in_bytes: Option<u64>,
-    /// The number of seconds between each transfer of data to the remote object store. If [`None`],
-    /// data is not transferred based on time.
-    transfer_time_in_seconds: Option<u64>,
     /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and
     /// a new one is started.
     segment_size_threshold_in_bytes: u64,
@@ -96,10 +93,6 @@ impl Configuration {
 
         if let Some(value) = args.transfer_batch_size_in_bytes {
             self.transfer_batch_size_in_bytes = Some(value);
-        }
-
-        if let Some(value) = args.transfer_time_in_seconds {
-            self.transfer_time_in_seconds = Some(value);
         }
 
         if let Some(value) = args.segment_size_threshold_in_bytes {
@@ -153,7 +146,6 @@ impl Default for Configuration {
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
             transfer_batch_size_in_bytes: Some(64 * 1024 * 1024),
-            transfer_time_in_seconds: None,
             segment_size_threshold_in_bytes: 64 * 1024 * 1024,
             ingestion_threads: 1,
             compression_threads: 1,
@@ -364,31 +356,6 @@ impl ConfigurationManager {
             .await
     }
 
-    pub(crate) fn transfer_time_in_seconds(&self) -> Option<u64> {
-        self.configuration.transfer_time_in_seconds
-    }
-
-    /// Set the new value and update the transfer time in the storage engine. If the transfer time
-    /// could not be updated or if the new configuration could not be saved to the configuration
-    /// file, return [`ModelarDbServerError`].
-    pub(crate) async fn set_transfer_time_in_seconds(
-        &mut self,
-        new_transfer_time_in_seconds: Option<u64>,
-        storage_engine: Arc<RwLock<StorageEngine>>,
-    ) -> Result<()> {
-        storage_engine
-            .write()
-            .await
-            .set_transfer_time_in_seconds(new_transfer_time_in_seconds)
-            .await?;
-
-        self.configuration.transfer_time_in_seconds = new_transfer_time_in_seconds;
-
-        self.configuration
-            .save_to_toml(&self.local_data_folder)
-            .await
-    }
-
     #[allow(dead_code)]
     pub(crate) fn segment_size_threshold_in_bytes(&self) -> u64 {
         self.configuration.segment_size_threshold_in_bytes
@@ -448,7 +415,6 @@ impl ConfigurationManager {
                 .configuration
                 .compressed_reserved_memory_in_bytes,
             transfer_batch_size_in_bytes: self.configuration.transfer_batch_size_in_bytes,
-            transfer_time_in_seconds: self.configuration.transfer_time_in_seconds,
             segment_size_threshold_in_bytes: self.configuration.segment_size_threshold_in_bytes,
             ingestion_threads: self.configuration.ingestion_threads as u32,
             compression_threads: self.configuration.compression_threads as u32,
@@ -499,7 +465,6 @@ mod tests {
             uncompressed_reserved_memory_in_bytes: 1,
             compressed_reserved_memory_in_bytes: 1,
             transfer_batch_size_in_bytes: Some(1),
-            transfer_time_in_seconds: Some(1),
             segment_size_threshold_in_bytes: 1,
             ..Configuration::default()
         };
@@ -716,39 +681,6 @@ mod tests {
             configuration_from_file.transfer_batch_size_in_bytes,
             new_value
         );
-    }
-
-    #[tokio::test]
-    async fn test_set_transfer_time_in_seconds() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
-
-        assert_eq!(
-            configuration_manager
-                .read()
-                .await
-                .transfer_time_in_seconds(),
-            None
-        );
-
-        let new_value = Some(60);
-        configuration_manager
-            .write()
-            .await
-            .set_transfer_time_in_seconds(new_value, storage_engine)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            configuration_manager
-                .read()
-                .await
-                .transfer_time_in_seconds(),
-            new_value
-        );
-
-        let configuration_from_file = configuration_from_file(&temp_dir).await;
-        assert_eq!(configuration_from_file.transfer_time_in_seconds, new_value)
     }
 
     #[tokio::test]
