@@ -17,16 +17,12 @@
 //! is managed here until it is of a sufficient size to be transferred efficiently.
 
 use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
 
 use dashmap::DashMap;
 use deltalake::arrow::array::RecordBatch;
 use futures::TryStreamExt;
 use modelardb_storage::data_folder::DataFolder;
 use object_store::ObjectStoreExt;
-use tokio::sync::RwLock;
-use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
 
 use crate::error::Result;
@@ -46,9 +42,6 @@ pub struct DataTransfer {
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// Delta Lake. If [`None`], data is only transferred on an explicit flush or on shutdown.
     transfer_batch_size_in_bytes: Option<u64>,
-    /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
-    /// data is not transferred based on time.
-    transfer_scheduler_handle: Option<TaskJoinHandle<()>>,
     /// Tables that have been dropped and should not be transferred to the remote data folder.
     dropped_tables: HashSet<String>,
 }
@@ -84,7 +77,6 @@ impl DataTransfer {
             remote_data_folder,
             table_size_in_bytes: table_size_in_bytes.clone(),
             transfer_batch_size_in_bytes,
-            transfer_scheduler_handle: None,
             dropped_tables: HashSet::new(),
         };
 
@@ -158,43 +150,6 @@ impl DataTransfer {
         self.transfer_batch_size_in_bytes = new_value;
 
         Ok(())
-    }
-
-    /// If a new transfer time is given, stop the existing task transferring data periodically
-    /// if there is one, and start a new task. If `new_value` is [`None`], the task is just stopped.
-    /// `data_transfer` is needed as an argument instead of using `self` so it can be moved into the
-    /// periodic task.
-    pub(super) fn set_transfer_time_in_seconds(
-        &mut self,
-        new_value: Option<u64>,
-        data_transfer: Arc<RwLock<Option<Self>>>,
-    ) {
-        // Stop the current task periodically transferring data if there is one.
-        if let Some(task) = &self.transfer_scheduler_handle {
-            task.abort();
-        }
-
-        // If a transfer time was given, create the task that periodically transfers data.
-        self.transfer_scheduler_handle = if let Some(transfer_time) = new_value {
-            let join_handle = tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_secs(transfer_time)).await;
-
-                    data_transfer
-                        .write()
-                        .await
-                        .as_ref()
-                        .unwrap()
-                        .transfer_larger_than_threshold(0)
-                        .await
-                        .expect("Periodic data transfer failed.");
-                }
-            });
-
-            Some(join_handle)
-        } else {
-            None
-        };
     }
 
     /// Transfer all compressed files from tables currently using more than `threshold` bytes in the
