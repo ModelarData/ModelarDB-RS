@@ -511,6 +511,8 @@ mod tests {
             compressed_reserved_memory_in_bytes: 1,
             transfer_batch_size_in_bytes: Some(1),
             segment_size_threshold_in_bytes: 1,
+            optimize_target_file_size_in_bytes: 1,
+            vacuum_retention_period_in_seconds: 1,
             ..Configuration::default()
         };
 
