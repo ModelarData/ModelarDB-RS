@@ -79,6 +79,15 @@ message Configuration {
 
   // Whether the write-ahead log is enabled.
   bool wal_enabled = 9;
+
+  // Target size, in bytes, of the files produced when automatically optimizing a table's storage. This is also the
+  // default value used when an OPTIMIZE query is executed without an explicit target size.
+  uint64 optimize_target_file_size_in_bytes = 10;
+
+  // Retention period, in seconds, used when automatically vacuuming a table after optimization. This is also the
+  // default value used when a VACUUM query is executed without an explicit retention period. Note that a very low
+  // value can delete files an in-flight query is still scanning.
+  uint64 vacuum_retention_period_in_seconds = 11;
 }
 
 // Request to update the configuration of a ModelarDB node.
@@ -89,6 +98,8 @@ message UpdateConfiguration {
     COMPRESSED_RESERVED_MEMORY_IN_BYTES = 2;
     TRANSFER_BATCH_SIZE_IN_BYTES = 3;
     SEGMENT_SIZE_THRESHOLD_IN_BYTES = 4;
+    OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES = 5;
+    VACUUM_RETENTION_PERIOD_IN_SECONDS = 6;
   }
 
   // Setting to update in the configuration.
