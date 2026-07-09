@@ -88,6 +88,19 @@ pub(crate) struct ServerArgs {
     #[arg(long, env = "MODELARDBD_WAL_ENABLED")]
     wal_enabled: Option<bool>,
 
+    /// Target size, in bytes, of the files produced when automatically optimizing a table's
+    /// storage. This is also the default value used when an OPTIMIZE query is executed without an
+    /// explicit target size.
+    #[arg(long, env = "MODELARDBD_OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES")]
+    optimize_target_file_size_in_bytes: Option<u64>,
+
+    /// Retention period, in seconds, used when automatically vacuuming a table after optimization.
+    /// This is also the default value used when a VACUUM query is executed without an explicit
+    /// retention period. Note that a very low value can delete files an in-flight query is still
+    /// scanning.
+    #[arg(long, env = "MODELARDBD_VACUUM_RETENTION_PERIOD_IN_SECONDS")]
+    vacuum_retention_period_in_seconds: Option<u64>,
+
     /// Subcommand specifying the mode the server is started in and the required data folders.
     #[command(subcommand)]
     mode: ServerMode,
