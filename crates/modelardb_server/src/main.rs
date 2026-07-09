@@ -84,10 +84,6 @@ pub(crate) struct ServerArgs {
     #[arg(long, env = "MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES")]
     segment_size_threshold_in_bytes: Option<u64>,
 
-    /// Whether the write-ahead log is enabled.
-    #[arg(long, env = "MODELARDBD_WAL_ENABLED")]
-    wal_enabled: Option<bool>,
-
     /// Target size, in bytes, of the files produced when automatically optimizing a table's
     /// storage. This is also the default value used when an OPTIMIZE query is executed without an
     /// explicit target size.
@@ -100,6 +96,10 @@ pub(crate) struct ServerArgs {
     /// scanning.
     #[arg(long, env = "MODELARDBD_VACUUM_RETENTION_PERIOD_IN_SECONDS")]
     vacuum_retention_period_in_seconds: Option<u64>,
+
+    /// Whether the write-ahead log is enabled.
+    #[arg(long, env = "MODELARDBD_WAL_ENABLED")]
+    wal_enabled: Option<bool>,
 
     /// Subcommand specifying the mode the server is started in and the required data folders.
     #[command(subcommand)]

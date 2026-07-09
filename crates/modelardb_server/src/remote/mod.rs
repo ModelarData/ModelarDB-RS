@@ -67,7 +67,7 @@ use crate::remote::auth_layer::AuthLayer;
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
 /// process the requests through [`FlightServiceHandler`]. All requests are passed through the
 /// [`AuthLayer`], which authenticates them using `maybe_authenticator` before they are passed to
-/// the [`FlightServiceHandler`]. If `maybe_authenticator` is [`None`], authentication is disabled, 
+/// the [`FlightServiceHandler`]. If `maybe_authenticator` is [`None`], authentication is disabled,
 /// and every request that is not an internal cluster request is allowed.
 pub async fn start_apache_arrow_flight_server(
     context: Arc<Context>,
