@@ -3567,7 +3567,7 @@ dependencies = [
 name = "modelardb_macros"
 version = "0.1.0"
 dependencies = [
- "object_store",
+ "modelardb_test",
  "proc-macro2",
  "quote",
  "tempfile",
@@ -3649,7 +3649,10 @@ dependencies = [
  "async-trait",
  "datafusion",
  "modelardb_types",
+ "object_store",
  "rand 0.10.2",
+ "tempfile",
+ "url",
 ]
 
 [[package]]

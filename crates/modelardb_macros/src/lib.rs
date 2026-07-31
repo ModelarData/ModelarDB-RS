@@ -30,9 +30,6 @@ use quote::quote;
 use crate::error::ModelarDbMacrosError;
 use crate::error::Result;
 
-/// Bucket and container name used by Minio and Azurite
-const BUCKET_AND_CONTAINER_NAME: &str = "modelardb";
-
 #[proc_macro_attribute]
 pub fn object_store_test(
     args: proc_macro::TokenStream,
@@ -56,7 +53,7 @@ pub fn object_store_test(
         .collect();
 
     let mut tokio_test_function = quote! {
-        #function_name(#(#argument_names),*);
+        #function_name(#(#argument_names),*).await;
     };
 
     for argument_name in argument_names.iter().rev() {
@@ -70,70 +67,19 @@ pub fn object_store_test(
     tokio_test_function = quote! {
         #[tokio::test]
         async fn #function_name_object_store_test() {
-            let object_stores = &[in_memory_object_store(), local_file_system_object_store(), aws3_object_store(), azure_object_store()];
+            let object_stores = &[
+                modelardb_test::object_store::in_memory_object_store(),
+                modelardb_test::object_store::local_file_system_object_store(),
+                modelardb_test::object_store::aws3_object_store(),
+                modelardb_test::object_store::azure_object_store()
+            ];
             #tokio_test_function
         }
     };
 
-    let tokens = quote! {
-        fn in_memory_object_store() -> Box<dyn object_store::ObjectStore> {
-            Box::new(InMemory::new())
-        }
+    println!("{}", tokio_test_function);
 
-        fn local_file_system_object_store() -> Box<dyn object_store::ObjectStore> {
-            let temp_dir = tempfile::tempdir().unwrap();
-            let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-            Box::new(local_file_system)
-        }
-
-        fn aws3_object_store() -> Box<dyn object_store::ObjectStore> {
-            let storage_options = HashMap::from([
-                ("aws_access_key_id".to_owned(), "minioadmin".to_owned()),
-                ("aws_secret_access_key".to_owned(), "minioadmin".to_owned()),
-                ("aws_endpoint_url".to_owned(), "http://localhost:9000".to_owned()),
-                ("aws_bucket_name".to_owned(), #BUCKET_AND_CONTAINER_NAME.to_owned()),
-                ("aws_s3_allow_unsafe_rename".to_owned(), "true".to_owned()),
-            ]);
-
-            // Build the Amazon S3 object store with the given storage options manually to allow http.
-            let location = format!("s3://{}", #BUCKET_AND_CONTAINER_NAME);
-            let url = Url::parse(&location).unwrap();
-
-            let amazon_s3 = storage_options
-            .iter()
-            .fold(
-                AmazonS3Builder::new()
-                .with_url(url.to_string())
-                .with_allow_http(true),
-                |builder, (key, value)| match key.parse() {
-                    Ok(k) => builder.with_config(k, value),
-                    Err(_) => builder,
-                },
-            )
-            .build().unwrap();
-            Box::new(amazon_s3)
-        }
-
-        fn azure_object_store() -> Box<dyn object_store::ObjectStore> {
-            let location = format!("az://{}", #BUCKET_AND_CONTAINER_NAME);
-            let url = Url::parse(&location).unwrap();
-
-            let storage_options = HashMap::from([
-                ("azure_storage_account_name".to_owned(), "devstoreaccount1".to_owned()),
-                ("azure_storage_account_key".to_owned(), "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==".to_owned()),
-                ("azure_container_name".to_owned(), #BUCKET_AND_CONTAINER_NAME.to_owned()),
-                ("azure_storage_use_emulator".to_owned(), "true".to_owned()),
-            ]);
-            let (boxed_microsoft_azure, _path) = object_store::parse_url_opts(&url, &storage_options).unwrap();
-            boxed_microsoft_azure
-        }
-
-        #tokio_test_function
-    };
-
-    println!("{}", tokens);
-
-    input.extend(tokens);
+    input.extend(tokio_test_function);
     input.into()
 }
 
@@ -230,16 +176,4 @@ fn expect_punct_with_contents(
         None => format!("Expected Punct with {}, found an empty iterator.", contents),
     };
     Err(ModelarDbMacrosError::Parse(error_message))
-}
-
-/// Adds `suffix` to `ident` without updating the [`Span`] associated with `ident`. The [`Span`] is
-/// not updated as there seems to be no method for constructing a new [`Span`].
-fn add_suffix_to_ident(ident: &IdentStruct, suffix: &str) -> IdentStruct {
-    // The existing span is reused as there seems to no method for constructing one.
-    let span = ident.span();
-
-    // Span.source_text(); is not used as its comment say it is for diagnostics only.
-    let ident_strint = ident.to_string();
-
-    IdentStruct::new(&format!("{ident_strint}{suffix}"), span)
 }

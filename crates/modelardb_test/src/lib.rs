@@ -16,7 +16,11 @@
 //! Implementation of functions and types used throughout ModelarDB for testing purposes.
 
 pub mod data_generation;
+pub mod object_store;
 pub mod table;
+
+/// Bucket and container name used by Minio and Azurite
+pub const BUCKET_AND_CONTAINER_NAME: &str = "modelardb";
 
 /// Expected size of the uncompressed data buffers produced in the tests.
 pub const UNCOMPRESSED_BUFFER_SIZE: usize = 1048576;

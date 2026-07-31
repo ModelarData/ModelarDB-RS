@@ -23,7 +23,7 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 proc-macro = true
 
 [dependencies]
-object_store = { workspace = true, features = ["aws", "azure"] }
 quote.workspace = true
 proc-macro2.workspace = true
 tempfile.workspace = true
+modelardb_test = { path = "../modelardb_test" }
