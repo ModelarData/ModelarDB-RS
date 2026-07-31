@@ -1108,10 +1108,16 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
+    use modelardb_macros::object_store_test;
     use modelardb_test::table as test;
     use modelardb_test::table::{NoOpDataSink, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::ArrowTimestamp;
     use tempfile::TempDir;
+
+    #[object_store_test]
+    async fn test_object_store_test(store_one: &dyn ObjectStore, store_two: &dyn ObjectStore) {
+        println!("I am a very advanced function!!!!");
+    }
 
     // Tests for DataFolder.
     #[tokio::test]

@@ -15,10 +15,19 @@
 
 //! The procedural macros used throughout ModelarDB.
 
+mod error;
+
+use proc_macro2::Group as GroupStruct;
 use proc_macro2::Ident as IdentStruct;
 use proc_macro2::TokenStream;
+use proc_macro2::TokenTree;
+use proc_macro2::TokenTree::Group;
 use proc_macro2::TokenTree::Ident;
+use proc_macro2::TokenTree::Punct;
 use quote::quote;
+
+use crate::error::ModelarDbMacrosError;
+use crate::error::Result;
 
 /// Bucket and container name used by Minio and Azurite
 const BUCKET_AND_CONTAINER_NAME: &str = "modelardb";
@@ -32,17 +41,11 @@ pub fn object_store_test(
     let _args: TokenStream = args.into();
     let mut input: TokenStream = input.into();
 
-    // TODO: Updated the code to replace all object_stores with any permutation of object_stores.
-    let mut input_iter = input.clone().into_iter();
-    input_iter.next();
-    input_iter.next();
+    let (function_name, group) =
+        next_ident_and_group(input.clone()).expect("Assumes the input would contain a Group.");
+    let _object_store_parameter_count = object_store_count(group.clone())
+        .expect("Assumes the input would contain &dyn ObjectStore parameters.");
 
-    let function_name = if let Some(Ident(ident)) = input_iter.next() {
-        ident
-    } else {
-        // TODO: Compile error?
-        panic!("Must be applied to an async function with one parameter of type &dyn ObjectStore");
-    };
     let function_name_in_memory = add_suffix_to_ident(&function_name, "_memory");
     let function_name_local_file_system = add_suffix_to_ident(&function_name, "_local_file_system");
     let function_name_aws3 = add_suffix_to_ident(&function_name, "_aws3");
@@ -111,6 +114,101 @@ pub fn object_store_test(
 
     input.extend(tokens);
     input.into()
+}
+
+/// Return the next pair of adjacent [`IdentStruct`] and [`GroupStruct`] tokens from `input` or
+/// `None` if no adjacent [`IdentStruct`] and [`GroupStruct`] token exist in the rest of `input`.
+fn next_ident_and_group(input: TokenStream) -> Option<(IdentStruct, GroupStruct)> {
+    let mut adjacent_ident = None;
+    for token in input {
+        if let Group(group) = &token
+            && let Some(ident) = adjacent_ident
+        {
+            // Clone is needed to avoid a partial move error with the next if let.
+            return Some((ident, group.clone()));
+        } else if let Ident(ident) = token {
+            adjacent_ident = Some(ident);
+        } else {
+            adjacent_ident = None;
+        }
+    }
+    None
+}
+
+/// Returns the number of `name: &dyn ObjectStore` arguments in the group. `The return type is `u16`
+/// as `rustc` returns an error if a function or method have more than 65,535 parameters at the time
+/// of writing. An [`ModelarDbMacrosError`] is returned if `group` contain anything but multiple
+/// instances of ``name: &dyn ObjectStore`.
+fn object_store_count(group: GroupStruct) -> Result<u16> {
+    let mut token_peekable_iterator = group.stream().into_iter().peekable();
+
+    let mut object_store_count = 0;
+    loop {
+        expect_parameter_object_store(&mut token_peekable_iterator)?;
+        object_store_count += 1;
+
+        // Skip the comma between parameters
+        token_peekable_iterator.next();
+
+        // End loop when iterator is empty, peek is used to not consume a token.
+        if let None = token_peekable_iterator.peek() {
+            break;
+        }
+    }
+
+    Ok(object_store_count)
+}
+
+/// Returns [`Ok`] if the next five tokens `token_iterator` returns is `name: &dyn ObjectStore`,
+/// otherwise a [`ModelarDbMacrosError`] is returned.
+fn expect_parameter_object_store(
+    token_iterator: &mut impl Iterator<Item = TokenTree>,
+) -> Result<()> {
+    // The contents of the first Ident token cannot checked as it is the parameter name.
+    expect_ident_without_contents(token_iterator)?;
+    expect_punct_with_contents(token_iterator, ':')?;
+    expect_punct_with_contents(token_iterator, '&')?;
+    expect_ident_with_contents(token_iterator, "dyn")?;
+    expect_ident_with_contents(token_iterator, "ObjectStore")?;
+    Ok(())
+}
+
+/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Ident`], otherwise a [`ModelarDbMacrosError] is returned.
+fn expect_ident_without_contents(
+    token_iterator: &mut impl Iterator<Item = TokenTree>,
+) -> Result<()> {
+    let error_message = match token_iterator.next() {
+        Some(Ident(_token)) => return Ok(()),
+        Some(token) => format!("Expected Ident, found {}.", token),
+        None => format!("Expected Ident, found an empty iterator."),
+    };
+    Err(ModelarDbMacrosError::Parse(error_message))
+}
+
+/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Ident`] that contains `content`, otherwise a [`ModelarDbMacrosError] is returned.
+fn expect_ident_with_contents(
+    token_iterator: &mut impl Iterator<Item = TokenTree>,
+    contents: &str,
+) -> Result<()> {
+    let error_message = match token_iterator.next() {
+        Some(Ident(token)) if token.to_string() == contents => return Ok(()),
+        Some(token) => format!("Expected Ident with {}, found {}.", contents, token),
+        None => format!("Expected Ident with {}, found an empty iterator.", contents),
+    };
+    Err(ModelarDbMacrosError::Parse(error_message))
+}
+
+/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Punct`] that contains `content`, otherwise a [`ModelarDbMacrosError] is returned.
+fn expect_punct_with_contents(
+    token_iterator: &mut impl Iterator<Item = TokenTree>,
+    contents: char,
+) -> Result<()> {
+    let error_message = match token_iterator.next() {
+        Some(Punct(token)) if token.as_char() == contents => return Ok(()),
+        Some(token) => format!("Expected Punct with {}, found {}.", contents, token),
+        None => format!("Expected Punct with {}, found an empty iterator.", contents),
+    };
+    Err(ModelarDbMacrosError::Parse(error_message))
 }
 
 /// Adds `suffix` to `ident` without updating the [`Span`] associated with `ident`. The [`Span`] is
