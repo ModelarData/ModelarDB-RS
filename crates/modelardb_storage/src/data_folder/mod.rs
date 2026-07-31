@@ -1108,7 +1108,7 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
     use datafusion::common::ScalarValue::Int64;
     use datafusion::logical_expr::Expr::Literal;
-    use modelardb_test::table as test;
+    use modelardb_test::table as test_table;
     use modelardb_test::table::{NoOpDataSink, TIME_SERIES_TABLE_NAME};
     use modelardb_types::types::ArrowTimestamp;
     use tempfile::TempDir;
@@ -1190,7 +1190,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         data_folder
-            .create_time_series_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test_table::time_series_table_metadata())
             .await
             .unwrap();
 
@@ -1239,7 +1239,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         let result = data_folder
-            .create_normal_table("normal_table_1", &test::normal_table_schema())
+            .create_normal_table("normal_table_1", &test_table::normal_table_schema())
             .await;
 
         assert_eq!(
@@ -1272,7 +1272,7 @@ mod tests {
         assert_eq!(
             **batch.column(1),
             BinaryViewArray::from_iter_values([&try_convert_schema_to_bytes(
-                &test::time_series_table_metadata().query_schema
+                &test_table::time_series_table_metadata().query_schema
             )
             .unwrap()])
         );
@@ -1303,7 +1303,7 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
         let result = data_folder
-            .create_time_series_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test_table::time_series_table_metadata())
             .await;
 
         assert_eq!(
@@ -1401,7 +1401,10 @@ mod tests {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         let mut delta_table = data_folder
-            .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+            .write_record_batches(
+                "normal_table_1",
+                vec![test_table::normal_table_record_batch()],
+            )
             .await
             .unwrap();
 
@@ -1420,7 +1423,7 @@ mod tests {
         let mut delta_table = data_folder
             .write_record_batches(
                 TIME_SERIES_TABLE_NAME,
-                vec![test::compressed_segments_record_batch()],
+                vec![test_table::compressed_segments_record_batch()],
             )
             .await
             .unwrap();
@@ -1456,7 +1459,10 @@ mod tests {
         let (temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         data_folder
-            .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+            .write_record_batches(
+                "normal_table_1",
+                vec![test_table::normal_table_record_batch()],
+            )
             .await
             .unwrap();
 
@@ -1485,7 +1491,7 @@ mod tests {
         data_folder
             .write_record_batches(
                 TIME_SERIES_TABLE_NAME,
-                vec![test::compressed_segments_record_batch()],
+                vec![test_table::compressed_segments_record_batch()],
             )
             .await
             .unwrap();
@@ -1517,7 +1523,10 @@ mod tests {
         let (temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
         data_folder
-            .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+            .write_record_batches(
+                "normal_table_1",
+                vec![test_table::normal_table_record_batch()],
+            )
             .await
             .unwrap();
 
@@ -1576,7 +1585,10 @@ mod tests {
         // Each write is a separate commit, so four writes produce four small files.
         for _ in 0..4 {
             data_folder
-                .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+                .write_record_batches(
+                    "normal_table_1",
+                    vec![test_table::normal_table_record_batch()],
+                )
                 .await
                 .unwrap();
         }
@@ -1604,7 +1616,7 @@ mod tests {
             data_folder
                 .write_record_batches(
                     TIME_SERIES_TABLE_NAME,
-                    vec![test::compressed_segments_record_batch()],
+                    vec![test_table::compressed_segments_record_batch()],
                 )
                 .await
                 .unwrap();
@@ -1648,7 +1660,10 @@ mod tests {
         // Each write is a separate commit, so four writes produce four small files.
         for _ in 0..4 {
             data_folder
-                .write_record_batches("normal_table_1", vec![test::normal_table_record_batch()])
+                .write_record_batches(
+                    "normal_table_1",
+                    vec![test_table::normal_table_record_batch()],
+                )
                 .await
                 .unwrap();
         }
@@ -1706,7 +1721,7 @@ mod tests {
     async fn test_write_record_batches_to_normal_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        let batch_to_write = test::normal_table_record_batch();
+        let batch_to_write = test_table::normal_table_record_batch();
         let delta_table = data_folder
             .write_record_batches("normal_table_1", vec![batch_to_write.clone()])
             .await
@@ -1734,7 +1749,7 @@ mod tests {
     async fn test_write_record_batches_to_time_series_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
 
-        let batch_to_write = test::compressed_segments_record_batch();
+        let batch_to_write = test_table::compressed_segments_record_batch();
         let delta_table = data_folder
             .write_record_batches(TIME_SERIES_TABLE_NAME, vec![batch_to_write.clone()])
             .await
@@ -1745,7 +1760,9 @@ mod tests {
 
         // Read the data back and verify the content. The partition column (field_column) is
         // moved to the end by Delta Lake, so SELECT the columns in the original schema order.
-        let schema = test::time_series_table_metadata().compressed_schema.clone();
+        let schema = test_table::time_series_table_metadata()
+            .compressed_schema
+            .clone();
         let column_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
 
         let table_provider = delta_table.table_provider().build().await.unwrap();
@@ -1784,7 +1801,7 @@ mod tests {
     async fn test_write_empty_record_batch_to_table() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        let empty_batch = RecordBatch::new_empty(Arc::new(test::normal_table_schema()));
+        let empty_batch = RecordBatch::new_empty(Arc::new(test_table::normal_table_schema()));
         let delta_table = data_folder
             .write_record_batches("normal_table_1", vec![empty_batch])
             .await
@@ -1799,7 +1816,10 @@ mod tests {
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let result = data_folder
-            .write_record_batches("missing_table", vec![test::normal_table_record_batch()])
+            .write_record_batches(
+                "missing_table",
+                vec![test_table::normal_table_record_batch()],
+            )
             .await;
 
         assert_eq!(
@@ -1875,7 +1895,7 @@ mod tests {
     async fn test_table_names() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
 
-        let time_series_table_metadata = test::time_series_table_metadata();
+        let time_series_table_metadata = test_table::time_series_table_metadata();
         data_folder
             .create_time_series_table(&time_series_table_metadata)
             .await
@@ -1913,7 +1933,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(schema.as_ref(), &test::normal_table_schema());
+        assert_eq!(schema.as_ref(), &test_table::normal_table_schema());
     }
 
     #[tokio::test]
@@ -1933,7 +1953,7 @@ mod tests {
 
         assert_eq!(
             time_series_table_metadata.first().unwrap().name,
-            test::time_series_table_metadata().name,
+            test_table::time_series_table_metadata().name,
         );
     }
 
@@ -1948,7 +1968,7 @@ mod tests {
 
         assert_eq!(
             time_series_table_metadata.name,
-            test::time_series_table_metadata().name,
+            test_table::time_series_table_metadata().name,
         );
     }
 
@@ -1981,7 +2001,7 @@ mod tests {
 
         assert_eq!(
             metadata.unwrap().as_ref(),
-            &test::time_series_table_metadata(),
+            &test_table::time_series_table_metadata(),
         );
     }
 
@@ -2087,7 +2107,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let normal_table_schema = test::normal_table_schema();
+        let normal_table_schema = test_table::normal_table_schema();
         data_folder
             .create_normal_table("normal_table_1", &normal_table_schema)
             .await
@@ -2105,7 +2125,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let time_series_table_metadata = test::time_series_table_metadata();
+        let time_series_table_metadata = test_table::time_series_table_metadata();
         data_folder
             .create_time_series_table(&time_series_table_metadata)
             .await
