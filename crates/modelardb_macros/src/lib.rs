@@ -24,6 +24,7 @@ use proc_macro2::TokenTree;
 use proc_macro2::TokenTree::Group;
 use proc_macro2::TokenTree::Ident;
 use proc_macro2::TokenTree::Punct;
+use quote::format_ident;
 use quote::quote;
 
 use crate::error::ModelarDbMacrosError;
@@ -43,30 +44,49 @@ pub fn object_store_test(
 
     let (function_name, group) =
         next_ident_and_group(input.clone()).expect("Assumes the input would contain a Group.");
-    let _object_store_parameter_count = object_store_count(group.clone())
+    let object_store_parameter_count = object_store_count(group.clone())
         .expect("Assumes the input would contain &dyn ObjectStore parameters.");
+    let function_name_object_store_test = format_ident!("{}_object_store_test", function_name);
 
-    let function_name_in_memory = add_suffix_to_ident(&function_name, "_memory");
-    let function_name_local_file_system = add_suffix_to_ident(&function_name, "_local_file_system");
-    let function_name_aws3 = add_suffix_to_ident(&function_name, "_aws3");
-    let function_name_azure = add_suffix_to_ident(&function_name, "_azure");
+    // Build the async tokio::test function that will call the function annotated with this macro
+    // using all the combinations of supported object stores. The function is build inside out to
+    // make correct nesting using curly braces simpler.
+    let argument_names: Vec<_> = (0..object_store_parameter_count)
+        .map(|ospc| format_ident!("os{}", ospc))
+        .collect();
+
+    let mut tokio_test_function = quote! {
+        #function_name(#(#argument_names),*);
+    };
+
+    for argument_name in argument_names.iter().rev() {
+        tokio_test_function = quote! {
+            for #argument_name in object_stores {
+                #tokio_test_function
+            }
+        };
+    }
+
+    tokio_test_function = quote! {
+        #[tokio::test]
+        async fn #function_name_object_store_test() {
+            let object_stores = &[in_memory_object_store(), local_file_system_object_store(), aws3_object_store(), azure_object_store()];
+            #tokio_test_function
+        }
+    };
 
     let tokens = quote! {
-        #[tokio::test]
-        async fn #function_name_in_memory() {
-            let object_store = InMemory::new();
-            #function_name(&object_store).await;
+        fn in_memory_object_store() -> Box<dyn object_store::ObjectStore> {
+            Box::new(InMemory::new())
         }
 
-        #[tokio::test]
-        async fn #function_name_local_file_system() {
+        fn local_file_system_object_store() -> Box<dyn object_store::ObjectStore> {
             let temp_dir = tempfile::tempdir().unwrap();
-            let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-            #function_name(&object_store).await;
+            let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+            Box::new(local_file_system)
         }
 
-        #[tokio::test]
-        async fn #function_name_aws3() {
+        fn aws3_object_store() -> Box<dyn object_store::ObjectStore> {
             let storage_options = HashMap::from([
                 ("aws_access_key_id".to_owned(), "minioadmin".to_owned()),
                 ("aws_secret_access_key".to_owned(), "minioadmin".to_owned()),
@@ -79,24 +99,22 @@ pub fn object_store_test(
             let location = format!("s3://{}", #BUCKET_AND_CONTAINER_NAME);
             let url = Url::parse(&location).unwrap();
 
-            let object_store = storage_options
-                .iter()
-                .fold(
-                    AmazonS3Builder::new()
-                        .with_url(url.to_string())
-                        .with_allow_http(true),
-                    |builder, (key, value)| match key.parse() {
-                        Ok(k) => builder.with_config(k, value),
-                        Err(_) => builder,
-                    },
-                )
-                .build().unwrap();
-
-            #function_name(&object_store).await;
+            let amazon_s3 = storage_options
+            .iter()
+            .fold(
+                AmazonS3Builder::new()
+                .with_url(url.to_string())
+                .with_allow_http(true),
+                |builder, (key, value)| match key.parse() {
+                    Ok(k) => builder.with_config(k, value),
+                    Err(_) => builder,
+                },
+            )
+            .build().unwrap();
+            Box::new(amazon_s3)
         }
 
-        #[tokio::test]
-        async fn #function_name_azure() {
+        fn azure_object_store() -> Box<dyn object_store::ObjectStore> {
             let location = format!("az://{}", #BUCKET_AND_CONTAINER_NAME);
             let url = Url::parse(&location).unwrap();
 
@@ -106,11 +124,14 @@ pub fn object_store_test(
                 ("azure_container_name".to_owned(), #BUCKET_AND_CONTAINER_NAME.to_owned()),
                 ("azure_storage_use_emulator".to_owned(), "true".to_owned()),
             ]);
-            let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options).unwrap();
-
-            #function_name(&object_store).await;
+            let (boxed_microsoft_azure, _path) = object_store::parse_url_opts(&url, &storage_options).unwrap();
+            boxed_microsoft_azure
         }
+
+        #tokio_test_function
     };
+
+    println!("{}", tokens);
 
     input.extend(tokens);
     input.into()
