@@ -17,6 +17,7 @@
 
 mod error;
 
+use itertools::Itertools;
 use proc_macro2::Group as GroupStruct;
 use proc_macro2::Ident as IdentStruct;
 use proc_macro2::TokenStream;
@@ -43,43 +44,57 @@ pub fn object_store_test(
         next_ident_and_group(input.clone()).expect("Assumes the input would contain a Group.");
     let object_store_parameter_count = object_store_count(group.clone())
         .expect("Assumes the input would contain &dyn ObjectStore parameters.");
-    let function_name_object_store_test = format_ident!("{}_object_store_test", function_name);
 
-    // Build the async tokio::test function that will call the function annotated with this macro
-    // using all the combinations of supported object stores. The function is build inside out to
-    // make correct nesting using curly braces simpler.
-    let argument_names: Vec<_> = (0..object_store_parameter_count)
-        .map(|ospc| format_ident!("os{}", ospc))
-        .collect();
+    // Build the async tokio::test functions that will call the function annotated with this macro
+    // using all the combinations of supported object stores. A separate function is created for
+    // each permutation of ObjectStores instead of a single function with nested loops to make it
+    // simpler to see which combination of object stores fail a test.
+    let object_store_idents = &[
+        format_ident!("in_memory_object_store"),
+        format_ident!("local_file_system_object_store"),
+        format_ident!("aws3_object_store"),
+        format_ident!("azure_object_store"),
+    ];
 
-    let mut tokio_test_function = quote! {
-        #function_name(#(#argument_names),*).await;
-    };
+    let object_store_ident_permutations_with_replacements = itertools::repeat_n(
+        object_store_idents.into_iter(),
+        object_store_parameter_count as usize,
+    )
+    .multi_cartesian_product();
 
-    for argument_name in argument_names.iter().rev() {
-        tokio_test_function = quote! {
-            for #argument_name in object_stores {
-                #tokio_test_function
+    let mut tokio_test_functions = quote! {};
+    let function_name_string = function_name.to_string();
+    for object_store_idents in object_store_ident_permutations_with_replacements {
+        // The name of all tokio test functions use function_test as a prefix so cargo test will
+        // execute them all if is called with functions_name as its argument as it runs tests
+        // containing its argument in their names. The name of all the object stores used are append
+        // to make it easy to see which object stores caused the test to fail.
+        //
+        // Each part is separated by two underscores to make the name more readable and to decrease
+        // the chance that the name will conflict with the name of a user-defined test since they
+        // should not use two underscores.
+        //
+        // The name is crated manually because quote!()'s * syntax adds spaces rustc cannot handle and
+        // format_ident!() cannot be used as the number of ObjectStore parameters is not static.
+        let mut tokio_test_function_name = String::new();
+        tokio_test_function_name.push_str(&function_name_string);
+        for object_store_ident in &object_store_idents {
+            tokio_test_function_name.push_str("__");
+            tokio_test_function_name.push_str(&object_store_ident.to_string());
+        }
+        let tokio_test_function_name_ident = format_ident!("{}", tokio_test_function_name);
+
+        tokio_test_functions = quote! {
+            #tokio_test_functions
+
+            #[tokio::test]
+            async fn #tokio_test_function_name_ident() {
+                #function_name(#(&modelardb_test::object_store::#object_store_idents()),*).await
             }
         };
     }
 
-    tokio_test_function = quote! {
-        #[tokio::test]
-        async fn #function_name_object_store_test() {
-            let object_stores = &[
-                modelardb_test::object_store::in_memory_object_store(),
-                modelardb_test::object_store::local_file_system_object_store(),
-                modelardb_test::object_store::aws3_object_store(),
-                modelardb_test::object_store::azure_object_store()
-            ];
-            #tokio_test_function
-        }
-    };
-
-    println!("{}", tokio_test_function);
-
-    input.extend(tokio_test_function);
+    input.extend(tokio_test_functions);
     input.into()
 }
 
