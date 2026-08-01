@@ -3646,6 +3646,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "datafusion",
+ "modelardb_storage",
  "modelardb_types",
  "object_store",
  "rand 0.10.2",

@@ -24,6 +24,7 @@ arrow.workspace = true
 async-trait.workspace = true
 datafusion.workspace = true
 modelardb_types = { path = "../modelardb_types" }
+modelardb_storage = { path = "../modelardb_storage" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 rand.workspace = true
 tempfile.workspace = true

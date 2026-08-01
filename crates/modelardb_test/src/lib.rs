@@ -15,6 +15,7 @@
 
 //! Implementation of functions and types used throughout ModelarDB for testing purposes.
 
+pub mod data_folder;
 pub mod data_generation;
 pub mod object_store;
 pub mod table;

@@ -13,65 +13,84 @@
  * limitations under the License.
  */
 
-//! The procedural macros used throughout ModelarDB.
+//! The procedural macros used throughout ModelarDB. The procedural macros does purposely not use
+//! crates designed to simply writing procedural macros like `syn`, `proc_macro2`, and `quote`, as
+//! they made the code more complex when evaluated.
 
 mod error;
 
+use std::fmt::{self, Display, Formatter};
+
 use itertools::Itertools;
-use proc_macro::Group as GroupStruct;
-use proc_macro::Ident as IdentStruct;
-use proc_macro::TokenStream;
-use proc_macro::TokenTree;
-use proc_macro::TokenTree::Group;
-use proc_macro::TokenTree::Ident;
-use proc_macro::TokenTree::Punct;
+use proc_macro::TokenTree::{Group, Ident, Punct};
+use proc_macro::{Group as GroupStruct, Ident as IdentStruct, TokenStream, TokenTree};
 
 use crate::error::ModelarDbMacrosError;
 use crate::error::Result;
 
+/// Specify the type of parameters a macro supports.
+#[derive(Clone, Copy)]
+enum ParameterType {
+    /// The annotated function must only contain `&DataFolder` parameters.
+    DataFolder,
+    /// The annotated function must only contain `&dyn ObjectStore` parameters.
+    ObjectStore,
+}
+
+impl Display for ParameterType {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            ParameterType::DataFolder => write!(f, "&DataFolder"),
+            ParameterType::ObjectStore => write!(f, "&dyn ObjectStore"),
+        }
+    }
+}
+
+/// Macro for generating test functions that use all permutations with replacements of `DataFolder`
+/// The macro must be placed on an `async` function without `#[test]` or `#[tokio::test]` that only
+/// has `&DataFolder` parameters. It will generate one `#[tokio::test]` function for each
+/// permutation with replacement of `DataFolder` configurations that call the annotated function.
 #[proc_macro_attribute]
-pub fn object_store_test(
+pub fn data_folder_test(
     _args: proc_macro::TokenStream,
-    mut input: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     // Extract and check the required parts of the annotated function. The input stream must be
     // cloned as it must be read as part of this macro but also extended with the generated code.
-    let (function_name_ident, function_parameters_group) =
-        next_ident_and_group(input.clone()).expect("Assumes input is a function with parameters.");
-    let object_store_parameter_count = object_store_count(function_parameters_group)
-        .expect("Assumes the function only has &dyn ObjectStore parameters.");
+    let (function_name, data_folder_parameter_count) =
+        function_name_and_checked_parameter_count(input.clone(), ParameterType::DataFolder);
 
-    // Build the async tokio::test functions that will call the annotated function using all the
-    // combinations of supported object stores. A separate function is created for each permutation
-    // of object stores instead of a single function with nested loops to make it simpler to see
-    // which combination of object stores fail a test. The name for the generated function start
-    // with the name of the annotated function so they can all by run with cargo test annotated
-    // function name and uses a combination of one and two underscores to make it more readable and
-    // to avoid conflicts with user code as normal function names should not use two underscores.
-    let function_name = function_name_ident.to_string();
-
-    let object_store_names = &[
-        "in_memory_object_store",
-        "local_file_system_object_store",
-        "aws3_object_store",
-        "azure_object_store",
+    // Build the async tokio::test functions that will call the annotated function using all
+    // combinations of data folder configurations. A separate function is created for each
+    // permutation of data folder configurations instead of a single function with nested loops to
+    // make it simpler to see which combination of data folder configurations fail a test. The name
+    // for the generated function start with the name of the annotated function followed by the name
+    // of each data folder configuration used with each part of the name separated by two
+    // underscores. By using the annotated function name as a prefix, all the generated tests can be
+    // run with cargo test annotated function name. The names of the data folder configurations used
+    // are included to make it simple to identify which data folder configurations causes a test to
+    // fail. Finally, each part of the name is separated by two underscores to make it more readable
+    // and to avoid conflicts with user code as function names should not use two underscores.
+    let data_folders = &[
+        "in_memory_data_folder",
+        "local_file_system_data_folder",
+        "aws3_data_folder",
+        "azure_data_folder",
     ];
 
-    let object_store_names_permutations_with_replacements = itertools::repeat_n(
-        object_store_names.into_iter(),
-        object_store_parameter_count as usize,
-    )
-    .multi_cartesian_product();
+    let data_folder_permutations_with_replacements =
+        itertools::repeat_n(data_folders.iter(), data_folder_parameter_count as usize)
+            .multi_cartesian_product();
 
-    let mut implementation = String::new();
-    for object_store_names in object_store_names_permutations_with_replacements {
-        let name = object_store_names.clone().into_iter().join("__");
-        let arguments = object_store_names
-            .into_iter()
-            .map(|osn| format!("&modelardb_test::object_store::{}()", osn))
+    let mut code = String::new();
+    for data_folder_permutation in data_folder_permutations_with_replacements {
+        let name = data_folder_permutation.clone().iter().join("__");
+        let arguments = data_folder_permutation
+            .iter()
+            .map(|osn| format!("&modelardb_test::data_folder::{}().await", osn))
             .join(", ");
 
-        implementation.push_str(&format!(
+        code.push_str(&format!(
             "
             #[tokio::test]
             async fn {function_name}__{name}() {{
@@ -81,13 +100,75 @@ pub fn object_store_test(
         ));
     }
 
-    // Append the generated functions to the existing token stream.
-    let implementation_tokens = implementation
-        .parse::<TokenStream>()
-        .expect("object_store_test generated invalid tokens.");
-    input.extend(implementation_tokens);
+    println!("{}", code);
 
-    input
+    // Append the generated functions to the existing token stream.
+    append_code_to_token_stream(input, code)
+}
+
+/// Macro for generating test functions that use all permutations with replacements of object
+/// stores. The macro must be placed on an `async` function without `#[test]` or `#[tokio::test]`
+/// that only has `&dyn ObjectStore` parameters. It will generate one `#[tokio::test]` function for
+/// each permutation with replacement of supported object stores that call the annotated function.
+#[proc_macro_attribute]
+pub fn object_store_test(
+    _args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    // input is cloned as it is read as part of this macro and extended with the generated code.
+    let (function_name, object_store_parameter_count) =
+        function_name_and_checked_parameter_count(input.clone(), ParameterType::ObjectStore);
+
+    let object_stores = &[
+        "in_memory_object_store",
+        "local_file_system_object_store",
+        "aws3_object_store",
+        "azure_object_store",
+    ];
+
+    let object_store_permutations_with_replacements = itertools::repeat_n(
+        object_stores.into_iter(),
+        object_store_parameter_count as usize,
+    )
+    .multi_cartesian_product();
+
+    let mut code = String::new();
+    for object_store_permutation in object_store_permutations_with_replacements {
+        let name = object_store_permutation.iter().join("__");
+        let arguments = object_store_permutation
+            .iter()
+            .map(|osn| format!("&modelardb_test::object_store::{}()", osn))
+            .join(", ");
+
+        code.push_str(&format!(
+            "
+            #[tokio::test]
+            async fn {function_name}__{name}() {{
+                {function_name}({arguments}).await
+            }}
+        "
+        ));
+    }
+
+    append_code_to_token_stream(input, code)
+}
+
+/// Extracts the function name from `input`, checks that all its parameters are of type
+///`ParameterType`, and returns the number of parameters. `The number of parameters is returned as a
+///`u16` as `rustc` returns an error if a function or method have more than 65,535 parameters at the
+///time of writing. An [`ModelarDbMacrosError`] is returned if `input` is not a function that only
+///accept parameters of `parameter_type`.
+fn function_name_and_checked_parameter_count(
+    input: TokenStream,
+    parameter_type: ParameterType,
+) -> (String, u16) {
+    let (function_name_ident, function_parameter_group) =
+        next_ident_and_group(input.clone()).expect("Assumes input is a function with parameters.");
+    let function_name = function_name_ident.to_string();
+    let data_folder_parameter_count =
+        expect_parameter_type_and_count(function_parameter_group, parameter_type)
+            .expect("Assumes all of the function's parameters are of type {parameter_type}.");
+    (function_name, data_folder_parameter_count)
 }
 
 /// Return the next pair of adjacent [`IdentStruct`] and [`GroupStruct`] tokens from `input` or
@@ -109,41 +190,53 @@ fn next_ident_and_group(input: TokenStream) -> Option<(IdentStruct, GroupStruct)
     None
 }
 
-/// Returns the number of `name: &dyn ObjectStore` arguments in the group. `The return type is `u16`
-/// as `rustc` returns an error if a function or method have more than 65,535 parameters at the time
-/// of writing. An [`ModelarDbMacrosError`] is returned if `group` contain anything but multiple
-/// instances of ``name: &dyn ObjectStore`.
-fn object_store_count(function_arguments_group: GroupStruct) -> Result<u16> {
-    let mut token_peekable_iterator = function_arguments_group.stream().into_iter().peekable();
+/// Returns the number of `parameter_type` parameters in `function_parameter_group`. `The return
+/// type is `u16` as `rustc` returns an error if a function or method have more than 65,535
+/// parameters at the time of writing. An [`ModelarDbMacrosError`] is returned if
+/// `function_parameter_group` contain anything but multiple instances of `parameter_type`.
+fn expect_parameter_type_and_count(
+    function_parameter_group: GroupStruct,
+    parameter_type: ParameterType,
+) -> Result<u16> {
+    let mut token_peekable_iterator = function_parameter_group.stream().into_iter().peekable();
 
-    let mut object_store_count = 0;
+    let mut parameter_count = 0;
     loop {
-        expect_parameter_object_store(&mut token_peekable_iterator)?;
-        object_store_count += 1;
+        // Return an error if the next parameter does not match parameter_type.
+        expect_parameter_type(&mut token_peekable_iterator, parameter_type)?;
+        parameter_count += 1;
 
-        // Skip the comma between parameters
+        // Skip the comma between parameters.
         token_peekable_iterator.next();
 
-        // End loop when iterator is empty, peek is used to not consume a token.
+        // End loop when iterator is empty, peek is used in case the stream is not empty.
         if let None = token_peekable_iterator.peek() {
             break;
         }
     }
 
-    Ok(object_store_count)
+    Ok(parameter_count)
 }
 
-/// Returns [`Ok`] if the next five tokens `token_iterator` returns is `name: &dyn ObjectStore`,
-/// otherwise a [`ModelarDbMacrosError`] is returned.
-fn expect_parameter_object_store(
+/// Returns [`Ok`] if the next four tokens `token_iterator` returns is as expected according to
+/// `parameter_type`, otherwise a [`ModelarDbMacrosError`] is returned.
+fn expect_parameter_type(
     token_iterator: &mut impl Iterator<Item = TokenTree>,
+    parameter_type: ParameterType,
 ) -> Result<()> {
     // The contents of the first Ident token cannot checked as it is the parameter name.
     expect_ident_without_contents(token_iterator)?;
     expect_punct_with_contents(token_iterator, ':')?;
     expect_punct_with_contents(token_iterator, '&')?;
-    expect_ident_with_contents(token_iterator, "dyn")?;
-    expect_ident_with_contents(token_iterator, "ObjectStore")?;
+    match parameter_type {
+        ParameterType::DataFolder => {
+            expect_ident_with_contents(token_iterator, "DataFolder")?;
+        }
+        ParameterType::ObjectStore => {
+            expect_ident_with_contents(token_iterator, "dyn")?;
+            expect_ident_with_contents(token_iterator, "ObjectStore")?;
+        }
+    }
     Ok(())
 }
 
@@ -183,4 +276,13 @@ fn expect_punct_with_contents(
         None => format!("Expected Punct with {}, found an empty iterator.", contents),
     };
     Err(ModelarDbMacrosError::Parse(error_message))
+}
+
+/// Appends `code` to `input`.
+fn append_code_to_token_stream(mut input: TokenStream, code: String) -> TokenStream {
+    let implementation_tokens = code
+        .parse::<TokenStream>()
+        .expect("The macro generated invalid Rust code.");
+    input.extend(implementation_tokens);
+    input
 }
