@@ -18,84 +18,76 @@
 mod error;
 
 use itertools::Itertools;
-use proc_macro2::Group as GroupStruct;
-use proc_macro2::Ident as IdentStruct;
-use proc_macro2::TokenStream;
-use proc_macro2::TokenTree;
-use proc_macro2::TokenTree::Group;
-use proc_macro2::TokenTree::Ident;
-use proc_macro2::TokenTree::Punct;
-use quote::format_ident;
-use quote::quote;
+use proc_macro::Group as GroupStruct;
+use proc_macro::Ident as IdentStruct;
+use proc_macro::TokenStream;
+use proc_macro::TokenTree;
+use proc_macro::TokenTree::Group;
+use proc_macro::TokenTree::Ident;
+use proc_macro::TokenTree::Punct;
 
 use crate::error::ModelarDbMacrosError;
 use crate::error::Result;
 
 #[proc_macro_attribute]
 pub fn object_store_test(
-    args: proc_macro::TokenStream,
-    input: proc_macro::TokenStream,
+    _args: proc_macro::TokenStream,
+    mut input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    // Convert args and input to proc_macro2 so they can be used with quote!.
-    let _args: TokenStream = args.into();
-    let mut input: TokenStream = input.into();
+    // Extract and check the required parts of the annotated function. The input stream must be
+    // cloned as it must be read as part of this macro but also extended with the generated code.
+    let (function_name_ident, function_parameters_group) =
+        next_ident_and_group(input.clone()).expect("Assumes input is a function with parameters.");
+    let object_store_parameter_count = object_store_count(function_parameters_group)
+        .expect("Assumes the function only has &dyn ObjectStore parameters.");
 
-    let (function_name, group) =
-        next_ident_and_group(input.clone()).expect("Assumes the input would contain a Group.");
-    let object_store_parameter_count = object_store_count(group.clone())
-        .expect("Assumes the input would contain &dyn ObjectStore parameters.");
+    // Build the async tokio::test functions that will call the annotated function using all the
+    // combinations of supported object stores. A separate function is created for each permutation
+    // of object stores instead of a single function with nested loops to make it simpler to see
+    // which combination of object stores fail a test. The name for the generated function start
+    // with the name of the annotated function so they can all by run with cargo test annotated
+    // function name and uses a combination of one and two underscores to make it more readable and
+    // to avoid conflicts with user code as normal function names should not use two underscores.
+    let function_name = function_name_ident.to_string();
 
-    // Build the async tokio::test functions that will call the function annotated with this macro
-    // using all the combinations of supported object stores. A separate function is created for
-    // each permutation of ObjectStores instead of a single function with nested loops to make it
-    // simpler to see which combination of object stores fail a test.
-    let object_store_idents = &[
-        format_ident!("in_memory_object_store"),
-        format_ident!("local_file_system_object_store"),
-        format_ident!("aws3_object_store"),
-        format_ident!("azure_object_store"),
+    let object_store_names = &[
+        "in_memory_object_store",
+        "local_file_system_object_store",
+        "aws3_object_store",
+        "azure_object_store",
     ];
 
-    let object_store_ident_permutations_with_replacements = itertools::repeat_n(
-        object_store_idents.into_iter(),
+    let object_store_names_permutations_with_replacements = itertools::repeat_n(
+        object_store_names.into_iter(),
         object_store_parameter_count as usize,
     )
     .multi_cartesian_product();
 
-    let mut tokio_test_functions = quote! {};
-    let function_name_string = function_name.to_string();
-    for object_store_idents in object_store_ident_permutations_with_replacements {
-        // The name of all tokio test functions use function_test as a prefix so cargo test will
-        // execute them all if is called with functions_name as its argument as it runs tests
-        // containing its argument in their names. The name of all the object stores used are append
-        // to make it easy to see which object stores caused the test to fail.
-        //
-        // Each part is separated by two underscores to make the name more readable and to decrease
-        // the chance that the name will conflict with the name of a user-defined test since they
-        // should not use two underscores.
-        //
-        // The name is crated manually because quote!()'s * syntax adds spaces rustc cannot handle and
-        // format_ident!() cannot be used as the number of ObjectStore parameters is not static.
-        let mut tokio_test_function_name = String::new();
-        tokio_test_function_name.push_str(&function_name_string);
-        for object_store_ident in &object_store_idents {
-            tokio_test_function_name.push_str("__");
-            tokio_test_function_name.push_str(&object_store_ident.to_string());
-        }
-        let tokio_test_function_name_ident = format_ident!("{}", tokio_test_function_name);
+    let mut implementation = String::new();
+    for object_store_names in object_store_names_permutations_with_replacements {
+        let name = object_store_names.clone().into_iter().join("__");
+        let arguments = object_store_names
+            .into_iter()
+            .map(|osn| format!("&modelardb_test::object_store::{}()", osn))
+            .join(", ");
 
-        tokio_test_functions = quote! {
-            #tokio_test_functions
-
+        implementation.push_str(&format!(
+            "
             #[tokio::test]
-            async fn #tokio_test_function_name_ident() {
-                #function_name(#(&modelardb_test::object_store::#object_store_idents()),*).await
-            }
-        };
+            async fn {function_name}__{name}() {{
+                {function_name}({arguments}).await
+            }}
+        "
+        ));
     }
 
-    input.extend(tokio_test_functions);
-    input.into()
+    // Append the generated functions to the existing token stream.
+    let implementation_tokens = implementation
+        .parse::<TokenStream>()
+        .expect("object_store_test generated invalid tokens.");
+    input.extend(implementation_tokens);
+
+    input
 }
 
 /// Return the next pair of adjacent [`IdentStruct`] and [`GroupStruct`] tokens from `input` or
@@ -121,8 +113,8 @@ fn next_ident_and_group(input: TokenStream) -> Option<(IdentStruct, GroupStruct)
 /// as `rustc` returns an error if a function or method have more than 65,535 parameters at the time
 /// of writing. An [`ModelarDbMacrosError`] is returned if `group` contain anything but multiple
 /// instances of ``name: &dyn ObjectStore`.
-fn object_store_count(group: GroupStruct) -> Result<u16> {
-    let mut token_peekable_iterator = group.stream().into_iter().peekable();
+fn object_store_count(function_arguments_group: GroupStruct) -> Result<u16> {
+    let mut token_peekable_iterator = function_arguments_group.stream().into_iter().peekable();
 
     let mut object_store_count = 0;
     loop {
