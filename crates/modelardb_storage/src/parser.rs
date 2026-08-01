@@ -485,17 +485,13 @@ impl ModelarDbDialect {
 
         let mut addresses = vec![];
         loop {
-            match self.parse_single_quoted_string(parser) {
-                Ok(address) => {
-                    addresses.push(new_address_setting(address));
-                    if let Token::Comma = parser.peek_nth_token(0).token {
-                        parser.next_token();
-                    } else {
-                        break;
-                    };
-                }
-                Err(error) => return Err(error),
-            }
+            let address = self.parse_single_quoted_string(parser)?;
+            addresses.push(new_address_setting(address));
+            if let Token::Comma = parser.peek_nth_token(0).token {
+                parser.next_token();
+            } else {
+                break;
+            };
         }
 
         // SELECT.
@@ -727,17 +723,13 @@ impl ModelarDbDialect {
         let mut table_names = vec![];
 
         loop {
-            match self.parse_word_value(parser) {
-                Ok(table_name) => {
-                    table_names.push(table_name);
-                    if Token::Comma == parser.peek_nth_token(0).token {
-                        parser.next_token();
-                    } else {
-                        return Ok(table_names);
-                    };
-                }
-                Err(error) => return Err(error),
-            }
+            let table_name = self.parse_word_value(parser)?;
+            table_names.push(table_name);
+            if Token::Comma == parser.peek_nth_token(0).token {
+                parser.next_token();
+            } else {
+                return Ok(table_names);
+            };
         }
     }
 }

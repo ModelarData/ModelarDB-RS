@@ -15,7 +15,8 @@
 
 //! The procedural macros used throughout ModelarDB. The procedural macros does purposely not use
 //! crates designed to simply writing procedural macros like `syn`, `proc_macro2`, and `quote`, as
-//! they made the code more complex when evaluated.
+//! they made the code more complex when evaluated. The macros have no automatic tests as using
+//! [`proc_macro`] outside procedural macros makes the compiler panic.
 
 mod error;
 
@@ -126,11 +127,9 @@ pub fn object_store_test(
         "azure_object_store",
     ];
 
-    let object_store_permutations_with_replacements = itertools::repeat_n(
-        object_stores.into_iter(),
-        object_store_parameter_count as usize,
-    )
-    .multi_cartesian_product();
+    let object_store_permutations_with_replacements =
+        itertools::repeat_n(object_stores.iter(), object_store_parameter_count as usize)
+            .multi_cartesian_product();
 
     let mut code = String::new();
     for object_store_permutation in object_store_permutations_with_replacements {
@@ -210,7 +209,7 @@ fn expect_parameter_type_and_count(
         token_peekable_iterator.next();
 
         // End loop when iterator is empty, peek is used in case the stream is not empty.
-        if let None = token_peekable_iterator.peek() {
+        if token_peekable_iterator.peek().is_none() {
             break;
         }
     }
@@ -240,19 +239,21 @@ fn expect_parameter_type(
     Ok(())
 }
 
-/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Ident`], otherwise a [`ModelarDbMacrosError] is returned.
+/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Ident`], otherwise a
+/// [`ModelarDbMacrosError] is returned.
 fn expect_ident_without_contents(
     token_iterator: &mut impl Iterator<Item = TokenTree>,
 ) -> Result<()> {
     let error_message = match token_iterator.next() {
         Some(Ident(_token)) => return Ok(()),
         Some(token) => format!("Expected Ident, found {}.", token),
-        None => format!("Expected Ident, found an empty iterator."),
+        None => "Expected Ident, found an empty iterator.".to_owned(),
     };
     Err(ModelarDbMacrosError::Parse(error_message))
 }
 
-/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Ident`] that contains `content`, otherwise a [`ModelarDbMacrosError] is returned.
+/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Ident`] that contains
+/// `content`, otherwise a [`ModelarDbMacrosError] is returned.
 fn expect_ident_with_contents(
     token_iterator: &mut impl Iterator<Item = TokenTree>,
     contents: &str,
@@ -265,7 +266,8 @@ fn expect_ident_with_contents(
     Err(ModelarDbMacrosError::Parse(error_message))
 }
 
-/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Punct`] that contains `content`, otherwise a [`ModelarDbMacrosError] is returned.
+/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Punct`] that contains
+/// `content`, otherwise a [`ModelarDbMacrosError] is returned.
 fn expect_punct_with_contents(
     token_iterator: &mut impl Iterator<Item = TokenTree>,
     contents: char,
