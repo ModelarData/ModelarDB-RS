@@ -186,13 +186,12 @@ unsafe fn open_azure(
     let account_name = unsafe { c_char_ptr_to_str(account_name_ptr)? };
     let access_key = unsafe { c_char_ptr_to_str(access_key_ptr)? };
     let container_name = unsafe { c_char_ptr_to_str(container_name_ptr)? };
-    let use_emulator = "false".to_owned();
 
     let data_folder = TOKIO_RUNTIME.block_on(DataFolder::open_azure(
         account_name.to_owned(),
         access_key.to_owned(),
         container_name.to_owned(),
-        use_emulator,
+        false,
     ))?;
     let data_sink = Arc::new(DataFolderDataSink::new());
     TOKIO_RUNTIME.block_on(data_folder.register_tables(data_sink))?;

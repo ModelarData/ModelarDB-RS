@@ -172,9 +172,8 @@ impl DataFolder {
                         "Azure Blob Storage requires --azure-storage-access-key or AZURE_STORAGE_ACCESS_KEY.".to_owned(),
                     )
                 })?;
-                let use_emulator = "false".to_owned();
 
-                Self::open_azure(account_name, access_key, container_name.to_owned(), use_emulator).await
+                Self::open_azure(account_name, access_key, container_name.to_owned(), false).await
             }
             _ => Err(ModelarDbStorageError::InvalidArgument(
                 "Remote data folder URL must be s3://bucket-name or azureblobstorage://container-name."
@@ -230,9 +229,10 @@ impl DataFolder {
         account_name: String,
         access_key: String,
         container_name: String,
-        use_emulator: String,
+        use_emulator: bool,
     ) -> Result<Self> {
         let location = format!("az://{container_name}");
+        let use_emulator = use_emulator.to_string();
 
         // TODO: Needs to be tested.
         let storage_options = HashMap::from([

@@ -49,7 +49,7 @@ pub async fn azure_data_folder() -> DataFolder {
         "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
             .to_owned(),
         BUCKET_AND_CONTAINER_NAME.to_owned(),
-        "true".to_owned(),
+        true,
     )
     .await
     .unwrap()

@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! The procedural macros used throughout ModelarDB. The procedural macros does purposely not use
-//! crates designed to simply writing procedural macros like `syn`, `proc_macro2`, and `quote`, as
+//! The procedural macros used throughout ModelarDB. The procedural macros purposely do not use
+//! crates designed to simplify writing procedural macros like `syn`, `proc_macro2`, and `quote`, as
 //! they made the code more complex when evaluated. The macros have no automatic tests as using
 //! [`proc_macro`] outside procedural macros makes the compiler panic.
 
@@ -101,8 +101,6 @@ pub fn data_folder_test(
         ));
     }
 
-    println!("{}", code);
-
     // Append the generated functions to the existing token stream.
     append_code_to_token_stream(input, code)
 }
@@ -152,11 +150,11 @@ pub fn object_store_test(
     append_code_to_token_stream(input, code)
 }
 
-/// Extracts the function name from `input`, checks that all its parameters are of type
-///`ParameterType`, and returns the number of parameters. `The number of parameters is returned as a
-///`u16` as `rustc` returns an error if a function or method have more than 65,535 parameters at the
-///time of writing. An [`ModelarDbMacrosError`] is returned if `input` is not a function that only
-///accept parameters of `parameter_type`.
+///  Extracts the function name from `input`, checks that all its parameters are of type
+/// `ParameterType`, and returns the number of parameters. The number of parameters is returned as a
+/// `u16` as `rustc` returns an error if a function or method has more than 65,535 parameters at the
+/// time of writing. A [`ModelarDbMacrosError`] is returned if `input` is not a function that only
+/// accepts parameters of `parameter_type`.
 fn function_name_and_checked_parameter_count(
     input: TokenStream,
     parameter_type: ParameterType,
@@ -164,10 +162,9 @@ fn function_name_and_checked_parameter_count(
     let (function_name_ident, function_parameter_group) =
         next_ident_and_group(input.clone()).expect("Assumes input is a function with parameters.");
     let function_name = function_name_ident.to_string();
-    let data_folder_parameter_count =
-        expect_parameter_type_and_count(function_parameter_group, parameter_type)
-            .expect("Assumes all of the function's parameters are of type {parameter_type}.");
-    (function_name, data_folder_parameter_count)
+    let parameter_count = expect_parameter_type_and_count(function_parameter_group, parameter_type)
+        .expect("Assumes all of the function's parameters are of type {parameter_type}.");
+    (function_name, parameter_count)
 }
 
 /// Return the next pair of adjacent [`IdentStruct`] and [`GroupStruct`] tokens from `input` or
@@ -240,7 +237,7 @@ fn expect_parameter_type(
 }
 
 /// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Ident`], otherwise a
-/// [`ModelarDbMacrosError] is returned.
+/// [`ModelarDbMacrosError`] is returned.
 fn expect_ident_without_contents(
     token_iterator: &mut impl Iterator<Item = TokenTree>,
 ) -> Result<()> {
@@ -253,7 +250,7 @@ fn expect_ident_without_contents(
 }
 
 /// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Ident`] that contains
-/// `content`, otherwise a [`ModelarDbMacrosError] is returned.
+/// `content`, otherwise a [`ModelarDbMacrosError`] is returned.
 fn expect_ident_with_contents(
     token_iterator: &mut impl Iterator<Item = TokenTree>,
     contents: &str,
@@ -267,7 +264,7 @@ fn expect_ident_with_contents(
 }
 
 /// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Punct`] that contains
-/// `content`, otherwise a [`ModelarDbMacrosError] is returned.
+/// `content`, otherwise a [`ModelarDbMacrosError`] is returned.
 fn expect_punct_with_contents(
     token_iterator: &mut impl Iterator<Item = TokenTree>,
     contents: char,
