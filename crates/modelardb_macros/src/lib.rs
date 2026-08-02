@@ -150,7 +150,7 @@ pub fn object_store_test(
     append_code_to_token_stream(input, code)
 }
 
-///  Extracts the function name from `input`, checks that all its parameters are of type
+/// Extracts the function name from `input`, checks that all its parameters are of type
 /// `ParameterType`, and returns the number of parameters. The number of parameters is returned as a
 /// `u16` as `rustc` returns an error if a function or method has more than 65,535 parameters at the
 /// time of writing. A [`ModelarDbMacrosError`] is returned if `input` is not a function that only
