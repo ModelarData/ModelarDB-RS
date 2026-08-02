@@ -47,6 +47,29 @@ impl Display for ParameterType {
     }
 }
 
+/// An function that will create an argument to be passed to a function as a borrow.
+struct BorrowedArgument {
+    /// Name of the function.
+    name: String,
+    /// Module containing the function.
+    module: String,
+    /// Specify if the function must be called with a path.
+    need_path: bool,
+    /// Specify if the function must be called with .await.
+    need_await: bool,
+}
+
+impl BorrowedArgument {
+    fn new(name: &str, module: &str, need_path: bool, need_await: bool) -> Self {
+        BorrowedArgument {
+            name: name.to_owned(),
+            module: module.to_owned(),
+            need_path,
+            need_await,
+        }
+    }
+}
+
 /// Macro for generating test functions that use all permutations with replacements of `DataFolder`
 /// The macro must be placed on an `async` function without `#[test]` or `#[tokio::test]` that only
 /// has `&DataFolder` parameters. It will generate one `#[tokio::test]` function for each
@@ -61,7 +84,7 @@ pub fn data_folder_test(
     let (function_name, data_folder_parameter_count) =
         function_name_and_checked_parameter_count(input.clone(), ParameterType::DataFolder);
 
-    // Build the async tokio::test functions that will call the annotated function using all
+    // Generate the async tokio::test functions that will call the annotated function using all
     // combinations of data folder configurations. A separate function is created for each
     // permutation of data folder configurations instead of a single function with nested loops to
     // make it simpler to see which combination of data folder configurations fail a test. The name
@@ -73,10 +96,30 @@ pub fn data_folder_test(
     // fail. Finally, each part of the name is separated by two underscores to make it more readable
     // and to avoid conflicts with user code as function names should not use two underscores.
     let data_folders = &[
-        "in_memory_data_folder",
-        "local_file_system_data_folder",
-        "aws3_data_folder",
-        "azure_data_folder",
+        BorrowedArgument::new(
+            "in_memory_data_folder",
+            "modelardb_test::data_folder",
+            false,
+            true,
+        ),
+        BorrowedArgument::new(
+            "local_file_system_data_folder",
+            "modelardb_test::data_folder",
+            true,
+            true,
+        ),
+        BorrowedArgument::new(
+            "aws3_data_folder",
+            "modelardb_test::data_folder",
+            false,
+            true,
+        ),
+        BorrowedArgument::new(
+            "azure_data_folder",
+            "modelardb_test::data_folder",
+            false,
+            true,
+        ),
     ];
 
     let data_folder_permutations_with_replacements =
@@ -85,19 +128,9 @@ pub fn data_folder_test(
 
     let mut code = String::new();
     for data_folder_permutation in data_folder_permutations_with_replacements {
-        let name = data_folder_permutation.clone().iter().join("__");
-        let arguments = data_folder_permutation
-            .iter()
-            .map(|osn| format!("&modelardb_test::data_folder::{}().await", osn))
-            .join(", ");
-
-        code.push_str(&format!(
-            "
-            #[tokio::test]
-            async fn {function_name}__{name}() {{
-                {function_name}({arguments}).await
-            }}
-        "
+        code.push_str(&generate_test_function(
+            &function_name,
+            &data_folder_permutation,
         ));
     }
 
@@ -119,10 +152,30 @@ pub fn object_store_test(
         function_name_and_checked_parameter_count(input.clone(), ParameterType::ObjectStore);
 
     let object_stores = &[
-        "in_memory_object_store",
-        "local_file_system_object_store",
-        "aws3_object_store",
-        "azure_object_store",
+        BorrowedArgument::new(
+            "in_memory_object_store",
+            "modelardb_test::object_store",
+            false,
+            false,
+        ),
+        BorrowedArgument::new(
+            "local_file_system_object_store",
+            "modelardb_test::object_store",
+            true,
+            false,
+        ),
+        BorrowedArgument::new(
+            "aws3_object_store",
+            "modelardb_test::object_store",
+            false,
+            false,
+        ),
+        BorrowedArgument::new(
+            "azure_object_store",
+            "modelardb_test::object_store",
+            false,
+            false,
+        ),
     ];
 
     let object_store_permutations_with_replacements =
@@ -131,19 +184,9 @@ pub fn object_store_test(
 
     let mut code = String::new();
     for object_store_permutation in object_store_permutations_with_replacements {
-        let name = object_store_permutation.iter().join("__");
-        let arguments = object_store_permutation
-            .iter()
-            .map(|osn| format!("&modelardb_test::object_store::{}()", osn))
-            .join(", ");
-
-        code.push_str(&format!(
-            "
-            #[tokio::test]
-            async fn {function_name}__{name}() {{
-                {function_name}({arguments}).await
-            }}
-        "
+        code.push_str(&generate_test_function(
+            &function_name,
+            &object_store_permutation,
         ));
     }
 
@@ -284,4 +327,53 @@ fn append_code_to_token_stream(mut input: TokenStream, code: String) -> TokenStr
         .expect("The macro generated invalid Rust code.");
     input.extend(implementation_tokens);
     input
+}
+
+/// Generate a call to `function_name` and pass it the `permutation` with replacements of arguments.
+fn generate_test_function(function_name: &str, permutation: &[&BorrowedArgument]) -> String {
+    let permutation_name = permutation.iter().map(|ba| &ba.name).join("__");
+
+    let mut temp_dir_name_counter = 0;
+    let temp_dirs = permutation
+        .iter()
+        .filter_map(|ba| {
+            if ba.need_path {
+                temp_dir_name_counter += 1;
+                Some(format!(
+                    "let temp_dir{temp_dir_name_counter} = tempfile::tempdir().unwrap();"
+                ))
+            } else {
+                None
+            }
+        })
+        .join(" ");
+
+    temp_dir_name_counter = 0;
+    let arguments = permutation
+        .iter()
+        .map(|ba| {
+            let mut argument = String::new();
+            argument.push_str(&format!("&{}::{}", ba.module, ba.name));
+            if ba.need_path {
+                temp_dir_name_counter += 1;
+                argument.push_str(&format!("(temp_dir{temp_dir_name_counter}.path())"));
+            } else {
+                argument.push_str("()");
+            }
+            if ba.need_await {
+                argument.push_str(".await")
+            }
+            argument
+        })
+        .join(", ");
+
+    format!(
+        "
+            #[tokio::test]
+            async fn {function_name}__{permutation_name}() {{
+                {temp_dirs}
+                {function_name}({arguments}).await
+            }}
+        "
+    )
 }

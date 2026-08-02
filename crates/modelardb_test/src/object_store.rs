@@ -17,6 +17,7 @@
 //! `Box<dyn ObjectStore>` to match the output of [`object_store::parse_url_opts()`].
 
 use std::collections::HashMap;
+use std::path::Path as StdPath;
 
 use object_store::{ObjectStore, aws::AmazonS3Builder, local::LocalFileSystem, memory::InMemory};
 use url::Url;
@@ -29,9 +30,8 @@ pub fn in_memory_object_store() -> Box<dyn ObjectStore> {
 }
 
 /// Return a [`LocalFileSystem`] [`ObjectStore`] for testing.
-pub fn local_file_system_object_store() -> Box<dyn ObjectStore> {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+pub fn local_file_system_object_store(object_store_path: &StdPath) -> Box<dyn ObjectStore> {
+    let local_file_system = LocalFileSystem::new_with_prefix(object_store_path).unwrap();
     Box::new(local_file_system)
 }
 

@@ -15,6 +15,8 @@
 
 //! Functions for creating data folders used throughout ModelarDB for testing purposes.
 
+use std::path::Path as StdPath;
+
 use modelardb_storage::data_folder::DataFolder;
 
 use crate::BUCKET_AND_CONTAINER_NAME;
@@ -25,9 +27,8 @@ pub async fn in_memory_data_folder() -> DataFolder {
 }
 
 /// Return a [`DataFolder`] storing data on local disk for testing.
-pub async fn local_file_system_data_folder() -> DataFolder {
-    let temp_dir = tempfile::tempdir().unwrap();
-    DataFolder::open_local(temp_dir.path()).await.unwrap()
+pub async fn local_file_system_data_folder(data_folder_path: &StdPath) -> DataFolder {
+    DataFolder::open_local(data_folder_path).await.unwrap()
 }
 
 /// Return a [`DataFolder`] storing data in an AWS3 compatible object store for testing using Minio.
