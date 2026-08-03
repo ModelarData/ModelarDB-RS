@@ -234,9 +234,9 @@ fn function_name_and_checked_parameter_count(
         next_ident_and_group(input.clone()).expect("Assumes input is a function with parameters.");
     let function_name = function_name_ident.to_string();
     let parameter_count = expect_parameter_type_and_count(function_parameter_group, parameter_type)
-        .expect(&format!(
-            "Assumes all of the function's parameters are of type {parameter_type}."
-        ));
+        .unwrap_or_else(|_| {
+            panic!("Assumes all of the function's parameters are of type {parameter_type}.")
+        });
     (function_name, parameter_count)
 }
 
