@@ -21,8 +21,8 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
 arrow.workspace = true
-modelardb_types = { path = "../modelardb_types" }
+modelardb_types.workspace = true
 
 [dev-dependencies]
-modelardb_test = { path = "../modelardb_test" }
+modelardb_test.workspace = true
 proptest.workspace = true

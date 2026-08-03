@@ -23,8 +23,8 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 arrow.workspace = true
 async-trait.workspace = true
 datafusion.workspace = true
-modelardb_types = { path = "../modelardb_types" }
-modelardb_storage = { path = "../modelardb_storage" }
+modelardb_types.workspace = true
+modelardb_storage.workspace = true
 object_store = { workspace = true, features = ["aws", "azure"] }
 rand.workspace = true
 url.workspace = true

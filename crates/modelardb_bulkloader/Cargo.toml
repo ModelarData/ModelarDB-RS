@@ -30,9 +30,9 @@ datafusion.workspace = true
 delta_kernel.workspace = true
 deltalake.workspace = true
 futures.workspace = true
-modelardb_compression = { path = "../modelardb_compression" }
-modelardb_embedded = { path = "../modelardb_embedded" }
-modelardb_storage = { path = "../modelardb_storage" }
-modelardb_types = { path = "../modelardb_types" }
+modelardb_compression.workspace = true
+modelardb_embedded.workspace = true
+modelardb_storage.workspace = true
+modelardb_types.workspace = true
 sysinfo.workspace = true
 tokio.workspace = true

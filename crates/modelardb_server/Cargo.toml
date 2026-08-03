@@ -36,10 +36,10 @@ deltalake = { workspace = true, features = ["datafusion"] }
 futures.workspace = true
 http.workspace = true
 http-body-util.workspace = true
-modelardb_auth = { path = "../modelardb_auth" }
-modelardb_compression = { path = "../modelardb_compression" }
-modelardb_storage = { path = "../modelardb_storage" }
-modelardb_types = { path = "../modelardb_types" }
+modelardb_auth.workspace = true
+modelardb_compression.workspace = true
+modelardb_storage.workspace = true
+modelardb_types.workspace = true
 object_store = { workspace = true, features = ["aws", "azure"] }
 prost.workspace = true
 rand.workspace = true
@@ -58,8 +58,8 @@ tracing = { workspace = true, features = ["max_level_debug", "release_max_level_
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
-modelardb_test = { path = "../modelardb_test" }
-modelardb_auth = { path = "../modelardb_auth", features = ["testing"] }
+modelardb_test.workspace = true
+modelardb_auth = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 tempfile.workspace = true
 

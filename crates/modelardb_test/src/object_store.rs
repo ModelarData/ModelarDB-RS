@@ -35,8 +35,8 @@ pub fn local_file_system_object_store(object_store_path: &StdPath) -> Box<dyn Ob
     Box::new(local_file_system)
 }
 
-/// Return a [`AmazonS3`](object_store::aws::AmazonS3) [`ObjectStore`] for testing.
-pub fn aws3_object_store() -> Box<dyn ObjectStore> {
+/// Return an [`AmazonS3`](object_store::aws::AmazonS3) [`ObjectStore`] for testing.
+pub fn s3_object_store() -> Box<dyn ObjectStore> {
     let storage_options = HashMap::from([
         ("aws_access_key_id".to_owned(), "minioadmin".to_owned()),
         ("aws_secret_access_key".to_owned(), "minioadmin".to_owned()),

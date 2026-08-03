@@ -31,8 +31,8 @@ pub async fn local_file_system_data_folder(data_folder_path: &StdPath) -> DataFo
     DataFolder::open_local(data_folder_path).await.unwrap()
 }
 
-/// Return a [`DataFolder`] storing data in an AWS3 compatible object store for testing using Minio.
-pub async fn aws3_data_folder() -> DataFolder {
+/// Return a [`DataFolder`] storing data in an Amazon S3 compatible object store for testing using MinIO.
+pub async fn s3_data_folder() -> DataFolder {
     DataFolder::open_s3(
         "http://localhost:9000".to_owned(),
         BUCKET_AND_CONTAINER_NAME.to_owned(),
@@ -43,7 +43,7 @@ pub async fn aws3_data_folder() -> DataFolder {
     .unwrap()
 }
 
-/// Return a [`DataFolder`] storing data in Microsoft Azure for testing using Azurite.
+/// Return a [`DataFolder`] storing data in Microsoft Azure Blob Storage for testing using Azurite.
 pub async fn azure_data_folder() -> DataFolder {
     DataFolder::open_azure(
         "devstoreaccount1".to_owned(),
