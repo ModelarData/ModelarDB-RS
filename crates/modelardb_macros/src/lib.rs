@@ -83,7 +83,8 @@ impl BorrowedArgument {
 /// async fn test_data_folder_drop_table(data_folder: &DataFolder) {
 ///     data_folder.drop_table("table_name").await.unwrap();
 /// }
-/// ```.
+/// ```
+///.
 #[proc_macro_attribute]
 pub fn data_folder_test(
     _args: proc_macro::TokenStream,
@@ -169,7 +170,8 @@ pub fn data_folder_test(
 ///        f.unwrap();
 ///     }
 /// }
-/// ```.
+/// ```
+///.
 #[proc_macro_attribute]
 pub fn object_store_test(
     _args: proc_macro::TokenStream,
