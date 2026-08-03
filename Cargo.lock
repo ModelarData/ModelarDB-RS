@@ -3568,7 +3568,6 @@ name = "modelardb_macros"
 version = "0.1.0"
 dependencies = [
  "itertools",
- "modelardb_test",
 ]
 
 [[package]]

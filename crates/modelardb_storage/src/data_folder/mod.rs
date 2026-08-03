@@ -212,9 +212,9 @@ impl DataFolder {
                 AmazonS3Builder::new()
                     .with_url(url.to_string())
                     .with_allow_http(true),
-                |builder, (key, value)| match key.parse() {
-                    Ok(k) => builder.with_config(k, value),
-                    Err(_) => builder,
+                |builder, (key, value)| {
+                    let key = key.parse().unwrap();
+                    builder.with_config(key, value)
                 },
             )
             .build()?;

@@ -24,4 +24,3 @@ proc-macro = true
 
 [dependencies]
 itertools.workspace = true
-modelardb_test.workspace = true
