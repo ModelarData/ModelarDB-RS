@@ -2436,6 +2436,16 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_unit_without_space() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1MB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
     fn test_tokenize_and_parse_optimize_multiple_tables_with_target_size() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
             parse_optimize_and_extract_table_names(
