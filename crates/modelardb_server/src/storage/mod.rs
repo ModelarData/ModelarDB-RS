@@ -28,6 +28,7 @@ mod data_transfer;
 mod types;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
+mod data_storage_optimizer;
 
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
