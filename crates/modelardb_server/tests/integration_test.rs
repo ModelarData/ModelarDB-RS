@@ -1429,6 +1429,14 @@ async fn test_can_get_configuration() {
         configuration.segment_size_threshold_in_bytes,
         64 * 1024 * 1024
     );
+    assert_eq!(
+        configuration.optimize_target_file_size_in_bytes,
+        64 * 1024 * 1024
+    );
+    assert_eq!(
+        configuration.vacuum_retention_period_in_seconds,
+        60 * 60 * 24 * 7
+    );
     assert_eq!(configuration.ingestion_threads, 1);
     assert_eq!(configuration.compression_threads, 1);
     assert_eq!(configuration.writer_threads, 1);
