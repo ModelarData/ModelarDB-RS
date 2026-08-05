@@ -1481,6 +1481,26 @@ async fn test_can_update_segment_size_threshold_in_bytes() {
     assert_eq!(updated_configuration.segment_size_threshold_in_bytes, 1);
 }
 
+#[tokio::test]
+async fn test_can_update_optimize_target_file_size_in_bytes() {
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration::Setting::OptimizeTargetFileSizeInBytes as i32,
+    )
+    .await;
+
+    assert_eq!(updated_configuration.optimize_target_file_size_in_bytes, 1);
+}
+
+#[tokio::test]
+async fn test_can_update_vacuum_retention_period_in_seconds() {
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration::Setting::VacuumRetentionPeriodInSeconds as i32,
+    )
+    .await;
+
+    assert_eq!(updated_configuration.vacuum_retention_period_in_seconds, 1);
+}
+
 async fn update_and_get_configuration(setting: i32) -> protocol::Configuration {
     let mut test_context = TestContext::new().await;
     test_context
@@ -1521,6 +1541,8 @@ async fn test_cannot_update_non_nullable_setting_with_null_value() {
         protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::CompressedReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::SegmentSizeThresholdInBytes as i32,
+        protocol::update_configuration::Setting::OptimizeTargetFileSizeInBytes as i32,
+        protocol::update_configuration::Setting::VacuumRetentionPeriodInSeconds as i32,
     ] {
         update_configuration_and_assert_error(
             setting,
