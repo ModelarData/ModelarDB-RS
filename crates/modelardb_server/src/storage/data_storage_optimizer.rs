@@ -151,3 +151,64 @@ impl DataStorageOptimizer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
+    use tempfile::{self, TempDir};
+
+    const OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES: u64 = 1024 * 1024;
+    const VACUUM_RETENTION_PERIOD_IN_SECONDS: u64 = 0;
+    /// Create a [`DataFolder`] in a local [`TempDir`] containing a single time series table.
+    async fn create_local_data_folder_with_table() -> (TempDir, DataFolder) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+
+        let time_series_table_metadata = table::time_series_table_metadata();
+        local_data_folder
+            .create_time_series_table(&time_series_table_metadata)
+            .await
+            .unwrap();
+
+        (temp_dir, local_data_folder)
+    }
+
+    /// Write `batch_count` batches of compressed segments to the time series table in
+    /// `local_data_folder`, each as a separate file.
+    async fn write_batches_to_table(local_data_folder: &DataFolder, batch_count: u8) {
+        for _ in 0..batch_count {
+            local_data_folder
+                .write_record_batches(
+                    TIME_SERIES_TABLE_NAME,
+                    vec![table::compressed_segments_record_batch()],
+                )
+                .await
+                .unwrap();
+        }
+    }
+
+    /// Return the number of active files in the time series table in `local_data_folder`.
+    async fn active_file_count(local_data_folder: &DataFolder) -> usize {
+        let mut delta_table = local_data_folder
+            .delta_table(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap();
+        delta_table.load().await.unwrap();
+
+        delta_table.get_file_uris().unwrap().count()
+    }
+
+    /// Create a [`DataStorageOptimizer`] that optimizes the tables in `local_data_folder`.
+    async fn create_data_storage_optimizer(local_data_folder: DataFolder) -> DataStorageOptimizer {
+        DataStorageOptimizer::try_new(
+            local_data_folder,
+            OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES,
+            VACUUM_RETENTION_PERIOD_IN_SECONDS,
+        )
+        .await
+        .unwrap()
+    }
+}
