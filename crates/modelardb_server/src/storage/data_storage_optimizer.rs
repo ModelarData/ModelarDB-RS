@@ -162,6 +162,33 @@ mod tests {
     const OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES: u64 = 1024 * 1024;
     const VACUUM_RETENTION_PERIOD_IN_SECONDS: u64 = 0;
 
+    // Tests for try_new().
+    #[tokio::test]
+    async fn test_initialize_estimate_from_existing_small_files() {
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_table().await;
+        write_batches_to_table(&local_data_folder, 3).await;
+
+        // The optimizer is created after the data is written, so its estimate includes the small
+        // files already on disk.
+        let optimizer = create_data_storage_optimizer(local_data_folder.clone()).await;
+
+        let expected_estimate: u64 = local_data_folder
+            .table_file_sizes(TIME_SERIES_TABLE_NAME)
+            .await
+            .unwrap()
+            .into_iter()
+            .sum();
+        assert!(expected_estimate > 0);
+
+        assert_eq!(
+            *optimizer
+                .estimated_compactable_size_in_bytes
+                .get(TIME_SERIES_TABLE_NAME)
+                .unwrap(),
+            expected_estimate
+        );
+    }
+
     // Tests for increase_estimated_compactable_size().
     #[tokio::test]
     async fn test_optimize_table_when_estimate_reaches_target() {
@@ -227,6 +254,7 @@ mod tests {
             OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES - 1
         );
     }
+
     /// Create a [`DataFolder`] in a local [`TempDir`] containing a single time series table.
     async fn create_local_data_folder_with_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
