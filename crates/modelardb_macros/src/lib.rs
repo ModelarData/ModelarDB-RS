@@ -47,7 +47,8 @@ impl Display for ParameterType {
     }
 }
 
-/// A function that will create an argument to be passed to a function as a borrow.
+/// This struct represents a function that will create an argument to be passed to a function as a
+/// borrow.
 struct BorrowedArgument {
     /// Name of the function.
     name: String,
@@ -311,7 +312,7 @@ fn expect_parameter_type(
     Ok(())
 }
 
-/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is a [`Ident`], otherwise a
+/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Ident`], otherwise a
 /// [`ModelarDbMacrosError`] is returned.
 fn expect_ident_without_contents(
     token_iterator: &mut impl Iterator<Item = TokenTree>,
@@ -338,7 +339,7 @@ fn expect_ident_with_contents(
     Err(ModelarDbMacrosError::Parse(error_message))
 }
 
-/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is an [`Punct`] that contains
+/// Return [`Ok`] if the next [`TokenTree`] from `token_iterator` is a [`Punct`] that contains
 /// `content`, otherwise a [`ModelarDbMacrosError`] is returned.
 fn expect_punct_with_contents(
     token_iterator: &mut impl Iterator<Item = TokenTree>,
