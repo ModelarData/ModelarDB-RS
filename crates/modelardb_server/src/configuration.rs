@@ -922,7 +922,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid State Error: Optimize target file size must be greater than zero."
+            "Invalid Argument Error: Optimize target file size must be greater than zero."
         );
     }
 
@@ -961,6 +961,30 @@ mod tests {
             new_value
         );
     }
+
+    #[tokio::test]
+    async fn test_set_vacuum_retention_period_in_seconds_rejects_too_large_value() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+
+        let result = configuration_manager
+            .write()
+            .await
+            .set_vacuum_retention_period_in_seconds(
+                MAX_RETENTION_PERIOD_IN_SECONDS + 1,
+                storage_engine,
+            )
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Vacuum retention period cannot be more than {} seconds.",
+                MAX_RETENTION_PERIOD_IN_SECONDS
+            )
+        );
+    }
+
     /// Return the configuration from the configuration file at the root of `temp_dir`.
     async fn configuration_from_file(temp_dir: &TempDir) -> Configuration {
         let configuration_file_path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
