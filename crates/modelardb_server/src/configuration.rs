@@ -424,9 +424,9 @@ impl ConfigurationManager {
         self.configuration.optimize_target_file_size_in_bytes
     }
 
-    /// Set the new value and update the target file size in the data storage optimizer. If the new
-    /// value is zero or the new configuration could not be saved to the configuration file, return
-    /// [`ModelarDbServerError`].
+    /// Set the target file size used by the data storage optimizer and as the default for OPTIMIZE
+    /// queries without an explicit target size. If the new value is zero or the new configuration
+    /// could not be saved to the configuration file, return [`ModelarDbServerError`].
     pub(crate) async fn set_optimize_target_file_size_in_bytes(
         &mut self,
         new_optimize_target_file_size_in_bytes: u64,
@@ -456,9 +456,10 @@ impl ConfigurationManager {
         self.configuration.vacuum_retention_period_in_seconds
     }
 
-    /// Set the new value and update the retention period in the data storage optimizer. If the new
-    /// value is larger than [`MAX_RETENTION_PERIOD_IN_SECONDS`] or the new configuration could not
-    /// be saved to the configuration file, return [`ModelarDbServerError`].
+    /// Set the retention period used by the data storage optimizer and as the default for VACUUM
+    /// queries without an explicit retention period. If the new value is larger than
+    /// [`MAX_RETENTION_PERIOD_IN_SECONDS`] or the new configuration could not be saved to the
+    /// configuration file, return [`ModelarDbServerError`].
     pub(crate) async fn set_vacuum_retention_period_in_seconds(
         &mut self,
         new_vacuum_retention_period_in_seconds: u64,
