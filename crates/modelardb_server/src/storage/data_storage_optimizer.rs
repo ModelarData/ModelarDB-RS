@@ -170,7 +170,7 @@ mod tests {
 
         write_batches_to_table(&local_data_folder, 3).await;
 
-        let initial_file_count = active_file_count(&local_data_folder).await;
+        let initial_file_count = table_file_count(&local_data_folder).await;
         assert_eq!(initial_file_count, 3);
 
         optimizer
@@ -182,7 +182,7 @@ mod tests {
             .unwrap();
 
         // The small files should have been compacted into a single file.
-        assert_eq!(active_file_count(&local_data_folder).await, 1);
+        assert_eq!(table_file_count(&local_data_folder).await, 1);
 
         // The estimate should have been reset after optimizing.
         assert_eq!(
@@ -191,6 +191,40 @@ mod tests {
                 .get(TIME_SERIES_TABLE_NAME)
                 .unwrap(),
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_do_not_optimize_table_when_estimate_below_target() {
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_table().await;
+        let optimizer = create_data_storage_optimizer(local_data_folder.clone()).await;
+
+        write_batches_to_table(&local_data_folder, 3).await;
+
+        let initial_file_count = table_file_count(&local_data_folder).await;
+        assert_eq!(initial_file_count, 3);
+
+        optimizer
+            .increase_estimated_compactable_size(
+                TIME_SERIES_TABLE_NAME,
+                OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES - 1,
+            )
+            .await
+            .unwrap();
+
+        // No files should have been compacted since the estimate did not reach the target.
+        assert_eq!(
+            table_file_count(&local_data_folder).await,
+            initial_file_count
+        );
+
+        // The estimate should have accumulated without being reset.
+        assert_eq!(
+            *optimizer
+                .estimated_compactable_size_in_bytes
+                .get(TIME_SERIES_TABLE_NAME)
+                .unwrap(),
+            OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES - 1
         );
     }
     /// Create a [`DataFolder`] in a local [`TempDir`] containing a single time series table.
@@ -223,7 +257,7 @@ mod tests {
     }
 
     /// Return the number of active files in the time series table in `local_data_folder`.
-    async fn active_file_count(local_data_folder: &DataFolder) -> usize {
+    async fn table_file_count(local_data_folder: &DataFolder) -> usize {
         let mut delta_table = local_data_folder
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
