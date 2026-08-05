@@ -260,7 +260,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use modelardb_test::table as test;
+    use modelardb_test::table as test_table;
     use modelardb_test::table::{NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use tempfile::TempDir;
 
@@ -277,7 +277,7 @@ mod tests {
             .unwrap();
 
         let delta_table = writer
-            .write_all_and_commit(&[test::normal_table_record_batch()])
+            .write_all_and_commit(&[test_table::normal_table_record_batch()])
             .await
             .unwrap();
 
@@ -289,7 +289,7 @@ mod tests {
         let (_temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
 
         writer
-            .write(&test::compressed_segments_record_batch())
+            .write(&test_table::compressed_segments_record_batch())
             .await
             .unwrap();
 
@@ -302,7 +302,7 @@ mod tests {
         let (_temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
 
         let empty_batch =
-            RecordBatch::new_empty(test::time_series_table_metadata().compressed_schema);
+            RecordBatch::new_empty(test_table::time_series_table_metadata().compressed_schema);
         writer.write(&empty_batch).await.unwrap();
 
         let delta_table = writer.commit().await.unwrap();
@@ -313,7 +313,7 @@ mod tests {
     async fn test_write_with_schema_mismatch() {
         let (_temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
 
-        let result = writer.write(&test::normal_table_record_batch()).await;
+        let result = writer.write(&test_table::normal_table_record_batch()).await;
 
         assert!(
             result
@@ -327,7 +327,7 @@ mod tests {
     async fn test_write_all_and_commit() {
         let (_temp_dir, data_folder, writer) = create_time_series_table_writer().await;
 
-        let batch = test::compressed_segments_record_batch();
+        let batch = test_table::compressed_segments_record_batch();
         let delta_table = writer
             .write_all_and_commit(&[batch.clone(), batch])
             .await
@@ -356,8 +356,8 @@ mod tests {
     async fn test_write_all_and_commit_rolls_back_on_error() {
         let (temp_dir, data_folder, writer) = create_time_series_table_writer().await;
 
-        let valid_batch = test::compressed_segments_record_batch();
-        let invalid_batch = test::normal_table_record_batch();
+        let valid_batch = test_table::compressed_segments_record_batch();
+        let invalid_batch = test_table::normal_table_record_batch();
         let result = writer
             .write_all_and_commit(&[valid_batch, invalid_batch])
             .await;
@@ -397,7 +397,7 @@ mod tests {
         let (temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
 
         writer
-            .write(&test::compressed_segments_record_batch())
+            .write(&test_table::compressed_segments_record_batch())
             .await
             .unwrap();
 
@@ -417,7 +417,7 @@ mod tests {
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         data_folder
-            .create_normal_table(NORMAL_TABLE_NAME, &test::normal_table_schema())
+            .create_normal_table(NORMAL_TABLE_NAME, &test_table::normal_table_schema())
             .await
             .unwrap();
 
@@ -429,7 +429,7 @@ mod tests {
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         let delta_table = data_folder
-            .create_time_series_table(&test::time_series_table_metadata())
+            .create_time_series_table(&test_table::time_series_table_metadata())
             .await
             .unwrap();
 

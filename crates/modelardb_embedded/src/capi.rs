@@ -191,6 +191,7 @@ unsafe fn open_azure(
         account_name.to_owned(),
         access_key.to_owned(),
         container_name.to_owned(),
+        false,
     ))?;
     let data_sink = Arc::new(DataFolderDataSink::new());
     TOKIO_RUNTIME.block_on(data_folder.register_tables(data_sink))?;

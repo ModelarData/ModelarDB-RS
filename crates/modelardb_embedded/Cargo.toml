@@ -31,10 +31,10 @@ async-trait.workspace = true
 datafusion.workspace = true
 deltalake = { workspace = true, features = ["datafusion", "s3"] }
 futures.workspace = true
-modelardb_auth = { path = "../modelardb_auth" }
-modelardb_compression = { path = "../modelardb_compression" }
-modelardb_storage = { path = "../modelardb_storage" }
-modelardb_types = { path = "../modelardb_types" }
+modelardb_auth.workspace = true
+modelardb_compression.workspace = true
+modelardb_storage.workspace = true
+modelardb_types.workspace = true
 tokio.workspace = true
 tonic.workspace = true
 
