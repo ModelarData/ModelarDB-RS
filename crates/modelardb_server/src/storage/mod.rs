@@ -24,11 +24,11 @@
 mod compressed_data_buffer;
 mod compressed_data_manager;
 pub(super) mod data_sinks; // pub(super) so it can be used in context.rs.
+mod data_storage_optimizer;
 mod data_transfer;
 mod types;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
-mod data_storage_optimizer;
 
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
