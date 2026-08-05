@@ -146,6 +146,24 @@ impl DataStorageOptimizer {
 
         Ok(())
     }
+
+    /// Set the target size, in bytes, of the files produced when a table is optimized to
+    /// `new_optimize_target_file_size_in_bytes`.
+    pub(super) fn set_optimize_target_file_size_in_bytes(
+        &mut self,
+        new_optimize_target_file_size_in_bytes: u64,
+    ) {
+        self.optimize_target_file_size_in_bytes = new_optimize_target_file_size_in_bytes;
+    }
+
+    /// Set the retention period, in seconds, used when a table is vacuumed after it is optimized to
+    /// `new_vacuum_retention_period_in_seconds`.
+    pub(super) fn set_vacuum_retention_period_in_seconds(
+        &mut self,
+        new_vacuum_retention_period_in_seconds: u64,
+    ) {
+        self.vacuum_retention_period_in_seconds = new_vacuum_retention_period_in_seconds;
+    }
 }
 
 #[cfg(test)]
