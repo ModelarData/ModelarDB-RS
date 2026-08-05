@@ -115,8 +115,35 @@ impl DataStorageOptimizer {
             >= self.optimize_target_file_size_in_bytes;
 
         if estimate_reached_target {
-            // self.optimize_and_vacuum_table(table_name).await?;
+            self.optimize_and_vacuum_table(table_name).await?;
         }
 
         Ok(())
     }
+
+    /// Compact the small files of the table with `table_name` into files of approximately
+    /// `optimize_target_file_size_in_bytes` bytes, vacuum the small files left behind, and reset
+    /// the table's estimated compactable size. Note that the vacuum can physically delete files
+    /// that an in-flight query is still scanning if `vacuum_retention_period_in_seconds` is very
+    /// low. Returns [`Ok`] if the table was optimized successfully, otherwise
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    async fn optimize_and_vacuum_table(&self, table_name: &str) -> Result<()> {
+        debug!("Optimizing the storage of the table '{table_name}'.");
+
+        self.local_data_folder
+            .optimize_table(table_name, Some(self.optimize_target_file_size_in_bytes))
+            .await?;
+
+        self.local_data_folder
+            .vacuum_table(table_name, Some(self.vacuum_retention_period_in_seconds))
+            .await?;
+
+        // Reset the estimate so the next optimization only counts data written from now on.
+        *self
+            .estimated_compactable_size_in_bytes
+            .get_mut(table_name)
+            .expect("table_name should be in estimated_compactable_size_in_bytes.") = 0;
+
+        Ok(())
+    }
+}
