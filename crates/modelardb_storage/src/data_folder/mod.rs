@@ -48,11 +48,11 @@ use modelardb_types::types::{
     ArrowValue, CloudCredentials, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
     TimeSeriesTableMetadata,
 };
-use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
+use object_store::{ObjectStore, ObjectStoreExt};
 use url::Url;
 
 use crate::data_folder::delta_table_writer::DeltaTableWriter;
@@ -709,6 +709,21 @@ impl DataFolder {
         delta_table.optimize().with_target_size(target_size).await?;
 
         Ok(())
+    }
+
+    /// Return the size in bytes of each Apache Parquet file that makes up the Delta Lake table with
+    /// `table_name`. If the table does not exist or the size of a file could not be read, a
+    /// [`ModelarDbStorageError`] is returned.
+    pub async fn table_file_sizes(&self, table_name: &str) -> Result<Vec<u64>> {
+        let delta_table = self.delta_table(table_name).await?;
+        let object_store = delta_table.object_store();
+
+        let mut file_sizes_in_bytes = Vec::new();
+        for file_path in delta_table.get_files_by_partitions(&[]).await? {
+            file_sizes_in_bytes.push(object_store.head(&file_path).await?.size);
+        }
+
+        Ok(file_sizes_in_bytes)
     }
 
     /// Return a [`DeltaTableWriter`] for writing to the table with `table_name` in the Delta Lake,
