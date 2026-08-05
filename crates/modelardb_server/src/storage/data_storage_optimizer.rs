@@ -46,3 +46,37 @@ pub(super) struct DataStorageOptimizer {
     /// component for simplicity.
     estimated_compactable_size_in_bytes: DashMap<String, u64>,
 }
+
+impl DataStorageOptimizer {
+    /// Create a new [`DataStorageOptimizer`] that optimizes the tables in `local_data_folder`,
+    /// producing files of approximately `optimize_target_file_size_in_bytes` bytes and vacuuming
+    /// with a retention period of `vacuum_retention_period_in_seconds` seconds. The estimate for
+    /// each table is initialized with the combined size of its files smaller than the target size,  
+    /// so small files written before a restart are not forgotten. If the files in `local_data_folder`
+    /// could not be read, return [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    pub(super) async fn try_new(
+        local_data_folder: DataFolder,
+        optimize_target_file_size_in_bytes: u64,
+        vacuum_retention_period_in_seconds: u64,
+    ) -> Result<Self> {
+        let table_names = local_data_folder.table_names().await?;
+
+        let estimated_compactable_size_in_bytes = DashMap::with_capacity(table_names.len());
+        for table_name in table_names {
+            let compactable_size_in_bytes: u64 = local_data_folder
+                .table_file_sizes(&table_name)
+                .await?
+                .into_iter()
+                .filter(|size_in_bytes| *size_in_bytes < optimize_target_file_size_in_bytes)
+                .sum();
+
+            estimated_compactable_size_in_bytes.insert(table_name, compactable_size_in_bytes);
+        }
+
+        Ok(Self {
+            local_data_folder,
+            optimize_target_file_size_in_bytes,
+            vacuum_retention_period_in_seconds,
+            estimated_compactable_size_in_bytes,
+        })
+    }
