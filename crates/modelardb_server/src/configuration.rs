@@ -926,6 +926,41 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_set_vacuum_retention_period_in_seconds() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .vacuum_retention_period_in_seconds(),
+            60 * 60 * 24 * 7
+        );
+
+        let new_value = 60;
+        configuration_manager
+            .write()
+            .await
+            .set_vacuum_retention_period_in_seconds(new_value, storage_engine)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .vacuum_retention_period_in_seconds(),
+            new_value
+        );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(
+            configuration_from_file.vacuum_retention_period_in_seconds,
+            new_value
+        );
+    }
     /// Return the configuration from the configuration file at the root of `temp_dir`.
     async fn configuration_from_file(temp_dir: &TempDir) -> Configuration {
         let configuration_file_path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
