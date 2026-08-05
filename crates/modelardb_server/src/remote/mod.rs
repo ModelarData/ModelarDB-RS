@@ -1021,6 +1021,22 @@ impl FlightService for FlightServiceHandler {
                         .await
                         .map_err(error_to_status_internal)
                 }
+                Ok(protocol::update_configuration::Setting::OptimizeTargetFileSizeInBytes) => {
+                    let new_value = maybe_new_value.ok_or(invalid_null_error)?;
+
+                    configuration_manager
+                        .set_optimize_target_file_size_in_bytes(new_value, storage_engine)
+                        .await
+                        .map_err(error_to_status_internal)
+                }
+                Ok(protocol::update_configuration::Setting::VacuumRetentionPeriodInSeconds) => {
+                    let new_value = maybe_new_value.ok_or(invalid_null_error)?;
+
+                    configuration_manager
+                        .set_vacuum_retention_period_in_seconds(new_value, storage_engine)
+                        .await
+                        .map_err(error_to_status_internal)
+                }
                 _ => Err(Status::unimplemented(format!(
                     "{setting} is not an updatable setting in the server configuration."
                 ))),
