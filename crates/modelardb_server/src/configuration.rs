@@ -873,6 +873,42 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_set_optimize_target_file_size_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .optimize_target_file_size_in_bytes(),
+            64 * 1024 * 1024
+        );
+
+        let new_value = 1024;
+        configuration_manager
+            .write()
+            .await
+            .set_optimize_target_file_size_in_bytes(new_value, storage_engine)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .optimize_target_file_size_in_bytes(),
+            new_value
+        );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(
+            configuration_from_file.optimize_target_file_size_in_bytes,
+            new_value
+        );
+    }
+
     /// Return the configuration from the configuration file at the root of `temp_dir`.
     async fn configuration_from_file(temp_dir: &TempDir) -> Configuration {
         let configuration_file_path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
