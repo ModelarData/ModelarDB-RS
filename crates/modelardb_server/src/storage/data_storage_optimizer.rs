@@ -80,3 +80,43 @@ impl DataStorageOptimizer {
             estimated_compactable_size_in_bytes,
         })
     }
+
+    /// Increase the estimated compactable size of the table with `table_name` by `size_in_bytes`.
+    /// If the estimate has reached `optimize_target_file_size_in_bytes`, the table's small files
+    /// are compacted and the files left behind are vacuumed. The trigger assumes each newly written
+    /// file is smaller than the target size. If the target is set below the size of a typical file,
+    /// optimization is attempted on nearly every write, but is a harmless no-op. Returns [`Ok`] if
+    /// the table did not need optimizing or was optimized successfully, otherwise
+    /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
+    pub(super) async fn increase_estimated_compactable_size(
+        &self,
+        table_name: &str,
+        size_in_bytes: u64,
+    ) -> Result<()> {
+        // entry() is not used as it would require the allocation of a new String for each lookup as
+        // it must be given as a K, while get_mut() accepts the key as a &K so one K can be used.
+        if !self
+            .estimated_compactable_size_in_bytes
+            .contains_key(table_name)
+        {
+            self.estimated_compactable_size_in_bytes
+                .insert(table_name.to_owned(), 0);
+        }
+        *self
+            .estimated_compactable_size_in_bytes
+            .get_mut(table_name)
+            .unwrap() += size_in_bytes;
+
+        let estimate_reached_target = *self
+            .estimated_compactable_size_in_bytes
+            .get(table_name)
+            .expect("table_name should have been added to estimated_compactable_size_in_bytes.")
+            .value()
+            >= self.optimize_target_file_size_in_bytes;
+
+        if estimate_reached_target {
+            // self.optimize_and_vacuum_table(table_name).await?;
+        }
+
+        Ok(())
+    }
