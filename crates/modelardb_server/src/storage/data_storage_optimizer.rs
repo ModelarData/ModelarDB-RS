@@ -110,7 +110,9 @@ impl DataStorageOptimizer {
         let estimate_reached_target = *self
             .estimated_compactable_size_in_bytes
             .get(table_name)
-            .expect("table_name should have been added to estimated_compactable_size_in_bytes.")
+            .expect(&format!(
+                "{table_name} should have been added to estimated_compactable_size_in_bytes."
+            ))
             .value()
             >= self.optimize_target_file_size_in_bytes;
 
@@ -142,7 +144,9 @@ impl DataStorageOptimizer {
         *self
             .estimated_compactable_size_in_bytes
             .get_mut(table_name)
-            .expect("table_name should be in estimated_compactable_size_in_bytes.") = 0;
+            .expect(&format!(
+                "{table_name} should be in estimated_compactable_size_in_bytes."
+            )) = 0;
 
         Ok(())
     }
