@@ -29,7 +29,7 @@ arrow = { workspace = true, features = ["prettyprint"] }
 bytes.workspace = true
 clap.workspace = true
 dirs.workspace = true
-modelardb_auth = { path = "../modelardb_auth" }
+modelardb_auth.workspace = true
 rustyline.workspace = true
 tokio.workspace = true
 tonic.workspace = true

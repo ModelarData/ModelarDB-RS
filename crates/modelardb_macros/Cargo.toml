@@ -1,4 +1,4 @@
-# Copyright 2025 The ModelarDB Contributors
+# Copyright 2026 The ModelarDB Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,26 +13,14 @@
 # limitations under the License.
 
 [package]
-name = "modelardb_bulkloader"
+name = "modelardb_macros"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2024"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
-[[bin]]
-name = "modelardbb"
-path = "src/main.rs"
+[lib]
+proc-macro = true
 
 [dependencies]
-arrow = { workspace = true, features = ["ffi"] }
-clap.workspace = true
-datafusion.workspace = true
-delta_kernel.workspace = true
-deltalake.workspace = true
-futures.workspace = true
-modelardb_compression.workspace = true
-modelardb_embedded.workspace = true
-modelardb_storage.workspace = true
-modelardb_types.workspace = true
-sysinfo.workspace = true
-tokio.workspace = true
+itertools.workspace = true
