@@ -672,8 +672,9 @@ impl ModelarDbDialect {
     /// [`Self::parse_unsigned_literal_u64`]. If the [`Token`] after the number is a [`Token::Word`]
     /// matching a supported byte unit (B, KB, MB, GB, or TB, case-insensitive), it is consumed and
     /// the number is multiplied by the number of bytes the unit represents, e.g., `1 KB` is parsed
-    /// as `1024`. A [`ParserError`] is returned if the number cannot be parsed as a [`u64`], or if
-    /// multiplying the number by the unit does not fit in a [`u64`].
+    /// as `1024`. A [`ParserError`] is returned if the number cannot be parsed as a [`u64`], if the
+    /// number is followed by a word that is not a supported byte unit, or if multiplying the number
+    /// by the unit does not fit in a [`u64`].
     fn parse_unsigned_literal_u64_with_optional_byte_unit(
         &self,
         parser: &mut Parser,
