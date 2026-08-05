@@ -196,8 +196,9 @@ pub fn tokenize_and_parse_sql_expression(
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
 /// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements,
 /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements,
-/// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\] statements, and
-/// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements.
+/// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] statements, and
+/// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements. `unit` is an optional, case-insensitive
+/// byte unit (B, KB, MB, GB, or TB) that `num_bytes` is multiplied by.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -585,13 +586,14 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Parse OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\] to a
+    /// Parse OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] to a
     /// [`Statement::CreateSecret`] with the table names in the `name` field, the cluster flag in
-    /// the `if_not_exists` field, and the optional target file size in the `storage_specifier`
-    /// field. Note that [`Statement::CreateSecret`] is used since [`Statement`] does not have an
-    /// `Optimize` variant with the required fields. A [`ParserError`] is returned if OPTIMIZE is
-    /// not the first word, the table names cannot be extracted, or the target file size is not a
-    /// valid positive integer.
+    /// the `if_not_exists` field, and the optional target file size in bytes in the
+    /// `storage_specifier` field. Note that [`Statement::CreateSecret`] is used since [`Statement`]
+    /// does not have an `Optimize` variant with the required fields. A [`ParserError`] is returned
+    /// if OPTIMIZE is not the first word, the table names cannot be extracted, the target file size
+    /// is not a valid positive integer, or the target file size is followed by a word that is not a
+    /// supported byte unit (B, KB, MB, GB, or TB).
     fn parse_optimize(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // OPTIMIZE.
         parser.expect_keyword(Keyword::OPTIMIZE)?;
@@ -615,12 +617,14 @@ impl ModelarDbDialect {
             vec![]
         };
 
-        // If the next token is TARGET, attempt to parse the target file size in bytes.
+        // If the next token is TARGET, attempt to parse the target file size in bytes, optionally
+        // followed by a unit that the target file size is multiplied by.
         let maybe_target_size_in_bytes = if let Token::Word(word) = parser.peek_nth_token(0).token
             && word.keyword == Keyword::TARGET
         {
             parser.expect_keyword(Keyword::TARGET)?;
-            let target_size_in_bytes = self.parse_unsigned_literal_u64(parser)?;
+            let target_size_in_bytes =
+                self.parse_unsigned_literal_u64_with_optional_byte_unit(parser)?;
 
             if target_size_in_bytes == 0 {
                 return Err(ParserError::ParserError(
@@ -657,6 +661,52 @@ impl ModelarDbDialect {
                 ))
             }),
             _ => parser.expected("literal integer", token_with_location),
+        }
+    }
+
+    /// Return its value as a [`u64`] if the next [`Token`] is a [`Token::Number`], the same as
+    /// [`Self::parse_unsigned_literal_u64`]. If the [`Token`] after the number is a [`Token::Word`]
+    /// matching a supported byte unit (B, KB, MB, GB, or TB, case-insensitive), it is consumed and
+    /// the number is multiplied by the number of bytes the unit represents, e.g., `1 KB` is parsed
+    /// as `1024`. A [`ParserError`] is returned if the number cannot be parsed as a [`u64`], if the
+    /// number is followed by a word that is not a supported byte unit, or if multiplying the number
+    /// by the unit does not fit in a [`u64`].
+    fn parse_unsigned_literal_u64_with_optional_byte_unit(
+        &self,
+        parser: &mut Parser,
+    ) -> StdResult<u64, ParserError> {
+        let value = self.parse_unsigned_literal_u64(parser)?;
+
+        let maybe_unit_and_multiplier = if let Token::Word(word) = parser.peek_nth_token(0).token {
+            self.byte_unit_multiplier(&word.value)
+                .map(|multiplier| (word.value, multiplier))
+        } else {
+            None
+        };
+
+        if let Some((unit, multiplier)) = maybe_unit_and_multiplier {
+            // Consume the unit as it has already been extracted above.
+            parser.next_token();
+
+            value.checked_mul(multiplier).ok_or_else(|| {
+                ParserError::ParserError(format!("'{value} {unit}' is too large to fit in a u64."))
+            })
+        } else {
+            Ok(value)
+        }
+    }
+
+    /// Return the number of bytes a single unit of `unit` represents if `unit` is a supported byte
+    /// unit (B, KB, MB, GB, or TB, case-insensitive), otherwise [`None`] is returned. Binary
+    /// prefixes are used, so e.g., `KB` is defined as 1024 bytes and not 1000 bytes.
+    fn byte_unit_multiplier(&self, unit: &str) -> Option<u64> {
+        match unit.to_uppercase().as_str() {
+            "B" => Some(1),
+            "KB" => Some(1024),
+            "MB" => Some(1024 * 1024),
+            "GB" => Some(1024 * 1024 * 1024),
+            "TB" => Some(1024 * 1024 * 1024 * 1024),
+            _ => None,
         }
     }
 
@@ -770,7 +820,7 @@ impl Dialect for ModelarDbDialect {
     /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
     /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If not,
     /// check if the next token is OPTIMIZE, if so, attempt to parse the token stream as an
-    /// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\] statement. If not,
+    /// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] statement. If not,
     /// check if the next token is TRUNCATE, if so, attempt to parse the token stream as a
     /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statement. If all checks fail, [`None`] is
     /// returned so [`sqlparser`] uses its parsing methods for all other statements. If parsing
@@ -2309,6 +2359,86 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_bytes_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1024 B");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_kb_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 KB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_mb_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1024 MB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_gb_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 GB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_tb_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 TB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_lowercase_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 mb");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_mixed_case_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 Mb");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_unit_without_space() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1MB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
     fn test_tokenize_and_parse_optimize_multiple_tables_with_target_size() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
             parse_optimize_and_extract_table_names(
@@ -2320,6 +2450,21 @@ mod tests {
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
         assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_multiple_tables_with_target_size_and_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names(
+                "OPTIMIZE table_name_1, table_name_2 TARGET 1 MB",
+            );
+
+        assert_eq!(
+            table_names,
+            vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
+        );
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024));
         assert!(!cluster)
     }
 
@@ -2368,6 +2513,16 @@ mod tests {
             vec!["table_name_1".to_owned(), "table_name_2".to_owned()]
         );
         assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_cluster_with_target_size_and_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE CLUSTER TARGET 1 GB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024));
         assert!(cluster)
     }
 
@@ -2481,6 +2636,39 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "Parser Error: sql parser error: Target file size must be a positive integer."
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_zero_and_unit() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET 0 MB");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Target file size must be a positive integer."
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_invalid_unit() {
+        let result = tokenize_and_parse_sql_statement("OPTIMIZE TARGET 1024 XY");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Expected: end of statement, found: XY at Line: 1, Column: 22"
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_target_with_unit_overflow() {
+        let result = tokenize_and_parse_sql_statement(&format!("OPTIMIZE TARGET {} TB", u64::MAX));
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Parser Error: sql parser error: '{} TB' is too large to fit in a u64.",
+                u64::MAX
+            )
         );
     }
 
