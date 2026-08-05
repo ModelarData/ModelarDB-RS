@@ -427,7 +427,6 @@ impl ConfigurationManager {
     /// Set the new value and update the target file size in the data storage optimizer. If the new
     /// value is zero or the new configuration could not be saved to the configuration file, return
     /// [`ModelarDbServerError`].
-    #[allow(dead_code)]
     pub(crate) async fn set_optimize_target_file_size_in_bytes(
         &mut self,
         new_optimize_target_file_size_in_bytes: u64,
@@ -455,6 +454,34 @@ impl ConfigurationManager {
 
     pub(crate) fn vacuum_retention_period_in_seconds(&self) -> u64 {
         self.configuration.vacuum_retention_period_in_seconds
+    }
+
+    /// Set the new value and update the retention period in the data storage optimizer. If the new
+    /// value is larger than [`MAX_RETENTION_PERIOD_IN_SECONDS`] or the new configuration could not
+    /// be saved to the configuration file, return [`ModelarDbServerError`].
+    pub(crate) async fn set_vacuum_retention_period_in_seconds(
+        &mut self,
+        new_vacuum_retention_period_in_seconds: u64,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) -> Result<()> {
+        if new_vacuum_retention_period_in_seconds > MAX_RETENTION_PERIOD_IN_SECONDS {
+            return Err(ModelarDbServerError::InvalidArgument(format!(
+                "Vacuum retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+            )));
+        }
+
+        storage_engine
+            .write()
+            .await
+            .set_vacuum_retention_period_in_seconds(new_vacuum_retention_period_in_seconds)
+            .await;
+
+        self.configuration.vacuum_retention_period_in_seconds =
+            new_vacuum_retention_period_in_seconds;
+
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
     }
 
     pub(crate) fn ingestion_threads(&self) -> u8 {
