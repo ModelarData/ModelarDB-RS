@@ -29,6 +29,7 @@ use tracing::{debug, error, info};
 use crate::configuration::WalMode;
 use crate::error::Result;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
+use crate::storage::data_storage_optimizer::DataStorageOptimizer;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
 use crate::storage::types::{Channels, MemoryPool};
@@ -36,6 +37,9 @@ use crate::storage::types::{Channels, MemoryPool};
 /// Stores data points compressed as segments containing metadata and models in memory to batch the
 /// compressed segments before saving them to Apache Parquet files.
 pub(super) struct CompressedDataManager {
+    /// Component that compacts the small compressed files that accumulate for a table into fewer
+    /// larger files and vacuums the files left behind by the compaction.
+    pub(super) data_storage_optimizer: Arc<RwLock<DataStorageOptimizer>>,
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
     /// Folder containing all compressed data managed by the [`StorageEngine`](crate::storage::StorageEngine).
@@ -57,6 +61,7 @@ pub(super) struct CompressedDataManager {
 
 impl CompressedDataManager {
     pub(super) fn new(
+        data_storage_optimizer: Arc<RwLock<DataStorageOptimizer>>,
         data_transfer: Arc<RwLock<Option<DataTransfer>>>,
         local_data_folder: DataFolder,
         channels: Arc<Channels>,
@@ -64,6 +69,7 @@ impl CompressedDataManager {
         wal_mode: WalMode,
     ) -> Self {
         Self {
+            data_storage_optimizer,
             data_transfer,
             local_data_folder,
             compressed_data_buffers: DashMap::new(),

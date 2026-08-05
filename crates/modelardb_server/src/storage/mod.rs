@@ -43,6 +43,7 @@ use crate::configuration::{ConfigurationManager, WalMode};
 use crate::data_folders::DataFolders;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_manager::CompressedDataManager;
+use crate::storage::data_storage_optimizer::DataStorageOptimizer;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message};
 use crate::storage::uncompressed_data_buffer::IngestedDataBuffer;
@@ -147,6 +148,13 @@ impl StorageEngine {
         }
 
         // Create the compressed data manager.
+        let data_storage_optimizer = DataStorageOptimizer::try_new(
+            data_folders.local_data_folder.clone(),
+            configuration_manager.optimize_target_file_size_in_bytes(),
+            configuration_manager.vacuum_retention_period_in_seconds(),
+        )
+        .await?;
+
         let data_transfer = if let Some(remote_data_folder) = data_folders.maybe_remote_data_folder
         {
             let data_transfer = DataTransfer::try_new(
@@ -162,6 +170,7 @@ impl StorageEngine {
         };
 
         let compressed_data_manager = Arc::new(CompressedDataManager::new(
+            Arc::new(RwLock::new(data_storage_optimizer)),
             Arc::new(RwLock::new(data_transfer)),
             data_folders.local_data_folder,
             channels.clone(),
