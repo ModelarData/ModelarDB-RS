@@ -293,6 +293,14 @@ impl CompressedDataManager {
             self.memory_pool.remaining_compressed_memory_in_bytes()
         );
 
+        // Optimize how the compressed data for table_name is stored on disk once enough new data
+        // has been written since the last optimization.
+        self.data_storage_optimizer
+            .read()
+            .await
+            .increase_estimated_compactable_size(table_name, compressed_data_buffer_size_in_bytes)
+            .await?;
+
         Ok(())
     }
 
@@ -586,9 +594,18 @@ mod tests {
                 .unwrap(),
         ));
 
+        let optimizer = DataStorageOptimizer::try_new(
+            local_data_folder.clone(),
+            64 * 1024 * 1024,
+            60 * 60 * 24 * 7,
+        )
+        .await
+        .unwrap();
+
         (
             temp_dir,
             CompressedDataManager::new(
+                Arc::new(RwLock::new(optimizer)),
                 Arc::new(RwLock::new(None)),
                 local_data_folder,
                 channels,
