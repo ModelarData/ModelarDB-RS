@@ -203,6 +203,26 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_initialize_estimate_excludes_files_at_or_above_target() {
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_table().await;
+        write_batches_to_table(&local_data_folder, 3).await;
+
+        // With a one-byte target, every existing file is already at or above the target, so none of
+        // them count towards the compactable backlog.
+        let optimizer = DataStorageOptimizer::try_new(local_data_folder.clone(), 1, 0)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *optimizer
+                .estimated_compactable_size_in_bytes
+                .get(TIME_SERIES_TABLE_NAME)
+                .unwrap(),
+            0
+        );
+    }
+
     // Tests for increase_estimated_compactable_size().
     #[tokio::test]
     async fn test_optimize_table_when_estimate_reaches_target() {
