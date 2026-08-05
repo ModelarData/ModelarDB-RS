@@ -398,4 +398,23 @@ impl StorageEngine {
             ))
         }
     }
+
+    /// Set the target file size used when automatically optimizing a table's storage to `new_value`.
+    pub(super) async fn set_optimize_target_file_size_in_bytes(&self, new_value: u64) {
+        self.compressed_data_manager
+            .data_storage_optimizer
+            .write()
+            .await
+            .set_optimize_target_file_size_in_bytes(new_value);
+    }
+
+    /// Set the retention period used when automatically vacuuming a table after optimization to
+    /// `new_value`.
+    pub(super) async fn set_vacuum_retention_period_in_seconds(&self, new_value: u64) {
+        self.compressed_data_manager
+            .data_storage_optimizer
+            .write()
+            .await
+            .set_vacuum_retention_period_in_seconds(new_value);
+    }
 }
