@@ -161,6 +161,38 @@ mod tests {
 
     const OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES: u64 = 1024 * 1024;
     const VACUUM_RETENTION_PERIOD_IN_SECONDS: u64 = 0;
+
+    // Tests for increase_estimated_compactable_size().
+    #[tokio::test]
+    async fn test_optimize_table_when_estimate_reaches_target() {
+        let (_temp_dir, local_data_folder) = create_local_data_folder_with_table().await;
+        let optimizer = create_data_storage_optimizer(local_data_folder.clone()).await;
+
+        write_batches_to_table(&local_data_folder, 3).await;
+
+        let initial_file_count = active_file_count(&local_data_folder).await;
+        assert_eq!(initial_file_count, 3);
+
+        optimizer
+            .increase_estimated_compactable_size(
+                TIME_SERIES_TABLE_NAME,
+                OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES,
+            )
+            .await
+            .unwrap();
+
+        // The small files should have been compacted into a single file.
+        assert_eq!(active_file_count(&local_data_folder).await, 1);
+
+        // The estimate should have been reset after optimizing.
+        assert_eq!(
+            *optimizer
+                .estimated_compactable_size_in_bytes
+                .get(TIME_SERIES_TABLE_NAME)
+                .unwrap(),
+            0
+        );
+    }
     /// Create a [`DataFolder`] in a local [`TempDir`] containing a single time series table.
     async fn create_local_data_folder_with_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
