@@ -424,6 +424,35 @@ impl ConfigurationManager {
         self.configuration.optimize_target_file_size_in_bytes
     }
 
+    /// Set the new value and update the target file size in the data storage optimizer. If the new
+    /// value is zero or the new configuration could not be saved to the configuration file, return
+    /// [`ModelarDbServerError`].
+    #[allow(dead_code)]
+    pub(crate) async fn set_optimize_target_file_size_in_bytes(
+        &mut self,
+        new_optimize_target_file_size_in_bytes: u64,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) -> Result<()> {
+        if new_optimize_target_file_size_in_bytes == 0 {
+            return Err(ModelarDbServerError::InvalidArgument(
+                "Optimize target file size must be greater than zero.".to_owned(),
+            ));
+        }
+
+        storage_engine
+            .write()
+            .await
+            .set_optimize_target_file_size_in_bytes(new_optimize_target_file_size_in_bytes)
+            .await;
+
+        self.configuration.optimize_target_file_size_in_bytes =
+            new_optimize_target_file_size_in_bytes;
+
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
+    }
+
     pub(crate) fn vacuum_retention_period_in_seconds(&self) -> u64 {
         self.configuration.vacuum_retention_period_in_seconds
     }
