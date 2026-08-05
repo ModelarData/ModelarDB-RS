@@ -909,6 +909,23 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_set_optimize_target_file_size_in_bytes_rejects_zero() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+
+        let result = configuration_manager
+            .write()
+            .await
+            .set_optimize_target_file_size_in_bytes(0, storage_engine)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: Optimize target file size must be greater than zero."
+        );
+    }
+
     /// Return the configuration from the configuration file at the root of `temp_dir`.
     async fn configuration_from_file(temp_dir: &TempDir) -> Configuration {
         let configuration_file_path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
