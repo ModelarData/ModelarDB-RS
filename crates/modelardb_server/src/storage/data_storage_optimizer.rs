@@ -231,7 +231,7 @@ mod tests {
 
         write_batches_to_table(&local_data_folder, 3).await;
 
-        let initial_file_count = table_file_count(&local_data_folder).await;
+        let initial_file_count = table_file_count(&local_data_folder);
         assert_eq!(initial_file_count, 3);
 
         optimizer
@@ -243,7 +243,7 @@ mod tests {
             .unwrap();
 
         // The small files should have been compacted into a single file.
-        assert_eq!(table_file_count(&local_data_folder).await, 1);
+        assert_eq!(table_file_count(&local_data_folder), 1);
 
         // The estimate should have been reset after optimizing.
         assert_eq!(
@@ -262,7 +262,7 @@ mod tests {
 
         write_batches_to_table(&local_data_folder, 3).await;
 
-        let initial_file_count = table_file_count(&local_data_folder).await;
+        let initial_file_count = table_file_count(&local_data_folder);
         assert_eq!(initial_file_count, 3);
 
         optimizer
@@ -274,10 +274,7 @@ mod tests {
             .unwrap();
 
         // No files should have been compacted since the estimate did not reach the target.
-        assert_eq!(
-            table_file_count(&local_data_folder).await,
-            initial_file_count
-        );
+        assert_eq!(table_file_count(&local_data_folder), initial_file_count);
 
         // The estimate should have accumulated without being reset.
         assert_eq!(
@@ -318,15 +315,16 @@ mod tests {
         }
     }
 
-    /// Return the number of active files in the time series table in `local_data_folder`.
-    async fn table_file_count(local_data_folder: &DataFolder) -> usize {
-        let mut delta_table = local_data_folder
-            .delta_table(TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
-        delta_table.load().await.unwrap();
+    /// Return the number of physical Apache Parquet files in the time series table in
+    /// `local_data_folder`.
+    fn table_file_count(local_data_folder: &DataFolder) -> usize {
+        let column_path = format!(
+            "{}/tables/{}/field_column=0",
+            local_data_folder.location(),
+            TIME_SERIES_TABLE_NAME
+        );
 
-        delta_table.get_file_uris().unwrap().count()
+        std::fs::read_dir(column_path).unwrap().count()
     }
 
     /// Create a [`DataStorageOptimizer`] that optimizes the tables in `local_data_folder`.
