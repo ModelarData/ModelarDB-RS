@@ -61,7 +61,7 @@ pub(crate) struct ServerArgs {
     #[arg(long, default_value_t = 9999, env = "MODELARDBD_PORT")]
     port: u16,
 
-    /// Amount of memory in bytes to reserve for storing ingested multivariate time series.
+    /// Amount of memory in bytes to reserve for storing ingested time series.
     #[arg(long, env = "MODELARDBD_INGESTED_RESERVED_MEMORY_IN_BYTES")]
     ingested_reserved_memory_in_bytes: Option<u64>,
 

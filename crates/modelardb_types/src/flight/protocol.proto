@@ -52,7 +52,7 @@ message TableMetadata {
 
 // Configuration of a ModelarDB node.
 message Configuration {
-  // Amount of memory to reserve for storing ingested multivariate time series.
+  // Amount of memory to reserve for storing ingested time series.
   uint64 ingested_reserved_memory_in_bytes = 1;
 
   // Amount of memory to reserve for storing uncompressed data buffers.

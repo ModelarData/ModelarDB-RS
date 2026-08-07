@@ -51,7 +51,7 @@ pub(crate) enum WalMode {
 /// only be done through the [`ConfigurationManager`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Configuration {
-    /// Amount of memory to reserve for storing ingested multivariate time series.
+    /// Amount of memory to reserve for storing ingested time series.
     ingested_reserved_memory_in_bytes: u64,
     /// Amount of memory to reserve for storing uncompressed data buffers.
     uncompressed_reserved_memory_in_bytes: u64,
