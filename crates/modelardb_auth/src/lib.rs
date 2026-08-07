@@ -61,7 +61,9 @@ impl BearerInterceptor {
             .map(|token| {
                 format!("Bearer {token}")
                     .parse::<AsciiMetadataValue>()
-                    .map_err(|error| Status::invalid_argument(format!("Token is not ASCII: {error}.")))
+                    .map_err(|error| {
+                        Status::invalid_argument(format!("Token is not ASCII: {error}."))
+                    })
             })
             .transpose()?;
 
