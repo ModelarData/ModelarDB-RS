@@ -51,8 +51,8 @@ pub(crate) enum WalMode {
 /// only be done through the [`ConfigurationManager`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Configuration {
-    /// Amount of memory to reserve for storing multivariate time series.
-    multivariate_reserved_memory_in_bytes: u64,
+    /// Amount of memory to reserve for storing ingested multivariate time series.
+    ingested_reserved_memory_in_bytes: u64,
     /// Amount of memory to reserve for storing uncompressed data buffers.
     uncompressed_reserved_memory_in_bytes: u64,
     /// Amount of memory to reserve for storing compressed data buffers.
@@ -79,8 +79,8 @@ impl Configuration {
     /// Update the configuration parameters with the corresponding flags or environment variables
     /// from the command line if they are set.
     fn update_from_args(&mut self, args: &ServerArgs) {
-        if let Some(value) = args.multivariate_reserved_memory_in_bytes {
-            self.multivariate_reserved_memory_in_bytes = value;
+        if let Some(value) = args.ingested_reserved_memory_in_bytes {
+            self.ingested_reserved_memory_in_bytes = value;
         }
 
         if let Some(value) = args.uncompressed_reserved_memory_in_bytes {
@@ -142,7 +142,7 @@ impl Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            multivariate_reserved_memory_in_bytes: 512 * 1024 * 1024,
+            ingested_reserved_memory_in_bytes: 512 * 1024 * 1024,
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
             transfer_batch_size_in_bytes: Some(64 * 1024 * 1024),
@@ -237,31 +237,31 @@ impl ConfigurationManager {
         &self.wal_mode
     }
 
-    pub(crate) fn multivariate_reserved_memory_in_bytes(&self) -> u64 {
-        self.configuration.multivariate_reserved_memory_in_bytes
+    pub(crate) fn ingested_reserved_memory_in_bytes(&self) -> u64 {
+        self.configuration.ingested_reserved_memory_in_bytes
     }
 
-    /// Set the new value and update the amount of memory for multivariate data in the storage
+    /// Set the new value and update the amount of memory for ingested data in the storage
     /// engine. If the new configuration could not be saved to the configuration file, return
     /// [`ModelarDbServerError`].
-    pub(crate) async fn set_multivariate_reserved_memory_in_bytes(
+    pub(crate) async fn set_ingested_reserved_memory_in_bytes(
         &mut self,
-        new_multivariate_reserved_memory_in_bytes: u64,
+        new_ingested_reserved_memory_in_bytes: u64,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Result<()> {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
-        let value_change = new_multivariate_reserved_memory_in_bytes as i64
-            - self.configuration.multivariate_reserved_memory_in_bytes as i64;
+        let value_change = new_ingested_reserved_memory_in_bytes as i64
+            - self.configuration.ingested_reserved_memory_in_bytes as i64;
 
         storage_engine
             .write()
             .await
-            .adjust_multivariate_remaining_memory_in_bytes(value_change)
+            .adjust_ingested_remaining_memory_in_bytes(value_change)
             .await;
 
-        self.configuration.multivariate_reserved_memory_in_bytes =
-            new_multivariate_reserved_memory_in_bytes;
+        self.configuration.ingested_reserved_memory_in_bytes =
+            new_ingested_reserved_memory_in_bytes;
 
         self.configuration
             .save_to_toml(&self.local_data_folder)
@@ -405,9 +405,7 @@ impl ConfigurationManager {
     /// protobuf message and serialize it.
     pub(crate) fn encode_and_serialize(&self) -> Vec<u8> {
         let configuration = protocol::Configuration {
-            multivariate_reserved_memory_in_bytes: self
-                .configuration
-                .multivariate_reserved_memory_in_bytes,
+            ingested_reserved_memory_in_bytes: self.configuration.ingested_reserved_memory_in_bytes,
             uncompressed_reserved_memory_in_bytes: self
                 .configuration
                 .uncompressed_reserved_memory_in_bytes,
@@ -461,7 +459,7 @@ mod tests {
         let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
 
         let existing_configuration = Configuration {
-            multivariate_reserved_memory_in_bytes: 1,
+            ingested_reserved_memory_in_bytes: 1,
             uncompressed_reserved_memory_in_bytes: 1,
             compressed_reserved_memory_in_bytes: 1,
             transfer_batch_size_in_bytes: Some(1),
@@ -540,7 +538,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_multivariate_reserved_memory_in_bytes() {
+    async fn test_set_ingested_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
@@ -548,7 +546,7 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .multivariate_reserved_memory_in_bytes(),
+                .ingested_reserved_memory_in_bytes(),
             512 * 1024 * 1024
         );
 
@@ -556,7 +554,7 @@ mod tests {
         configuration_manager
             .write()
             .await
-            .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
+            .set_ingested_reserved_memory_in_bytes(new_value, storage_engine)
             .await
             .unwrap();
 
@@ -564,13 +562,13 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .multivariate_reserved_memory_in_bytes(),
+                .ingested_reserved_memory_in_bytes(),
             new_value
         );
 
         let configuration_from_file = configuration_from_file(&temp_dir).await;
         assert_eq!(
-            configuration_from_file.multivariate_reserved_memory_in_bytes,
+            configuration_from_file.ingested_reserved_memory_in_bytes,
             new_value
         );
     }
