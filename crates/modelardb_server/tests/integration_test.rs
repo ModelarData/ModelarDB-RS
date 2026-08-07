@@ -1410,7 +1410,7 @@ async fn test_can_get_configuration() {
     let configuration = protocol::Configuration::decode(configuration_bytes).unwrap();
 
     assert_eq!(
-        configuration.multivariate_reserved_memory_in_bytes,
+        configuration.ingested_reserved_memory_in_bytes,
         512 * 1024 * 1024
     );
     assert_eq!(
@@ -1436,16 +1436,13 @@ async fn test_can_get_configuration() {
 }
 
 #[tokio::test]
-async fn test_can_update_multivariate_reserved_memory_in_bytes() {
+async fn test_can_update_ingested_reserved_memory_in_bytes() {
     let updated_configuration = update_and_get_configuration(
-        protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::IngestedReservedMemoryInBytes as i32,
     )
     .await;
 
-    assert_eq!(
-        updated_configuration.multivariate_reserved_memory_in_bytes,
-        1
-    );
+    assert_eq!(updated_configuration.ingested_reserved_memory_in_bytes, 1);
 }
 
 #[tokio::test]
@@ -1517,7 +1514,7 @@ async fn test_cannot_update_non_updatable_setting() {
 #[tokio::test]
 async fn test_cannot_update_non_nullable_setting_with_null_value() {
     for setting in [
-        protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes as i32,
+        protocol::update_configuration::Setting::IngestedReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::CompressedReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::SegmentSizeThresholdInBytes as i32,
