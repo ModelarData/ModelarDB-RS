@@ -32,11 +32,12 @@ pub(super) struct DataStorageOptimizer {
     /// The data folder containing all compressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
     local_data_folder: DataFolder,
-    /// The target size, in bytes, of the files produced when a table is optimized. Also used as the
-    /// trigger for when a table is optimized.
+    /// The target size, in bytes, of the files produced when a table is optimized. A table is
+    /// optimized once its `estimated_compactable_size_in_bytes` reaches this size, so the same
+    /// value decides both when to optimize and how large the resulting files are.
     optimize_target_file_size_in_bytes: u64,
     /// The retention period, in seconds, used when a table is vacuumed after it is optimized.
-    /// Note that a very low value can let the vacuum physically delete files that an in-flight
+    /// Note that a very low value can let the vacuum physically delete files that an in-progress
     /// query is still scanning, causing that query to fail.
     vacuum_retention_period_in_seconds: u64,
     /// Map from table names to an estimate of how many bytes each table has in files smaller than
@@ -124,7 +125,7 @@ impl DataStorageOptimizer {
     /// Compact the small files of the table with `table_name` into files of approximately
     /// `optimize_target_file_size_in_bytes` bytes, vacuum the small files left behind, and reset
     /// the table's estimated compactable size. Note that the vacuum can physically delete files
-    /// that an in-flight query is still scanning if `vacuum_retention_period_in_seconds` is very
+    /// that an in-progress query is still scanning if `vacuum_retention_period_in_seconds` is very
     /// low. Returns [`Ok`] if the table was optimized successfully, otherwise
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     async fn optimize_and_vacuum_table(&self, table_name: &str) -> Result<()> {
@@ -148,7 +149,9 @@ impl DataStorageOptimizer {
     }
 
     /// Set the target size, in bytes, of the files produced when a table is optimized to
-    /// `new_optimize_target_file_size_in_bytes`.
+    /// `new_optimize_target_file_size_in_bytes`. The new target takes effect the next time each
+    /// table is written to. Tables are not re-optimized here to keep configuration updates cheap
+    /// and to avoid having to re-check all files on disk to see if they are compactable.
     pub(super) fn set_optimize_target_file_size_in_bytes(
         &mut self,
         new_optimize_target_file_size_in_bytes: u64,
@@ -175,12 +178,13 @@ mod tests {
 
     const OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES: u64 = 1024 * 1024;
     const VACUUM_RETENTION_PERIOD_IN_SECONDS: u64 = 0;
+    const BATCH_COUNT: u8 = 3;
 
     // Tests for try_new().
     #[tokio::test]
     async fn test_initialize_estimate_from_existing_small_files() {
         let (_temp_dir, local_data_folder) = create_local_data_folder_with_table().await;
-        write_batches_to_table(&local_data_folder, 3).await;
+        write_batches_to_table(&local_data_folder, BATCH_COUNT).await;
 
         // The optimizer is created after the data is written, so its estimate includes the small
         // files already on disk.
@@ -206,13 +210,15 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_estimate_excludes_files_at_or_above_target() {
         let (_temp_dir, local_data_folder) = create_local_data_folder_with_table().await;
-        write_batches_to_table(&local_data_folder, 3).await;
+        write_batches_to_table(&local_data_folder, BATCH_COUNT).await;
 
         // With a one-byte target, every existing file is already at or above the target, so none of
         // them count towards the compactable backlog.
         let optimizer = DataStorageOptimizer::try_new(local_data_folder.clone(), 1, 0)
             .await
             .unwrap();
+
+        assert_eq!(table_file_count(&local_data_folder), BATCH_COUNT);
 
         assert_eq!(
             *optimizer
@@ -229,10 +235,10 @@ mod tests {
         let (_temp_dir, local_data_folder) = create_local_data_folder_with_table().await;
         let optimizer = create_data_storage_optimizer(local_data_folder.clone()).await;
 
-        write_batches_to_table(&local_data_folder, 3).await;
+        write_batches_to_table(&local_data_folder, BATCH_COUNT).await;
 
         let initial_file_count = table_file_count(&local_data_folder);
-        assert_eq!(initial_file_count, 3);
+        assert_eq!(initial_file_count, BATCH_COUNT);
 
         optimizer
             .increase_estimated_compactable_size(
@@ -260,10 +266,10 @@ mod tests {
         let (_temp_dir, local_data_folder) = create_local_data_folder_with_table().await;
         let optimizer = create_data_storage_optimizer(local_data_folder.clone()).await;
 
-        write_batches_to_table(&local_data_folder, 3).await;
+        write_batches_to_table(&local_data_folder, BATCH_COUNT).await;
 
         let initial_file_count = table_file_count(&local_data_folder);
-        assert_eq!(initial_file_count, 3);
+        assert_eq!(initial_file_count, BATCH_COUNT);
 
         optimizer
             .increase_estimated_compactable_size(
@@ -317,14 +323,14 @@ mod tests {
 
     /// Return the number of physical Apache Parquet files in the time series table in
     /// `local_data_folder`.
-    fn table_file_count(local_data_folder: &DataFolder) -> usize {
+    fn table_file_count(local_data_folder: &DataFolder) -> u8 {
         let column_path = format!(
             "{}/tables/{}/field_column=0",
             local_data_folder.location(),
             TIME_SERIES_TABLE_NAME
         );
 
-        std::fs::read_dir(column_path).unwrap().count()
+        std::fs::read_dir(column_path).unwrap().count() as u8
     }
 
     /// Create a [`DataStorageOptimizer`] that optimizes the tables in `local_data_folder`.

@@ -86,7 +86,7 @@ message Configuration {
 
   // Retention period, in seconds, used when automatically vacuuming a table after optimization. This is also the
   // default value used when a VACUUM query is executed without an explicit retention period. Note that a very low
-  // value can delete files an in-flight query is still scanning.
+  // value can delete files an in-progress query is still scanning.
   uint64 vacuum_retention_period_in_seconds = 11;
 }
 

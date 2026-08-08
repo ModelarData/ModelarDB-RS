@@ -92,7 +92,7 @@ pub(crate) struct ServerArgs {
 
     /// Retention period, in seconds, used when automatically vacuuming a table after optimization.
     /// This is also the default value used when a VACUUM query is executed without an explicit
-    /// retention period. Note that a very low value can delete files an in-flight query is still
+    /// retention period. Note that a very low value can delete files an in-progress query is still
     /// scanning.
     #[arg(long, env = "MODELARDBD_VACUUM_RETENTION_PERIOD_IN_SECONDS")]
     vacuum_retention_period_in_seconds: Option<u64>,
