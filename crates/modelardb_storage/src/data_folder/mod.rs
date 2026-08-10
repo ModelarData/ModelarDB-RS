@@ -685,12 +685,12 @@ impl DataFolder {
         Ok(())
     }
 
-    /// Optimize the Delta Lake table with `table_name` by compacting its many small files into
+    /// Optimize the Delta Lake table with `table_name` by merging its many small files into
     /// fewer larger files of approximately `maybe_target_size_in_bytes` bytes. If a target size is
-    /// not given, a default target size of 64 MiB is used. Compaction only rewrites files smaller
+    /// not given, a default target size of 64 MiB is used. Optimize only rewrites files smaller
     /// than the target, so it is safe to call repeatedly. Note that the small files are only marked
     /// as removed and are not deleted from disk until the table is vacuumed. If the target size is
-    /// zero, the table does not exist, or the files could not be compacted, a
+    /// zero, the table does not exist, or the files could not be merged, a
     /// [`ModelarDbStorageError`] is returned.
     pub async fn optimize_table(
         &self,
@@ -1619,7 +1619,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The small files should be compacted into a single active file with no rows lost or
+        // The small files should be merged into a single active file with no rows lost or
         // duplicated.
         assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 1);
         assert_eq!(row_count(&data_folder, "normal_table_1").await, rows_before);
@@ -1651,7 +1651,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The small files should be compacted into a single active file with no rows lost or
+        // The small files should be merged into a single active file with no rows lost or
         // duplicated.
         assert_eq!(
             active_file_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
@@ -1690,7 +1690,7 @@ mod tests {
         assert_eq!(files_before, 4);
 
         // A one-byte target is smaller than every existing file, so none of them are candidates for
-        // compaction, and the files should be left untouched.
+        // merging, and the files should be left untouched.
         data_folder
             .optimize_table("normal_table_1", Some(1))
             .await
