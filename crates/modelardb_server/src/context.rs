@@ -401,7 +401,7 @@ impl Context {
         Ok(())
     }
 
-    /// Optimize the table with `table_name` if it exists by compacting its small files into larger
+    /// Optimize the table with `table_name` if it exists by merging its small files into larger
     /// files of approximately `maybe_target_size_in_bytes` bytes. If a target size is not given, a
     /// default target size of 64 MiB is used. If the target size is zero, the table does not exist,
     /// or it could not be optimized, [`ModelarDbServerError`] is returned.
@@ -922,7 +922,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The small files should be compacted into a single active file.
+        // The small files should be merged into a single active file.
         assert_eq!(active_file_count(&context, NORMAL_TABLE_NAME).await, 1);
     }
 
@@ -970,7 +970,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The small files should be compacted into a single active file.
+        // The small files should be merged into a single active file.
         assert_eq!(active_file_count(&context, TIME_SERIES_TABLE_NAME).await, 1);
     }
 
