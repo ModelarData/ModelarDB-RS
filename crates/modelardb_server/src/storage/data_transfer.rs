@@ -22,7 +22,6 @@ use dashmap::DashMap;
 use deltalake::arrow::array::RecordBatch;
 use futures::TryStreamExt;
 use modelardb_storage::data_folder::DataFolder;
-use object_store::ObjectStoreExt;
 use tracing::debug;
 
 use crate::error::Result;
@@ -61,15 +60,13 @@ impl DataTransfer {
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
         for table_name in table_names {
-            let delta_table = local_data_folder.delta_table(&table_name).await?;
+            let size_in_bytes: u64 = local_data_folder
+                .table_file_sizes(&table_name)
+                .await?
+                .into_iter()
+                .sum();
 
-            let mut table_size_in_bytes = table_size_in_bytes.entry(table_name).or_insert(0);
-
-            let object_store = delta_table.object_store();
-            for file_path in delta_table.get_files_by_partitions(&[]).await? {
-                let object_meta = object_store.head(&file_path).await?;
-                *table_size_in_bytes += object_meta.size;
-            }
+            table_size_in_bytes.insert(table_name, size_in_bytes);
         }
 
         let data_transfer = Self {
@@ -460,15 +457,12 @@ mod tests {
 
     /// Return the total size of the files in the table with `table_name` in `local_data_folder`.
     async fn table_files_size(local_data_folder: &DataFolder, table_name: &str) -> u64 {
-        let delta_table = local_data_folder.delta_table(table_name).await.unwrap();
-
-        let mut files_size = 0;
-        for file_path in delta_table.get_files_by_partitions(&[]).await.unwrap() {
-            let object_meta = delta_table.object_store().head(&file_path).await;
-            files_size += object_meta.unwrap().size;
-        }
-
-        files_size
+        local_data_folder
+            .table_file_sizes(table_name)
+            .await
+            .unwrap()
+            .into_iter()
+            .sum()
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.

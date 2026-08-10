@@ -780,6 +780,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_wal_recovery_survives_optimize_and_vacuum() {
+        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+
+        // Write three separate commits, each carrying its own batch ids.
+        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
+        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([3, 4, 5])).await;
+        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([6, 7, 8])).await;
+
+        let column_path = format!(
+            "{}/tables/{}/field_column=0",
+            temp_dir.path().to_str().unwrap(),
+            TIME_SERIES_TABLE_NAME
+        );
+        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 3);
+
+        // Optimize merges the small files into one, and vacuum physically deletes the stale files
+        // left behind. Vacuum should only remove Parquet data files, never the _delta_log commits.
+        data_folder
+            .optimize_table(TIME_SERIES_TABLE_NAME, None)
+            .await
+            .unwrap();
+        data_folder
+            .vacuum_table(TIME_SERIES_TABLE_NAME, Some(0))
+            .await
+            .unwrap();
+
+        // Only the single merged Parquet file should remain on disk.
+        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 1);
+
+        // Rebuilding the WAL from the same folder must still recover every persisted batch id from
+        // the Delta commit history. This proves optimize and vacuum did not discard the commits
+        // that crash recovery relies on to exclude already persisted data from replay.
+        let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
+            .await
+            .unwrap();
+
+        let persisted = wal.table_logs[TIME_SERIES_TABLE_NAME]
+            .persisted_batch_ids
+            .lock()
+            .unwrap();
+
+        assert_eq!(*persisted, BTreeSet::from([0, 1, 2, 3, 4, 5, 6, 7, 8]));
+    }
+
+    #[tokio::test]
     async fn test_try_new_fails_for_non_local_data_folder() {
         let data_folder = DataFolder::open_memory().await.unwrap();
         let result = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES).await;

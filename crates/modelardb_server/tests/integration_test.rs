@@ -831,7 +831,7 @@ async fn test_can_optimize_normal_table() {
     .await;
 
     // ingest_time_series_and_flush_data() writes one file. Ingest and flush three more times so
-    // there are four small files to compact.
+    // there are four small files to merge.
     for _ in 0..3 {
         let flight_data = TestContext::create_flight_data_from_time_series(
             NORMAL_TABLE_NAME.to_owned(),
@@ -886,7 +886,7 @@ async fn test_can_optimize_time_series_table() {
     .await;
 
     // ingest_time_series_and_flush_data() writes one file per field column partition. ingest and
-    // flush three more times so each partition has four small files to compact.
+    // flush three more times so each partition has four small files to merge.
     for _ in 0..3 {
         let flight_data = TestContext::create_flight_data_from_time_series(
             TIME_SERIES_TABLE_NAME.to_owned(),
@@ -921,7 +921,7 @@ async fn test_can_optimize_time_series_table() {
         .await
         .unwrap();
 
-    // The four files in the partition should be compacted into a single active file.
+    // The four files in the partition should be merged into a single active file.
     let files = std::fs::read_dir(&column_path).unwrap();
     assert_eq!(files.count(), 1);
 }
@@ -1429,6 +1429,14 @@ async fn test_can_get_configuration() {
         configuration.segment_size_threshold_in_bytes,
         64 * 1024 * 1024
     );
+    assert_eq!(
+        configuration.optimize_target_file_size_in_bytes,
+        64 * 1024 * 1024
+    );
+    assert_eq!(
+        configuration.vacuum_retention_period_in_seconds,
+        60 * 60 * 24 * 7
+    );
     assert_eq!(configuration.ingestion_threads, 1);
     assert_eq!(configuration.compression_threads, 1);
     assert_eq!(configuration.writer_threads, 1);
@@ -1478,6 +1486,26 @@ async fn test_can_update_segment_size_threshold_in_bytes() {
     assert_eq!(updated_configuration.segment_size_threshold_in_bytes, 1);
 }
 
+#[tokio::test]
+async fn test_can_update_optimize_target_file_size_in_bytes() {
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration::Setting::OptimizeTargetFileSizeInBytes as i32,
+    )
+    .await;
+
+    assert_eq!(updated_configuration.optimize_target_file_size_in_bytes, 1);
+}
+
+#[tokio::test]
+async fn test_can_update_vacuum_retention_period_in_seconds() {
+    let updated_configuration = update_and_get_configuration(
+        protocol::update_configuration::Setting::VacuumRetentionPeriodInSeconds as i32,
+    )
+    .await;
+
+    assert_eq!(updated_configuration.vacuum_retention_period_in_seconds, 1);
+}
+
 async fn update_and_get_configuration(setting: i32) -> protocol::Configuration {
     let mut test_context = TestContext::new().await;
     test_context
@@ -1518,6 +1546,8 @@ async fn test_cannot_update_non_nullable_setting_with_null_value() {
         protocol::update_configuration::Setting::UncompressedReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::CompressedReservedMemoryInBytes as i32,
         protocol::update_configuration::Setting::SegmentSizeThresholdInBytes as i32,
+        protocol::update_configuration::Setting::OptimizeTargetFileSizeInBytes as i32,
+        protocol::update_configuration::Setting::VacuumRetentionPeriodInSeconds as i32,
     ] {
         update_configuration_and_assert_error(
             setting,

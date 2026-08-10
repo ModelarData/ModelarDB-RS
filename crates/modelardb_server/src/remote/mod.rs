@@ -471,9 +471,15 @@ impl FlightServiceHandler {
             }
         }
 
+        // If the retention period is not specified, use the local configuration retention period.
+        // The local retention period is not passed to the peer nodes above, so they can use their
+        // own local retention period.
+        let retention_period_in_seconds = maybe_retention_period_in_seconds
+            .unwrap_or(configuration_manager.vacuum_retention_period_in_seconds());
+
         for table_name in table_names {
             self.context
-                .vacuum_table(table_name, maybe_retention_period_in_seconds)
+                .vacuum_table(table_name, Some(retention_period_in_seconds))
                 .await
                 .map_err(error_to_status_invalid_argument)?;
         }
@@ -503,9 +509,15 @@ impl FlightServiceHandler {
             }
         }
 
+        // If the target size is not specified, use the local configuration target size. The local
+        // target size is not passed to the peer nodes above, so they can use their own local target
+        // size.
+        let target_size_in_bytes = maybe_target_size_in_bytes
+            .unwrap_or(configuration_manager.optimize_target_file_size_in_bytes());
+
         for table_name in table_names {
             self.context
-                .optimize_table(table_name, maybe_target_size_in_bytes)
+                .optimize_table(table_name, Some(target_size_in_bytes))
                 .await
                 .map_err(error_to_status_invalid_argument)?;
         }
@@ -1018,6 +1030,22 @@ impl FlightService for FlightServiceHandler {
 
                     configuration_manager
                         .set_segment_size_threshold_in_bytes(new_value)
+                        .await
+                        .map_err(error_to_status_internal)
+                }
+                Ok(protocol::update_configuration::Setting::OptimizeTargetFileSizeInBytes) => {
+                    let new_value = maybe_new_value.ok_or(invalid_null_error)?;
+
+                    configuration_manager
+                        .set_optimize_target_file_size_in_bytes(new_value, storage_engine)
+                        .await
+                        .map_err(error_to_status_internal)
+                }
+                Ok(protocol::update_configuration::Setting::VacuumRetentionPeriodInSeconds) => {
+                    let new_value = maybe_new_value.ok_or(invalid_null_error)?;
+
+                    configuration_manager
+                        .set_vacuum_retention_period_in_seconds(new_value, storage_engine)
                         .await
                         .map_err(error_to_status_internal)
                 }

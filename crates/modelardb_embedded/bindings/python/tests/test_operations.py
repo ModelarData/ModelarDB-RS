@@ -512,10 +512,10 @@ class TestOperations(unittest.TestCase):
 
             data_folder.optimize(TIME_SERIES_TABLE_NAME)
 
-            # Vacuum to remove the compacted files.
+            # Vacuum to remove the stale files left by the merge.
             data_folder.vacuum(TIME_SERIES_TABLE_NAME, retention_period_in_seconds=0)
 
-            # The small files should be compacted into a single active file.
+            # The small files should be merged into a single active file.
             file_count = len(os.listdir(folder_path))
             self.assertEqual(file_count, 1)
 

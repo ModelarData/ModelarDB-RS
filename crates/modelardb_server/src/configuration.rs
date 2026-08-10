@@ -27,6 +27,7 @@ use std::sync::Arc;
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::flight::protocol;
+use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
 use object_store::path::Path;
 use object_store::{Error, ObjectStoreExt, PutPayload};
 use prost::Message;
@@ -63,6 +64,14 @@ struct Configuration {
     /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and
     /// a new one is started.
     segment_size_threshold_in_bytes: u64,
+    /// Target size, in bytes, of the files produced when automatically compacting a table's
+    /// storage. This is also the default value used when an OPTIMIZE query is executed without an
+    /// explicit target size.
+    optimize_target_file_size_in_bytes: u64,
+    /// Retention period, in seconds, used when automatically vacuuming a table during compaction.
+    /// This is also the default value used when a VACUUM query is executed without an explicit
+    /// retention period.
+    vacuum_retention_period_in_seconds: u64,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
     ingestion_threads: u8,
@@ -99,6 +108,14 @@ impl Configuration {
             self.segment_size_threshold_in_bytes = value;
         }
 
+        if let Some(value) = args.optimize_target_file_size_in_bytes {
+            self.optimize_target_file_size_in_bytes = value;
+        }
+
+        if let Some(value) = args.vacuum_retention_period_in_seconds {
+            self.vacuum_retention_period_in_seconds = value;
+        }
+
         if let Some(value) = args.wal_enabled {
             self.wal_enabled = value;
         }
@@ -114,9 +131,21 @@ impl Configuration {
         if self.ingestion_threads != 1 || self.compression_threads != 1 || self.writer_threads != 1
         {
             return Err(ModelarDbServerError::InvalidState(
-                "Only one thread per component is currently supported.".to_string(),
+                "Only one thread per component is currently supported.".to_owned(),
             ));
         };
+
+        if self.optimize_target_file_size_in_bytes == 0 {
+            return Err(ModelarDbServerError::InvalidState(
+                "Optimize target file size must be greater than zero.".to_owned(),
+            ));
+        }
+
+        if self.vacuum_retention_period_in_seconds > MAX_RETENTION_PERIOD_IN_SECONDS {
+            return Err(ModelarDbServerError::InvalidState(format!(
+                "Vacuum retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+            )));
+        }
 
         Ok(())
     }
@@ -147,6 +176,8 @@ impl Default for Configuration {
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
             transfer_batch_size_in_bytes: Some(64 * 1024 * 1024),
             segment_size_threshold_in_bytes: 64 * 1024 * 1024,
+            optimize_target_file_size_in_bytes: 64 * 1024 * 1024,
+            vacuum_retention_period_in_seconds: 60 * 60 * 24 * 7,
             ingestion_threads: 1,
             compression_threads: 1,
             writer_threads: 1,
@@ -389,6 +420,71 @@ impl ConfigurationManager {
             .await
     }
 
+    pub(crate) fn optimize_target_file_size_in_bytes(&self) -> u64 {
+        self.configuration.optimize_target_file_size_in_bytes
+    }
+
+    /// Set the target file size used by the data storage compactor and as the default for OPTIMIZE
+    /// queries without an explicit target size. If the new value is zero or the new configuration
+    /// could not be saved to the configuration file, return [`ModelarDbServerError`].
+    pub(crate) async fn set_optimize_target_file_size_in_bytes(
+        &mut self,
+        new_optimize_target_file_size_in_bytes: u64,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) -> Result<()> {
+        if new_optimize_target_file_size_in_bytes == 0 {
+            return Err(ModelarDbServerError::InvalidArgument(
+                "Optimize target file size must be greater than zero.".to_owned(),
+            ));
+        }
+
+        storage_engine
+            .write()
+            .await
+            .set_optimize_target_file_size_in_bytes(new_optimize_target_file_size_in_bytes)
+            .await;
+
+        self.configuration.optimize_target_file_size_in_bytes =
+            new_optimize_target_file_size_in_bytes;
+
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
+    }
+
+    pub(crate) fn vacuum_retention_period_in_seconds(&self) -> u64 {
+        self.configuration.vacuum_retention_period_in_seconds
+    }
+
+    /// Set the retention period used by the data storage compactor and as the default for VACUUM
+    /// queries without an explicit retention period. If the new value is larger than
+    /// [`MAX_RETENTION_PERIOD_IN_SECONDS`] or the new configuration could not be saved to the
+    /// configuration file, return [`ModelarDbServerError`].
+    pub(crate) async fn set_vacuum_retention_period_in_seconds(
+        &mut self,
+        new_vacuum_retention_period_in_seconds: u64,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) -> Result<()> {
+        if new_vacuum_retention_period_in_seconds > MAX_RETENTION_PERIOD_IN_SECONDS {
+            return Err(ModelarDbServerError::InvalidArgument(format!(
+                "Vacuum retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+            )));
+        }
+
+        storage_engine
+            .write()
+            .await
+            .set_vacuum_retention_period_in_seconds(new_vacuum_retention_period_in_seconds)
+            .await;
+
+        self.configuration.vacuum_retention_period_in_seconds =
+            new_vacuum_retention_period_in_seconds;
+
+        self.configuration
+            .save_to_toml(&self.local_data_folder)
+            .await
+    }
+
     pub(crate) fn ingestion_threads(&self) -> u8 {
         self.configuration.ingestion_threads
     }
@@ -418,6 +514,12 @@ impl ConfigurationManager {
             compression_threads: self.configuration.compression_threads as u32,
             writer_threads: self.configuration.writer_threads as u32,
             wal_enabled: self.configuration.wal_enabled,
+            optimize_target_file_size_in_bytes: self
+                .configuration
+                .optimize_target_file_size_in_bytes,
+            vacuum_retention_period_in_seconds: self
+                .configuration
+                .vacuum_retention_period_in_seconds,
         };
 
         configuration.encode_to_vec()
@@ -464,6 +566,8 @@ mod tests {
             compressed_reserved_memory_in_bytes: 1,
             transfer_batch_size_in_bytes: Some(1),
             segment_size_threshold_in_bytes: 1,
+            optimize_target_file_size_in_bytes: 1,
+            vacuum_retention_period_in_seconds: 1,
             ..Configuration::default()
         };
 
@@ -534,6 +638,39 @@ mod tests {
                 .unwrap()
                 .to_string()
                 .contains("TOML Deserialize Error: TOML parse error at line 1")
+        );
+    }
+
+    #[test]
+    fn test_validate_rejects_zero_optimize_target_file_size() {
+        let configuration = Configuration {
+            optimize_target_file_size_in_bytes: 0,
+            ..Configuration::default()
+        };
+
+        let result = configuration.validate();
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: Optimize target file size must be greater than zero."
+        );
+    }
+
+    #[test]
+    fn test_validate_rejects_too_large_vacuum_retention_period() {
+        let configuration = Configuration {
+            vacuum_retention_period_in_seconds: MAX_RETENTION_PERIOD_IN_SECONDS + 1,
+            ..Configuration::default()
+        };
+
+        let result = configuration.validate();
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid State Error: Vacuum retention period cannot be more than {} seconds.",
+                MAX_RETENTION_PERIOD_IN_SECONDS
+            )
         );
     }
 
@@ -732,6 +869,118 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "Invalid State Error: Cannot set segment size threshold when WAL is disabled."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_optimize_target_file_size_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .optimize_target_file_size_in_bytes(),
+            64 * 1024 * 1024
+        );
+
+        let new_value = 1024;
+        configuration_manager
+            .write()
+            .await
+            .set_optimize_target_file_size_in_bytes(new_value, storage_engine)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .optimize_target_file_size_in_bytes(),
+            new_value
+        );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(
+            configuration_from_file.optimize_target_file_size_in_bytes,
+            new_value
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_optimize_target_file_size_in_bytes_rejects_zero() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+
+        let result = configuration_manager
+            .write()
+            .await
+            .set_optimize_target_file_size_in_bytes(0, storage_engine)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: Optimize target file size must be greater than zero."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_vacuum_retention_period_in_seconds() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .vacuum_retention_period_in_seconds(),
+            60 * 60 * 24 * 7
+        );
+
+        let new_value = 60;
+        configuration_manager
+            .write()
+            .await
+            .set_vacuum_retention_period_in_seconds(new_value, storage_engine)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .vacuum_retention_period_in_seconds(),
+            new_value
+        );
+
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(
+            configuration_from_file.vacuum_retention_period_in_seconds,
+            new_value
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_vacuum_retention_period_in_seconds_rejects_too_large_value() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
+
+        let result = configuration_manager
+            .write()
+            .await
+            .set_vacuum_retention_period_in_seconds(
+                MAX_RETENTION_PERIOD_IN_SECONDS + 1,
+                storage_engine,
+            )
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Invalid Argument Error: Vacuum retention period cannot be more than {} seconds.",
+                MAX_RETENTION_PERIOD_IN_SECONDS
+            )
         );
     }
 

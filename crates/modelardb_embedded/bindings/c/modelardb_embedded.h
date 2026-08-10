@@ -199,7 +199,7 @@ int modelardb_embedded_vacuum(void* maybe_operations_ptr,
                               const char* table_name_ptr,
                               const uint64_t* retention_period_in_seconds_ptr);
 
-// Optimize the table by compacting its many small files into fewer larger files.
+// Optimize the table by merging its many small files into fewer larger files.
 int modelardb_embedded_optimize(void* maybe_operations_ptr,
                                 bool is_data_folder,
                                 const char* table_name_ptr,
