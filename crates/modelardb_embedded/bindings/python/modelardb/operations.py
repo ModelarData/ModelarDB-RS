@@ -685,7 +685,7 @@ class Operations:
 
         :param table_name: The name of the table to optimize.
         :type table_name: str
-        :param target_size_in_bytes: The target file size in bytes. Many small files are compacted
+        :param target_size_in_bytes: The target file size in bytes. Many small files are merged
          into fewer larger files of approximately this size. If `None`, the default target size of
          64 MiB is used.
         :type target_size_in_bytes: int, optional
