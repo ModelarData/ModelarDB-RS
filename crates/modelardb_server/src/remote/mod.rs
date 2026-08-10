@@ -995,11 +995,11 @@ impl FlightService for FlightServiceHandler {
                 Status::invalid_argument(format!("New value for {setting} cannot be null."));
 
             match protocol::update_configuration::Setting::try_from(setting) {
-                Ok(protocol::update_configuration::Setting::MultivariateReservedMemoryInBytes) => {
+                Ok(protocol::update_configuration::Setting::IngestedReservedMemoryInBytes) => {
                     let new_value = maybe_new_value.ok_or(invalid_null_error)?;
 
                     configuration_manager
-                        .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
+                        .set_ingested_reserved_memory_in_bytes(new_value, storage_engine)
                         .await
                         .map_err(error_to_status_internal)
                 }

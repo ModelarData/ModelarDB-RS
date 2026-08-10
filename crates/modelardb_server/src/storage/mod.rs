@@ -86,10 +86,10 @@ impl StorageEngine {
         wal_mode: WalMode,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
     ) -> Result<Self> {
-        // Create shared memory pool.
+        // Create a shared memory pool.
         let configuration_manager = configuration_manager.read().await;
         let memory_pool = Arc::new(MemoryPool::new(
-            configuration_manager.multivariate_reserved_memory_in_bytes(),
+            configuration_manager.ingested_reserved_memory_in_bytes(),
             configuration_manager.uncompressed_reserved_memory_in_bytes(),
             configuration_manager.compressed_reserved_memory_in_bytes(),
         ));
@@ -329,8 +329,8 @@ impl StorageEngine {
         Ok(())
     }
 
-    /// Change the amount of memory for multivariate data in bytes according to `value_change`.
-    pub(super) async fn adjust_multivariate_remaining_memory_in_bytes(&self, value_change: i64) {
+    /// Change the amount of memory for ingested data in bytes according to `value_change`.
+    pub(super) async fn adjust_ingested_remaining_memory_in_bytes(&self, value_change: i64) {
         self.memory_pool.adjust_ingested_memory(value_change)
     }
 

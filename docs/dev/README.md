@@ -18,6 +18,10 @@ exists, e.g., the bug report if it is a bugfix, and as a new GitHub issue otherw
 ## Structure
 The ModelarDB project consists of the following crates and major components:
 
+- [modelardb_auth](/crates/modelardb_auth) - Library providing types to support authentication and authorization in
+  ModelarDB.
+  - **Authenticator** - Defines the `Authenticator` trait for validating credentials and authorizing access to
+    ModelarDB.
 - [modelardb_bulkloader](/crates/modelardb_bulkloader) - ModelarDB's command-line bulk loader in the form of the binary
 `modelardbb`.
 - [modelardb_client](/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
@@ -37,6 +41,8 @@ data folders from programming languages.
   - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
   - **C-API** - A C-API for using modelardb_embedded from other programming languages through a C-FFI.
   - **ModelarDB** - Module providing functionality for reading from and writing to ModelarDB instances and data folders.
+- [modelardb_macros](/crates/modelardb_macros) - Library providing the procedural macros used throughout ModelarDB.
+    - **Error** - Error type used throughout the crate, a single error type is used for simplicity.
 - [modelardb_server](/crates/modelardb_server) - ModelarDB's DBMS server in the form of the binary `modelardbd`.
   - **Storage** - Manages uncompressed data, compresses uncompressed data, manages compressed data, and writes
   compressed data to Delta Lake.

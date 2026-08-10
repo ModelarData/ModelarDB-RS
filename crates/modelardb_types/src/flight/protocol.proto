@@ -52,8 +52,8 @@ message TableMetadata {
 
 // Configuration of a ModelarDB node.
 message Configuration {
-  // Amount of memory to reserve for storing multivariate time series.
-  uint64 multivariate_reserved_memory_in_bytes = 1;
+  // Amount of memory to reserve for storing ingested time series.
+  uint64 ingested_reserved_memory_in_bytes = 1;
 
   // Amount of memory to reserve for storing uncompressed data buffers.
   uint64 uncompressed_reserved_memory_in_bytes = 2;
@@ -93,7 +93,7 @@ message Configuration {
 // Request to update the configuration of a ModelarDB node.
 message UpdateConfiguration {
   enum Setting {
-    MULTIVARIATE_RESERVED_MEMORY_IN_BYTES = 0;
+    INGESTED_RESERVED_MEMORY_IN_BYTES = 0;
     UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES = 1;
     COMPRESSED_RESERVED_MEMORY_IN_BYTES = 2;
     TRANSFER_BATCH_SIZE_IN_BYTES = 3;
