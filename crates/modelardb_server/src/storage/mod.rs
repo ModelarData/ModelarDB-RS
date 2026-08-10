@@ -43,7 +43,7 @@ use crate::configuration::{ConfigurationManager, WalMode};
 use crate::data_folders::DataFolders;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_manager::CompressedDataManager;
-use crate::storage::data_storage_compactor::DataStorageOptimizer;
+use crate::storage::data_storage_compactor::DataStorageCompactor;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message};
 use crate::storage::uncompressed_data_buffer::IngestedDataBuffer;
@@ -148,7 +148,7 @@ impl StorageEngine {
         }
 
         // Create the compressed data manager.
-        let data_storage_optimizer = DataStorageOptimizer::try_new(
+        let data_storage_compactor = DataStorageCompactor::try_new(
             data_folders.local_data_folder.clone(),
             configuration_manager.optimize_target_file_size_in_bytes(),
             configuration_manager.vacuum_retention_period_in_seconds(),
@@ -170,7 +170,7 @@ impl StorageEngine {
         };
 
         let compressed_data_manager = Arc::new(CompressedDataManager::new(
-            Arc::new(RwLock::new(data_storage_optimizer)),
+            Arc::new(RwLock::new(data_storage_compactor)),
             Arc::new(RwLock::new(data_transfer)),
             data_folders.local_data_folder,
             channels.clone(),
@@ -399,20 +399,20 @@ impl StorageEngine {
         }
     }
 
-    /// Set the target file size used when automatically optimizing a table's storage to `new_value`.
+    /// Set the target file size used when automatically compacting a table's storage to `new_value`.
     pub(super) async fn set_optimize_target_file_size_in_bytes(&self, new_value: u64) {
         self.compressed_data_manager
-            .data_storage_optimizer
+            .data_storage_compactor
             .write()
             .await
             .set_optimize_target_file_size_in_bytes(new_value);
     }
 
-    /// Set the retention period used when automatically vacuuming a table after optimization to
+    /// Set the retention period used when automatically vacuuming a table during compaction to
     /// `new_value`.
     pub(super) async fn set_vacuum_retention_period_in_seconds(&self, new_value: u64) {
         self.compressed_data_manager
-            .data_storage_optimizer
+            .data_storage_compactor
             .write()
             .await
             .set_vacuum_retention_period_in_seconds(new_value);
