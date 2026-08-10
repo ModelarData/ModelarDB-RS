@@ -29,7 +29,7 @@ use tracing::{debug, error, info};
 use crate::configuration::WalMode;
 use crate::error::Result;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
-use crate::storage::data_storage_compactor::DataStorageOptimizer;
+use crate::storage::data_storage_compactor::DataStorageCompactor;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
 use crate::storage::types::{Channels, MemoryPool};
@@ -37,9 +37,9 @@ use crate::storage::types::{Channels, MemoryPool};
 /// Stores data points compressed as segments containing metadata and models in memory to batch the
 /// compressed segments before saving them to Apache Parquet files.
 pub(super) struct CompressedDataManager {
-    /// Component that compacts the small compressed files that accumulate for a table into fewer
-    /// larger files and vacuums the files left behind by the compaction.
-    pub(super) data_storage_optimizer: Arc<RwLock<DataStorageOptimizer>>,
+    /// Component that compacts a table by merging the small compressed files that accumulate for it
+    /// into fewer larger files and vacuuming the files left behind.
+    pub(super) data_storage_compactor: Arc<RwLock<DataStorageCompactor>>,
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
     /// Folder containing all compressed data managed by the [`StorageEngine`](crate::storage::StorageEngine).
@@ -61,7 +61,7 @@ pub(super) struct CompressedDataManager {
 
 impl CompressedDataManager {
     pub(super) fn new(
-        data_storage_optimizer: Arc<RwLock<DataStorageOptimizer>>,
+        data_storage_compactor: Arc<RwLock<DataStorageCompactor>>,
         data_transfer: Arc<RwLock<Option<DataTransfer>>>,
         local_data_folder: DataFolder,
         channels: Arc<Channels>,
@@ -69,7 +69,7 @@ impl CompressedDataManager {
         wal_mode: WalMode,
     ) -> Self {
         Self {
-            data_storage_optimizer,
+            data_storage_compactor,
             data_transfer,
             local_data_folder,
             compressed_data_buffers: DashMap::new(),
@@ -293,9 +293,9 @@ impl CompressedDataManager {
             self.memory_pool.remaining_compressed_memory_in_bytes()
         );
 
-        // Optimize how the compressed data for table_name is stored on disk once enough new data
-        // has been written since the last optimization.
-        self.data_storage_optimizer
+        // Compact the compressed data for table_name on disk once enough new data has been written
+        // since the last compaction.
+        self.data_storage_compactor
             .read()
             .await
             .increase_estimated_compactable_size(table_name, compressed_data_buffer_size_in_bytes)
@@ -594,7 +594,7 @@ mod tests {
                 .unwrap(),
         ));
 
-        let optimizer = DataStorageOptimizer::try_new(
+        let compactor = DataStorageCompactor::try_new(
             local_data_folder.clone(),
             64 * 1024 * 1024,
             60 * 60 * 24 * 7,
@@ -605,7 +605,7 @@ mod tests {
         (
             temp_dir,
             CompressedDataManager::new(
-                Arc::new(RwLock::new(optimizer)),
+                Arc::new(RwLock::new(compactor)),
                 Arc::new(RwLock::new(None)),
                 local_data_folder,
                 channels,
