@@ -795,7 +795,7 @@ mod tests {
         );
         assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 3);
 
-        // Optimize compacts the small files into one, and vacuum physically deletes the stale files
+        // Optimize merges the small files into one, and vacuum physically deletes the stale files
         // left behind. Vacuum should only remove Parquet data files, never the _delta_log commits.
         data_folder
             .optimize_table(TIME_SERIES_TABLE_NAME, None)
@@ -806,7 +806,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Only the single compacted Parquet file should remain on disk.
+        // Only the single merged Parquet file should remain on disk.
         assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 1);
 
         // Rebuilding the WAL from the same folder must still recover every persisted batch id from

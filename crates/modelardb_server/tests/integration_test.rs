@@ -831,7 +831,7 @@ async fn test_can_optimize_normal_table() {
     .await;
 
     // ingest_time_series_and_flush_data() writes one file. Ingest and flush three more times so
-    // there are four small files to compact.
+    // there are four small files to merge.
     for _ in 0..3 {
         let flight_data = TestContext::create_flight_data_from_time_series(
             NORMAL_TABLE_NAME.to_owned(),
@@ -886,7 +886,7 @@ async fn test_can_optimize_time_series_table() {
     .await;
 
     // ingest_time_series_and_flush_data() writes one file per field column partition. ingest and
-    // flush three more times so each partition has four small files to compact.
+    // flush three more times so each partition has four small files to merge.
     for _ in 0..3 {
         let flight_data = TestContext::create_flight_data_from_time_series(
             TIME_SERIES_TABLE_NAME.to_owned(),
@@ -921,7 +921,7 @@ async fn test_can_optimize_time_series_table() {
         .await
         .unwrap();
 
-    // The four files in the partition should be compacted into a single active file.
+    // The four files in the partition should be merged into a single active file.
     let files = std::fs::read_dir(&column_path).unwrap();
     assert_eq!(files.count(), 1);
 }
