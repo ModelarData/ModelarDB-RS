@@ -84,13 +84,13 @@ pub(crate) struct ServerArgs {
     #[arg(long, env = "MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES")]
     segment_size_threshold_in_bytes: Option<u64>,
 
-    /// Target size, in bytes, of the files produced when automatically optimizing a table's
+    /// Target size, in bytes, of the files produced when automatically compacting a table's
     /// storage. This is also the default value used when an OPTIMIZE query is executed without an
     /// explicit target size.
     #[arg(long, env = "MODELARDBD_OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES")]
     optimize_target_file_size_in_bytes: Option<u64>,
 
-    /// Retention period, in seconds, used when automatically vacuuming a table after optimization.
+    /// Retention period, in seconds, used when automatically vacuuming a table during compaction.
     /// This is also the default value used when a VACUUM query is executed without an explicit
     /// retention period. Note that a very low value can delete files an in-progress query is still
     /// scanning.

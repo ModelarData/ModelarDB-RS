@@ -64,11 +64,11 @@ struct Configuration {
     /// The approximate maximum size, in bytes, of a single WAL segment file before it is closed and
     /// a new one is started.
     segment_size_threshold_in_bytes: u64,
-    /// Target size, in bytes, of the files produced when automatically optimizing a table's
+    /// Target size, in bytes, of the files produced when automatically compacting a table's
     /// storage. This is also the default value used when an OPTIMIZE query is executed without an
     /// explicit target size.
     optimize_target_file_size_in_bytes: u64,
-    /// Retention period, in seconds, used when automatically vacuuming a table after optimization.
+    /// Retention period, in seconds, used when automatically vacuuming a table during compaction.
     /// This is also the default value used when a VACUUM query is executed without an explicit
     /// retention period.
     vacuum_retention_period_in_seconds: u64,
@@ -424,7 +424,7 @@ impl ConfigurationManager {
         self.configuration.optimize_target_file_size_in_bytes
     }
 
-    /// Set the target file size used by the data storage optimizer and as the default for OPTIMIZE
+    /// Set the target file size used by the data storage compactor and as the default for OPTIMIZE
     /// queries without an explicit target size. If the new value is zero or the new configuration
     /// could not be saved to the configuration file, return [`ModelarDbServerError`].
     pub(crate) async fn set_optimize_target_file_size_in_bytes(
@@ -456,7 +456,7 @@ impl ConfigurationManager {
         self.configuration.vacuum_retention_period_in_seconds
     }
 
-    /// Set the retention period used by the data storage optimizer and as the default for VACUUM
+    /// Set the retention period used by the data storage compactor and as the default for VACUUM
     /// queries without an explicit retention period. If the new value is larger than
     /// [`MAX_RETENTION_PERIOD_IN_SECONDS`] or the new configuration could not be saved to the
     /// configuration file, return [`ModelarDbServerError`].
