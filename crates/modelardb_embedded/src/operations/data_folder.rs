@@ -540,7 +540,7 @@ impl Operations for DataFolder {
         }
     }
 
-    /// Optimize the table with the name in `table_name` by compacting its many small files into
+    /// Optimize the table with the name in `table_name` by merging its many small files into
     /// fewer larger files of approximately `maybe_target_size_in_bytes` bytes. If a target size is
     /// not given, the default target size of 64 MiB is used. If the table does not exist, the table
     /// could not be optimized, or the target size is zero, [`ModelarDbEmbeddedError`] is returned.
@@ -2314,7 +2314,7 @@ mod tests {
 
         data_folder.optimize(NORMAL_TABLE_NAME, None).await.unwrap();
 
-        // The small files should be compacted into a single active file.
+        // The small files should be merged into a single active file.
         let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
     }
@@ -2343,7 +2343,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The files in each of the two partitions should be compacted into a single active file.
+        // The files in each of the two partitions should be merged into a single active file.
         let delta_table = data_folder
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await

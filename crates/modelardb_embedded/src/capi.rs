@@ -1007,7 +1007,7 @@ unsafe fn vacuum(
 }
 
 /// Optimizes the table with the name in `table_name_ptr` in the [`DataFolder`] or [`Client`] in
-/// `maybe_operations_ptr` by compacting its many small files into fewer larger files of
+/// `maybe_operations_ptr` by merging its many small files into fewer larger files of
 /// approximately `target_size_in_bytes_ptr` bytes. Assumes `maybe_operations_ptr` points to a
 /// [`DataFolder`] or [`Client`]; `table_name_ptr` points to a valid C string; and
 /// `target_size_in_bytes_ptr` points to a valid `u64`, or is null to use the default target size.
