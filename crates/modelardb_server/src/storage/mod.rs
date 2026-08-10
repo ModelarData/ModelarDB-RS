@@ -24,7 +24,7 @@
 mod compressed_data_buffer;
 mod compressed_data_manager;
 pub(super) mod data_sinks; // pub(super) so it can be used in context.rs.
-mod data_storage_optimizer;
+mod data_storage_compactor;
 mod data_transfer;
 mod types;
 mod uncompressed_data_buffer;
@@ -43,7 +43,7 @@ use crate::configuration::{ConfigurationManager, WalMode};
 use crate::data_folders::DataFolders;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::compressed_data_manager::CompressedDataManager;
-use crate::storage::data_storage_optimizer::DataStorageOptimizer;
+use crate::storage::data_storage_compactor::DataStorageOptimizer;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message};
 use crate::storage::uncompressed_data_buffer::IngestedDataBuffer;

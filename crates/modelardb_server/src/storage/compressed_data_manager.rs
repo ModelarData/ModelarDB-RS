@@ -29,7 +29,7 @@ use tracing::{debug, error, info};
 use crate::configuration::WalMode;
 use crate::error::Result;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
-use crate::storage::data_storage_optimizer::DataStorageOptimizer;
+use crate::storage::data_storage_compactor::DataStorageOptimizer;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
 use crate::storage::types::{Channels, MemoryPool};
