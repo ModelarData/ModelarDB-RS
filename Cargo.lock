@@ -3599,6 +3599,7 @@ dependencies = [
  "serde",
  "snmalloc-rs",
  "sqlparser",
+ "sysinfo",
  "tempfile",
  "tokio",
  "tokio-stream",
