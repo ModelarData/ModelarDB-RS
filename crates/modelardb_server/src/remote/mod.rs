@@ -1106,25 +1106,13 @@ impl FlightService for FlightServiceHandler {
             }))))
         } else if action.r#type == "ListNodes" {
             let configuration_manager = self.context.configuration_manager.read().await;
+            let nodes = configuration_manager
+                .cluster_mode()
+                .nodes()
+                .await
+                .map_err(error_to_status_internal)?;
 
-            let nodes = match configuration_manager.cluster_mode() {
-                ClusterMode::MultiNode(cluster) => {
-                    cluster.nodes().await.map_err(error_to_status_internal)?
-                }
-                ClusterMode::SingleNode(node) => vec![node.clone()],
-            };
-
-            let cluster_nodes = protocol::ClusterNodes {
-                nodes: nodes
-                    .into_iter()
-                    .map(|node| protocol::NodeMetadata {
-                        url: node.url,
-                        mode: node.mode.to_string(),
-                    })
-                    .collect(),
-            };
-
-            let protobuf_bytes = cluster_nodes.encode_to_vec();
+            let protobuf_bytes = modelardb_types::flight::encode_and_serialize_cluster_nodes(nodes);
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {

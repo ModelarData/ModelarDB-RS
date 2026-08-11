@@ -28,7 +28,7 @@ use prost::bytes::Bytes;
 
 use crate::error::{ModelarDbTypesError, Result};
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use crate::types::{ErrorBound, GeneratedColumn, Table, TimeSeriesTableMetadata};
+use crate::types::{ErrorBound, GeneratedColumn, Node, Table, TimeSeriesTableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
@@ -192,6 +192,21 @@ fn decode_error_bounds(
     }
 
     Ok(error_bounds)
+}
+
+/// Encode `nodes` into a [`ClusterNodes`](protocol::ClusterNodes) protobuf message and serialize it.
+pub fn encode_and_serialize_cluster_nodes(nodes: Vec<Node>) -> Vec<u8> {
+    let cluster_nodes = protocol::ClusterNodes {
+        nodes: nodes
+            .into_iter()
+            .map(|node| protocol::NodeMetadata {
+                url: node.url,
+                mode: node.mode.to_string(),
+            })
+            .collect(),
+    };
+
+    cluster_nodes.encode_to_vec()
 }
 
 /// Decode the generated column expressions from a vector of byte expressions into a vector of

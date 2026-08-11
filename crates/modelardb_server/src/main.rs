@@ -45,6 +45,18 @@ pub(crate) enum ClusterMode {
     MultiNode(Box<Cluster>),
 }
 
+impl ClusterMode {
+    /// Return all nodes in the deployment. A single node returns only itself, while a node in a
+    /// cluster returns every node in the cluster. If the nodes could not be retrieved, return
+    /// [`ModelarDbServerError`](error::ModelarDbServerError).
+    pub(crate) async fn nodes(&self) -> Result<Vec<Node>> {
+        match self {
+            ClusterMode::SingleNode(node) => Ok(vec![node.clone()]),
+            ClusterMode::MultiNode(cluster) => cluster.nodes().await,
+        }
+    }
+}
+
 /// Command line arguments for the ModelarDB server.
 #[derive(Parser)]
 #[command(
