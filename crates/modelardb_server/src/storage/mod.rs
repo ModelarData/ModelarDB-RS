@@ -357,6 +357,21 @@ impl StorageEngine {
             .await
     }
 
+    /// Return the amount of memory available for ingested data in bytes.
+    pub(super) fn remaining_ingested_memory_in_bytes(&self) -> i64 {
+        self.memory_pool.remaining_ingested_memory_in_bytes()
+    }
+
+    /// Return the amount of memory available for uncompressed data in bytes.
+    pub(super) fn remaining_uncompressed_memory_in_bytes(&self) -> i64 {
+        self.memory_pool.remaining_uncompressed_memory_in_bytes()
+    }
+
+    /// Return the amount of memory available for compressed data in bytes.
+    pub(super) fn remaining_compressed_memory_in_bytes(&self) -> i64 {
+        self.memory_pool.remaining_compressed_memory_in_bytes()
+    }
+
     /// Mark the table with `table_name` as dropped in the data transfer component. This will prevent
     /// data related to the table from being transferred to the remote data folder.
     pub(super) async fn mark_table_as_dropped(&self, table_name: &str) {
