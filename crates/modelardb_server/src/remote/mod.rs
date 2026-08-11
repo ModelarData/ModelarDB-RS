@@ -922,6 +922,9 @@ impl FlightService for FlightServiceHandler {
     /// and the change is persisted in the configuration file.
     /// * `NodeType`: Get the type of the node. The type is `SingleEdge`, `ClusterEdge`, or
     /// `ClusterCloud`. The type of the node is returned as a string.
+    /// * `ListNodes`: Get the nodes that are currently part of the cluster. The nodes are returned
+    /// in a [`ClusterNodes`](protocol::ClusterNodes) protobuf message. A single node returns only
+    /// itself.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -1097,6 +1100,33 @@ impl FlightService for FlightServiceHandler {
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(flight_result)
+            }))))
+        } else if action.r#type == "ListNodes" {
+            let configuration_manager = self.context.configuration_manager.read().await;
+
+            let nodes = match configuration_manager.cluster_mode() {
+                ClusterMode::MultiNode(cluster) => {
+                    cluster.nodes().await.map_err(error_to_status_internal)?
+                }
+                ClusterMode::SingleNode(node) => vec![node.clone()],
+            };
+
+            let cluster_nodes = protocol::ClusterNodes {
+                nodes: nodes
+                    .into_iter()
+                    .map(|node| protocol::NodeMetadata {
+                        url: node.url,
+                        mode: node.mode.to_string(),
+                    })
+                    .collect(),
+            };
+
+            let protobuf_bytes = cluster_nodes.encode_to_vec();
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: protobuf_bytes.into(),
+                })
             }))))
         } else {
             Err(Status::unimplemented("Action not implemented."))
