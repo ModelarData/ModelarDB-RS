@@ -369,7 +369,7 @@ impl Cluster {
     /// Return all nodes in the cluster except the node that was saved when the [`Cluster`] was
     /// created. If the nodes could not be retrieved, return [`ModelarDbServerError`].
     async fn peer_nodes(&self) -> Result<Vec<Node>> {
-        let nodes = self.remote_data_folder.nodes().await?;
+        let nodes = self.nodes().await?;
 
         Ok(nodes
             .into_iter()
