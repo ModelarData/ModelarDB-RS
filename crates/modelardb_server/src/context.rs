@@ -525,8 +525,6 @@ impl Context {
         let compressed_reserved_memory_in_bytes =
             configuration_manager.compressed_reserved_memory_in_bytes();
 
-        // The storage engine only tracks how much reserved memory remains, and that value can go
-        // negative when it is temporarily over budget, so the used memory is clamped to zero.
         let ingested_used_memory_in_bytes = (ingested_reserved_memory_in_bytes as i64
             - storage_engine.remaining_ingested_memory_in_bytes())
         .max(0) as u64;
