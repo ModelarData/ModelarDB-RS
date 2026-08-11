@@ -26,36 +26,16 @@ mod storage;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use modelardb_types::types::{CloudCredentials, Node};
+use modelardb_types::types::CloudCredentials;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::cluster::Cluster;
+use crate::cluster::ClusterMode;
 use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::Result;
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
-
-/// The different possible modes that a ModelarDB server can be deployed in, assigned when the
-/// server is started.
-#[derive(Clone)]
-pub(crate) enum ClusterMode {
-    SingleNode(Node),
-    MultiNode(Box<Cluster>),
-}
-
-impl ClusterMode {
-    /// Return all nodes in the deployment. A single node returns only itself, while a node in a
-    /// cluster returns every node in the cluster. If the nodes could not be retrieved, return
-    /// [`ModelarDbServerError`](error::ModelarDbServerError).
-    pub(crate) async fn nodes(&self) -> Result<Vec<Node>> {
-        match self {
-            ClusterMode::SingleNode(node) => Ok(vec![node.clone()]),
-            ClusterMode::MultiNode(cluster) => cluster.nodes().await,
-        }
-    }
-}
 
 /// Command line arguments for the ModelarDB server.
 #[derive(Parser)]

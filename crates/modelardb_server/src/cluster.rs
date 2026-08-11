@@ -36,6 +36,26 @@ use tonic::transport::Endpoint;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 
+/// The different possible modes that a ModelarDB server can be deployed in, assigned when the
+/// server is started.
+#[derive(Clone)]
+pub(crate) enum ClusterMode {
+    SingleNode(Node),
+    MultiNode(Box<Cluster>),
+}
+
+impl ClusterMode {
+    /// Return all nodes in the deployment. A single node returns only itself, while a node in a
+    /// cluster returns every node in the cluster. If the nodes could not be retrieved, return
+    /// [`ModelarDbServerError`].
+    pub(crate) async fn nodes(&self) -> Result<Vec<Node>> {
+        match self {
+            ClusterMode::SingleNode(node) => Ok(vec![node.clone()]),
+            ClusterMode::MultiNode(cluster) => cluster.nodes().await,
+        }
+    }
+}
+
 /// Stores the node that represents the local system and allows for performing operations that need
 /// to be applied to every peer node in the cluster.
 #[derive(Clone)]
