@@ -20,7 +20,9 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::SchemaProvider;
+use modelardb_types::flight::protocol;
 use modelardb_types::types::TimeSeriesTableMetadata;
+use sysinfo::{Disks, System};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -490,6 +492,89 @@ impl Context {
         })?;
 
         Ok(schema)
+    }
+
+    /// Collect the current resource usage metrics of the node, including CPU, memory, disk, and
+    /// storage engine memory usage.
+    pub(crate) async fn node_metrics(&self) -> protocol::NodeMetrics {
+        let mut system = System::new();
+
+        // Sample the CPU twice, separated by the minimum update interval, since a single refresh
+        // reads zero.
+        system.refresh_cpu_usage();
+        tokio::time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
+        system.refresh_cpu_usage();
+
+        let cpu_usage_percentage = system.global_cpu_usage() as f64;
+        let cpu_count = system.cpus().len() as u32;
+
+        system.refresh_memory();
+        let used_memory_in_bytes = system.used_memory();
+        let total_memory_in_bytes = system.total_memory();
+
+        let (used_disk_space_in_bytes, total_disk_space_in_bytes) =
+            self.local_data_folder_disk_space();
+
+        let configuration_manager = self.configuration_manager.read().await;
+        let storage_engine = self.storage_engine.read().await;
+
+        let ingested_reserved_memory_in_bytes =
+            configuration_manager.ingested_reserved_memory_in_bytes();
+        let uncompressed_reserved_memory_in_bytes =
+            configuration_manager.uncompressed_reserved_memory_in_bytes();
+        let compressed_reserved_memory_in_bytes =
+            configuration_manager.compressed_reserved_memory_in_bytes();
+
+        // The storage engine only tracks how much reserved memory remains, and that value can go
+        // negative when it is temporarily over budget, so the used memory is clamped to zero.
+        let ingested_used_memory_in_bytes = (ingested_reserved_memory_in_bytes as i64
+            - storage_engine.remaining_ingested_memory_in_bytes())
+        .max(0) as u64;
+        let uncompressed_used_memory_in_bytes = (uncompressed_reserved_memory_in_bytes as i64
+            - storage_engine.remaining_uncompressed_memory_in_bytes())
+        .max(0) as u64;
+        let compressed_used_memory_in_bytes = (compressed_reserved_memory_in_bytes as i64
+            - storage_engine.remaining_compressed_memory_in_bytes())
+        .max(0) as u64;
+
+        protocol::NodeMetrics {
+            cpu_usage_percentage,
+            cpu_count,
+            used_memory_in_bytes,
+            total_memory_in_bytes,
+            used_disk_space_in_bytes,
+            total_disk_space_in_bytes,
+            ingested_used_memory_in_bytes,
+            ingested_reserved_memory_in_bytes,
+            uncompressed_used_memory_in_bytes,
+            uncompressed_reserved_memory_in_bytes,
+            compressed_used_memory_in_bytes,
+            compressed_reserved_memory_in_bytes,
+        }
+    }
+
+    /// Return the used and total disk space in bytes for the disk holding the local data folder.
+    /// The disk is identified by finding the mounted disk whose mount point is the longest prefix
+    /// of the local data folder path. If no disk matches, e.g., because the data folder is in
+    /// memory, the largest-capacity disk is used instead. If no disks are found, `(0, 0)` is
+    /// returned.
+    fn local_data_folder_disk_space(&self) -> (u64, u64) {
+        let disks = Disks::new_with_refreshed_list();
+        let location = self.data_folders.local_data_folder.location();
+
+        let maybe_disk = disks
+            .iter()
+            .filter(|disk| location.starts_with(&*disk.mount_point().to_string_lossy()))
+            .max_by_key(|disk| disk.mount_point().as_os_str().len())
+            .or_else(|| disks.iter().max_by_key(|disk| disk.total_space()));
+
+        if let Some(disk) = maybe_disk {
+            let total = disk.total_space();
+            let used = total.saturating_sub(disk.available_space());
+            (used, total)
+        } else {
+            (0, 0)
+        }
     }
 }
 
