@@ -51,6 +51,7 @@ use modelardb_types::flight::protocol;
 use modelardb_types::functions;
 use modelardb_types::types::{ServerMode, Table, TimeSeriesTableMetadata};
 use prost::Message;
+use sysinfo::Disks;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
@@ -289,6 +290,29 @@ pub fn table_name_from_flight_descriptor(
 /// to return.
 fn empty_record_batch_stream() -> SendableRecordBatchStream {
     Box::pin(EmptyRecordBatchStream::new(Arc::new(Schema::empty())))
+}
+
+/// Return the used and total disk space in bytes for the disk holding the local data folder. The
+/// disk is identified by finding the mounted disk whose mount point is the longest prefix of the
+/// local data folder path. If no disk matches, e.g., because the data folder is in memory, the
+/// largest-capacity disk is used instead. If no disks are found, `(0, 0)` is returned.
+fn local_data_folder_disk_space(context: &Context) -> (u64, u64) {
+    let disks = Disks::new_with_refreshed_list();
+    let location = context.data_folders.local_data_folder.location();
+
+    let maybe_disk = disks
+        .iter()
+        .filter(|disk| location.starts_with(&*disk.mount_point().to_string_lossy()))
+        .max_by_key(|disk| disk.mount_point().as_os_str().len())
+        .or_else(|| disks.iter().max_by_key(|disk| disk.total_space()));
+
+    if let Some(disk) = maybe_disk {
+        let total = disk.total_space();
+        let used = total.saturating_sub(disk.available_space());
+        (used, total)
+    } else {
+        (0, 0)
+    }
 }
 
 /// Convert an `error` to a [`Status`] with [`tonic::Code::InvalidArgument`] as the code and `error`
