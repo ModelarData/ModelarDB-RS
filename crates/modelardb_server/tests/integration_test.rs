@@ -988,6 +988,8 @@ async fn test_can_list_actions() {
             "FlushNode",
             "GetConfiguration",
             "KillNode",
+            "ListNodes",
+            "NodeMetrics",
             "NodeType",
             "UpdateConfiguration",
         ]
