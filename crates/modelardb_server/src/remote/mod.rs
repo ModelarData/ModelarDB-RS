@@ -51,7 +51,7 @@ use modelardb_types::flight::protocol;
 use modelardb_types::functions;
 use modelardb_types::types::{ServerMode, Table, TimeSeriesTableMetadata};
 use prost::Message;
-use sysinfo::Disks;
+use sysinfo::{Disks, System};
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
@@ -925,6 +925,9 @@ impl FlightService for FlightServiceHandler {
     /// * `ListNodes`: Get the nodes that are currently part of the cluster. The nodes are returned
     /// in a [`ClusterNodes`](protocol::ClusterNodes) protobuf message. A single node returns only
     /// itself.
+    /// * `NodeMetrics`: Get the current resource usage metrics of the node, including CPU, memory,
+    /// disk, and storage engine memory usage. The metrics are returned in a
+    /// [`NodeMetrics`](protocol::NodeMetrics) protobuf message.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -1122,6 +1125,69 @@ impl FlightService for FlightServiceHandler {
             };
 
             let protobuf_bytes = cluster_nodes.encode_to_vec();
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: protobuf_bytes.into(),
+                })
+            }))))
+        } else if action.r#type == "NodeMetrics" {
+            let mut system = System::new();
+
+            // Sample the CPU twice, separated by the minimum update interval, since a single
+            // refresh reads zero.
+            system.refresh_cpu_usage();
+            tokio::time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
+            system.refresh_cpu_usage();
+
+            let cpu_usage_percentage = system.global_cpu_usage() as f64;
+            let cpu_count = system.cpus().len() as u32;
+
+            system.refresh_memory();
+            let used_memory_in_bytes = system.used_memory();
+            let total_memory_in_bytes = system.total_memory();
+
+            let (used_disk_space_in_bytes, total_disk_space_in_bytes) =
+                local_data_folder_disk_space(&self.context);
+
+            // Pair each reserved value from the configuration with the remaining value from the
+            // storage engine to compute how much of the reservation is currently in use.
+            let configuration_manager = self.context.configuration_manager.read().await;
+            let storage_engine = self.context.storage_engine.read().await;
+
+            let ingested_reserved_memory_in_bytes =
+                configuration_manager.ingested_reserved_memory_in_bytes();
+            let uncompressed_reserved_memory_in_bytes =
+                configuration_manager.uncompressed_reserved_memory_in_bytes();
+            let compressed_reserved_memory_in_bytes =
+                configuration_manager.compressed_reserved_memory_in_bytes();
+
+            let ingested_used_memory_in_bytes = (ingested_reserved_memory_in_bytes as i64
+                - storage_engine.remaining_ingested_memory_in_bytes())
+            .max(0) as u64;
+            let uncompressed_used_memory_in_bytes = (uncompressed_reserved_memory_in_bytes as i64
+                - storage_engine.remaining_uncompressed_memory_in_bytes())
+            .max(0) as u64;
+            let compressed_used_memory_in_bytes = (compressed_reserved_memory_in_bytes as i64
+                - storage_engine.remaining_compressed_memory_in_bytes())
+            .max(0) as u64;
+
+            let node_metrics = protocol::NodeMetrics {
+                cpu_usage_percentage,
+                cpu_count,
+                used_memory_in_bytes,
+                total_memory_in_bytes,
+                used_disk_space_in_bytes,
+                total_disk_space_in_bytes,
+                ingested_used_memory_in_bytes,
+                ingested_reserved_memory_in_bytes,
+                uncompressed_used_memory_in_bytes,
+                uncompressed_reserved_memory_in_bytes,
+                compressed_used_memory_in_bytes,
+                compressed_reserved_memory_in_bytes,
+            };
+
+            let protobuf_bytes = node_metrics.encode_to_vec();
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
