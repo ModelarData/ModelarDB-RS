@@ -1246,6 +1246,16 @@ impl FlightService for FlightServiceHandler {
             description: "Get the type of the node.".to_owned(),
         };
 
+        let list_nodes_action = ActionType {
+            r#type: "ListNodes".to_owned(),
+            description: "Get the nodes that are currently part of the cluster.".to_owned(),
+        };
+
+        let node_metrics_action = ActionType {
+            r#type: "NodeMetrics".to_owned(),
+            description: "Get the current resource usage metrics of the node.".to_owned(),
+        };
+
         let output = stream::iter(vec![
             Ok(create_tables_action),
             Ok(flush_memory_action),
@@ -1254,6 +1264,8 @@ impl FlightService for FlightServiceHandler {
             Ok(get_configuration_action),
             Ok(update_configuration_action),
             Ok(node_type_action),
+            Ok(list_nodes_action),
+            Ok(node_metrics_action),
         ]);
 
         Ok(Response::new(Box::pin(output)))
