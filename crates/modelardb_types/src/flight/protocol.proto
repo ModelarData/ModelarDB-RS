@@ -123,3 +123,41 @@ message ClusterNodes {
   repeated NodeMetadata nodes = 1;
 }
 
+// Resource usage metrics for a single ModelarDB node.
+message NodeMetrics {
+  // Percentage of the CPU that is currently in use across all cores.
+  double cpu_usage_percentage = 1;
+
+  // Number of logical CPUs available to the node.
+  uint32 cpu_count = 2;
+
+  // Amount of memory currently in use on the node.
+  uint64 used_memory_in_bytes = 3;
+
+  // Total amount of memory on the node.
+  uint64 total_memory_in_bytes = 4;
+
+  // Amount of disk space currently in use on the disk holding the local data folder.
+  uint64 used_disk_space_in_bytes = 5;
+
+  // Total amount of disk space on the disk holding the local data folder.
+  uint64 total_disk_space_in_bytes = 6;
+
+  // Amount of memory currently in use for storing ingested time series.
+  uint64 ingested_used_memory_in_bytes = 7;
+
+  // Total amount of memory reserved for storing ingested time series.
+  uint64 ingested_reserved_memory_in_bytes = 8;
+
+  // Amount of memory currently in use for storing uncompressed data buffers.
+  uint64 uncompressed_used_memory_in_bytes = 9;
+
+  // Total amount of memory reserved for storing uncompressed data buffers.
+  uint64 uncompressed_reserved_memory_in_bytes = 10;
+
+  // Amount of memory currently in use for storing compressed data buffers.
+  uint64 compressed_used_memory_in_bytes = 11;
+
+  // Total amount of memory reserved for storing compressed data buffers.
+  uint64 compressed_reserved_memory_in_bytes = 12;
+}
