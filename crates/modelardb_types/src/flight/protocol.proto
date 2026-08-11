@@ -108,3 +108,18 @@ message UpdateConfiguration {
   // New value for the setting.
   optional uint64 new_value = 2;
 }
+
+// Metadata identifying a single node in a ModelarDB cluster.
+message NodeMetadata {
+  // Apache Arrow Flight URL that uniquely identifies the node.
+  string url = 1;
+
+  // Mode the node was started in, either "edge" or "cloud".
+  string mode = 2;
+}
+
+// The nodes that are currently part of a ModelarDB cluster.
+message ClusterNodes {
+  repeated NodeMetadata nodes = 1;
+}
+
