@@ -357,6 +357,15 @@ impl Cluster {
         Ok(url.to_owned())
     }
 
+    /// Return all nodes currently in the cluster. If the nodes could not be retrieved, return
+    /// [`ModelarDbServerError`].
+    pub(crate) async fn nodes(&self) -> Result<Vec<Node>> {
+        self.remote_data_folder
+            .nodes()
+            .await
+            .map_err(|error| error.into())
+    }
+
     /// Return all nodes in the cluster except the node that was saved when the [`Cluster`] was
     /// created. If the nodes could not be retrieved, return [`ModelarDbServerError`].
     async fn peer_nodes(&self) -> Result<Vec<Node>> {
