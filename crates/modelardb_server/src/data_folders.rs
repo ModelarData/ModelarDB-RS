@@ -18,8 +18,8 @@
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::types::{Node, ServerMode};
 
-use crate::cluster::Cluster;
-use crate::{ClusterMode, Result, ServerMode as ServerModeArg};
+use crate::cluster::{Cluster, ClusterMode};
+use crate::{Result, ServerMode as ServerModeArg};
 
 /// Folders for storing metadata and data in Apache Parquet files locally and remotely.
 #[derive(Clone)]

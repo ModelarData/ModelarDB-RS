@@ -24,11 +24,12 @@ use modelardb_types::types::TimeSeriesTableMetadata;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use crate::cluster::ClusterMode;
 use crate::configuration::{ConfigurationManager, WalMode};
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
 use crate::storage::data_sinks::{NormalTableDataSink, TimeSeriesTableDataSink};
-use crate::{ClusterMode, DataFolders, ServerArgs};
+use crate::{DataFolders, ServerArgs};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {

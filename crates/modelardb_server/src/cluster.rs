@@ -514,8 +514,8 @@ mod test {
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ServerMode};
     use tempfile::TempDir;
 
+    use crate::ServerArgs;
     use crate::data_folders::DataFolders;
-    use crate::{ClusterMode, ServerArgs};
 
     // Tests for Cluster.
     #[tokio::test]
