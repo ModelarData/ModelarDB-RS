@@ -83,7 +83,7 @@ pub async fn start_apache_arrow_flight_server(
 
     let maybe_cluster_key = match context.configuration_manager.read().await.cluster_mode() {
         ClusterMode::MultiNode(cluster) => Some(cluster.key().clone()),
-        ClusterMode::SingleNode => None,
+        ClusterMode::SingleNode(_) => None,
     };
 
     let auth_layer = AuthLayer::new(maybe_authenticator, maybe_cluster_key);
@@ -1060,7 +1060,7 @@ impl FlightService for FlightServiceHandler {
             let configuration_manager = self.context.configuration_manager.read().await;
 
             let node_type = match configuration_manager.cluster_mode() {
-                ClusterMode::SingleNode => "SingleEdge",
+                ClusterMode::SingleNode(_) => "SingleEdge",
                 ClusterMode::MultiNode(cluster) => match cluster.node().mode {
                     ServerMode::Edge => "ClusterEdge",
                     ServerMode::Cloud => "ClusterCloud",

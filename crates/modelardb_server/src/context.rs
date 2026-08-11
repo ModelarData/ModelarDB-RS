@@ -504,7 +504,7 @@ mod tests {
     use clap::Parser;
     use modelardb_storage::data_folder::DataFolder;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
-    use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
+    use modelardb_types::types::{MAX_RETENTION_PERIOD_IN_SECONDS, Node, ServerMode};
     use tempfile::TempDir;
 
     // Tests for Context.
@@ -1162,11 +1162,12 @@ mod tests {
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+        let node = Node::new("edge".to_owned(), ServerMode::Edge);
 
         Arc::new(
             Context::try_new(
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
-                ClusterMode::SingleNode,
+                ClusterMode::SingleNode(node),
                 &ServerArgs::parse_from(["modelardbd", "edge", "data"]),
             )
             .await

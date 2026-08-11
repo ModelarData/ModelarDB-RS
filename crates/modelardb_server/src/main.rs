@@ -26,7 +26,7 @@ mod storage;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use modelardb_types::types::CloudCredentials;
+use modelardb_types::types::{CloudCredentials, Node};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
@@ -41,7 +41,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 /// server is started.
 #[derive(Clone)]
 pub(crate) enum ClusterMode {
-    SingleNode,
+    SingleNode(Node),
     MultiNode(Box<Cluster>),
 }
 

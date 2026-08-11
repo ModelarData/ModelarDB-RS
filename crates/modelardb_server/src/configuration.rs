@@ -602,9 +602,10 @@ mod tests {
             .await
             .unwrap();
 
+        let node = Node::new("edge".to_owned(), ServerMode::Edge);
         let result = ConfigurationManager::try_new(
             local_data_folder,
-            ClusterMode::SingleNode,
+            ClusterMode::SingleNode(node),
             &default_args(),
         )
         .await;
@@ -625,9 +626,10 @@ mod tests {
         let path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
         std::fs::write(path, "invalid_toml").unwrap();
 
+        let node = Node::new("edge".to_owned(), ServerMode::Edge);
         let result = ConfigurationManager::try_new(
             local_data_folder,
-            ClusterMode::SingleNode,
+            ClusterMode::SingleNode(node),
             &default_args(),
         )
         .await;
