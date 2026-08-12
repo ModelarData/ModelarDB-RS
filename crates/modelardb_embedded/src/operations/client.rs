@@ -170,6 +170,32 @@ impl Client {
 
         Ok(response.into_inner())
     }
+
+    /// Returns the URL of the cloud node that the node assigns to execute the SQL in `sql`. If the
+    /// node is not running in a cluster, or a cloud node could not be assigned,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    pub async fn cloud_query_node(&mut self, sql: &str) -> Result<String> {
+        let flight_descriptor = FlightDescriptor::new_cmd(sql.to_owned());
+        let flight_info = self
+            .flight_client
+            .get_flight_info(Request::new(flight_descriptor))
+            .await?
+            .into_inner();
+
+        let endpoint = flight_info.endpoint.into_iter().next().ok_or_else(|| {
+            ModelarDbEmbeddedError::InvalidArgument(
+                "The node did not return an endpoint for the query.".to_owned(),
+            )
+        })?;
+
+        let location = endpoint.location.into_iter().next().ok_or_else(|| {
+            ModelarDbEmbeddedError::InvalidArgument(
+                "The endpoint did not return a cloud node location for the query.".to_owned(),
+            )
+        })?;
+
+        Ok(location.uri)
+    }
 }
 
 #[async_trait]
