@@ -35,6 +35,7 @@ use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt, stream};
 use modelardb_auth::BearerInterceptor;
+use prost::bytes::Bytes;
 use tonic::codegen::InterceptedService;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Status};
@@ -64,6 +65,39 @@ impl Client {
         let flight_client = FlightServiceClient::with_interceptor(connection, interceptor);
 
         Ok(Client { flight_client })
+    }
+
+    /// Send the action with the type `action_type` and an empty body to the node. If the action
+    /// could not be performed, [`ModelarDbEmbeddedError`] is returned.
+    async fn run_action(&mut self, action_type: &str) -> Result<()> {
+        let action = Action {
+            r#type: action_type.to_owned(),
+            body: vec![].into(),
+        };
+
+        self.flight_client.do_action(Request::new(action)).await?;
+
+        Ok(())
+    }
+
+    /// Send the action with the type `action_type` and an empty body to the node and return the
+    /// body of the response. If the action could not be performed, [`ModelarDbEmbeddedError`] is
+    /// returned.
+    async fn retrieve_action_bytes(&mut self, action_type: &str) -> Result<Bytes> {
+        let action = Action {
+            r#type: action_type.to_owned(),
+            body: vec![].into(),
+        };
+
+        let response = self.flight_client.do_action(Request::new(action)).await?;
+
+        let message = response
+            .into_inner()
+            .message()
+            .await?
+            .expect("Flight message should exist.");
+
+        Ok(message.body)
     }
 }
 
