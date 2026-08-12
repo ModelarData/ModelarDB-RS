@@ -28,7 +28,7 @@ use arrow::record_batch::RecordBatch;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::encode::FlightDataEncoderBuilder;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{Action, Criteria, FlightDescriptor, Ticket};
+use arrow_flight::{Action, Criteria, FlightDescriptor, Result as FlightResult, Ticket};
 use async_trait::async_trait;
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
@@ -38,7 +38,7 @@ use modelardb_auth::BearerInterceptor;
 use prost::bytes::Bytes;
 use tonic::codegen::InterceptedService;
 use tonic::transport::{Channel, Endpoint};
-use tonic::{Request, Status};
+use tonic::{Request, Status, Streaming};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
@@ -67,32 +67,30 @@ impl Client {
         Ok(Client { flight_client })
     }
 
-    /// Send the action with the type `action_type` and an empty body to the node. If the action
-    /// could not be performed, [`ModelarDbEmbeddedError`] is returned.
-    async fn run_action(&mut self, action_type: &str) -> Result<()> {
+    /// Send the action with the type `action_type` and `body` to the node and return the response
+    /// stream. If the action could not be performed, [`ModelarDbEmbeddedError`] is returned.
+    async fn send_action(
+        &mut self,
+        action_type: &str,
+        body: Vec<u8>,
+    ) -> Result<Streaming<FlightResult>> {
         let action = Action {
             r#type: action_type.to_owned(),
-            body: vec![].into(),
+            body: body.into(),
         };
 
-        self.flight_client.do_action(Request::new(action)).await?;
+        let response = self.flight_client.do_action(Request::new(action)).await?;
 
-        Ok(())
+        Ok(response.into_inner())
     }
 
     /// Send the action with the type `action_type` and an empty body to the node and return the
     /// body of the response. If the action could not be performed, [`ModelarDbEmbeddedError`] is
     /// returned.
     async fn retrieve_action_bytes(&mut self, action_type: &str) -> Result<Bytes> {
-        let action = Action {
-            r#type: action_type.to_owned(),
-            body: vec![].into(),
-        };
-
-        let response = self.flight_client.do_action(Request::new(action)).await?;
+        let mut response = self.send_action(action_type, vec![]).await?;
 
         let message = response
-            .into_inner()
             .message()
             .await?
             .expect("Flight message should exist.");
@@ -110,21 +108,9 @@ impl Operations for Client {
 
     /// Returns the type of the ModelarDB node that the client is connected to.
     async fn modelardb_type(&mut self) -> Result<ModelarDBType> {
-        // Retrieve the node type from the ModelarDB node.
-        let action = Action {
-            r#type: "NodeType".to_owned(),
-            body: vec![].into(),
-        };
+        let bytes = self.retrieve_action_bytes("NodeType").await?;
 
-        let response = self.flight_client.do_action(Request::new(action)).await?;
-
-        let message = response
-            .into_inner()
-            .message()
-            .await?
-            .expect("Flight message should exist.");
-
-        ModelarDBType::from_str(str::from_utf8(&message.body)?)
+        ModelarDBType::from_str(str::from_utf8(&bytes)?)
     }
 
     /// Creates a table with the name in `table_name` and the information in `table_type`. If the
@@ -152,12 +138,7 @@ impl Operations for Client {
             }
         };
 
-        let action = Action {
-            r#type: "CreateTable".to_owned(),
-            body: protobuf_bytes.into(),
-        };
-
-        self.flight_client.do_action(action).await?;
+        self.send_action("CreateTable", protobuf_bytes).await?;
 
         Ok(())
     }
