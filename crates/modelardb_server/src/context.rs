@@ -568,7 +568,7 @@ impl Context {
 
         if let Some(disk) = maybe_disk {
             let total = disk.total_space();
-            let used = total.saturating_sub(disk.available_space());
+            let used = total - disk.available_space();
             (used, total)
         } else {
             (0, 0)
