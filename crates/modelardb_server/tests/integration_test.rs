@@ -40,7 +40,7 @@ use futures::{StreamExt, stream};
 use modelardb_test::data_generation;
 use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
 use modelardb_types::flight::protocol;
-use modelardb_types::types::ErrorBound;
+use modelardb_types::types::{ErrorBound, Node, ServerMode};
 use prost::Message;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -1629,5 +1629,38 @@ async fn test_can_list_nodes() {
             format!("grpc://{HOST}:{}", test_context.port),
             ServerMode::Edge
         )
+    );
+}
+
+#[tokio::test]
+async fn test_can_get_node_metrics() {
+    let mut test_context = TestContext::new().await;
+    let metrics_bytes = test_context.retrieve_action_bytes("NodeMetrics").await;
+    let metrics = protocol::NodeMetrics::decode(metrics_bytes).unwrap();
+
+    // Only stable fields are asserted exactly. CPU usage, used memory, and disk usage vary per run
+    // and per machine.
+    assert!(metrics.cpu_usage_percentage > 0.0);
+    assert!(metrics.cpu_count > 0);
+
+    assert!(metrics.used_memory_in_bytes > 0);
+    assert!(metrics.total_memory_in_bytes > 0);
+
+    assert!(metrics.used_disk_space_in_bytes > 0);
+    assert!(metrics.total_disk_space_in_bytes > 0);
+
+    assert_eq!(metrics.ingested_used_memory_in_bytes, 0);
+    assert_eq!(metrics.ingested_reserved_memory_in_bytes, 512 * 1024 * 1024);
+
+    assert_eq!(metrics.uncompressed_used_memory_in_bytes, 0);
+    assert_eq!(
+        metrics.uncompressed_reserved_memory_in_bytes,
+        512 * 1024 * 1024
+    );
+
+    assert_eq!(metrics.compressed_used_memory_in_bytes, 0);
+    assert_eq!(
+        metrics.compressed_reserved_memory_in_bytes,
+        512 * 1024 * 1024
     );
 }
