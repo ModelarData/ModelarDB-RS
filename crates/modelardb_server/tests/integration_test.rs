@@ -1614,3 +1614,20 @@ async fn test_can_create_time_series_table_from_metadata() {
     let retrieved_table_names = test_context.retrieve_all_table_names().await.unwrap();
     assert_eq!(retrieved_table_names[0], TIME_SERIES_TABLE_NAME);
 }
+
+#[tokio::test]
+async fn test_can_list_nodes() {
+    let mut test_context = TestContext::new().await;
+    let nodes_bytes = test_context.retrieve_action_bytes("ListNodes").await;
+    let nodes =
+        modelardb_types::flight::deserialize_and_extract_cluster_nodes(&nodes_bytes).unwrap();
+
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(
+        nodes[0],
+        Node::new(
+            format!("grpc://{HOST}:{}", test_context.port),
+            ServerMode::Edge
+        )
+    );
+}
