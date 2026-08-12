@@ -17,6 +17,7 @@
 //! defined in `flight/protocol.proto`. The module also provides functions to serialize and
 //! deserialize encoded messages to and from bytes.
 
+use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
@@ -28,7 +29,7 @@ use prost::bytes::Bytes;
 
 use crate::error::{ModelarDbTypesError, Result};
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use crate::types::{ErrorBound, GeneratedColumn, Node, Table, TimeSeriesTableMetadata};
+use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, Table, TimeSeriesTableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
@@ -194,21 +195,6 @@ fn decode_error_bounds(
     Ok(error_bounds)
 }
 
-/// Encode `nodes` into a [`ClusterNodes`](protocol::ClusterNodes) protobuf message and serialize it.
-pub fn encode_and_serialize_cluster_nodes(nodes: Vec<Node>) -> Vec<u8> {
-    let cluster_nodes = protocol::ClusterNodes {
-        nodes: nodes
-            .into_iter()
-            .map(|node| protocol::NodeMetadata {
-                url: node.url,
-                mode: node.mode.to_string(),
-            })
-            .collect(),
-    };
-
-    cluster_nodes.encode_to_vec()
-}
-
 /// Decode the generated column expressions from a vector of byte expressions into a vector of
 /// optional [`GeneratedColumn`]. Return [`ModelarDbTypesError`] if the expression is invalid.
 fn decode_generated_column_expressions(
@@ -228,6 +214,34 @@ fn decode_generated_column_expressions(
     }
 
     Ok(expressions)
+}
+
+/// Encode `nodes` into a [`ClusterNodes`](protocol::ClusterNodes) protobuf message and serialize it.
+pub fn encode_and_serialize_cluster_nodes(nodes: Vec<Node>) -> Vec<u8> {
+    let cluster_nodes = protocol::ClusterNodes {
+        nodes: nodes
+            .into_iter()
+            .map(|node| protocol::NodeMetadata {
+                url: node.url,
+                mode: node.mode.to_string(),
+            })
+            .collect(),
+    };
+
+    cluster_nodes.encode_to_vec()
+}
+
+/// Deserialize `bytes` into a [`ClusterNodes`](protocol::ClusterNodes) protobuf message and extract
+/// a vector of [`Node`]. If `bytes` cannot be deserialized or a node has an invalid mode, return
+/// [`ModelarDbTypesError`].
+pub fn deserialize_and_extract_cluster_nodes(bytes: &[u8]) -> Result<Vec<Node>> {
+    let cluster_nodes = protocol::ClusterNodes::decode(bytes)?;
+
+    cluster_nodes
+        .nodes
+        .into_iter()
+        .map(|node| Ok(Node::new(node.url, ServerMode::from_str(&node.mode)?)))
+        .collect()
 }
 
 #[cfg(test)]
