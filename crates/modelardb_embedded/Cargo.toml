@@ -35,6 +35,7 @@ modelardb_auth.workspace = true
 modelardb_compression.workspace = true
 modelardb_storage.workspace = true
 modelardb_types.workspace = true
+prost.workspace = true
 tokio.workspace = true
 tonic.workspace = true
 

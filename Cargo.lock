@@ -3558,6 +3558,7 @@ dependencies = [
  "modelardb_compression",
  "modelardb_storage",
  "modelardb_types",
+ "prost",
  "tempfile",
  "tokio",
  "tonic",
