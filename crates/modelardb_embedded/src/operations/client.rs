@@ -35,6 +35,9 @@ use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt, stream};
 use modelardb_auth::BearerInterceptor;
+use modelardb_types::flight::protocol;
+use modelardb_types::types::Node;
+use prost::Message;
 use prost::bytes::Bytes;
 use tonic::codegen::InterceptedService;
 use tonic::transport::{Channel, Endpoint};
@@ -65,6 +68,76 @@ impl Client {
         let flight_client = FlightServiceClient::with_interceptor(connection, interceptor);
 
         Ok(Client { flight_client })
+    }
+
+    /// Returns the current configuration of the node. If the configuration could not be retrieved,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    pub async fn configuration(&mut self) -> Result<protocol::Configuration> {
+        let bytes = self.retrieve_action_bytes("GetConfiguration").await?;
+
+        Ok(protocol::Configuration::decode(bytes)?)
+    }
+
+    /// Updates `setting` in the node configuration to `new_value`. If the setting could not be
+    /// updated, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn update_configuration(
+        &mut self,
+        setting: protocol::update_configuration::Setting,
+        new_value: Option<u64>,
+    ) -> Result<()> {
+        let update_configuration = protocol::UpdateConfiguration {
+            setting: setting as i32,
+            new_value,
+        };
+
+        self.send_action("UpdateConfiguration", update_configuration.encode_to_vec())
+            .await?;
+
+        Ok(())
+    }
+
+    /// Flushes all data currently in memory to disk. If the data could not be flushed,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    pub async fn flush_memory(&mut self) -> Result<()> {
+        self.send_action("FlushMemory", vec![]).await?;
+
+        Ok(())
+    }
+
+    /// Flushes all data in memory to disk and then transfers all compressed data to the remote
+    /// object store. If the data could not be flushed, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn flush_node(&mut self) -> Result<()> {
+        self.send_action("FlushNode", vec![]).await?;
+
+        Ok(())
+    }
+
+    /// Flushes all data to disk, transfers it to the remote object store, removes the node from the
+    /// cluster if necessary, and kills the node process. Since the process is killed, a
+    /// conventional response cannot be returned, so a dropped connection is not treated as an
+    /// error. If the data could not be flushed before the node was killed,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    pub async fn kill_node(&mut self) -> Result<()> {
+        // The node exits while handling this action, so the response stream is dropped.
+        let _ = self.send_action("KillNode", vec![]).await;
+
+        Ok(())
+    }
+
+    /// Returns the nodes that are currently part of the cluster. A single node returns only itself.
+    /// If the nodes could not be retrieved, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn list_nodes(&mut self) -> Result<Vec<Node>> {
+        let bytes = self.retrieve_action_bytes("ListNodes").await?;
+
+        Ok(modelardb_types::flight::deserialize_and_extract_cluster_nodes(&bytes)?)
+    }
+
+    /// Returns the current resource usage metrics of the node. If the metrics could not be
+    /// retrieved, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn node_metrics(&mut self) -> Result<protocol::NodeMetrics> {
+        let bytes = self.retrieve_action_bytes("NodeMetrics").await?;
+
+        Ok(protocol::NodeMetrics::decode(bytes)?)
     }
 
     /// Send the action with the type `action_type` and `body` to the node and return the response
