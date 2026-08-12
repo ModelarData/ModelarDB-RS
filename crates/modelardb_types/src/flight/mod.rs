@@ -288,4 +288,18 @@ mod test {
             _ => panic!("Expected time series table."),
         }
     }
+
+    // Test for serializing and deserializing cluster nodes.
+    #[test]
+    fn test_serialize_and_deserialize_cluster_nodes() {
+        let expected_nodes = vec![
+            Node::new("grpc://127.0.0.1:9999".to_owned(), ServerMode::Edge),
+            Node::new("grpc://127.0.0.1:9998".to_owned(), ServerMode::Cloud),
+        ];
+
+        let bytes = encode_and_serialize_cluster_nodes(expected_nodes.clone());
+        let nodes = deserialize_and_extract_cluster_nodes(&bytes).unwrap();
+
+        assert_eq!(nodes, expected_nodes);
+    }
 }
