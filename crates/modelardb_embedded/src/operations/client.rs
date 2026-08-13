@@ -146,10 +146,11 @@ impl Client {
     async fn retrieve_action_bytes(&mut self, action_type: &str) -> Result<Bytes> {
         let mut response = self.send_action(action_type, vec![]).await?;
 
-        let message = response
-            .message()
-            .await?
-            .expect("Flight message should exist.");
+        let message = response.message().await?.ok_or_else(|| {
+            ModelarDbEmbeddedError::from(Status::internal(format!(
+                "Action '{action_type}' did not return a response message."
+            )))
+        })?;
 
         Ok(message.body)
     }
