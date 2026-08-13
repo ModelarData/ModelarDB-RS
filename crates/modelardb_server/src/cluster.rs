@@ -48,7 +48,7 @@ pub(crate) struct Cluster {
     /// The remote data folder that each node in the cluster should be synchronized with.
     /// When a table is created, dropped, vacuumed, or truncated, it is done in the
     /// remote data folder first.
-    remote_data_folder: DataFolder,
+    remote_data_folder: Arc<DataFolder>,
 }
 
 impl Cluster {
@@ -56,7 +56,7 @@ impl Cluster {
     /// It is assumed that `node` corresponds to the local system running `modelardbd`. If the
     /// cluster metadata tables do not exist and could not be created or the node could not be
     /// saved, return [`ModelarDbServerError`].
-    pub(crate) async fn try_new(node: Node, remote_data_folder: DataFolder) -> Result<Self> {
+    pub(crate) async fn try_new(node: Node, remote_data_folder: Arc<DataFolder>) -> Result<Self> {
         remote_data_folder
             .create_and_register_cluster_metadata_tables()
             .await?;
@@ -673,7 +673,11 @@ mod test {
 
     /// Create a normal table named `table_name` with a single column named `column_name` in
     /// `data_folder`.
-    async fn create_normal_table(table_name: &str, column_name: &str, data_folder: DataFolder) {
+    async fn create_normal_table(
+        table_name: &str,
+        column_name: &str,
+        data_folder: Arc<DataFolder>,
+    ) {
         let schema = Schema::new(vec![Field::new(column_name, ArrowValue::DATA_TYPE, false)]);
 
         data_folder
@@ -687,7 +691,7 @@ mod test {
     async fn create_time_series_table(
         table_name: &str,
         column_name: &str,
-        data_folder: DataFolder,
+        data_folder: Arc<DataFolder>,
     ) {
         let query_schema = Arc::new(Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
@@ -724,7 +728,7 @@ mod test {
     /// data folder in the context uses a local [`DataFolder`].
     async fn create_context(local_temp_dir: &TempDir, remote_temp_dir: &TempDir) -> Arc<Context> {
         let temp_dir_url = local_temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(temp_dir_url).await.unwrap());
 
         let edge_node = Node::new("edge".to_owned(), ServerMode::Edge);
         let cluster = create_cluster_with_node(remote_temp_dir, edge_node).await;
@@ -813,7 +817,7 @@ mod test {
     /// Create a [`Cluster`] that uses a local [`DataFolder`] for the remote data folder.
     async fn create_cluster_with_node(temp_dir: &TempDir, node: Node) -> Cluster {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(temp_dir_url).await.unwrap());
 
         Cluster::try_new(node, local_data_folder.clone())
             .await
