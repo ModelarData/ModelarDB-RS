@@ -66,8 +66,9 @@ enum TableType {
     TimeSeriesTable,
 }
 
-/// Functionality for managing Delta Lake tables in a local folder or an object store.
-#[derive(Clone)]
+/// Functionality for managing Delta Lake tables in a local folder or an object store. A single
+/// instance should be shared through an [`Arc`], so the cache and session context are only
+/// created once.
 pub struct DataFolder {
     /// URL to access the root of the Delta Lake.
     location: String,
@@ -78,7 +79,7 @@ pub struct DataFolder {
     /// Cache of Delta tables to avoid opening the same table multiple times.
     delta_table_cache: DashMap<String, DeltaTable>,
     /// Session context used to query the tables using Apache DataFusion.
-    session_context: Arc<SessionContext>,
+    session_context: SessionContext,
 }
 
 impl DataFolder {
@@ -261,7 +262,7 @@ impl DataFolder {
             storage_options,
             object_store,
             delta_table_cache: DashMap::new(),
-            session_context: Arc::new(crate::create_session_context()),
+            session_context: crate::create_session_context(),
         };
 
         data_folder.create_and_register_metadata_tables().await?;
