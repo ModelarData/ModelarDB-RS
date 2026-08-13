@@ -17,6 +17,7 @@
 //! is managed here until it is of a sufficient size to be transferred efficiently.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use deltalake::arrow::array::RecordBatch;
@@ -33,9 +34,9 @@ use crate::error::Result;
 pub struct DataTransfer {
     /// The data folder containing all compressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    local_data_folder: DataFolder,
+    local_data_folder: Arc<DataFolder>,
     /// The data folder that the data should be transferred to.
-    remote_data_folder: DataFolder,
+    remote_data_folder: Arc<DataFolder>,
     /// Map from table names to the current size of the table in bytes.
     table_size_in_bytes: DashMap<String, u64>,
     /// The number of bytes that are required before transferring a batch of data to the remote
@@ -51,8 +52,8 @@ impl DataTransfer {
     /// `local_data_folder_path` could not be read, return
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub async fn try_new(
-        local_data_folder: DataFolder,
-        remote_data_folder: DataFolder,
+        local_data_folder: Arc<DataFolder>,
+        remote_data_folder: Arc<DataFolder>,
         transfer_batch_size_in_bytes: Option<u64>,
     ) -> Result<Self> {
         let table_names = local_data_folder.table_names().await?;
@@ -405,10 +406,10 @@ mod tests {
 
     /// Create a [`DataFolder`] in a local [`TempDir`] and create a single normal table and a
     /// single time series table in it.
-    async fn create_local_data_folder_with_tables() -> (TempDir, DataFolder) {
+    async fn create_local_data_folder_with_tables() -> (TempDir, Arc<DataFolder>) {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(temp_dir_url).await.unwrap());
 
         // Create a normal table.
         local_data_folder
@@ -467,11 +468,12 @@ mod tests {
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
     async fn create_data_transfer_component(
-        local_data_folder: DataFolder,
+        local_data_folder: Arc<DataFolder>,
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
         let target_dir_url = target_dir.path().to_str().unwrap();
-        let remote_data_folder = DataFolder::open_local_url(target_dir_url).await.unwrap();
+        let remote_data_folder =
+            Arc::new(DataFolder::open_local_url(target_dir_url).await.unwrap());
 
         // Set the transfer batch size so that data is transferred if three batches are written.
         let data_transfer = DataTransfer::try_new(
