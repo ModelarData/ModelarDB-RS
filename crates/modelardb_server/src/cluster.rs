@@ -499,24 +499,19 @@ mod test {
 
         // Create a normal table in the remote data folder that should be retrieved and created
         // in the local data folder and one that already exists.
-        create_normal_table(
-            "normal_table_1",
-            "column",
-            data_folders.local_data_folder.clone(),
-        )
-        .await;
+        create_normal_table("normal_table_1", "column", &data_folders.local_data_folder).await;
 
         create_normal_table(
             "normal_table_1",
             "column",
-            data_folders.maybe_remote_data_folder.clone().unwrap(),
+            data_folders.maybe_remote_data_folder.as_ref().unwrap(),
         )
         .await;
 
         create_normal_table(
             "normal_table_2",
             "column",
-            data_folders.maybe_remote_data_folder.clone().unwrap(),
+            data_folders.maybe_remote_data_folder.as_ref().unwrap(),
         )
         .await;
 
@@ -538,17 +533,12 @@ mod test {
 
         // Create a normal table in the local data folder with the same name as a normal table in
         // the remote data folder, but with a different schema.
-        create_normal_table(
-            NORMAL_TABLE_NAME,
-            "local",
-            data_folders.local_data_folder.clone(),
-        )
-        .await;
+        create_normal_table(NORMAL_TABLE_NAME, "local", &data_folders.local_data_folder).await;
 
         create_normal_table(
             NORMAL_TABLE_NAME,
             "remote",
-            data_folders.maybe_remote_data_folder.clone().unwrap(),
+            data_folders.maybe_remote_data_folder.as_ref().unwrap(),
         )
         .await;
 
@@ -576,21 +566,21 @@ mod test {
         create_time_series_table(
             "time_series_table_1",
             "field",
-            data_folders.local_data_folder.clone(),
+            &data_folders.local_data_folder,
         )
         .await;
 
         create_time_series_table(
             "time_series_table_1",
             "field",
-            data_folders.maybe_remote_data_folder.clone().unwrap(),
+            data_folders.maybe_remote_data_folder.as_ref().unwrap(),
         )
         .await;
 
         create_time_series_table(
             "time_series_table_2",
             "field",
-            data_folders.maybe_remote_data_folder.clone().unwrap(),
+            data_folders.maybe_remote_data_folder.as_ref().unwrap(),
         )
         .await;
 
@@ -615,14 +605,14 @@ mod test {
         create_time_series_table(
             TIME_SERIES_TABLE_NAME,
             "local",
-            data_folders.local_data_folder.clone(),
+            &data_folders.local_data_folder,
         )
         .await;
 
         create_time_series_table(
             TIME_SERIES_TABLE_NAME,
             "remote",
-            data_folders.maybe_remote_data_folder.clone().unwrap(),
+            data_folders.maybe_remote_data_folder.as_ref().unwrap(),
         )
         .await;
 
@@ -646,17 +636,12 @@ mod test {
         let data_folders = context.data_folders.clone();
 
         // Create tables in the local data folder that are not in the remote data folder.
-        create_normal_table(
-            NORMAL_TABLE_NAME,
-            "local",
-            data_folders.local_data_folder.clone(),
-        )
-        .await;
+        create_normal_table(NORMAL_TABLE_NAME, "local", &data_folders.local_data_folder).await;
 
         create_time_series_table(
             TIME_SERIES_TABLE_NAME,
             "local",
-            data_folders.local_data_folder.clone(),
+            &data_folders.local_data_folder,
         )
         .await;
 
@@ -673,11 +658,7 @@ mod test {
 
     /// Create a normal table named `table_name` with a single column named `column_name` in
     /// `data_folder`.
-    async fn create_normal_table(
-        table_name: &str,
-        column_name: &str,
-        data_folder: Arc<DataFolder>,
-    ) {
+    async fn create_normal_table(table_name: &str, column_name: &str, data_folder: &DataFolder) {
         let schema = Schema::new(vec![Field::new(column_name, ArrowValue::DATA_TYPE, false)]);
 
         data_folder
@@ -691,7 +672,7 @@ mod test {
     async fn create_time_series_table(
         table_name: &str,
         column_name: &str,
-        data_folder: Arc<DataFolder>,
+        data_folder: &DataFolder,
     ) {
         let query_schema = Arc::new(Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
