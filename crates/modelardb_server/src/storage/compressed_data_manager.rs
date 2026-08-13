@@ -43,7 +43,7 @@ pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
     /// Folder containing all compressed data managed by the [`StorageEngine`](crate::storage::StorageEngine).
-    pub(crate) local_data_folder: DataFolder,
+    pub(crate) local_data_folder: Arc<DataFolder>,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the time series table the compressed segments represents data points for so the Apache Parquet
     /// files can be partitioned by table.
@@ -63,7 +63,7 @@ impl CompressedDataManager {
     pub(super) fn new(
         data_storage_compactor: Arc<RwLock<DataStorageCompactor>>,
         data_transfer: Arc<RwLock<Option<DataTransfer>>>,
-        local_data_folder: DataFolder,
+        local_data_folder: Arc<DataFolder>,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
         wal_mode: WalMode,
@@ -580,7 +580,7 @@ mod tests {
 
         // Create a local data folder and save a single time series table to the Delta Lake.
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(temp_dir_url).await.unwrap());
 
         let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder
