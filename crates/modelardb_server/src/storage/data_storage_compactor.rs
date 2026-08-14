@@ -18,6 +18,8 @@
 //! table by merging those small files into fewer larger ones and vacuuming the files left behind,
 //! reducing storage use and query time.
 
+use std::sync::Arc;
+
 use dashmap::DashMap;
 use modelardb_storage::data_folder::DataFolder;
 use tracing::debug;
@@ -31,7 +33,7 @@ use crate::error::Result;
 pub(super) struct DataStorageCompactor {
     /// The data folder containing all compressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    local_data_folder: DataFolder,
+    local_data_folder: Arc<DataFolder>,
     /// The target size, in bytes, of the files produced when a table is optimized. A table is
     /// compacted once its `estimated_compactable_size_in_bytes` reaches this size, so the same
     /// value decides both when to compact and how large the optimized files are.
@@ -56,7 +58,7 @@ impl DataStorageCompactor {
     /// so small files written before a restart are not forgotten. If the files in `local_data_folder`
     /// could not be read, return [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(super) async fn try_new(
-        local_data_folder: DataFolder,
+        local_data_folder: Arc<DataFolder>,
         optimize_target_file_size_in_bytes: u64,
         vacuum_retention_period_in_seconds: u64,
     ) -> Result<Self> {
@@ -292,10 +294,10 @@ mod tests {
     }
 
     /// Create a [`DataFolder`] in a local [`TempDir`] containing a single time series table.
-    async fn create_local_data_folder_with_table() -> (TempDir, DataFolder) {
+    async fn create_local_data_folder_with_table() -> (TempDir, Arc<DataFolder>) {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(temp_dir_url).await.unwrap());
 
         let time_series_table_metadata = table::time_series_table_metadata();
         local_data_folder
@@ -333,7 +335,9 @@ mod tests {
     }
 
     /// Create a [`DataStorageCompactor`] that compacts the tables in `local_data_folder`.
-    async fn create_data_storage_compactor(local_data_folder: DataFolder) -> DataStorageCompactor {
+    async fn create_data_storage_compactor(
+        local_data_folder: Arc<DataFolder>,
+    ) -> DataStorageCompactor {
         DataStorageCompactor::try_new(
             local_data_folder,
             OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES,

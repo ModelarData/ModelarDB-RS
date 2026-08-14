@@ -111,13 +111,13 @@ impl TestContext {
         self.client = Self::create_client(self.port).await;
     }
 
-    /// Create a server that stores data in `local_data_folder` and listens on `port` and ensure it
-    /// is ready to receive requests.
-    async fn create_server(local_data_folder: &TempDir, port: u16) -> Child {
+    /// Create a server that stores data in the local data folder at `temp_dir` and listens on
+    /// `port` and ensure it is ready to receive requests.
+    async fn create_server(temp_dir: &TempDir, port: u16) -> Child {
         // The server's stdout and stderr are piped so the log messages (stdout) and expected errors
         // (stderr) are not printed when all the tests are run using the "cargo test" command.
         // modelardbd is run using dev-release so the tests can use larger more realistic data sets.
-        let local_data_folder = local_data_folder.path().to_str().unwrap();
+        let local_data_folder_path = temp_dir.path().to_str().unwrap();
         let mut server = Command::new("cargo")
             .env("MODELARDBD_PORT", port.to_string())
             .args([
@@ -127,7 +127,7 @@ impl TestContext {
                 "--bin",
                 "modelardbd",
                 "edge",
-                local_data_folder,
+                local_data_folder_path,
             ])
             .kill_on_drop(true)
             .stdout(Stdio::piped())

@@ -15,6 +15,8 @@
 
 //! Implementation of a struct that provides access to the local and remote data storage components.
 
+use std::sync::Arc;
+
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::types::{Node, ServerMode};
 
@@ -25,20 +27,20 @@ use crate::{Result, ServerMode as ServerModeArg};
 #[derive(Clone)]
 pub struct DataFolders {
     /// Folder for storing metadata and data in Apache Parquet files on the local file system.
-    pub local_data_folder: DataFolder,
+    pub local_data_folder: Arc<DataFolder>,
     /// Folder for storing metadata and data in Apache Parquet files in a remote object store.
-    pub maybe_remote_data_folder: Option<DataFolder>,
+    pub maybe_remote_data_folder: Option<Arc<DataFolder>>,
     /// Folder from which metadata and data in Apache Parquet files will be read during query
     /// execution. It is equivalent to `local_data_folder` when deployed on the edge and
     /// `remote_data_folder` when deployed in the cloud.
-    pub query_data_folder: DataFolder,
+    pub query_data_folder: Arc<DataFolder>,
 }
 
 impl DataFolders {
     pub fn new(
-        local_data_folder: DataFolder,
-        maybe_remote_data_folder: Option<DataFolder>,
-        query_data_folder: DataFolder,
+        local_data_folder: Arc<DataFolder>,
+        maybe_remote_data_folder: Option<Arc<DataFolder>>,
+        query_data_folder: Arc<DataFolder>,
     ) -> Self {
         Self {
             local_data_folder,
@@ -65,7 +67,8 @@ impl DataFolders {
                 remote_data_folder: None,
                 ..
             } => {
-                let local_data_folder = DataFolder::open_local_url(local_data_folder).await?;
+                let local_data_folder =
+                    Arc::new(DataFolder::open_local_url(local_data_folder).await?);
                 let node = Node::new(url_with_port, ServerMode::Edge);
 
                 Ok((
@@ -80,9 +83,10 @@ impl DataFolders {
                 credentials,
             } => {
                 let remote_data_folder =
-                    DataFolder::open_remote_url(remote_data_folder, credentials).await?;
+                    Arc::new(DataFolder::open_remote_url(remote_data_folder, credentials).await?);
 
-                let local_data_folder = DataFolder::open_local_url(local_data_folder).await?;
+                let local_data_folder =
+                    Arc::new(DataFolder::open_local_url(local_data_folder).await?);
 
                 let node = Node::new(url_with_port, ServerMode::Edge);
                 let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
@@ -103,9 +107,10 @@ impl DataFolders {
                 credentials,
             } => {
                 let remote_data_folder =
-                    DataFolder::open_remote_url(remote_data_folder, credentials).await?;
+                    Arc::new(DataFolder::open_remote_url(remote_data_folder, credentials).await?);
 
-                let local_data_folder = DataFolder::open_local_url(local_data_folder).await?;
+                let local_data_folder =
+                    Arc::new(DataFolder::open_local_url(local_data_folder).await?);
 
                 let node = Node::new(url_with_port, ServerMode::Cloud);
                 let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
