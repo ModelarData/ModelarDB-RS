@@ -825,8 +825,8 @@ impl DataFolder {
     /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
     async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
-        // Clone the cached table out if possible and drop the DashMap guard before loading. load()
-        // is an async IO call, and get_mut() holds a write guard on the shard, so loading while
+        // Clone the cached table if possible and drop the DashMap guard before loading. load() is
+        // an async IO call, and get_mut() holds a write guard on the shard, so loading while
         // holding it would serialize access to every table in the same shard.
         let maybe_delta_table = self
             .delta_table_cache
