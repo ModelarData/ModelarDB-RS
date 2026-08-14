@@ -500,8 +500,8 @@ impl Context {
     pub(crate) async fn node_metrics(&self) -> protocol::NodeMetrics {
         let mut system = System::new();
 
-        // Sample the CPU twice, separated by the minimum update interval, since a single refresh
-        // reads zero.
+        // Refresh the CPU usage twice, separated by the minimum update interval, since a single
+        // refresh results in global_cpu_usage() always returning 0.
         system.refresh_cpu_usage();
         tokio::time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
         system.refresh_cpu_usage();
@@ -526,15 +526,17 @@ impl Context {
         let compressed_reserved_memory_in_bytes =
             configuration_manager.compressed_reserved_memory_in_bytes();
 
-        let ingested_used_memory_in_bytes = (ingested_reserved_memory_in_bytes as i64
-            - storage_engine.remaining_ingested_memory_in_bytes())
-        .max(0) as u64;
-        let uncompressed_used_memory_in_bytes = (uncompressed_reserved_memory_in_bytes as i64
-            - storage_engine.remaining_uncompressed_memory_in_bytes())
-        .max(0) as u64;
-        let compressed_used_memory_in_bytes = (compressed_reserved_memory_in_bytes as i64
-            - storage_engine.remaining_compressed_memory_in_bytes())
-        .max(0) as u64;
+        // The used memory is the reserved memory minus the available remaining memory. The
+        // remaining memory can be negative when the reserved memory is decreased below what is
+        // currently in use, so treat a negative value as zero.
+        let ingested_used_memory_in_bytes = ingested_reserved_memory_in_bytes
+            - storage_engine.remaining_ingested_memory_in_bytes().max(0) as u64;
+        let uncompressed_used_memory_in_bytes = uncompressed_reserved_memory_in_bytes
+            - storage_engine
+                .remaining_uncompressed_memory_in_bytes()
+                .max(0) as u64;
+        let compressed_used_memory_in_bytes = compressed_reserved_memory_in_bytes
+            - storage_engine.remaining_compressed_memory_in_bytes().max(0) as u64;
 
         protocol::NodeMetrics {
             cpu_usage_percentage,
