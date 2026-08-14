@@ -29,6 +29,7 @@ use deltalake::{DeltaTableError, ObjectStoreError};
 use modelardb_compression::error::ModelarDbCompressionError;
 use modelardb_storage::error::ModelarDbStorageError;
 use modelardb_types::error::ModelarDbTypesError;
+use prost::DecodeError;
 use tonic::Status as TonicStatusError;
 use tonic::transport::Error as TonicTransportError;
 
@@ -58,6 +59,8 @@ pub enum ModelarDbEmbeddedError {
     ObjectStore(ObjectStoreError),
     /// Error returned by Apache Parquet.
     Parquet(ParquetError),
+    /// Error returned by Prost when decoding a message that is not valid.
+    ProstDecode(DecodeError),
     /// Status returned by Tonic.
     TonicStatus(Box<TonicStatusError>),
     /// Error returned by Tonic.
@@ -83,6 +86,7 @@ impl Display for ModelarDbEmbeddedError {
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::Parquet(reason) => write!(f, "Parquet Error: {reason}"),
+            Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
             Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
             Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
             Self::Unimplemented(reason) => write!(f, "Unimplemented Error: {reason}"),
@@ -104,6 +108,7 @@ impl Error for ModelarDbEmbeddedError {
             Self::ModelarDbTypes(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
             Self::Parquet(reason) => Some(reason),
+            Self::ProstDecode(reason) => Some(reason),
             Self::TonicStatus(reason) => Some(reason),
             Self::TonicTransport(reason) => Some(reason),
             Self::Unimplemented(_reason) => None,
@@ -163,6 +168,12 @@ impl From<ObjectStoreError> for ModelarDbEmbeddedError {
 impl From<ParquetError> for ModelarDbEmbeddedError {
     fn from(error: ParquetError) -> Self {
         Self::Parquet(error)
+    }
+}
+
+impl From<DecodeError> for ModelarDbEmbeddedError {
+    fn from(error: DecodeError) -> Self {
+        Self::ProstDecode(error)
     }
 }
 

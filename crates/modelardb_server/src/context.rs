@@ -16,19 +16,23 @@
 //! Implementation of a [`Context`] that provides access to the system's configuration and
 //! components.
 
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
 use datafusion::catalog::SchemaProvider;
+use modelardb_types::flight::protocol;
 use modelardb_types::types::TimeSeriesTableMetadata;
+use sysinfo::{Disks, System};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use crate::cluster::ClusterMode;
 use crate::configuration::{ConfigurationManager, WalMode};
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
 use crate::storage::data_sinks::{NormalTableDataSink, TimeSeriesTableDataSink};
-use crate::{ClusterMode, DataFolders, ServerArgs};
+use crate::{DataFolders, ServerArgs};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
@@ -490,6 +494,91 @@ impl Context {
 
         Ok(schema)
     }
+
+    /// Collect the current resource usage metrics of the node, including CPU, memory, disk, and
+    /// storage engine memory usage.
+    pub(crate) async fn node_metrics(&self) -> protocol::NodeMetrics {
+        let mut system = System::new();
+
+        // Refresh the CPU usage twice, separated by the minimum update interval, since a single
+        // refresh results in global_cpu_usage() always returning 0.
+        system.refresh_cpu_usage();
+        tokio::time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
+        system.refresh_cpu_usage();
+
+        let cpu_usage_percentage = system.global_cpu_usage() as f64;
+        let cpu_count = system.cpus().len() as u32;
+
+        system.refresh_memory();
+        let used_memory_in_bytes = system.used_memory();
+        let total_memory_in_bytes = system.total_memory();
+
+        let (used_disk_space_in_bytes, total_disk_space_in_bytes) =
+            self.local_data_folder_disk_space();
+
+        let configuration_manager = self.configuration_manager.read().await;
+        let storage_engine = self.storage_engine.read().await;
+
+        let ingested_reserved_memory_in_bytes =
+            configuration_manager.ingested_reserved_memory_in_bytes();
+        let uncompressed_reserved_memory_in_bytes =
+            configuration_manager.uncompressed_reserved_memory_in_bytes();
+        let compressed_reserved_memory_in_bytes =
+            configuration_manager.compressed_reserved_memory_in_bytes();
+
+        // The used memory is the reserved memory minus the available remaining memory. The
+        // remaining memory can be negative when the reserved memory is decreased below what is
+        // currently in use, so treat a negative value as zero.
+        let ingested_used_memory_in_bytes = ingested_reserved_memory_in_bytes
+            - storage_engine.remaining_ingested_memory_in_bytes().max(0) as u64;
+        let uncompressed_used_memory_in_bytes = uncompressed_reserved_memory_in_bytes
+            - storage_engine
+                .remaining_uncompressed_memory_in_bytes()
+                .max(0) as u64;
+        let compressed_used_memory_in_bytes = compressed_reserved_memory_in_bytes
+            - storage_engine.remaining_compressed_memory_in_bytes().max(0) as u64;
+
+        protocol::NodeMetrics {
+            cpu_usage_percentage,
+            cpu_count,
+            used_memory_in_bytes,
+            total_memory_in_bytes,
+            used_disk_space_in_bytes,
+            total_disk_space_in_bytes,
+            ingested_used_memory_in_bytes,
+            ingested_reserved_memory_in_bytes,
+            uncompressed_used_memory_in_bytes,
+            uncompressed_reserved_memory_in_bytes,
+            compressed_used_memory_in_bytes,
+            compressed_reserved_memory_in_bytes,
+        }
+    }
+
+    /// Return the used and total disk space in bytes of the disk holding the local data folder. If
+    /// no disk holds the data folder, the disk with the most capacity is used. If no disks are
+    /// found, `(0, 0)` is returned.
+    fn local_data_folder_disk_space(&self) -> (u64, u64) {
+        let disks = Disks::new_with_refreshed_list();
+        let location = StdPath::new(self.data_folders.local_data_folder.location());
+
+        // A path can sit under multiple mount points when one volume is mounted inside another, so
+        // pick the disk whose mount point is the longest prefix of the location, as that is the
+        // most specific match. If the data folder is in memory, no mount point matches, so fall
+        // back to the disk with the most capacity.
+        let maybe_disk = disks
+            .iter()
+            .filter(|disk| location.starts_with(disk.mount_point()))
+            .max_by_key(|disk| disk.mount_point().as_os_str().len())
+            .or_else(|| disks.iter().max_by_key(|disk| disk.total_space()));
+
+        if let Some(disk) = maybe_disk {
+            let total = disk.total_space();
+            let used = total - disk.available_space();
+            (used, total)
+        } else {
+            (0, 0)
+        }
+    }
 }
 
 /// Return a [`ModelarDbServerError`] indicating that a table with `table_name` does not exist.
@@ -504,7 +593,7 @@ mod tests {
     use clap::Parser;
     use modelardb_storage::data_folder::DataFolder;
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
-    use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
+    use modelardb_types::types::{MAX_RETENTION_PERIOD_IN_SECONDS, Node, ServerMode};
     use tempfile::TempDir;
 
     // Tests for Context.
@@ -1162,11 +1251,12 @@ mod tests {
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = Arc::new(DataFolder::open_local_url(temp_dir_url).await.unwrap());
+        let node = Node::new("edge".to_owned(), ServerMode::Edge);
 
         Arc::new(
             Context::try_new(
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
-                ClusterMode::SingleNode,
+                ClusterMode::SingleNode(node),
                 &ServerArgs::parse_from(["modelardbd", "edge", "data"]),
             )
             .await

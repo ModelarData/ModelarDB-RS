@@ -59,7 +59,7 @@ use tonic::transport::{Endpoint, Server};
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
-use crate::ClusterMode;
+use crate::cluster::ClusterMode;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 use crate::remote::auth_layer::AuthLayer;
@@ -83,7 +83,7 @@ pub async fn start_apache_arrow_flight_server(
 
     let maybe_cluster_key = match context.configuration_manager.read().await.cluster_mode() {
         ClusterMode::MultiNode(cluster) => Some(cluster.key().clone()),
-        ClusterMode::SingleNode => None,
+        ClusterMode::SingleNode(_) => None,
     };
 
     let auth_layer = AuthLayer::new(maybe_authenticator, maybe_cluster_key);
@@ -898,6 +898,12 @@ impl FlightService for FlightServiceHandler {
     /// and the change is persisted in the configuration file.
     /// * `NodeType`: Get the type of the node. The type is `SingleEdge`, `ClusterEdge`, or
     /// `ClusterCloud`. The type of the node is returned as a string.
+    /// * `ListNodes`: Get the nodes that are currently part of the cluster. The nodes are returned
+    /// in a [`ClusterNodes`](protocol::ClusterNodes) protobuf message. A single node returns only
+    /// itself.
+    /// * `NodeMetrics`: Get the current resource usage metrics of the node, including CPU, memory,
+    /// disk, and storage engine memory usage. The metrics are returned in a
+    /// [`NodeMetrics`](protocol::NodeMetrics) protobuf message.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -1060,7 +1066,7 @@ impl FlightService for FlightServiceHandler {
             let configuration_manager = self.context.configuration_manager.read().await;
 
             let node_type = match configuration_manager.cluster_mode() {
-                ClusterMode::SingleNode => "SingleEdge",
+                ClusterMode::SingleNode(_) => "SingleEdge",
                 ClusterMode::MultiNode(cluster) => match cluster.node().mode {
                     ServerMode::Edge => "ClusterEdge",
                     ServerMode::Cloud => "ClusterCloud",
@@ -1073,6 +1079,29 @@ impl FlightService for FlightServiceHandler {
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(flight_result)
+            }))))
+        } else if action.r#type == "ListNodes" {
+            let configuration_manager = self.context.configuration_manager.read().await;
+            let nodes = configuration_manager
+                .cluster_mode()
+                .nodes()
+                .await
+                .map_err(error_to_status_internal)?;
+
+            let protobuf_bytes = modelardb_types::flight::encode_and_serialize_cluster_nodes(nodes);
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: protobuf_bytes.into(),
+                })
+            }))))
+        } else if action.r#type == "NodeMetrics" {
+            let protobuf_bytes = self.context.node_metrics().await.encode_to_vec();
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: protobuf_bytes.into(),
+                })
             }))))
         } else {
             Err(Status::unimplemented("Action not implemented."))
@@ -1126,6 +1155,16 @@ impl FlightService for FlightServiceHandler {
             description: "Get the type of the node.".to_owned(),
         };
 
+        let list_nodes_action = ActionType {
+            r#type: "ListNodes".to_owned(),
+            description: "Get the nodes that are currently part of the cluster.".to_owned(),
+        };
+
+        let node_metrics_action = ActionType {
+            r#type: "NodeMetrics".to_owned(),
+            description: "Get the current resource usage metrics of the node.".to_owned(),
+        };
+
         let output = stream::iter(vec![
             Ok(create_tables_action),
             Ok(flush_memory_action),
@@ -1134,6 +1173,8 @@ impl FlightService for FlightServiceHandler {
             Ok(get_configuration_action),
             Ok(update_configuration_action),
             Ok(node_type_action),
+            Ok(list_nodes_action),
+            Ok(node_metrics_action),
         ]);
 
         Ok(Response::new(Box::pin(output)))

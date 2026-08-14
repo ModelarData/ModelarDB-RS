@@ -29,21 +29,13 @@ use clap::{Parser, Subcommand};
 use modelardb_types::types::CloudCredentials;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::cluster::Cluster;
+use crate::cluster::ClusterMode;
 use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::Result;
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
-
-/// The different possible modes that a ModelarDB server can be deployed in, assigned when the
-/// server is started.
-#[derive(Clone)]
-pub(crate) enum ClusterMode {
-    SingleNode,
-    MultiNode(Box<Cluster>),
-}
 
 /// Command line arguments for the ModelarDB server.
 #[derive(Parser)]

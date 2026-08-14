@@ -98,7 +98,6 @@ impl MemoryPool {
     }
 
     /// Return the amount of memory available for ingested data in bytes.
-    #[cfg(test)]
     #[must_use]
     pub(super) fn remaining_ingested_memory_in_bytes(&self) -> i64 {
         *self

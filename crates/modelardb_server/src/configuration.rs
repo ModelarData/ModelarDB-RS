@@ -34,9 +34,10 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use crate::ServerArgs;
+use crate::cluster::ClusterMode;
 use crate::error::{ModelarDbServerError, Result};
 use crate::storage::StorageEngine;
-use crate::{ClusterMode, ServerArgs};
 
 const CONFIGURATION_FILE_NAME: &str = "modelardbd.toml";
 
@@ -602,9 +603,10 @@ mod tests {
             .await
             .unwrap();
 
+        let node = Node::new("edge".to_owned(), ServerMode::Edge);
         let result = ConfigurationManager::try_new(
             local_data_folder,
-            ClusterMode::SingleNode,
+            ClusterMode::SingleNode(node),
             &default_args(),
         )
         .await;
@@ -625,9 +627,10 @@ mod tests {
         let path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
         std::fs::write(path, "invalid_toml").unwrap();
 
+        let node = Node::new("edge".to_owned(), ServerMode::Edge);
         let result = ConfigurationManager::try_new(
             local_data_folder,
-            ClusterMode::SingleNode,
+            ClusterMode::SingleNode(node),
             &default_args(),
         )
         .await;
@@ -1020,7 +1023,7 @@ mod tests {
         let configuration_manager = Arc::new(RwLock::new(
             ConfigurationManager::try_new(
                 local_data_folder.clone(),
-                ClusterMode::MultiNode(Box::new(cluster)),
+                ClusterMode::MultiNode(cluster),
                 &default_args(),
             )
             .await

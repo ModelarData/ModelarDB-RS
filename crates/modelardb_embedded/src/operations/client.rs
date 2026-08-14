@@ -28,16 +28,20 @@ use arrow::record_batch::RecordBatch;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::encode::FlightDataEncoderBuilder;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{Action, Criteria, FlightDescriptor, Ticket};
+use arrow_flight::{Action, Criteria, FlightDescriptor, Result as FlightResult, Ticket};
 use async_trait::async_trait;
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt, stream};
 use modelardb_auth::BearerInterceptor;
+use modelardb_types::flight::protocol;
+use modelardb_types::types::Node;
+use prost::Message;
+use prost::bytes::Bytes;
 use tonic::codegen::InterceptedService;
 use tonic::transport::{Channel, Endpoint};
-use tonic::{Request, Status};
+use tonic::{Request, Status, Streaming};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
 use crate::operations::{
@@ -65,6 +69,134 @@ impl Client {
 
         Ok(Client { flight_client })
     }
+
+    /// Returns the current configuration of the node. If the configuration could not be retrieved,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    pub async fn configuration(&mut self) -> Result<protocol::Configuration> {
+        let bytes = self.retrieve_action_bytes("GetConfiguration").await?;
+
+        Ok(protocol::Configuration::decode(bytes)?)
+    }
+
+    /// Updates `setting` in the node configuration to `new_value`. If the setting could not be
+    /// updated, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn update_configuration(
+        &mut self,
+        setting: protocol::update_configuration::Setting,
+        new_value: Option<u64>,
+    ) -> Result<()> {
+        let update_configuration = protocol::UpdateConfiguration {
+            setting: setting as i32,
+            new_value,
+        };
+
+        self.send_action("UpdateConfiguration", update_configuration.encode_to_vec())
+            .await?;
+
+        Ok(())
+    }
+
+    /// Flushes all data in memory to disk. If the data could not be flushed,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    pub async fn flush_memory(&mut self) -> Result<()> {
+        self.send_action("FlushMemory", vec![]).await?;
+
+        Ok(())
+    }
+
+    /// Flushes all data in memory to disk and then transfers all compressed data to the remote
+    /// object store. If the data could not be flushed, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn flush_node(&mut self) -> Result<()> {
+        self.send_action("FlushNode", vec![]).await?;
+
+        Ok(())
+    }
+
+    /// Flushes all data to disk, transfers it to the remote object store, removes the node from the
+    /// cluster if necessary, and kills the node process. Since the process is killed, a
+    /// conventional response cannot be returned, so a dropped connection is not treated as an
+    /// error. If the data could not be flushed before the node was killed,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    pub async fn kill_node(&mut self) -> Result<()> {
+        // The node exits while handling this action, so the response stream is dropped.
+        let _ = self.send_action("KillNode", vec![]).await;
+
+        Ok(())
+    }
+
+    /// Returns the nodes that are currently part of the cluster. A single node returns only itself.
+    /// If the nodes could not be retrieved, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn list_nodes(&mut self) -> Result<Vec<Node>> {
+        let bytes = self.retrieve_action_bytes("ListNodes").await?;
+
+        Ok(modelardb_types::flight::deserialize_and_extract_cluster_nodes(&bytes)?)
+    }
+
+    /// Returns the current resource usage metrics of the node. If the metrics could not be
+    /// retrieved, [`ModelarDbEmbeddedError`] is returned.
+    pub async fn node_metrics(&mut self) -> Result<protocol::NodeMetrics> {
+        let bytes = self.retrieve_action_bytes("NodeMetrics").await?;
+
+        Ok(protocol::NodeMetrics::decode(bytes)?)
+    }
+
+    /// Sends the action with the type `action_type` and an empty body to the node and returns the
+    /// body of the response. If the action could not be performed, [`ModelarDbEmbeddedError`] is
+    /// returned.
+    async fn retrieve_action_bytes(&mut self, action_type: &str) -> Result<Bytes> {
+        let mut response = self.send_action(action_type, vec![]).await?;
+
+        let message = response.message().await?.ok_or_else(|| {
+            ModelarDbEmbeddedError::from(Status::internal(format!(
+                "Action '{action_type}' did not return a response message."
+            )))
+        })?;
+
+        Ok(message.body)
+    }
+
+    /// Sends the action with the type `action_type` and `body` to the node and returns the response
+    /// stream. If the action could not be performed, [`ModelarDbEmbeddedError`] is returned.
+    async fn send_action(
+        &mut self,
+        action_type: &str,
+        body: Vec<u8>,
+    ) -> Result<Streaming<FlightResult>> {
+        let action = Action {
+            r#type: action_type.to_owned(),
+            body: body.into(),
+        };
+
+        let response = self.flight_client.do_action(Request::new(action)).await?;
+
+        Ok(response.into_inner())
+    }
+
+    /// Returns the URL of the cloud node that the node assigns to execute the SQL in `sql`. If the
+    /// node is not running in a cluster, or a cloud node could not be assigned,
+    /// [`ModelarDbEmbeddedError`] is returned.
+    pub async fn cloud_query_node(&mut self, sql: &str) -> Result<String> {
+        let flight_descriptor = FlightDescriptor::new_cmd(sql.to_owned());
+        let flight_info = self
+            .flight_client
+            .get_flight_info(Request::new(flight_descriptor))
+            .await?
+            .into_inner();
+
+        let endpoint = flight_info.endpoint.into_iter().next().ok_or_else(|| {
+            ModelarDbEmbeddedError::InvalidArgument(
+                "The node did not return an endpoint for the query.".to_owned(),
+            )
+        })?;
+
+        let location = endpoint.location.into_iter().next().ok_or_else(|| {
+            ModelarDbEmbeddedError::InvalidArgument(
+                "The endpoint did not return a cloud node location for the query.".to_owned(),
+            )
+        })?;
+
+        Ok(location.uri)
+    }
 }
 
 #[async_trait]
@@ -76,21 +208,9 @@ impl Operations for Client {
 
     /// Returns the type of the ModelarDB node that the client is connected to.
     async fn modelardb_type(&mut self) -> Result<ModelarDBType> {
-        // Retrieve the node type from the ModelarDB node.
-        let action = Action {
-            r#type: "NodeType".to_owned(),
-            body: vec![].into(),
-        };
+        let bytes = self.retrieve_action_bytes("NodeType").await?;
 
-        let response = self.flight_client.do_action(Request::new(action)).await?;
-
-        let message = response
-            .into_inner()
-            .message()
-            .await?
-            .expect("Flight message should exist.");
-
-        ModelarDBType::from_str(str::from_utf8(&message.body)?)
+        ModelarDBType::from_str(str::from_utf8(&bytes)?)
     }
 
     /// Creates a table with the name in `table_name` and the information in `table_type`. If the
@@ -118,12 +238,7 @@ impl Operations for Client {
             }
         };
 
-        let action = Action {
-            r#type: "CreateTable".to_owned(),
-            body: protobuf_bytes.into(),
-        };
-
-        self.flight_client.do_action(action).await?;
+        self.send_action("CreateTable", protobuf_bytes).await?;
 
         Ok(())
     }

@@ -20,8 +20,8 @@ use std::sync::Arc;
 use modelardb_storage::data_folder::DataFolder;
 use modelardb_types::types::{Node, ServerMode};
 
-use crate::cluster::Cluster;
-use crate::{ClusterMode, Result, ServerMode as ServerModeArg};
+use crate::cluster::{Cluster, ClusterMode};
+use crate::{Result, ServerMode as ServerModeArg};
 
 /// Folders for storing metadata and data in Apache Parquet files locally and remotely.
 #[derive(Clone)]
@@ -69,9 +69,10 @@ impl DataFolders {
             } => {
                 let local_data_folder =
                     Arc::new(DataFolder::open_local_url(local_data_folder).await?);
+                let node = Node::new(url_with_port, ServerMode::Edge);
 
                 Ok((
-                    ClusterMode::SingleNode,
+                    ClusterMode::SingleNode(node),
                     Self::new(local_data_folder.clone(), None, local_data_folder),
                 ))
             }
@@ -91,7 +92,7 @@ impl DataFolders {
                 let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
 
                 Ok((
-                    ClusterMode::MultiNode(Box::new(cluster)),
+                    ClusterMode::MultiNode(cluster),
                     Self::new(
                         local_data_folder.clone(),
                         Some(remote_data_folder),
@@ -115,7 +116,7 @@ impl DataFolders {
                 let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
 
                 Ok((
-                    ClusterMode::MultiNode(Box::new(cluster)),
+                    ClusterMode::MultiNode(cluster),
                     Self::new(
                         local_data_folder,
                         Some(remote_data_folder.clone()),
@@ -149,7 +150,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(cluster_mode, ClusterMode::SingleNode));
+        let expected_node = Node::new("grpc://127.0.0.1:9999".to_owned(), ServerMode::Edge);
+        assert!(matches!(cluster_mode, ClusterMode::SingleNode(node) if node == expected_node));
         assert!(data_folders.maybe_remote_data_folder.is_none());
     }
 

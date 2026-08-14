@@ -36,6 +36,26 @@ use tonic::transport::Endpoint;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 
+/// The different possible modes that a ModelarDB server can be deployed in, assigned when the
+/// server is started.
+#[derive(Clone)]
+pub(crate) enum ClusterMode {
+    SingleNode(Node),
+    MultiNode(Cluster),
+}
+
+impl ClusterMode {
+    /// Return all nodes in the deployment. A single node returns only itself, while a node in a
+    /// cluster returns every node in the cluster. If the nodes could not be retrieved, return
+    /// [`ModelarDbServerError`].
+    pub(crate) async fn nodes(&self) -> Result<Vec<Node>> {
+        match self {
+            ClusterMode::SingleNode(node) => Ok(vec![node.clone()]),
+            ClusterMode::MultiNode(cluster) => cluster.nodes().await,
+        }
+    }
+}
+
 /// Stores the node that represents the local system and allows for performing operations that need
 /// to be applied to every peer node in the cluster.
 #[derive(Clone)]
@@ -357,10 +377,19 @@ impl Cluster {
         Ok(url.to_owned())
     }
 
+    /// Return all nodes currently in the cluster. If the nodes could not be retrieved, return
+    /// [`ModelarDbServerError`].
+    pub(crate) async fn nodes(&self) -> Result<Vec<Node>> {
+        self.remote_data_folder
+            .nodes()
+            .await
+            .map_err(|error| error.into())
+    }
+
     /// Return all nodes in the cluster except the node that was saved when the [`Cluster`] was
     /// created. If the nodes could not be retrieved, return [`ModelarDbServerError`].
     async fn peer_nodes(&self) -> Result<Vec<Node>> {
-        let nodes = self.remote_data_folder.nodes().await?;
+        let nodes = self.nodes().await?;
 
         Ok(nodes
             .into_iter()
@@ -485,8 +514,8 @@ mod test {
     use modelardb_types::types::{ArrowTimestamp, ArrowValue, ErrorBound, ServerMode};
     use tempfile::TempDir;
 
+    use crate::ServerArgs;
     use crate::data_folders::DataFolders;
-    use crate::{ClusterMode, ServerArgs};
 
     // Tests for Cluster.
     #[tokio::test]
@@ -721,7 +750,7 @@ mod test {
                     Some(cluster.remote_data_folder.clone()),
                     local_data_folder,
                 ),
-                ClusterMode::MultiNode(Box::new(cluster)),
+                ClusterMode::MultiNode(cluster),
                 &ServerArgs::parse_from(["modelardbd", "edge", "data", "s3://bucket"]),
             )
             .await
