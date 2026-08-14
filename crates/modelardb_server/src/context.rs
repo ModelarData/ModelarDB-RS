@@ -16,6 +16,7 @@
 //! Implementation of a [`Context`] that provides access to the system's configuration and
 //! components.
 
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::Schema;
@@ -551,18 +552,20 @@ impl Context {
         }
     }
 
-    /// Return the used and total disk space in bytes for the disk holding the local data folder.
-    /// The disk is identified by finding the mounted disk whose mount point is the longest prefix
-    /// of the local data folder path. If no disk matches, e.g., because the data folder is in
-    /// memory, the largest-capacity disk is used instead. If no disks are found, `(0, 0)` is
-    /// returned.
+    /// Return the used and total disk space in bytes of the disk holding the local data folder. If
+    /// no disk holds the data folder, the disk with the most capacity is used. If no disks are
+    /// found, `(0, 0)` is returned.
     fn local_data_folder_disk_space(&self) -> (u64, u64) {
         let disks = Disks::new_with_refreshed_list();
-        let location = self.data_folders.local_data_folder.location();
+        let location = StdPath::new(self.data_folders.local_data_folder.location());
 
+        // A path can sit under multiple mount points when one volume is mounted inside another, so
+        // pick the disk whose mount point is the longest prefix of the location, as that is the
+        // most specific match. If the data folder is in memory, no mount point matches, so fall
+        // back to the disk with the most capacity.
         let maybe_disk = disks
             .iter()
-            .filter(|disk| location.starts_with(&*disk.mount_point().to_string_lossy()))
+            .filter(|disk| location.starts_with(disk.mount_point()))
             .max_by_key(|disk| disk.mount_point().as_os_str().len())
             .or_else(|| disks.iter().max_by_key(|disk| disk.total_space()));
 
