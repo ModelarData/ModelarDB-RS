@@ -96,7 +96,7 @@ impl Client {
         Ok(())
     }
 
-    /// Flushes all data currently in memory to disk. If the data could not be flushed,
+    /// Flushes all data in memory to disk. If the data could not be flushed,
     /// [`ModelarDbEmbeddedError`] is returned.
     pub async fn flush_memory(&mut self) -> Result<()> {
         self.send_action("FlushMemory", vec![]).await?;
@@ -140,7 +140,7 @@ impl Client {
         Ok(protocol::NodeMetrics::decode(bytes)?)
     }
 
-    /// Send the action with the type `action_type` and an empty body to the node and return the
+    /// Sends the action with the type `action_type` and an empty body to the node and returns the
     /// body of the response. If the action could not be performed, [`ModelarDbEmbeddedError`] is
     /// returned.
     async fn retrieve_action_bytes(&mut self, action_type: &str) -> Result<Bytes> {
@@ -155,7 +155,7 @@ impl Client {
         Ok(message.body)
     }
 
-    /// Send the action with the type `action_type` and `body` to the node and return the response
+    /// Sends the action with the type `action_type` and `body` to the node and returns the response
     /// stream. If the action could not be performed, [`ModelarDbEmbeddedError`] is returned.
     async fn send_action(
         &mut self,
