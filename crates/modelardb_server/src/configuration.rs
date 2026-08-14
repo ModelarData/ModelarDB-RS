@@ -1023,7 +1023,7 @@ mod tests {
         let configuration_manager = Arc::new(RwLock::new(
             ConfigurationManager::try_new(
                 local_data_folder.clone(),
-                ClusterMode::MultiNode(Box::new(cluster)),
+                ClusterMode::MultiNode(cluster),
                 &default_args(),
             )
             .await

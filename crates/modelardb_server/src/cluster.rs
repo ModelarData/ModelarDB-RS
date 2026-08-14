@@ -41,7 +41,7 @@ use crate::error::{ModelarDbServerError, Result};
 #[derive(Clone)]
 pub(crate) enum ClusterMode {
     SingleNode(Node),
-    MultiNode(Box<Cluster>),
+    MultiNode(Cluster),
 }
 
 impl ClusterMode {
@@ -765,7 +765,7 @@ mod test {
                     Some(cluster.remote_data_folder.clone()),
                     local_data_folder,
                 ),
-                ClusterMode::MultiNode(Box::new(cluster)),
+                ClusterMode::MultiNode(cluster),
                 &ServerArgs::parse_from(["modelardbd", "edge", "data", "s3://bucket"]),
             )
             .await

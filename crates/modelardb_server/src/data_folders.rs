@@ -88,7 +88,7 @@ impl DataFolders {
                 let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
 
                 Ok((
-                    ClusterMode::MultiNode(Box::new(cluster)),
+                    ClusterMode::MultiNode(cluster),
                     Self::new(
                         local_data_folder.clone(),
                         Some(remote_data_folder),
@@ -111,7 +111,7 @@ impl DataFolders {
                 let cluster = Cluster::try_new(node, remote_data_folder.clone()).await?;
 
                 Ok((
-                    ClusterMode::MultiNode(Box::new(cluster)),
+                    ClusterMode::MultiNode(cluster),
                     Self::new(
                         local_data_folder,
                         Some(remote_data_folder.clone()),
