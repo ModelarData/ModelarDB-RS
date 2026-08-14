@@ -66,8 +66,9 @@ enum TableType {
     TimeSeriesTable,
 }
 
-/// Functionality for managing Delta Lake tables in a local folder or an object store.
-#[derive(Clone)]
+/// Functionality for managing Delta Lake tables in a local folder or an object store. A single
+/// instance should be shared through an [`Arc`], so the cache and session context are only
+/// created once.
 pub struct DataFolder {
     /// URL to access the root of the Delta Lake.
     location: String,
@@ -78,7 +79,7 @@ pub struct DataFolder {
     /// Cache of Delta tables to avoid opening the same table multiple times.
     delta_table_cache: DashMap<String, DeltaTable>,
     /// Session context used to query the tables using Apache DataFusion.
-    session_context: Arc<SessionContext>,
+    session_context: SessionContext,
 }
 
 impl DataFolder {
@@ -261,7 +262,7 @@ impl DataFolder {
             storage_options,
             object_store,
             delta_table_cache: DashMap::new(),
-            session_context: Arc::new(crate::create_session_context()),
+            session_context: crate::create_session_context(),
         };
 
         data_folder.create_and_register_metadata_tables().await?;
@@ -824,10 +825,17 @@ impl DataFolder {
     /// [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or the
     /// table does not exist.
     async fn delta_table_from_path(&self, table_path: &str) -> Result<DeltaTable> {
-        // Use the cache if possible and load to get the latest table data.
-        if let Some(mut delta_table) = self.delta_table_cache.get_mut(table_path) {
+        // Clone the cached table if possible and drop the DashMap guard before loading. load() is
+        // an async IO call, and get_mut() holds a write guard on the shard, so loading while
+        // holding it would serialize access to every table in the same shard.
+        let maybe_delta_table = self
+            .delta_table_cache
+            .get(table_path)
+            .map(|delta_table| delta_table.clone());
+
+        if let Some(mut delta_table) = maybe_delta_table {
             delta_table.load().await?;
-            Ok(delta_table.clone())
+            Ok(delta_table)
         } else {
             // Return a clear error message if the table does not exist instead of the internal
             // error message from deltalake.

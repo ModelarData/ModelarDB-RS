@@ -195,7 +195,7 @@ pub struct ConfigurationManager {
     /// The mode of the write-ahead log used to determine whether data is logged before ingestion.
     wal_mode: WalMode,
     /// The local data folder that stores the configuration file at the root.
-    local_data_folder: DataFolder,
+    local_data_folder: Arc<DataFolder>,
     /// The configuration of the system. This is stored in a separate type to allow for easier
     /// serialization and deserialization.
     configuration: Configuration,
@@ -208,7 +208,7 @@ impl ConfigurationManager {
     /// if the corresponding CLI flags or environment variables are set. If the configuration file
     /// could not be read or created, [`ModelarDbServerError`] is returned.
     pub async fn try_new(
-        local_data_folder: DataFolder,
+        local_data_folder: Arc<DataFolder>,
         cluster_mode: ClusterMode,
         args: &ServerArgs,
     ) -> Result<Self> {
@@ -589,7 +589,7 @@ mod tests {
     async fn test_invalid_configuration_in_configuration_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(local_url).await.unwrap());
 
         // Multiple threads per component are not supported.
         let invalid_configuration = Configuration {
@@ -619,7 +619,7 @@ mod tests {
     async fn test_invalid_toml_in_configuration_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(local_url).await.unwrap());
 
         // Write invalid TOML to the configuration file.
         let path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
@@ -1000,11 +1000,11 @@ mod tests {
         Arc<RwLock<ConfigurationManager>>,
     ) {
         let local_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(local_url).await.unwrap());
 
         let target_dir = tempfile::tempdir().unwrap();
         let target_url = target_dir.path().to_str().unwrap();
-        let remote_data_folder = DataFolder::open_local_url(target_url).await.unwrap();
+        let remote_data_folder = Arc::new(DataFolder::open_local_url(target_url).await.unwrap());
 
         let data_folders = DataFolders::new(
             local_data_folder.clone(),

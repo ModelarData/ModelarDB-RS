@@ -45,7 +45,7 @@ use crate::storage::uncompressed_data_buffer::{
 /// files. When an uncompressed data buffer is finished the data is made available for compression.
 pub(super) struct UncompressedDataManager {
     /// Folder for storing metadata and data in Apache Parquet files on the local file system.
-    pub local_data_folder: DataFolder,
+    pub local_data_folder: Arc<DataFolder>,
     /// Counter incremented for each [`RecordBatch`](datafusion::arrow::array::RecordBatch) of data
     /// points ingested. The value is assigned to buffers that are created or updated and is used to
     /// flush buffers that are no longer used.
@@ -71,7 +71,7 @@ impl UncompressedDataManager {
     /// there are any. If the existing buffers could not be deleted, return
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(super) async fn try_new(
-        local_data_folder: DataFolder,
+        local_data_folder: Arc<DataFolder>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
     ) -> Result<Self> {
@@ -1196,7 +1196,7 @@ mod tests {
         temp_dir: &TempDir,
     ) -> (UncompressedDataManager, Arc<TimeSeriesTableMetadata>) {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(temp_dir_url).await.unwrap());
 
         // Ensure the expected metadata is available through the metadata manager.
         let time_series_table_metadata = table::time_series_table_metadata();

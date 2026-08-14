@@ -1161,7 +1161,7 @@ mod tests {
     /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let temp_dir_url = temp_dir.path().to_str().unwrap();
-        let local_data_folder = DataFolder::open_local_url(temp_dir_url).await.unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(temp_dir_url).await.unwrap());
 
         Arc::new(
             Context::try_new(

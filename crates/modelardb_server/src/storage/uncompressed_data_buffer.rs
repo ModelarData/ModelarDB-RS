@@ -227,7 +227,7 @@ impl UncompressedInMemoryDataBuffer {
     /// an [`UncompressedOnDiskDataBuffer`] when finished.
     pub(super) async fn spill_to_apache_parquet(
         &mut self,
-        local_data_folder: Arc<dyn ObjectStore>,
+        local_object_store: Arc<dyn ObjectStore>,
     ) -> Result<UncompressedOnDiskDataBuffer> {
         let data_points = self.record_batch().await?;
 
@@ -235,7 +235,7 @@ impl UncompressedInMemoryDataBuffer {
             self.tag_hash,
             self.time_series_table_metadata.clone(),
             self.updated_by_batch_index,
-            local_data_folder,
+            local_object_store,
             data_points,
             self.batch_ids.clone(),
         )
@@ -272,8 +272,8 @@ pub(super) struct UncompressedOnDiskDataBuffer {
     time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
     /// Index of the last batch that added data points to this buffer.
     updated_by_batch_index: u64,
-    /// Location for storing spilled buffers at `file_path`.
-    local_data_folder: Arc<dyn ObjectStore>,
+    /// Object store the spilled buffer is written to at `file_path`.
+    local_object_store: Arc<dyn ObjectStore>,
     /// Path to the Apache Parquet file containing the uncompressed data in the
     /// [`UncompressedOnDiskDataBuffer`].
     file_path: Path,
@@ -283,14 +283,14 @@ pub(super) struct UncompressedOnDiskDataBuffer {
 
 impl UncompressedOnDiskDataBuffer {
     /// Spill the in-memory `data_points` from the time series with `tag_hash` to an Apache Parquet
-    /// file in `local_data_folder`. If the Apache Parquet file is written successfully, return an
+    /// file in `local_object_store`. If the Apache Parquet file is written successfully, return an
     /// [`UncompressedOnDiskDataBuffer`], otherwise return
     /// [`ModelarDbServerError`](crate::error::ModelarDbServerError).
     pub(super) async fn try_spill(
         tag_hash: u64,
         time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
         updated_by_batch_index: u64,
-        local_data_folder: Arc<dyn ObjectStore>,
+        local_object_store: Arc<dyn ObjectStore>,
         data_points: RecordBatch,
         batch_ids: HashSet<u64>,
     ) -> Result<Self> {
@@ -307,7 +307,7 @@ impl UncompressedOnDiskDataBuffer {
             &file_path,
             &data_points,
             None,
-            &(local_data_folder.clone() as Arc<dyn ObjectStore>),
+            &local_object_store,
         )
         .await?;
 
@@ -315,7 +315,7 @@ impl UncompressedOnDiskDataBuffer {
             tag_hash,
             time_series_table_metadata,
             updated_by_batch_index,
-            local_data_folder,
+            local_object_store,
             file_path,
             batch_ids,
         })
@@ -328,11 +328,11 @@ impl UncompressedOnDiskDataBuffer {
     pub(super) async fn record_batch(&self) -> Result<RecordBatch> {
         let data_points = modelardb_storage::read_record_batch_from_apache_parquet_file(
             &self.file_path,
-            self.local_data_folder.clone(),
+            self.local_object_store.clone(),
         )
         .await?;
 
-        self.local_data_folder.delete(&self.file_path).await?;
+        self.local_object_store.delete(&self.file_path).await?;
 
         Ok(data_points)
     }
@@ -766,7 +766,7 @@ mod tests {
 
     /// Create an on-disk data buffer in `temp_dir` from a full `UncompressedInMemoryDataBuffer`.
     async fn create_on_disk_data_buffer(temp_dir: &TempDir) -> UncompressedOnDiskDataBuffer {
-        let local_data_folder =
+        let local_object_store =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
@@ -783,7 +783,7 @@ mod tests {
         );
 
         uncompressed_in_memory_buffer_to_be_spilled
-            .spill_to_apache_parquet(local_data_folder)
+            .spill_to_apache_parquet(local_object_store)
             .await
             .unwrap()
     }
