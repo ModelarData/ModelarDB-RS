@@ -18,29 +18,20 @@
 mod error;
 mod helper;
 
-use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, IsTerminal, Write};
 use std::path::{Path as StdPath, PathBuf};
 use std::process;
-use std::sync::Arc;
 use std::time::Instant;
 
-use arrow::array::ArrayRef;
-use arrow::datatypes::Schema;
-use arrow::ipc::convert;
 use arrow::util::pretty;
-use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, Ticket, utils};
-use bytes::Bytes;
 use clap::Parser;
-use modelardb_auth::BearerInterceptor;
+use futures::StreamExt;
+use modelardb_embedded::error::ModelarDbEmbeddedError;
+use modelardb_embedded::operations::Operations;
+use modelardb_embedded::operations::client::Client;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
-use tonic::codegen::InterceptedService;
-use tonic::transport::{Channel, Endpoint};
-use tonic::{Request, Streaming};
 
 use crate::error::{ModelarDbClientError, Result};
 use crate::helper::ClientHelper;
@@ -88,12 +79,15 @@ async fn main() -> Result<()> {
     // Parse the command line arguments.
     let args = ClientArgs::parse();
 
+    // Connect to the server.
+    let url = format!("grpc://{}:{}", args.host, args.port);
+    let client = Client::connect(&url, args.token.as_deref()).await?;
+
     // Execute the queries.
-    let flight_service_client = connect(&args.host, args.port, args.token).await?;
     if let Some(query_file) = args.query_file {
-        execute_queries_from_a_file(flight_service_client, &query_file).await
+        execute_queries_from_a_file(client, &query_file).await
     } else {
-        execute_queries_from_a_repl(flight_service_client).await
+        execute_queries_from_a_repl(client).await
     }
 }
 
