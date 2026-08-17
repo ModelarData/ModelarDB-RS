@@ -92,10 +92,7 @@ async fn main() -> Result<()> {
 }
 
 /// Execute the commands and queries in `query_file`.
-async fn execute_queries_from_a_file(
-    mut flight_service_client: AuthenticatedFlightClient,
-    query_file: &StdPath,
-) -> Result<()> {
+async fn execute_queries_from_a_file(mut client: Client, query_file: &StdPath) -> Result<()> {
     let file = File::open(query_file)?;
     let lines = BufReader::new(file).lines();
 
@@ -111,7 +108,7 @@ async fn execute_queries_from_a_file(
         // Execute the query.
         if !query.is_empty() {
             println!("{query}");
-            execute_and_print_command_or_query(&mut flight_service_client, &query).await
+            execute_and_print_command_or_query(&mut client, &query).await
         }
     }
 
@@ -119,12 +116,10 @@ async fn execute_queries_from_a_file(
 }
 
 /// Execute commands and queries in a read-eval-print loop.
-async fn execute_queries_from_a_repl(
-    mut flight_service_client: AuthenticatedFlightClient,
-) -> Result<()> {
+async fn execute_queries_from_a_repl(mut client: Client) -> Result<()> {
     // Create the read-eval-print loop.
     let mut editor = Editor::<ClientHelper, FileHistory>::new()?;
-    let table_names = retrieve_table_names(&mut flight_service_client).await?;
+    let table_names = client.tables().await?;
     editor.set_helper(Some(ClientHelper::new(table_names)));
 
     // Read previously executed commands and queries from the history file.
@@ -140,7 +135,7 @@ async fn execute_queries_from_a_repl(
     // Execute commands and queries and print the result.
     while let Ok(line) = editor.readline("ModelarDB> ") {
         editor.add_history_entry(line.as_str())?;
-        execute_and_print_command_or_query(&mut flight_service_client, &line).await
+        execute_and_print_command_or_query(&mut client, &line).await
     }
 
     // Append the executed commands and queries to the history file.
@@ -154,17 +149,14 @@ async fn execute_queries_from_a_repl(
 
 /// Execute a command or a query. Returns [`ModelarDbClientError`] if the command or query could not
 /// be executed or their result could not be retrieved.
-async fn execute_and_print_command_or_query(
-    flight_service_client: &mut AuthenticatedFlightClient,
-    command_or_query: &str,
-) {
+async fn execute_and_print_command_or_query(client: &mut Client, command_or_query: &str) {
     let start_time = Instant::now();
     let command_or_query = command_or_query.trim();
 
     let result = if command_or_query.starts_with('\\') {
-        execute_command(flight_service_client, command_or_query).await
+        execute_command(client, command_or_query).await
     } else {
-        execute_query_and_print_result(flight_service_client, command_or_query).await
+        execute_query_and_print_result(client, command_or_query).await
     };
 
     if let Err(message) = result {
@@ -178,12 +170,7 @@ async fn execute_and_print_command_or_query(
 /// * An incorrect argument for the command was provided.
 /// * The command could not be executed.
 /// * The result could not be retrieved.
-async fn execute_command(
-    flight_service_client: &mut AuthenticatedFlightClient,
-    command_and_argument: &str,
-) -> Result<()> {
-    let mut command_and_argument = command_and_argument.split(' ');
-    match command_and_argument
+async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Result<()> {
         .next()
         .ok_or(ModelarDbClientError::InvalidArgument(
             "No command was provided.".to_owned(),
