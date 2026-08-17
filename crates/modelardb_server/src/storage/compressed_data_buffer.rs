@@ -99,10 +99,9 @@ impl CompressedDataBuffer {
         }
 
         let mut compressed_segments_size = 0;
-        for compressed_segment_batch in compressed_segments.drain(0..) {
-            compressed_segments_size +=
-                Self::size_of_compressed_segments(&compressed_segment_batch);
-            self.compressed_segments.push(compressed_segment_batch);
+        for compressed_segment in compressed_segments.drain(0..) {
+            compressed_segments_size += Self::size_of_compressed_segments(&compressed_segment);
+            self.compressed_segments.push(compressed_segment);
         }
 
         self.size_in_bytes += compressed_segments_size;
