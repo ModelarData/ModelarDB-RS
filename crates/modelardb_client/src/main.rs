@@ -236,37 +236,6 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
     }
 }
 
-/// Retrieve the names of the tables available on the server. Returns [`ModelarDbClientError`] if
-/// the request could not be performed or the tables names could not be retrieved.
-async fn retrieve_table_names(
-    flight_service_client: &mut AuthenticatedFlightClient,
-) -> Result<Vec<String>> {
-    let criteria = Criteria {
-        expression: Bytes::new(),
-    };
-    let request = Request::new(criteria);
-
-    let mut stream = flight_service_client
-        .list_flights(request)
-        .await?
-        .into_inner();
-
-    let flight_infos = stream
-        .message()
-        .await?
-        .ok_or(ModelarDbClientError::InvalidArgument(
-            TRANSPORT_ERROR.to_owned(),
-        ))?;
-
-    let mut table_names = vec![];
-    if let Some(flight_descriptor) = flight_infos.flight_descriptor {
-        for table_name in flight_descriptor.path {
-            table_names.push(table_name);
-        }
-    }
-
-    Ok(table_names)
-}
 
 /// Execute an action. Returns [`ModelarDbClientError`] if the action could not be executed.
 async fn execute_action(
