@@ -103,8 +103,9 @@ impl CompressedDataBuffer {
             compressed_segments_size +=
                 Self::size_of_compressed_segments(&compressed_segment_batch);
             self.compressed_segments.push(compressed_segment_batch);
-            self.size_in_bytes += compressed_segments_size;
         }
+
+        self.size_in_bytes += compressed_segments_size;
 
         self.batch_ids.extend(compressed_segment_batch.batch_ids);
 
