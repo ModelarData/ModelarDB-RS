@@ -91,25 +91,6 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Connect to the server at `host`:`port` with an optional bearer `maybe_token`. Returns
-/// [`ModelarDbClientError`] if a connection to the server cannot be established or the token is
-/// not a valid ASCII metadata value.
-async fn connect(
-    host: &str,
-    port: u16,
-    maybe_token: Option<String>,
-) -> Result<AuthenticatedFlightClient> {
-    let interceptor = BearerInterceptor::try_new(maybe_token.as_deref())?;
-
-    let address = format!("grpc://{host}:{port}");
-    let connection = Endpoint::new(address)?.connect().await?;
-
-    Ok(FlightServiceClient::with_interceptor(
-        connection,
-        interceptor,
-    ))
-}
-
 /// Execute the commands and queries in `query_file`.
 async fn execute_queries_from_a_file(
     mut flight_service_client: AuthenticatedFlightClient,
