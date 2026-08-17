@@ -166,11 +166,14 @@ mod tests {
         let mut compressed_data_buffer =
             CompressedDataBuffer::new(table::time_series_table_metadata_arc());
 
-        compressed_data_buffer
+        let size_in_bytes = compressed_data_buffer
             .append_compressed_segment_batch(compressed_segment_batch())
             .unwrap();
 
-        assert!(compressed_data_buffer.size_in_bytes > 0);
+        // The batch contains two compressed segments, so the size of both is added to the buffer.
+        // The returned size must match since the caller reserves memory based on it.
+        assert_eq!(size_in_bytes, 2 * COMPRESSED_SEGMENTS_SIZE);
+        assert_eq!(compressed_data_buffer.size_in_bytes, size_in_bytes);
     }
 
     #[tokio::test]
