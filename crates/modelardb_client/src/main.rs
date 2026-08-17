@@ -265,9 +265,10 @@ fn confirm_printing_next_batch() -> Result<bool> {
             return Ok(false);
         }
 
-        match user_input.as_str() {
-            "\n" => return Ok(true),
-            "q\n" => return Ok(false),
+        // The line includes the line ending, which is \r\n on Windows and \n everywhere else.
+        match user_input.trim() {
+            "" => return Ok(true),
+            "q" => return Ok(false),
             _ => (),
         }
     }
