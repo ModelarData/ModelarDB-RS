@@ -164,6 +164,8 @@ async fn execute_and_print_command_or_query(client: &mut Client, command_or_quer
 /// * The command could not be executed.
 /// * The result could not be retrieved.
 async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Result<()> {
+    let mut command_and_arguments = command_and_arguments.split_whitespace();
+    match command_and_arguments
         .next()
         .ok_or(ModelarDbClientError::InvalidArgument(
             "No command was provided.".to_owned(),
@@ -171,18 +173,13 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
         // Print the schema of a table on the server.
         "\\d" => {
             let table_name =
-                command_and_argument
+                command_and_arguments
                     .next()
                     .ok_or(ModelarDbClientError::InvalidArgument(
                         "No table name was provided.".to_owned(),
                     ))?;
-            let flight_descriptor = FlightDescriptor::new_path(vec![table_name.to_owned()]);
-            let request = Request::new(flight_descriptor);
-            let schema_result = flight_service_client
-                .get_schema(request)
-                .await?
-                .into_inner();
-            let schema = convert::try_schema_from_ipc_buffer(&schema_result.schema)?;
+
+            let schema = client.schema(table_name).await?;
             for field in schema.fields() {
                 print!("{}: {}", field.name(), field.data_type());
                 for (metadata_name, metadata_value) in field.metadata() {
@@ -194,17 +191,15 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
         }
         // Print the name of the tables on the server.
         "\\dt" => {
-            if let Ok(tables) = retrieve_table_names(flight_service_client).await {
-                for table in tables {
-                    println!("{table}");
-                }
+            for table_name in client.tables().await? {
+                println!("{table_name}");
             }
             Ok(())
         }
         // Flushes all data the server currently has in memory to disk.
-        "\\f" => execute_action(flight_service_client, "FlushMemory", "").await,
+        "\\f" => client.flush_memory().await.map_err(|error| error.into()),
         // Flushes all data the server currently has in memory and disk to the object store.
-        "\\F" => execute_action(flight_service_client, "FlushNode", "").await,
+        "\\F" => client.flush_node().await.map_err(|error| error.into()),
         // Print helpful information, explanations with \\ must be indented more to be aligned.
         "\\h" => {
             println!(
