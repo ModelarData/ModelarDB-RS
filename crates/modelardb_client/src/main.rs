@@ -36,13 +36,6 @@ use rustyline::history::FileHistory;
 use crate::error::{ModelarDbClientError, Result};
 use crate::helper::ClientHelper;
 
-/// Error to emit when the server does not provide a response when one is expected.
-const TRANSPORT_ERROR: &str = "transport error: no messages received.";
-
-/// [`FlightServiceClient`] with a [`BearerInterceptor`] that attaches an authorization header.
-type AuthenticatedFlightClient =
-    FlightServiceClient<InterceptedService<Channel, BearerInterceptor>>;
-
 /// Command line arguments for the ModelarDB client.
 #[derive(Parser)]
 #[command(
