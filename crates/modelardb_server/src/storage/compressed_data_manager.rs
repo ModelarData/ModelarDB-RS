@@ -503,8 +503,8 @@ mod tests {
             .await
             .unwrap();
 
-        // The remaining memory was set to -1 above, so saving the buffer returns exactly the
-        // memory reserved for its two compressed segments.
+        // The remaining memory was set to -1 above. Saving the buffer returns exactly the memory
+        // reserved for its two compressed segments.
         assert_eq!(
             data_manager
                 .memory_pool
@@ -542,8 +542,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Adjust the remaining memory to a negative value that equals the amount of memory
-        // currently used for the buffer.
         data_manager
             .adjust_compressed_remaining_memory_in_bytes(
                 -(COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64),
