@@ -378,13 +378,15 @@ mod tests {
 
         assert!(data_manager.compressed_data_buffers.contains_key(key));
         assert_eq!(data_manager.compressed_queue.pop().unwrap(), key);
-        assert!(
+
+        // The batch contains two compressed segments, so the size of both is added to the buffer.
+        assert_eq!(
             data_manager
                 .compressed_data_buffers
                 .get(key)
                 .unwrap()
-                .size_in_bytes
-                > 0
+                .size_in_bytes,
+            2 * COMPRESSED_SEGMENTS_SIZE
         );
     }
 
@@ -408,13 +410,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
+        // Each insert adds the size of the two compressed segments in the batch.
+        assert_eq!(previous_size, 2 * COMPRESSED_SEGMENTS_SIZE);
+        assert_eq!(
             data_manager
                 .compressed_data_buffers
                 .get(TIME_SERIES_TABLE_NAME)
                 .unwrap()
-                .size_in_bytes
-                > previous_size
+                .size_in_bytes,
+            4 * COMPRESSED_SEGMENTS_SIZE
         );
     }
 
@@ -499,10 +503,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            -1 < data_manager
+        // The remaining memory was set to -1 above, so saving the buffer returns exactly the
+        // memory reserved for its two compressed segments.
+        assert_eq!(
+            data_manager
                 .memory_pool
-                .remaining_compressed_memory_in_bytes()
+                .remaining_compressed_memory_in_bytes(),
+            2 * COMPRESSED_SEGMENTS_SIZE as i64 - 1
         );
     }
 
@@ -535,6 +542,8 @@ mod tests {
             .await
             .unwrap();
 
+        // Adjust the remaining memory to a negative value that equals the amount of memory
+        // currently used for the buffer.
         data_manager
             .adjust_compressed_remaining_memory_in_bytes(
                 -(COMPRESSED_RESERVED_MEMORY_IN_BYTES as i64),
@@ -542,11 +551,12 @@ mod tests {
             .await
             .unwrap();
 
+        // All the memory used for the buffer is returned when the buffer is saved.
         assert_eq!(
             data_manager
                 .memory_pool
                 .remaining_compressed_memory_in_bytes(),
-            1405
+            0
         );
 
         // There should no longer be any compressed data in memory.
