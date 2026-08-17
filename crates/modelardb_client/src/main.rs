@@ -237,28 +237,6 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
 }
 
 
-/// Execute an action. Returns [`ModelarDbClientError`] if the action could not be executed.
-async fn execute_action(
-    flight_service_client: &mut AuthenticatedFlightClient,
-    action_type: &str,
-    action_body: &str,
-) -> Result<()> {
-    let action = Action {
-        r#type: action_type.to_owned(),
-        body: action_body.to_owned().into(),
-    };
-
-    let request = Request::new(action);
-
-    flight_service_client
-        .do_action(request)
-        .await?
-        .into_inner()
-        .message()
-        .await?;
-
-    Ok(())
-}
 
 /// Execute a query and print each batch in the result set. Returns [`ModelarDbClientError`] if the
 /// query could not be executed or the batches in the result set could not be printed.
