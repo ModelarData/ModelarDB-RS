@@ -224,67 +224,23 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
     }
 }
 
+/// Execute a query and print each batch in the result set. If standard output is a terminal, ask
+/// the user for confirmation before printing each batch after the first. Returns
+/// [`ModelarDbClientError`] if the query could not be executed or the batches in the result set
+/// could not be printed.
+async fn execute_query_and_print_result(client: &mut Client, query: &str) -> Result<()> {
+    let mut record_batch_stream = client.read(query).await?;
 
-
-/// Execute a query and print each batch in the result set. Returns [`ModelarDbClientError`] if the
-/// query could not be executed or the batches in the result set could not be printed.
-async fn execute_query_and_print_result(
-    flight_service_client: &mut AuthenticatedFlightClient,
-    query: &str,
-) -> Result<()> {
-    // Execute the query.
-    let ticket = Ticket {
-        ticket: query.to_owned().into(),
-    };
-    let mut stream = flight_service_client.do_get(ticket).await?.into_inner();
-
-    // Get the schema of the data in the query result.
-    let flight_data = stream
-        .message()
-        .await?
-        .ok_or(ModelarDbClientError::InvalidArgument(
-            TRANSPORT_ERROR.to_owned(),
-        ))?;
-    let schema = Arc::new(Schema::try_from(&flight_data)?);
-    let dictionaries_by_id = HashMap::new();
-
-    if io::stdout().is_terminal() {
-        print_batches_with_confirmation(stream, schema, &dictionaries_by_id).await
-    } else {
-        print_batches_without_confirmation(stream, schema, &dictionaries_by_id).await
-    }
-}
-
-/// Print each batch in the result set with confirmation from the user before printing each batch.
-/// Returns [`ModelarDbClientError`] if the batches in the result set could not be printed.
-async fn print_batches_with_confirmation(
-    mut stream: Streaming<FlightData>,
-    schema: Arc<Schema>,
-    dictionaries_by_id: &HashMap<i64, ArrayRef>,
-) -> Result<()> {
-    let mut user_input = String::new();
+    let print_confirmation = io::stdout().is_terminal();
     let mut multiple_batches = false;
 
-    while let Some(flight_data) = stream.message().await? {
-        let record_batch =
-            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), dictionaries_by_id)?;
-
+    while let Some(record_batch) = record_batch_stream.next().await {
         // Only ask for confirmation to print the next batch if there are multiple batches.
-        if multiple_batches {
-            loop {
-                user_input.clear();
-                print!("Press Enter for next batch and q+Enter to quit> ");
-                io::stdout().flush()?;
-                io::stdin().read_line(&mut user_input)?;
-
-                match user_input.as_str() {
-                    "\n" => break,
-                    "q\n" => return Ok(()),
-                    _ => (),
-                }
-            }
+        if print_confirmation && multiple_batches && !confirm_printing_next_batch()? {
+            return Ok(());
         }
 
+        let record_batch = record_batch.map_err(ModelarDbEmbeddedError::from)?;
         pretty::print_batches(&[record_batch])?;
         multiple_batches = true;
     }
@@ -292,19 +248,27 @@ async fn print_batches_with_confirmation(
     Ok(())
 }
 
-/// Print each batch in the result set without user input. Returns [`ModelarDbClientError`] if the
-/// batches in the result set could not be printed.
-async fn print_batches_without_confirmation(
-    mut stream: Streaming<FlightData>,
-    schema: Arc<Schema>,
-    dictionaries_by_id: &HashMap<i64, ArrayRef>,
-) -> Result<()> {
-    while let Some(flight_data) = stream.message().await? {
-        let record_batch =
-            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), dictionaries_by_id)?;
+/// Ask the user for confirmation before printing the next batch in a result set. Returns false if
+/// the user chose to stop printing batches. Returns [`ModelarDbClientError`] if the input could not
+/// be read.
+fn confirm_printing_next_batch() -> Result<bool> {
+    let mut user_input = String::new();
 
-        pretty::print_batches(&[record_batch])?;
+    loop {
+        user_input.clear();
+        print!("Press Enter for next batch and q+Enter to quit> ");
+        io::stdout().flush()?;
+
+        // A read of zero bytes means standard input reached end-of-file, so no more batches can be
+        // confirmed.
+        if io::stdin().read_line(&mut user_input)? == 0 {
+            return Ok(false);
+        }
+
+        match user_input.as_str() {
+            "\n" => return Ok(true),
+            "q\n" => return Ok(false),
+            _ => (),
+        }
     }
-
-    Ok(())
 }
