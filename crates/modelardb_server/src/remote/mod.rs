@@ -1133,9 +1133,10 @@ impl FlightService for FlightServiceHandler {
 
         let kill_node_action = ActionType {
             r#type: "KillNode".to_owned(),
-            description: "Flush uncompressed data to disk by compressing and saving the data and \
-                          kill the process running the server. Data is not transferred to the \
-                          remote object store. Use FlushNode first if that is required."
+            description: "Flush uncompressed data to disk by compressing and saving the data, \
+                          remove the node from the cluster if necessary, and kill the process \
+                          running the server. Data is not transferred to the remote object store. \
+                          Use FlushNode first if that is required."
                 .to_owned(),
         };
 
