@@ -218,7 +218,7 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
             Ok(())
         }
         // Update a setting in the configuration of the node.
-        "\\s" => {
+        "\\sc" => {
             let name =
                 command_and_arguments
                     .next()
@@ -258,7 +258,7 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
                  \\dc                           Print the configuration of the node.\n\
                  \\dn                           Print the nodes in the cluster.\n\
                  \\dm                           Print the resource usage metrics of the node.\n\
-                 \\s SETTING [VALUE]            Set SETTING to VALUE, or unset SETTING if VALUE is omitted.\n\
+                 \\sc SETTING [VALUE]           Set SETTING to VALUE, or unset SETTING if VALUE is omitted.\n\
                  \\f                            Flushes data in memory to disk.\n\
                  \\F                            Flushes data in memory and disk to the object store.\n\
                  \\h                            Print documentation for all supported commands.\n\
