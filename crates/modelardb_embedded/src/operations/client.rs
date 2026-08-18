@@ -114,9 +114,9 @@ impl Client {
 
     /// Flushes all data to disk, removes the node from the cluster if necessary, and kills the node
     /// process. Data is not transferred to the remote object store. Call [`Client::flush_node`]
-    /// first if that is required. Since the process is killed, a conventional response cannot be
-    /// returned, so a dropped connection is not treated as an error. If the data could not be
-    /// flushed before the node was killed, [`ModelarDbEmbeddedError`] is returned.
+    /// first if that is required. The node exits while handling the request, so a response cannot
+    /// be returned. Errors are therefore ignored and [`Ok`] is returned even if the node rejected
+    /// the request or failed to flush its data.
     pub async fn kill_node(&mut self) -> Result<()> {
         // The node exits while handling this action, so the response stream is dropped.
         let _ = self.send_action("KillNode", vec![]).await;
