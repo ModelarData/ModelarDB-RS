@@ -130,7 +130,15 @@ async fn execute_queries_from_a_repl(mut client: Client) -> Result<()> {
     // Execute commands and queries and print the result.
     while let Ok(line) = editor.readline("ModelarDB> ") {
         editor.add_history_entry(line.as_str())?;
-        execute_and_print_command_or_query(&mut client, &line).await
+        execute_and_print_command_or_query(&mut client, &line).await;
+
+        // Refresh the table names for tab-completion if a table may have been created or dropped.
+        let first_word = line.split_whitespace().next().unwrap_or("");
+        if first_word.eq_ignore_ascii_case("CREATE") || first_word.eq_ignore_ascii_case("DROP") {
+            if let Ok(table_names) = client.tables().await {
+                editor.set_helper(Some(ClientHelper::new(table_names)));
+            }
+        }
     }
 
     // Append the executed commands and queries to the history file.
