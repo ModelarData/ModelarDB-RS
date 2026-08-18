@@ -262,7 +262,7 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
                  \\f                            Flushes data in memory to disk.\n\
                  \\F                            Flushes data in memory and disk to the object store.\n\
                  \\h                            Print documentation for all supported commands.\n\
-                 \\k                            Kill the node and quit modelardb.\n\
+                 \\k                            Flush data to disk, kill the node, and quit modelardb.\n\
                  \\q                            Quit modelardb."
             );
             Ok(())

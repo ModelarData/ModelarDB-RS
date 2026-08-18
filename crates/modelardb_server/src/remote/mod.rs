@@ -886,10 +886,11 @@ impl FlightService for FlightServiceHandler {
     /// currently in memory to disk and then flushes all compressed data on disk to the remote
     /// object store. Note that data is only transferred to the remote object store if one was
     /// provided when starting the server.
-    /// * `KillNode`: An extension of the `FlushNode` action that first flushes all data to disk,
-    /// then flushes all compressed data to the remote object store, then removes the node
-    /// from the cluster if necessary, and finally kills the process that is running the server.
-    /// Note that since the process is killed, a conventional response cannot be returned.
+    /// * `KillNode`: An extension of the `FlushMemory` action that first flushes all data that is
+    /// currently in memory to disk, then removes the node from the cluster if necessary, and
+    /// finally kills the process that is running the server. Data is not transferred to the remote
+    /// object store. Use `FlushNode` first if that is required. Note that since the process is
+    /// killed, a conventional response cannot be returned.
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
     /// configuration is returned in a [`Configuration`](protocol::Configuration) protobuf message.
     /// * `UpdateConfiguration`: Update a single setting in the configuration. The setting to update
@@ -954,13 +955,11 @@ impl FlightService for FlightServiceHandler {
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "KillNode" {
-            let mut storage_engine = self.context.storage_engine.write().await;
-            storage_engine
-                .flush()
+            self.context
+                .storage_engine
+                .write()
                 .await
-                .map_err(error_to_status_internal)?;
-            storage_engine
-                .transfer()
+                .flush()
                 .await
                 .map_err(error_to_status_internal)?;
 
@@ -1134,9 +1133,9 @@ impl FlightService for FlightServiceHandler {
 
         let kill_node_action = ActionType {
             r#type: "KillNode".to_owned(),
-            description: "Flush uncompressed data to disk by compressing and saving the data, \
-                          transfer all compressed data to the remote object store, and kill the \
-                          process running the server."
+            description: "Flush uncompressed data to disk by compressing and saving the data and \
+                          kill the process running the server. Data is not transferred to the \
+                          remote object store. Use FlushNode first if that is required."
                 .to_owned(),
         };
 
