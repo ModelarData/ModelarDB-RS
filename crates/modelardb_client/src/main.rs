@@ -210,6 +210,12 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
             }
             Ok(())
         }
+        // Print the resource usage metrics of the node.
+        "\\dm" => {
+            let node_metrics = client.node_metrics().await?;
+            print_node_metrics(&node_metrics);
+            Ok(())
+        }
         // Flushes all data the server currently has in memory to disk.
         "\\f" => client.flush_memory().await.map_err(|error| error.into()),
         // Flushes all data the server currently has in memory and disk to the object store.
@@ -324,4 +330,53 @@ fn print_configuration(configuration: &protocol::Configuration) {
     println!("compression_threads: {}", configuration.compression_threads);
     println!("writer_threads: {}", configuration.writer_threads);
     println!("wal_enabled: {}", configuration.wal_enabled);
+}
+
+/// Print each field in `node_metrics` on its own line.
+fn print_node_metrics(node_metrics: &protocol::NodeMetrics) {
+    println!(
+        "cpu_usage_percentage: {}",
+        node_metrics.cpu_usage_percentage
+    );
+    println!("cpu_count: {}", node_metrics.cpu_count);
+    println!(
+        "used_memory_in_bytes: {}",
+        node_metrics.used_memory_in_bytes
+    );
+    println!(
+        "total_memory_in_bytes: {}",
+        node_metrics.total_memory_in_bytes
+    );
+    println!(
+        "used_disk_space_in_bytes: {}",
+        node_metrics.used_disk_space_in_bytes
+    );
+    println!(
+        "total_disk_space_in_bytes: {}",
+        node_metrics.total_disk_space_in_bytes
+    );
+    println!(
+        "ingested_used_memory_in_bytes: {}",
+        node_metrics.ingested_used_memory_in_bytes
+    );
+    println!(
+        "ingested_reserved_memory_in_bytes: {}",
+        node_metrics.ingested_reserved_memory_in_bytes
+    );
+    println!(
+        "uncompressed_used_memory_in_bytes: {}",
+        node_metrics.uncompressed_used_memory_in_bytes
+    );
+    println!(
+        "uncompressed_reserved_memory_in_bytes: {}",
+        node_metrics.uncompressed_reserved_memory_in_bytes
+    );
+    println!(
+        "compressed_used_memory_in_bytes: {}",
+        node_metrics.compressed_used_memory_in_bytes
+    );
+    println!(
+        "compressed_reserved_memory_in_bytes: {}",
+        node_metrics.compressed_reserved_memory_in_bytes
+    );
 }
