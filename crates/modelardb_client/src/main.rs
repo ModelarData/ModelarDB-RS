@@ -203,6 +203,13 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
             print_configuration(&configuration);
             Ok(())
         }
+        // Print the nodes that are currently part of the cluster.
+        "\\dn" => {
+            for node in client.list_nodes().await? {
+                println!("{} ({})", node.url, node.mode);
+            }
+            Ok(())
+        }
         // Flushes all data the server currently has in memory to disk.
         "\\f" => client.flush_memory().await.map_err(|error| error.into()),
         // Flushes all data the server currently has in memory and disk to the object store.
