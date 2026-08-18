@@ -340,87 +340,64 @@ fn confirm_printing_next_batch() -> Result<bool> {
 
 /// Print each field in `configuration` on its own line.
 fn print_configuration(configuration: &protocol::Configuration) {
-    println!(
-        "ingested_reserved_memory_in_bytes: {}",
-        configuration.ingested_reserved_memory_in_bytes
-    );
-    println!(
-        "uncompressed_reserved_memory_in_bytes: {}",
-        configuration.uncompressed_reserved_memory_in_bytes
-    );
-    println!(
-        "compressed_reserved_memory_in_bytes: {}",
-        configuration.compressed_reserved_memory_in_bytes
-    );
+    let protocol::Configuration {
+        ingested_reserved_memory_in_bytes,
+        uncompressed_reserved_memory_in_bytes,
+        compressed_reserved_memory_in_bytes,
+        transfer_batch_size_in_bytes,
+        segment_size_threshold_in_bytes,
+        optimize_target_file_size_in_bytes,
+        vacuum_retention_period_in_seconds,
+        ingestion_threads,
+        compression_threads,
+        writer_threads,
+        wal_enabled,
+    } = configuration;
 
-    let transfer_batch_size_in_bytes = configuration
-        .transfer_batch_size_in_bytes
-        .map_or("not set".to_owned(), |value| value.to_string());
+    // Data is only transferred on an explicit flush if the batch size is not set.
+    let transfer_batch_size_in_bytes =
+        transfer_batch_size_in_bytes.map_or("not set".to_owned(), |value| value.to_string());
+
+    println!("ingested_reserved_memory_in_bytes: {ingested_reserved_memory_in_bytes}");
+    println!("uncompressed_reserved_memory_in_bytes: {uncompressed_reserved_memory_in_bytes}");
+    println!("compressed_reserved_memory_in_bytes: {compressed_reserved_memory_in_bytes}");
     println!("transfer_batch_size_in_bytes: {transfer_batch_size_in_bytes}");
-
-    println!(
-        "segment_size_threshold_in_bytes: {}",
-        configuration.segment_size_threshold_in_bytes
-    );
-    println!(
-        "optimize_target_file_size_in_bytes: {}",
-        configuration.optimize_target_file_size_in_bytes
-    );
-    println!(
-        "vacuum_retention_period_in_seconds: {}",
-        configuration.vacuum_retention_period_in_seconds
-    );
-    println!("ingestion_threads: {}", configuration.ingestion_threads);
-    println!("compression_threads: {}", configuration.compression_threads);
-    println!("writer_threads: {}", configuration.writer_threads);
-    println!("wal_enabled: {}", configuration.wal_enabled);
+    println!("segment_size_threshold_in_bytes: {segment_size_threshold_in_bytes}");
+    println!("optimize_target_file_size_in_bytes: {optimize_target_file_size_in_bytes}");
+    println!("vacuum_retention_period_in_seconds: {vacuum_retention_period_in_seconds}");
+    println!("ingestion_threads: {ingestion_threads}");
+    println!("compression_threads: {compression_threads}");
+    println!("writer_threads: {writer_threads}");
+    println!("wal_enabled: {wal_enabled}");
 }
 
 /// Print each field in `node_metrics` on its own line.
 fn print_node_metrics(node_metrics: &protocol::NodeMetrics) {
-    println!(
-        "cpu_usage_percentage: {}",
-        node_metrics.cpu_usage_percentage
-    );
-    println!("cpu_count: {}", node_metrics.cpu_count);
-    println!(
-        "used_memory_in_bytes: {}",
-        node_metrics.used_memory_in_bytes
-    );
-    println!(
-        "total_memory_in_bytes: {}",
-        node_metrics.total_memory_in_bytes
-    );
-    println!(
-        "used_disk_space_in_bytes: {}",
-        node_metrics.used_disk_space_in_bytes
-    );
-    println!(
-        "total_disk_space_in_bytes: {}",
-        node_metrics.total_disk_space_in_bytes
-    );
-    println!(
-        "ingested_used_memory_in_bytes: {}",
-        node_metrics.ingested_used_memory_in_bytes
-    );
-    println!(
-        "ingested_reserved_memory_in_bytes: {}",
-        node_metrics.ingested_reserved_memory_in_bytes
-    );
-    println!(
-        "uncompressed_used_memory_in_bytes: {}",
-        node_metrics.uncompressed_used_memory_in_bytes
-    );
-    println!(
-        "uncompressed_reserved_memory_in_bytes: {}",
-        node_metrics.uncompressed_reserved_memory_in_bytes
-    );
-    println!(
-        "compressed_used_memory_in_bytes: {}",
-        node_metrics.compressed_used_memory_in_bytes
-    );
-    println!(
-        "compressed_reserved_memory_in_bytes: {}",
-        node_metrics.compressed_reserved_memory_in_bytes
-    );
+    let protocol::NodeMetrics {
+        cpu_usage_percentage,
+        cpu_count,
+        used_memory_in_bytes,
+        total_memory_in_bytes,
+        used_disk_space_in_bytes,
+        total_disk_space_in_bytes,
+        ingested_used_memory_in_bytes,
+        ingested_reserved_memory_in_bytes,
+        uncompressed_used_memory_in_bytes,
+        uncompressed_reserved_memory_in_bytes,
+        compressed_used_memory_in_bytes,
+        compressed_reserved_memory_in_bytes,
+    } = node_metrics;
+
+    println!("cpu_usage_percentage: {cpu_usage_percentage}");
+    println!("cpu_count: {cpu_count}");
+    println!("used_memory_in_bytes: {used_memory_in_bytes}");
+    println!("total_memory_in_bytes: {total_memory_in_bytes}");
+    println!("used_disk_space_in_bytes: {used_disk_space_in_bytes}");
+    println!("total_disk_space_in_bytes: {total_disk_space_in_bytes}");
+    println!("ingested_used_memory_in_bytes: {ingested_used_memory_in_bytes}");
+    println!("ingested_reserved_memory_in_bytes: {ingested_reserved_memory_in_bytes}");
+    println!("uncompressed_used_memory_in_bytes: {uncompressed_used_memory_in_bytes}");
+    println!("uncompressed_reserved_memory_in_bytes: {uncompressed_reserved_memory_in_bytes}");
+    println!("compressed_used_memory_in_bytes: {compressed_used_memory_in_bytes}");
+    println!("compressed_reserved_memory_in_bytes: {compressed_reserved_memory_in_bytes}");
 }
