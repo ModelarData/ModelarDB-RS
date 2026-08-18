@@ -253,17 +253,17 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
                 "CREATE [TIME SERIES] TABLE     Execute a CREATE TABLE or CREATE TIME SERIES TABLE statement.\n\
                  INSERT INTO                    Execute an INSERT INTO statement. Must include generated columns.\n\
                  SELECT                         Execute a SELECT statement.\n\
-                 \\d TABLE_NAME                 Print the schema of a table with TABLE_NAME.\n\
-                 \\dt                           Print the name of all the tables.\n\
-                 \\dc                           Print the configuration of the node.\n\
-                 \\dn                           Print the nodes in the cluster.\n\
-                 \\dm                           Print the resource usage metrics of the node.\n\
-                 \\sc SETTING [VALUE]           Set SETTING to VALUE, or unset SETTING if VALUE is omitted.\n\
-                 \\f                            Flushes data in memory to disk.\n\
-                 \\F                            Flushes data in memory and disk to the object store.\n\
-                 \\h                            Print documentation for all supported commands.\n\
-                 \\k                            Flush data to disk, kill the node, and quit modelardb.\n\
-                 \\q                            Quit modelardb."
+                 \\d TABLE_NAME                  Print the schema of a table with TABLE_NAME.\n\
+                 \\dt                            Print the name of all the tables.\n\
+                 \\dc                            Print the configuration of the node.\n\
+                 \\dn                            Print the nodes in the cluster.\n\
+                 \\dm                            Print the resource usage metrics of the node.\n\
+                 \\sc SETTING [VALUE]            Set SETTING to VALUE, or unset SETTING if VALUE is omitted.\n\
+                 \\f                             Flushes data in memory to disk.\n\
+                 \\F                             Flushes data in memory and disk to the object store.\n\
+                 \\h                             Print documentation for all supported commands.\n\
+                 \\k                             Flush data to disk, kill the node, and quit modelardb.\n\
+                 \\q                             Quit modelardb."
             );
             Ok(())
         }
