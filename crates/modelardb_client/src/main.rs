@@ -30,6 +30,7 @@ use futures::StreamExt;
 use modelardb_embedded::error::ModelarDbEmbeddedError;
 use modelardb_embedded::operations::Operations;
 use modelardb_embedded::operations::client::Client;
+use modelardb_types::flight::protocol;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
 
@@ -196,6 +197,12 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
             }
             Ok(())
         }
+        // Print the configuration of the node.
+        "\\dc" => {
+            let configuration = client.configuration().await?;
+            print_configuration(&configuration);
+            Ok(())
+        }
         // Flushes all data the server currently has in memory to disk.
         "\\f" => client.flush_memory().await.map_err(|error| error.into()),
         // Flushes all data the server currently has in memory and disk to the object store.
@@ -272,4 +279,42 @@ fn confirm_printing_next_batch() -> Result<bool> {
             _ => (),
         }
     }
+}
+
+/// Print each field in `configuration` on its own line.
+fn print_configuration(configuration: &protocol::Configuration) {
+    println!(
+        "ingested_reserved_memory_in_bytes: {}",
+        configuration.ingested_reserved_memory_in_bytes
+    );
+    println!(
+        "uncompressed_reserved_memory_in_bytes: {}",
+        configuration.uncompressed_reserved_memory_in_bytes
+    );
+    println!(
+        "compressed_reserved_memory_in_bytes: {}",
+        configuration.compressed_reserved_memory_in_bytes
+    );
+
+    let transfer_batch_size_in_bytes = configuration
+        .transfer_batch_size_in_bytes
+        .map_or("not set".to_owned(), |value| value.to_string());
+    println!("transfer_batch_size_in_bytes: {transfer_batch_size_in_bytes}");
+
+    println!(
+        "segment_size_threshold_in_bytes: {}",
+        configuration.segment_size_threshold_in_bytes
+    );
+    println!(
+        "optimize_target_file_size_in_bytes: {}",
+        configuration.optimize_target_file_size_in_bytes
+    );
+    println!(
+        "vacuum_retention_period_in_seconds: {}",
+        configuration.vacuum_retention_period_in_seconds
+    );
+    println!("ingestion_threads: {}", configuration.ingestion_threads);
+    println!("compression_threads: {}", configuration.compression_threads);
+    println!("writer_threads: {}", configuration.writer_threads);
+    println!("wal_enabled: {}", configuration.wal_enabled);
 }

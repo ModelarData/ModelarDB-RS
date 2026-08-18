@@ -29,5 +29,6 @@ clap.workspace = true
 dirs.workspace = true
 futures.workspace = true
 modelardb_embedded.workspace = true
+modelardb_types.workspace = true
 rustyline.workspace = true
 tokio.workspace = true

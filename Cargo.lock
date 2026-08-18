@@ -3528,6 +3528,7 @@ dependencies = [
  "dirs",
  "futures",
  "modelardb_embedded",
+ "modelardb_types",
  "rustyline",
  "tokio",
 ]
