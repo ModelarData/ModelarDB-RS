@@ -101,9 +101,9 @@ async fn execute_queries_from_a_file(mut client: Client, query_file: &StdPath) -
         };
 
         // Execute the query.
-        if !query.is_empty() {
+        if !query.trim().is_empty() {
             println!("{query}");
-            execute_and_print_command_or_query(&mut client, &query).await
+            execute_and_print_command_or_query(&mut client, &query).await;
         }
     }
 
@@ -154,6 +154,11 @@ async fn execute_queries_from_a_repl(mut client: Client) -> Result<()> {
 async fn execute_and_print_command_or_query(client: &mut Client, command_or_query: &str) {
     let start_time = Instant::now();
     let command_or_query = command_or_query.trim();
+
+    // Nothing to execute if Enter was pressed without any input.
+    if command_or_query.is_empty() {
+        return;
+    }
 
     let result = if command_or_query.starts_with('\\') {
         execute_command(client, command_or_query).await
