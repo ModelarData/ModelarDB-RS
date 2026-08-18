@@ -247,6 +247,11 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
         "\\f" => client.flush_memory().await.map_err(|error| error.into()),
         // Flushes all data the server currently has in memory and disk to the object store.
         "\\F" => client.flush_node().await.map_err(|error| error.into()),
+        // Kill the node and quit, the connection is dead once the node process exits.
+        "\\k" => {
+            client.kill_node().await?;
+            process::exit(0);
+        }
         // Print helpful information, explanations with \\ must be indented more to be aligned.
         "\\h" => {
             println!(
