@@ -354,7 +354,6 @@ fn print_configuration(configuration: &protocol::Configuration) {
         wal_enabled,
     } = configuration;
 
-    // Data is only transferred on an explicit flush if the batch size is not set.
     let transfer_batch_size_in_bytes =
         transfer_batch_size_in_bytes.map_or("not set".to_owned(), |value| value.to_string());
 
