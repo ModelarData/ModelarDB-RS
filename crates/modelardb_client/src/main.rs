@@ -114,8 +114,7 @@ async fn execute_queries_from_a_file(mut client: Client, query_file: &StdPath) -
 async fn execute_queries_from_a_repl(mut client: Client) -> Result<()> {
     // Create the read-eval-print loop.
     let mut editor = Editor::<ClientHelper, FileHistory>::new()?;
-    let table_names = client.tables().await?;
-    editor.set_helper(Some(ClientHelper::new(table_names)));
+    editor.set_helper(Some(ClientHelper::new(client.tables().await?)));
 
     // Read previously executed commands and queries from the history file.
     let history_file_name = ".modelardb_history";
@@ -134,10 +133,10 @@ async fn execute_queries_from_a_repl(mut client: Client) -> Result<()> {
 
         // Refresh the table names for tab-completion if a table may have been created or dropped.
         let first_word = line.split_whitespace().next().unwrap_or("");
-        if first_word.eq_ignore_ascii_case("CREATE") || first_word.eq_ignore_ascii_case("DROP") {
-            if let Ok(table_names) = client.tables().await {
-                editor.set_helper(Some(ClientHelper::new(table_names)));
-            }
+        if (first_word.eq_ignore_ascii_case("CREATE") || first_word.eq_ignore_ascii_case("DROP"))
+            && let Ok(table_names) = client.tables().await
+        {
+            editor.set_helper(Some(ClientHelper::new(table_names)));
         }
     }
 
