@@ -263,10 +263,20 @@ instance executes the `SELECT` statement on the data it manages and forwards the
 the provided addresses. Afterwards, the `modelardbd` instance that initially received the query, unions the result from
 all `modelardbd` instances and returns it to the client. As an example, this can be used to execute a `SELECT` statement
 on both the data in the cloud and a specific edge node. Although, be aware that this does not make the edge node
-transfer the data it manages to the cloud, only the result of the query. In addition to SQL statements, the REPL also
-supports listing all tables using `\dt`, printing the schema of a table using `\d table_name`, flushing data in memory
-to disk using `\f`, flushing data in memory and on disk to an object store using `\F`, and printing operations supported
-by the client using `\h`.
+transfer the data it manages to the cloud, only the result of the query.
+
+In addition to SQL statements, the REPL supports the following commands:
+- `\d table_name` - Print the schema of the table with `table_name`.
+- `\dt` - Print the name of all the tables.
+- `\dc` - Print the configuration of the node.
+- `\dn` - Print the nodes in the cluster.
+- `\dm` - Print the resource usage metrics of the node.
+- `\sc setting [value]` - Set `setting` to `value`, or unset `setting` if `value` is omitted.
+- `\f` - Flush data in memory to disk.
+- `\F` - Flush data in memory and on disk to an object store.
+- `\h` - Print documentation for all supported commands.
+- `\k` - Flush data to disk, kill the node, and quit `modelardb`.
+- `\q` - Quit `modelardb`.
 
 ```sql
 ModelarDB> \dt
