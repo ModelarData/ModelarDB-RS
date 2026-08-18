@@ -207,8 +207,7 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
         }
         // Print the configuration of the node.
         "\\dc" => {
-            let configuration = client.configuration().await?;
-            print_configuration(&configuration);
+            print_configuration(&client.configuration().await?);
             Ok(())
         }
         // Print the nodes that are currently part of the cluster.
@@ -220,8 +219,7 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
         }
         // Print the resource usage metrics of the node.
         "\\dm" => {
-            let node_metrics = client.node_metrics().await?;
-            print_node_metrics(&node_metrics);
+            print_node_metrics(&client.node_metrics().await?);
             Ok(())
         }
         // Update a setting in the configuration of the node.
@@ -238,7 +236,7 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
             )?;
 
             // Omitting the value unsets the setting if it is optional.
-            let new_value = match command_and_arguments.next() {
+            let maybe_new_value = match command_and_arguments.next() {
                 Some(value) => Some(value.parse::<u64>().map_err(|_error| {
                     ModelarDbClientError::InvalidArgument(format!(
                         "{value} is not a valid value for {name}."
@@ -247,7 +245,9 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
                 None => None,
             };
 
-            client.update_configuration(setting, new_value).await?;
+            client
+                .update_configuration(setting, maybe_new_value)
+                .await?;
             Ok(())
         }
         // Flushes all data the server currently has in memory to disk.
