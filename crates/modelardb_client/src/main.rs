@@ -31,6 +31,7 @@ use modelardb_embedded::error::ModelarDbEmbeddedError;
 use modelardb_embedded::operations::Operations;
 use modelardb_embedded::operations::client::Client;
 use modelardb_types::flight::protocol;
+use modelardb_types::flight::protocol::update_configuration::Setting;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
 
@@ -214,6 +215,32 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
         "\\dm" => {
             let node_metrics = client.node_metrics().await?;
             print_node_metrics(&node_metrics);
+            Ok(())
+        }
+        // Update a setting in the configuration of the node.
+        "\\s" => {
+            let name =
+                command_and_arguments
+                    .next()
+                    .ok_or(ModelarDbClientError::InvalidArgument(
+                        "No setting was provided.".to_owned(),
+                    ))?;
+
+            let setting = Setting::from_str_name(&name.to_uppercase()).ok_or(
+                ModelarDbClientError::InvalidArgument(format!("Unknown setting: {name}.")),
+            )?;
+
+            // Omitting the value unsets the setting if it is optional.
+            let new_value = match command_and_arguments.next() {
+                Some(value) => Some(value.parse::<u64>().map_err(|_error| {
+                    ModelarDbClientError::InvalidArgument(format!(
+                        "{value} is not a valid value for {name}."
+                    ))
+                })?),
+                None => None,
+            };
+
+            client.update_configuration(setting, new_value).await?;
             Ok(())
         }
         // Flushes all data the server currently has in memory to disk.
