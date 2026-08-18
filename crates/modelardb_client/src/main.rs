@@ -247,11 +247,6 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
         "\\f" => client.flush_memory().await.map_err(|error| error.into()),
         // Flushes all data the server currently has in memory and disk to the object store.
         "\\F" => client.flush_node().await.map_err(|error| error.into()),
-        // Kill the node and quit, the connection is dead once the node process exits.
-        "\\k" => {
-            client.kill_node().await?;
-            process::exit(0);
-        }
         // Print helpful information, explanations with \\ must be indented more to be aligned.
         "\\h" => {
             println!(
@@ -260,12 +255,22 @@ async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Re
                  SELECT                         Execute a SELECT statement.\n\
                  \\d TABLE_NAME                 Print the schema of a table with TABLE_NAME.\n\
                  \\dt                           Print the name of all the tables.\n\
+                 \\dc                           Print the configuration of the node.\n\
+                 \\dn                           Print the nodes in the cluster.\n\
+                 \\dm                           Print the resource usage metrics of the node.\n\
+                 \\s SETTING [VALUE]            Set SETTING to VALUE, or unset SETTING if VALUE is omitted.\n\
                  \\f                            Flushes data in memory to disk.\n\
                  \\F                            Flushes data in memory and disk to the object store.\n\
                  \\h                            Print documentation for all supported commands.\n\
+                 \\k                            Kill the node and quit modelardb.\n\
                  \\q                            Quit modelardb."
             );
             Ok(())
+        }
+        // Kill the node and quit, the connection is dead once the node process exits.
+        "\\k" => {
+            client.kill_node().await?;
+            process::exit(0);
         }
         "\\q" => {
             process::exit(0);
