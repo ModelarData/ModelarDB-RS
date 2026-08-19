@@ -18,39 +18,25 @@
 mod error;
 mod helper;
 
-use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, IsTerminal, Write};
 use std::path::{Path as StdPath, PathBuf};
 use std::process;
-use std::sync::Arc;
 use std::time::Instant;
 
-use arrow::array::ArrayRef;
-use arrow::datatypes::Schema;
-use arrow::ipc::convert;
 use arrow::util::pretty;
-use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, Ticket, utils};
-use bytes::Bytes;
 use clap::Parser;
-use modelardb_auth::BearerInterceptor;
+use futures::StreamExt;
+use modelardb_embedded::error::ModelarDbEmbeddedError;
+use modelardb_embedded::operations::Operations;
+use modelardb_embedded::operations::client::Client;
+use modelardb_types::flight::protocol;
+use modelardb_types::flight::protocol::update_configuration::Setting;
 use rustyline::Editor;
 use rustyline::history::FileHistory;
-use tonic::codegen::InterceptedService;
-use tonic::transport::{Channel, Endpoint};
-use tonic::{Request, Streaming};
 
 use crate::error::{ModelarDbClientError, Result};
 use crate::helper::ClientHelper;
-
-/// Error to emit when the server does not provide a response when one is expected.
-const TRANSPORT_ERROR: &str = "transport error: no messages received.";
-
-/// [`FlightServiceClient`] with a [`BearerInterceptor`] that attaches an authorization header.
-type AuthenticatedFlightClient =
-    FlightServiceClient<InterceptedService<Channel, BearerInterceptor>>;
 
 /// Command line arguments for the ModelarDB client.
 #[derive(Parser)]
@@ -88,39 +74,20 @@ async fn main() -> Result<()> {
     // Parse the command line arguments.
     let args = ClientArgs::parse();
 
+    // Connect to the server.
+    let url = format!("grpc://{}:{}", args.host, args.port);
+    let client = Client::connect(&url, args.token.as_deref()).await?;
+
     // Execute the queries.
-    let flight_service_client = connect(&args.host, args.port, args.token).await?;
     if let Some(query_file) = args.query_file {
-        execute_queries_from_a_file(flight_service_client, &query_file).await
+        execute_queries_from_a_file(client, &query_file).await
     } else {
-        execute_queries_from_a_repl(flight_service_client).await
+        execute_queries_from_a_repl(client).await
     }
 }
 
-/// Connect to the server at `host`:`port` with an optional bearer `maybe_token`. Returns
-/// [`ModelarDbClientError`] if a connection to the server cannot be established or the token is
-/// not a valid ASCII metadata value.
-async fn connect(
-    host: &str,
-    port: u16,
-    maybe_token: Option<String>,
-) -> Result<AuthenticatedFlightClient> {
-    let interceptor = BearerInterceptor::try_new(maybe_token.as_deref())?;
-
-    let address = format!("grpc://{host}:{port}");
-    let connection = Endpoint::new(address)?.connect().await?;
-
-    Ok(FlightServiceClient::with_interceptor(
-        connection,
-        interceptor,
-    ))
-}
-
 /// Execute the commands and queries in `query_file`.
-async fn execute_queries_from_a_file(
-    mut flight_service_client: AuthenticatedFlightClient,
-    query_file: &StdPath,
-) -> Result<()> {
+async fn execute_queries_from_a_file(mut client: Client, query_file: &StdPath) -> Result<()> {
     let file = File::open(query_file)?;
     let lines = BufReader::new(file).lines();
 
@@ -134,9 +101,9 @@ async fn execute_queries_from_a_file(
         };
 
         // Execute the query.
-        if !query.is_empty() {
+        if !query.trim().is_empty() {
             println!("{query}");
-            execute_and_print_command_or_query(&mut flight_service_client, &query).await
+            execute_and_print_command_or_query(&mut client, &query).await;
         }
     }
 
@@ -144,13 +111,10 @@ async fn execute_queries_from_a_file(
 }
 
 /// Execute commands and queries in a read-eval-print loop.
-async fn execute_queries_from_a_repl(
-    mut flight_service_client: AuthenticatedFlightClient,
-) -> Result<()> {
+async fn execute_queries_from_a_repl(mut client: Client) -> Result<()> {
     // Create the read-eval-print loop.
     let mut editor = Editor::<ClientHelper, FileHistory>::new()?;
-    let table_names = retrieve_table_names(&mut flight_service_client).await?;
-    editor.set_helper(Some(ClientHelper::new(table_names)));
+    editor.set_helper(Some(ClientHelper::new(client.tables().await?)));
 
     // Read previously executed commands and queries from the history file.
     let history_file_name = ".modelardb_history";
@@ -165,7 +129,15 @@ async fn execute_queries_from_a_repl(
     // Execute commands and queries and print the result.
     while let Ok(line) = editor.readline("ModelarDB> ") {
         editor.add_history_entry(line.as_str())?;
-        execute_and_print_command_or_query(&mut flight_service_client, &line).await
+        execute_and_print_command_or_query(&mut client, &line).await;
+
+        // Refresh the table names for tab-completion if a table may have been created or dropped.
+        let first_word = line.split_whitespace().next().unwrap_or("");
+        if (first_word.eq_ignore_ascii_case("CREATE") || first_word.eq_ignore_ascii_case("DROP"))
+            && let Ok(table_names) = client.tables().await
+        {
+            editor.set_helper(Some(ClientHelper::new(table_names)));
+        }
     }
 
     // Append the executed commands and queries to the history file.
@@ -179,17 +151,19 @@ async fn execute_queries_from_a_repl(
 
 /// Execute a command or a query. Returns [`ModelarDbClientError`] if the command or query could not
 /// be executed or their result could not be retrieved.
-async fn execute_and_print_command_or_query(
-    flight_service_client: &mut AuthenticatedFlightClient,
-    command_or_query: &str,
-) {
+async fn execute_and_print_command_or_query(client: &mut Client, command_or_query: &str) {
     let start_time = Instant::now();
     let command_or_query = command_or_query.trim();
 
+    // Nothing to execute if Enter was pressed without any input.
+    if command_or_query.is_empty() {
+        return;
+    }
+
     let result = if command_or_query.starts_with('\\') {
-        execute_command(flight_service_client, command_or_query).await
+        execute_command(client, command_or_query).await
     } else {
-        execute_query_and_print_result(flight_service_client, command_or_query).await
+        execute_query_and_print_result(client, command_or_query).await
     };
 
     if let Err(message) = result {
@@ -203,12 +177,9 @@ async fn execute_and_print_command_or_query(
 /// * An incorrect argument for the command was provided.
 /// * The command could not be executed.
 /// * The result could not be retrieved.
-async fn execute_command(
-    flight_service_client: &mut AuthenticatedFlightClient,
-    command_and_argument: &str,
-) -> Result<()> {
-    let mut command_and_argument = command_and_argument.split(' ');
-    match command_and_argument
+async fn execute_command(client: &mut Client, command_and_arguments: &str) -> Result<()> {
+    let mut command_and_arguments = command_and_arguments.split_whitespace();
+    match command_and_arguments
         .next()
         .ok_or(ModelarDbClientError::InvalidArgument(
             "No command was provided.".to_owned(),
@@ -216,18 +187,13 @@ async fn execute_command(
         // Print the schema of a table on the server.
         "\\d" => {
             let table_name =
-                command_and_argument
+                command_and_arguments
                     .next()
                     .ok_or(ModelarDbClientError::InvalidArgument(
                         "No table name was provided.".to_owned(),
                     ))?;
-            let flight_descriptor = FlightDescriptor::new_path(vec![table_name.to_owned()]);
-            let request = Request::new(flight_descriptor);
-            let schema_result = flight_service_client
-                .get_schema(request)
-                .await?
-                .into_inner();
-            let schema = convert::try_schema_from_ipc_buffer(&schema_result.schema)?;
+
+            let schema = client.schema(table_name).await?;
             for field in schema.fields() {
                 print!("{}: {}", field.name(), field.data_type());
                 for (metadata_name, metadata_value) in field.metadata() {
@@ -239,31 +205,84 @@ async fn execute_command(
         }
         // Print the name of the tables on the server.
         "\\dt" => {
-            if let Ok(tables) = retrieve_table_names(flight_service_client).await {
-                for table in tables {
-                    println!("{table}");
-                }
+            for table_name in client.tables().await? {
+                println!("{table_name}");
             }
             Ok(())
         }
+        // Print the configuration of the node.
+        "\\dc" => {
+            print_configuration(&client.configuration().await?);
+            Ok(())
+        }
+        // Print the nodes that are currently part of the cluster.
+        "\\dn" => {
+            for node in client.list_nodes().await? {
+                println!("{} ({})", node.url, node.mode);
+            }
+            Ok(())
+        }
+        // Print the resource usage metrics of the node.
+        "\\dm" => {
+            print_node_metrics(&client.node_metrics().await?);
+            Ok(())
+        }
+        // Update a setting in the configuration of the node.
+        "\\sc" => {
+            let name =
+                command_and_arguments
+                    .next()
+                    .ok_or(ModelarDbClientError::InvalidArgument(
+                        "No setting was provided.".to_owned(),
+                    ))?;
+
+            let setting = Setting::from_str_name(&name.to_uppercase()).ok_or(
+                ModelarDbClientError::InvalidArgument(format!("Unknown setting: {name}.")),
+            )?;
+
+            // Omitting the value unsets the setting if it is optional.
+            let maybe_new_value = match command_and_arguments.next() {
+                Some(value) => Some(value.parse::<u64>().map_err(|_error| {
+                    ModelarDbClientError::InvalidArgument(format!(
+                        "{value} is not a valid value for {name}."
+                    ))
+                })?),
+                None => None,
+            };
+
+            client
+                .update_configuration(setting, maybe_new_value)
+                .await?;
+            Ok(())
+        }
         // Flushes all data the server currently has in memory to disk.
-        "\\f" => execute_action(flight_service_client, "FlushMemory", "").await,
+        "\\f" => client.flush_memory().await.map_err(|error| error.into()),
         // Flushes all data the server currently has in memory and disk to the object store.
-        "\\F" => execute_action(flight_service_client, "FlushNode", "").await,
+        "\\F" => client.flush_node().await.map_err(|error| error.into()),
         // Print helpful information, explanations with \\ must be indented more to be aligned.
         "\\h" => {
             println!(
                 "CREATE [TIME SERIES] TABLE     Execute a CREATE TABLE or CREATE TIME SERIES TABLE statement.\n\
                  INSERT INTO                    Execute an INSERT INTO statement. Must include generated columns.\n\
                  SELECT                         Execute a SELECT statement.\n\
-                 \\d TABLE_NAME                 Print the schema of a table with TABLE_NAME.\n\
-                 \\dt                           Print the name of all the tables.\n\
-                 \\f                            Flushes data in memory to disk.\n\
-                 \\F                            Flushes data in memory and disk to the object store.\n\
-                 \\h                            Print documentation for all supported commands.\n\
-                 \\q                            Quit modelardb."
+                 \\d TABLE_NAME                  Print the schema of a table with TABLE_NAME.\n\
+                 \\dt                            Print the name of all the tables.\n\
+                 \\dc                            Print the configuration of the node.\n\
+                 \\dn                            Print the nodes in the cluster.\n\
+                 \\dm                            Print the resource usage metrics of the node.\n\
+                 \\sc SETTING [VALUE]            Set SETTING to VALUE, or unset SETTING if VALUE is omitted.\n\
+                 \\f                             Flushes data in memory to disk.\n\
+                 \\F                             Flushes data in memory and disk to the object store.\n\
+                 \\h                             Print documentation for all supported commands.\n\
+                 \\k                             Flush data to disk, kill the node, and quit modelardb.\n\
+                 \\q                             Quit modelardb."
             );
             Ok(())
+        }
+        // Kill the node and quit, the connection is dead once the node process exits.
+        "\\k" => {
+            client.kill_node().await?;
+            process::exit(0);
         }
         "\\q" => {
             process::exit(0);
@@ -274,120 +293,23 @@ async fn execute_command(
     }
 }
 
-/// Retrieve the names of the tables available on the server. Returns [`ModelarDbClientError`] if
-/// the request could not be performed or the tables names could not be retrieved.
-async fn retrieve_table_names(
-    flight_service_client: &mut AuthenticatedFlightClient,
-) -> Result<Vec<String>> {
-    let criteria = Criteria {
-        expression: Bytes::new(),
-    };
-    let request = Request::new(criteria);
+/// Execute a query and print each batch in the result set. If standard output is a terminal, ask
+/// the user for confirmation before printing each batch after the first. Returns
+/// [`ModelarDbClientError`] if the query could not be executed or the batches in the result set
+/// could not be printed.
+async fn execute_query_and_print_result(client: &mut Client, query: &str) -> Result<()> {
+    let mut record_batch_stream = client.read(query).await?;
 
-    let mut stream = flight_service_client
-        .list_flights(request)
-        .await?
-        .into_inner();
-
-    let flight_infos = stream
-        .message()
-        .await?
-        .ok_or(ModelarDbClientError::InvalidArgument(
-            TRANSPORT_ERROR.to_owned(),
-        ))?;
-
-    let mut table_names = vec![];
-    if let Some(flight_descriptor) = flight_infos.flight_descriptor {
-        for table_name in flight_descriptor.path {
-            table_names.push(table_name);
-        }
-    }
-
-    Ok(table_names)
-}
-
-/// Execute an action. Returns [`ModelarDbClientError`] if the action could not be executed.
-async fn execute_action(
-    flight_service_client: &mut AuthenticatedFlightClient,
-    action_type: &str,
-    action_body: &str,
-) -> Result<()> {
-    let action = Action {
-        r#type: action_type.to_owned(),
-        body: action_body.to_owned().into(),
-    };
-
-    let request = Request::new(action);
-
-    flight_service_client
-        .do_action(request)
-        .await?
-        .into_inner()
-        .message()
-        .await?;
-
-    Ok(())
-}
-
-/// Execute a query and print each batch in the result set. Returns [`ModelarDbClientError`] if the
-/// query could not be executed or the batches in the result set could not be printed.
-async fn execute_query_and_print_result(
-    flight_service_client: &mut AuthenticatedFlightClient,
-    query: &str,
-) -> Result<()> {
-    // Execute the query.
-    let ticket = Ticket {
-        ticket: query.to_owned().into(),
-    };
-    let mut stream = flight_service_client.do_get(ticket).await?.into_inner();
-
-    // Get the schema of the data in the query result.
-    let flight_data = stream
-        .message()
-        .await?
-        .ok_or(ModelarDbClientError::InvalidArgument(
-            TRANSPORT_ERROR.to_owned(),
-        ))?;
-    let schema = Arc::new(Schema::try_from(&flight_data)?);
-    let dictionaries_by_id = HashMap::new();
-
-    if io::stdout().is_terminal() {
-        print_batches_with_confirmation(stream, schema, &dictionaries_by_id).await
-    } else {
-        print_batches_without_confirmation(stream, schema, &dictionaries_by_id).await
-    }
-}
-
-/// Print each batch in the result set with confirmation from the user before printing each batch.
-/// Returns [`ModelarDbClientError`] if the batches in the result set could not be printed.
-async fn print_batches_with_confirmation(
-    mut stream: Streaming<FlightData>,
-    schema: Arc<Schema>,
-    dictionaries_by_id: &HashMap<i64, ArrayRef>,
-) -> Result<()> {
-    let mut user_input = String::new();
+    let print_confirmation = io::stdout().is_terminal();
     let mut multiple_batches = false;
 
-    while let Some(flight_data) = stream.message().await? {
-        let record_batch =
-            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), dictionaries_by_id)?;
-
+    while let Some(record_batch) = record_batch_stream.next().await {
         // Only ask for confirmation to print the next batch if there are multiple batches.
-        if multiple_batches {
-            loop {
-                user_input.clear();
-                print!("Press Enter for next batch and q+Enter to quit> ");
-                io::stdout().flush()?;
-                io::stdin().read_line(&mut user_input)?;
-
-                match user_input.as_str() {
-                    "\n" => break,
-                    "q\n" => return Ok(()),
-                    _ => (),
-                }
-            }
+        if print_confirmation && multiple_batches && !confirm_printing_next_batch()? {
+            return Ok(());
         }
 
+        let record_batch = record_batch.map_err(ModelarDbEmbeddedError::from)?;
         pretty::print_batches(&[record_batch])?;
         multiple_batches = true;
     }
@@ -395,19 +317,91 @@ async fn print_batches_with_confirmation(
     Ok(())
 }
 
-/// Print each batch in the result set without user input. Returns [`ModelarDbClientError`] if the
-/// batches in the result set could not be printed.
-async fn print_batches_without_confirmation(
-    mut stream: Streaming<FlightData>,
-    schema: Arc<Schema>,
-    dictionaries_by_id: &HashMap<i64, ArrayRef>,
-) -> Result<()> {
-    while let Some(flight_data) = stream.message().await? {
-        let record_batch =
-            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), dictionaries_by_id)?;
+/// Ask the user for confirmation before printing the next batch in a result set. Returns false if
+/// the user chose to stop printing batches. Returns [`ModelarDbClientError`] if the input could not
+/// be read.
+fn confirm_printing_next_batch() -> Result<bool> {
+    let mut user_input = String::new();
 
-        pretty::print_batches(&[record_batch])?;
+    loop {
+        user_input.clear();
+        print!("Press Enter for next batch and q+Enter to quit> ");
+        io::stdout().flush()?;
+
+        // A read of zero bytes means standard input reached end-of-file, so no more batches can be
+        // confirmed.
+        if io::stdin().read_line(&mut user_input)? == 0 {
+            return Ok(false);
+        }
+
+        // The line includes the line ending, which is \r\n on Windows and \n everywhere else.
+        match user_input.trim() {
+            "" => return Ok(true),
+            "q" => return Ok(false),
+            _ => (),
+        }
     }
+}
 
-    Ok(())
+/// Print each field in `configuration` on its own line.
+fn print_configuration(configuration: &protocol::Configuration) {
+    let protocol::Configuration {
+        ingested_reserved_memory_in_bytes,
+        uncompressed_reserved_memory_in_bytes,
+        compressed_reserved_memory_in_bytes,
+        transfer_batch_size_in_bytes,
+        segment_size_threshold_in_bytes,
+        optimize_target_file_size_in_bytes,
+        vacuum_retention_period_in_seconds,
+        ingestion_threads,
+        compression_threads,
+        writer_threads,
+        wal_enabled,
+    } = configuration;
+
+    let transfer_batch_size_in_bytes =
+        transfer_batch_size_in_bytes.map_or("not set".to_owned(), |value| value.to_string());
+
+    println!("ingested_reserved_memory_in_bytes: {ingested_reserved_memory_in_bytes}");
+    println!("uncompressed_reserved_memory_in_bytes: {uncompressed_reserved_memory_in_bytes}");
+    println!("compressed_reserved_memory_in_bytes: {compressed_reserved_memory_in_bytes}");
+    println!("transfer_batch_size_in_bytes: {transfer_batch_size_in_bytes}");
+    println!("segment_size_threshold_in_bytes: {segment_size_threshold_in_bytes}");
+    println!("optimize_target_file_size_in_bytes: {optimize_target_file_size_in_bytes}");
+    println!("vacuum_retention_period_in_seconds: {vacuum_retention_period_in_seconds}");
+    println!("ingestion_threads: {ingestion_threads}");
+    println!("compression_threads: {compression_threads}");
+    println!("writer_threads: {writer_threads}");
+    println!("wal_enabled: {wal_enabled}");
+}
+
+/// Print each field in `node_metrics` on its own line.
+fn print_node_metrics(node_metrics: &protocol::NodeMetrics) {
+    let protocol::NodeMetrics {
+        cpu_usage_percentage,
+        cpu_count,
+        used_memory_in_bytes,
+        total_memory_in_bytes,
+        used_disk_space_in_bytes,
+        total_disk_space_in_bytes,
+        ingested_used_memory_in_bytes,
+        ingested_reserved_memory_in_bytes,
+        uncompressed_used_memory_in_bytes,
+        uncompressed_reserved_memory_in_bytes,
+        compressed_used_memory_in_bytes,
+        compressed_reserved_memory_in_bytes,
+    } = node_metrics;
+
+    println!("cpu_usage_percentage: {cpu_usage_percentage}");
+    println!("cpu_count: {cpu_count}");
+    println!("used_memory_in_bytes: {used_memory_in_bytes}");
+    println!("total_memory_in_bytes: {total_memory_in_bytes}");
+    println!("used_disk_space_in_bytes: {used_disk_space_in_bytes}");
+    println!("total_disk_space_in_bytes: {total_disk_space_in_bytes}");
+    println!("ingested_used_memory_in_bytes: {ingested_used_memory_in_bytes}");
+    println!("ingested_reserved_memory_in_bytes: {ingested_reserved_memory_in_bytes}");
+    println!("uncompressed_used_memory_in_bytes: {uncompressed_used_memory_in_bytes}");
+    println!("uncompressed_reserved_memory_in_bytes: {uncompressed_reserved_memory_in_bytes}");
+    println!("compressed_used_memory_in_bytes: {compressed_used_memory_in_bytes}");
+    println!("compressed_reserved_memory_in_bytes: {compressed_reserved_memory_in_bytes}");
 }

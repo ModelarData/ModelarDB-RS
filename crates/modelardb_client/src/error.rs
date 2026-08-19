@@ -21,9 +21,8 @@ use std::io::Error as IoError;
 use std::result::Result as StdResult;
 
 use arrow::error::ArrowError;
+use modelardb_embedded::error::ModelarDbEmbeddedError;
 use rustyline::error::ReadlineError as RustyLineError;
-use tonic::Status as TonicStatusError;
-use tonic::transport::Error as TonicTransportError;
 
 /// Result type used throughout `modelardb_client`.
 pub type Result<T> = StdResult<T, ModelarDbClientError>;
@@ -37,12 +36,10 @@ pub enum ModelarDbClientError {
     InvalidArgument(String),
     /// Error returned from IO operations.
     Io(IoError),
+    /// Error returned by modelardb_embedded.
+    ModelarDbEmbedded(ModelarDbEmbeddedError),
     /// Error returned by RustyLine.
     RustyLine(RustyLineError),
-    /// Status returned by Tonic.
-    TonicStatus(Box<TonicStatusError>),
-    /// Error returned by Tonic.
-    TonicTransport(TonicTransportError),
 }
 
 impl Display for ModelarDbClientError {
@@ -51,9 +48,8 @@ impl Display for ModelarDbClientError {
             Self::Arrow(reason) => write!(f, "Arrow Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
             Self::Io(reason) => write!(f, "Io Error: {reason}"),
+            Self::ModelarDbEmbedded(reason) => write!(f, "ModelarDB Embedded Error: {reason}"),
             Self::RustyLine(reason) => write!(f, "RustyLine Error: {reason}"),
-            Self::TonicStatus(reason) => write!(f, "Tonic Status Error: {reason}"),
-            Self::TonicTransport(reason) => write!(f, "Tonic Transport Error: {reason}"),
         }
     }
 }
@@ -65,9 +61,8 @@ impl Error for ModelarDbClientError {
             Self::Arrow(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
             Self::Io(reason) => Some(reason),
+            Self::ModelarDbEmbedded(reason) => Some(reason),
             Self::RustyLine(reason) => Some(reason),
-            Self::TonicStatus(reason) => Some(reason),
-            Self::TonicTransport(reason) => Some(reason),
         }
     }
 }
@@ -84,20 +79,14 @@ impl From<IoError> for ModelarDbClientError {
     }
 }
 
+impl From<ModelarDbEmbeddedError> for ModelarDbClientError {
+    fn from(error: ModelarDbEmbeddedError) -> Self {
+        Self::ModelarDbEmbedded(error)
+    }
+}
+
 impl From<RustyLineError> for ModelarDbClientError {
     fn from(error: RustyLineError) -> Self {
         Self::RustyLine(error)
-    }
-}
-
-impl From<TonicStatusError> for ModelarDbClientError {
-    fn from(error: TonicStatusError) -> Self {
-        Self::TonicStatus(Box::new(error))
-    }
-}
-
-impl From<TonicTransportError> for ModelarDbClientError {
-    fn from(error: TonicTransportError) -> Self {
-        Self::TonicTransport(error)
     }
 }

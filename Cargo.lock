@@ -3524,14 +3524,13 @@ name = "modelardb_client"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "arrow-flight",
- "bytes",
  "clap",
  "dirs",
- "modelardb_auth",
+ "futures",
+ "modelardb_embedded",
+ "modelardb_types",
  "rustyline",
  "tokio",
- "tonic",
 ]
 
 [[package]]
