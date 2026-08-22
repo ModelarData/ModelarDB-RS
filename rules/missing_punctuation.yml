@@ -6,7 +6,8 @@ language: Rust
 rule:
   kind: line_comment
   all:
-    - regex: '.+[^\\.]$'
+    - not:
+        regex: '.\.\s*$'
     - not:
         regex: '.*https?://.*'
   precedes:
