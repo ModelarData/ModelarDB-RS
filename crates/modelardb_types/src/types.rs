@@ -690,7 +690,7 @@ mod tests {
 
     #[property_test]
     fn test_absolute_error_bound_can_be_any_positive_value(
-        #[strategy = 0.0..=f32::MAX] value: f32,
+        #[strategy = f32::MIN_POSITIVE..=f32::MAX] value: f32,
     ) {
         assert!(ErrorBound::try_new_absolute(value).is_ok())
     }
