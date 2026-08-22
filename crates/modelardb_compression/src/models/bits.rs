@@ -182,7 +182,7 @@ impl Default for BitVecBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::{bool, collection, prop_assert, prop_assume, proptest};
+    use proptest::{bool, collection, prop_assert, prop_assume, property_test};
 
     // The largest byte, a random byte, and the smallest byte for testing.
     const TEST_BYTES: &[u8] = &[255, 170, 0];
@@ -311,16 +311,19 @@ mod tests {
         ));
     }
 
-    proptest! {
-    #[test]
-    fn test_writing_and_reading_random_bits(bits in collection::vec(bool::ANY, 0..50)) {
+    #[property_test]
+    fn test_writing_and_reading_random_bits(
+        #[strategy = collection::vec(bool::ANY, 0..50)] bits: Vec<bool>,
+    ) {
         prop_assume!(!bits.is_empty());
         let mut bit_vector_builder = BitVecBuilder::new();
         for bit in &bits {
             write_bool_as_bit(&mut bit_vector_builder, *bit);
         }
-        prop_assert!(bytes_and_bits_are_equal(&bit_vector_builder.finish(), &bits));
-    }
+        prop_assert!(bytes_and_bits_are_equal(
+            &bit_vector_builder.finish(),
+            &bits
+        ));
     }
 
     fn bytes_and_bits_are_equal(bytes: &[u8], bits: &[bool]) -> bool {

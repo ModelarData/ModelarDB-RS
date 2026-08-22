@@ -341,7 +341,7 @@ mod tests {
 
     use modelardb_test::ERROR_BOUND_TEN;
     use proptest::num::f32 as ProptestValue;
-    use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
+    use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, property_test};
 
     use crate::models;
 
@@ -351,28 +351,32 @@ mod tests {
         assert!(MacaqueV::new(ErrorBound::Lossless).model().0.is_empty());
     }
 
-    proptest! {
-    #[test]
-    fn test_append_single_value_with_lossless_error_bound(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_append_single_value_with_lossless_error_bound(value: f32) {
         let mut model_type = MacaqueV::new(ErrorBound::Lossless);
 
         model_type.compress_values(&[value]);
 
-        prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
+        prop_assert!(models::equal_or_nan(
+            value as f64,
+            model_type.last_value as f64
+        ));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
         prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
     }
 
-    #[test]
-    fn test_append_repeated_values_with_lossless_error_bound(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_append_repeated_values_with_lossless_error_bound(value: f32) {
         let mut model_type = MacaqueV::new(ErrorBound::Lossless);
 
         model_type.compress_values(&[value, value]);
 
-        prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
+        prop_assert!(models::equal_or_nan(
+            value as f64,
+            model_type.last_value as f64
+        ));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
         prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
-    }
     }
 
     #[test]
@@ -433,17 +437,16 @@ mod tests {
     }
 
     // Tests for sum().
-    proptest! {
-    #[test]
-    fn test_sum_with_lossless_error_bound(values in collection::vec(ProptestValue::ANY, 0..50)) {
+    #[property_test]
+    fn test_sum_with_lossless_error_bound(
+        #[strategy = collection::vec(ProptestValue::ANY, 0..50)] values: Vec<Value>,
+    ) {
         prop_assume!(!values.is_empty());
         let expected_sum = values.iter().sum::<f32>();
-        let compressed_values = compress_values_using_macaque_v(
-            ErrorBound::Lossless,
-            &values, None);
+        let compressed_values =
+            compress_values_using_macaque_v(ErrorBound::Lossless, &values, None);
         let sum = sum(values.len(), &compressed_values, None);
         prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
-    }
     }
 
     #[test]
@@ -464,14 +467,12 @@ mod tests {
     }
 
     // Tests for grid().
-    proptest! {
-    #[test]
-    fn test_grid_with_lossless_error_bound(values in collection::vec(ProptestValue::ANY, 0..50)) {
+    #[property_test]
+    fn test_grid_with_lossless_error_bound(
+        #[strategy = collection::vec(ProptestValue::ANY, 0..50)] values: Vec<Value>,
+    ) {
         prop_assume!(!values.is_empty());
-        assert_grid_with_error_bound(
-            ErrorBound::Lossless,
-            &values);
-    }
+        assert_grid_with_error_bound(ErrorBound::Lossless, &values);
     }
 
     fn assert_grid_with_error_bound(error_bound: ErrorBound, values: &[Value]) {

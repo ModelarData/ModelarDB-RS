@@ -422,7 +422,7 @@ mod tests {
     use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
     use object_store::local::LocalFileSystem;
     use proptest::num::u64 as ProptestTimestamp;
-    use proptest::{collection, proptest};
+    use proptest::{collection, property_test};
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
@@ -570,9 +570,10 @@ mod tests {
         assert_eq!(data.schema(), time_series_table_metadata.schema);
     }
 
-    proptest! {
-    #[test]
-    fn test_record_batch_from_in_memory_data_buffer_is_sorted(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
+    #[property_test]
+    fn test_record_batch_from_in_memory_data_buffer_is_sorted(
+        #[strategy = collection::vec(ProptestTimestamp::ANY, 1..50)] timestamps: Vec<u64>,
+    ) {
         // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
@@ -588,14 +589,24 @@ mod tests {
         // u64 is generated and then cast to i64 to ensure only positive values are generated.
         let values: &[Value] = &[37.0, 73.0];
         for timestamp in timestamps {
-            uncompressed_buffer.insert_data_point(CURRENT_BATCH_INDEX, timestamp as i64, &mut values.iter().copied());
+            uncompressed_buffer.insert_data_point(
+                CURRENT_BATCH_INDEX,
+                timestamp as i64,
+                &mut values.iter().copied(),
+            );
         }
 
-        let data = runtime.block_on(uncompressed_buffer.record_batch()).unwrap();
+        let data = runtime
+            .block_on(uncompressed_buffer.record_batch())
+            .unwrap();
         assert_eq!(data.schema(), time_series_table_metadata.schema);
         let timestamps = modelardb_types::array!(data, 0, TimestampArray);
-        assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
-    }
+        assert!(
+            timestamps
+                .values()
+                .windows(2)
+                .all(|pair| pair[0] <= pair[1])
+        );
     }
 
     #[tokio::test]
@@ -672,8 +683,10 @@ mod tests {
         assert!(!spilled_buffer_path.exists());
     }
 
-    proptest! {
-    #[test] fn test_record_batch_from_on_disk_data_buffer_is_sorted(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
+    #[property_test]
+    fn test_record_batch_from_on_disk_data_buffer_is_sorted(
+        #[strategy = collection::vec(ProptestTimestamp::ANY, 1..50)] timestamps: Vec<u64>,
+    ) {
         // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
@@ -689,27 +702,45 @@ mod tests {
         // u64 is generated and then cast to i64 to ensure only positive values are generated.
         let values: &[Value] = &[37.0, 73.0];
         for timestamp in timestamps {
-            uncompressed_in_memory_buffer.insert_data_point(CURRENT_BATCH_INDEX, timestamp as i64, &mut values.iter().copied());
+            uncompressed_in_memory_buffer.insert_data_point(
+                CURRENT_BATCH_INDEX,
+                timestamp as i64,
+                &mut values.iter().copied(),
+            );
         }
 
         let temp_dir = tempfile::tempdir().unwrap();
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-        let uncompressed_on_disk_buffer = runtime.block_on(uncompressed_in_memory_buffer
-            .spill_to_apache_parquet(object_store.clone()))
+        let uncompressed_on_disk_buffer = runtime
+            .block_on(uncompressed_in_memory_buffer.spill_to_apache_parquet(object_store.clone()))
             .unwrap();
 
-        let spilled_buffers = runtime.block_on(object_store.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER))).collect::<Vec<_>>());
+        let spilled_buffers = runtime.block_on(
+            object_store
+                .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
+                .collect::<Vec<_>>(),
+        );
         assert_eq!(spilled_buffers.len(), 1);
 
-        let data = runtime.block_on(uncompressed_on_disk_buffer.record_batch()).unwrap();
+        let data = runtime
+            .block_on(uncompressed_on_disk_buffer.record_batch())
+            .unwrap();
         assert_eq!(data.schema(), time_series_table_metadata.schema);
         let timestamps = modelardb_types::array!(data, 0, TimestampArray);
-        assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(
+            timestamps
+                .values()
+                .windows(2)
+                .all(|pair| pair[0] <= pair[1])
+        );
 
-        let spilled_buffers = runtime.block_on(object_store.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER))).collect::<Vec<_>>());
+        let spilled_buffers = runtime.block_on(
+            object_store
+                .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
+                .collect::<Vec<_>>(),
+        );
         assert_eq!(spilled_buffers.len(), 0);
-    }
     }
 
     #[tokio::test]

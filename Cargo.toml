@@ -47,7 +47,7 @@ modelardb_storage = { path = "crates/modelardb_storage"}
 modelardb_test = { path = "crates/modelardb_test"}
 modelardb_types = { path = "crates/modelardb_types"}
 object_store = "0.13.2"
-proptest = "1.11.0"
+proptest = { version = "1.11.0", features = ["attr-macro"]}
 prost = "0.14.3"
 prost-build = "0.14.3"
 protox = "0.9.1"
