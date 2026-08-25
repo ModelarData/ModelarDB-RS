@@ -247,7 +247,7 @@ impl UncompressedDataManager {
                 )
                 .await?;
 
-            // Two ifs are needed until if-let chains is implemented in Rust stable, see eRFC 2497.
+            // If the buffer is on disk read it into memory, otherwise create an in-memory buffer.
             if let Some(tag_hash_buffer) = self.uncompressed_on_disk_data_buffers.get(&tag_hash) {
                 let uncompressed_on_disk_data_buffer = tag_hash_buffer.value();
 
