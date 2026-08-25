@@ -77,9 +77,7 @@ jobs:
         sleep 5 # Ensure azurite has fully finished creating the endpoint.
         az storage container create -n modelardb --connection-string 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;'
 
-    # Update Rust.
-    - name: Rustup Add llvm-tools
-      run: rustup component add llvm-tools-preview
+    # Install Cargo Tools.
     - name: Cargo Install grcov
       run: cargo install grcov
     - name: Cargo Install machete
@@ -141,10 +139,6 @@ jobs:
     # Retrieve Code.
     - name: Checkout
       uses: actions/checkout@v4
-
-    # Update Rust.
-    - name: Rustup Update
-      run: rustup update
 
     # Build Rust Binaries.
     - name: Cargo Build Binaries
