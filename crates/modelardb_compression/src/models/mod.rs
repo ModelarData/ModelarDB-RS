@@ -290,100 +290,136 @@ mod tests {
     use modelardb_test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_ONE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_TEN,
     };
-    use proptest::num;
-    use proptest::num::f32 as ProptestValue;
-    use proptest::{prop_assert, prop_assume, proptest};
+    use proptest::{prop_assert, prop_assume, property_test};
 
     // Tests for is_value_within_error_bound().
-    proptest! {
-    #[test]
-    fn test_same_value_is_always_within_lossless_error_bound(value in ProptestValue::ANY) {
-        prop_assert!(is_value_within_error_bound(ErrorBound::Lossless, value, value));
+    #[property_test]
+    fn test_same_value_is_always_within_lossless_error_bound(value: Value) {
+        prop_assert!(is_value_within_error_bound(
+            ErrorBound::Lossless,
+            value,
+            value
+        ));
     }
 
-    #[test]
-    fn test_other_value_is_never_within_absolute_error_bound_of_positive_infinity(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_other_value_is_never_within_absolute_error_bound_of_positive_infinity(value: Value) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(), Value::INFINITY, value));
+            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(),
+            Value::INFINITY,
+            value
+        ));
     }
 
-    #[test]
-    fn test_other_value_is_never_within_relative_error_bound_of_positive_infinity(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_other_value_is_never_within_relative_error_bound_of_positive_infinity(value: Value) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(), Value::INFINITY, value));
+            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(),
+            Value::INFINITY,
+            value
+        ));
     }
 
-    #[test]
-    fn test_other_value_is_never_within_absolute_error_bound_of_negative_infinity(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_other_value_is_never_within_absolute_error_bound_of_negative_infinity(value: Value) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(), Value::NEG_INFINITY, value));
+            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(),
+            Value::NEG_INFINITY,
+            value
+        ));
     }
 
-    #[test]
-    fn test_other_value_is_never_within_relative_error_bound_of_negative_infinity(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_other_value_is_never_within_relative_error_bound_of_negative_infinity(value: Value) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(), Value::NEG_INFINITY, value));
+            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(),
+            Value::NEG_INFINITY,
+            value
+        ));
     }
 
-    #[test]
-    fn test_other_value_is_never_within_absolute_error_bound_of_nan(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_other_value_is_never_within_absolute_error_bound_of_nan(value: Value) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(), Value::NAN, value));
+            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(),
+            Value::NAN,
+            value
+        ));
     }
 
-    #[test]
-    fn test_other_value_is_never_within_relative_error_bound_of_nan(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_other_value_is_never_within_relative_error_bound_of_nan(value: Value) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(), Value::NAN, value));
+            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(),
+            Value::NAN,
+            value
+        ));
     }
 
-    #[test]
-    fn test_positive_infinity_is_never_within_absolute_error_bound_of_other_value(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_positive_infinity_is_never_within_absolute_error_bound_of_other_value(value: Value) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(), value, Value::INFINITY));
+            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(),
+            value,
+            Value::INFINITY
+        ));
     }
 
-    #[test]
-    fn test_positive_infinity_is_never_within_relative_error_bound_of_other_value(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_positive_infinity_is_never_within_relative_error_bound_of_other_value(value: Value) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(), value, Value::INFINITY));
+            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(),
+            value,
+            Value::INFINITY
+        ));
     }
 
-    #[test]
-    fn test_negative_infinity_is_never_within_absolute_error_bound_of_other_value(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_negative_infinity_is_never_within_absolute_error_bound_of_other_value(value: Value) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(), value, Value::NEG_INFINITY));
+            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(),
+            value,
+            Value::NEG_INFINITY
+        ));
     }
 
-    #[test]
-    fn test_negative_infinity_is_never_within_relative_error_bound_of_other_value(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_negative_infinity_is_never_within_relative_error_bound_of_other_value(value: Value) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(), value, Value::NEG_INFINITY));
+            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(),
+            value,
+            Value::NEG_INFINITY
+        ));
     }
 
-    #[test]
-    fn test_nan_is_never_within_absolute_error_bound_of_other_value(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_nan_is_never_within_absolute_error_bound_of_other_value(value: Value) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(), value, Value::NAN));
+            ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap(),
+            value,
+            Value::NAN
+        ));
     }
 
-    #[test]
-    fn test_nan_is_never_within_relative_error_bound_of_other_value(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_nan_is_never_within_relative_error_bound_of_other_value(value: Value) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(), value, Value::NAN));
-    }
+            ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap(),
+            value,
+            Value::NAN
+        ));
     }
 
     #[test]
@@ -416,17 +452,15 @@ mod tests {
     }
 
     // Tests for equal_or_nan().
-    proptest! {
-    #[test]
-    fn test_equal_or_nan_equal(value in num::f64::ANY) {
+    #[property_test]
+    fn test_equal_or_nan_equal(value: f64) {
         assert!(equal_or_nan(value, value));
     }
 
-    #[test]
-    fn test_equal_or_nan_not_equal(v1 in num::f64::ANY, v2 in num::f64::ANY) {
-        prop_assume!(v1 != v2 && !v1.is_nan() && !v2.is_nan());
-        prop_assert!(!equal_or_nan(v1, v2));
-    }
+    #[property_test]
+    fn test_equal_or_nan_not_equal(value_one: f64, value_two: f64) {
+        prop_assume!(value_one != value_two && !value_one.is_nan() && !value_two.is_nan());
+        prop_assert!(!equal_or_nan(value_one, value_two));
     }
 
     // Tests for decompress_all_timestamps_and_split_into_models_and_residuals().

@@ -351,8 +351,7 @@ mod tests {
     use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
     use proptest::num::f32 as ProptestValue;
-    use proptest::strategy::Strategy;
-    use proptest::{num, prop_assert, prop_assert_eq, prop_assume, proptest};
+    use proptest::{num, prop_assert, prop_assert_eq, prop_assume, property_test};
 
     use crate::models::SWING_ID;
 
@@ -363,13 +362,9 @@ mod tests {
     const SEGMENT_LENGTH: Timestamp = 5; // Timestamp is used to remove casts.
 
     // Tests for Swing.
-    proptest! {
-    #[test]
-    fn test_can_fit_sequence_of_finite_value_with_lossless_error_bound(value in ProptestValue::ANY) {
-        can_fit_sequence_of_value_with_error_bound(
-            ErrorBound::Lossless,
-            value)
-    }
+    #[property_test]
+    fn test_can_fit_sequence_of_finite_value_with_lossless_error_bound(value: Value) {
+        can_fit_sequence_of_value_with_error_bound(ErrorBound::Lossless, value)
     }
 
     #[test]
@@ -411,24 +406,25 @@ mod tests {
         }
     }
 
-    proptest! {
-    #[test]
-    fn test_can_fit_one_value_with_lossless_error_bound(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_can_fit_one_value_with_lossless_error_bound(value: Value) {
         prop_assert!(Swing::new(ErrorBound::Lossless).fit_data_point(START_TIME, value));
     }
 
-    #[test]
+    #[property_test]
     fn test_can_fit_two_finite_value_with_lossless_error_bound(
-        first_value in ProptestValue::NORMAL,
-        second_value in ProptestValue::NORMAL
+        #[strategy = ProptestValue::NORMAL] first_value: Value,
+        #[strategy = ProptestValue::NORMAL] second_value: Value,
     ) {
         let mut model_type = Swing::new(ErrorBound::Lossless);
         prop_assert!(model_type.fit_data_point(START_TIME, first_value));
         prop_assert!(model_type.fit_data_point(END_TIME, second_value));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_positive_infinity_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_positive_infinity_with_absolute_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -436,8 +432,10 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, Value::INFINITY));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_positive_infinity_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_positive_infinity_with_relative_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -445,8 +443,10 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, Value::INFINITY));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_negative_infinity_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_negative_infinity_with_absolute_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -454,8 +454,10 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, Value::NEG_INFINITY));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_negative_infinity_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_negative_infinity_with_relative_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -463,8 +465,8 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, Value::NEG_INFINITY));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_nan_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_nan_with_absolute_error_bound_max(value: Value) {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -472,8 +474,8 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, Value::NAN));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_nan_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_nan_with_relative_error_bound_max(value: Value) {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -481,8 +483,10 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, Value::NAN));
     }
 
-    #[test]
-    fn test_cannot_fit_positive_infinity_and_other_value_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_positive_infinity_and_other_value_with_absolute_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -490,8 +494,10 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, value));
     }
 
-    #[test]
-    fn test_cannot_fit_positive_infinity_and_other_value_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_positive_infinity_and_other_value_with_relative_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -499,8 +505,10 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, value));
     }
 
-    #[test]
-    fn test_cannot_fit_negative_infinity_and_other_value_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_negative_infinity_and_other_value_with_absolute_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -508,8 +516,10 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, value));
     }
 
-    #[test]
-    fn test_cannot_fit_negative_infinity_and_other_value_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_negative_infinity_and_other_value_with_relative_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -517,8 +527,8 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, value));
     }
 
-    #[test]
-    fn test_cannot_fit_nan_and_other_value_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_nan_and_other_value_with_absolute_error_bound_max(value: Value) {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
@@ -526,14 +536,13 @@ mod tests {
         prop_assert!(!model_type.fit_data_point(END_TIME, value));
     }
 
-    #[test]
-    fn test_cannot_fit_nan_and_other_value_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_nan_and_other_value_with_relative_error_bound_max(value: Value) {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(START_TIME, Value::NAN));
         prop_assert!(!model_type.fit_data_point(END_TIME, value));
-    }
     }
 
     #[test]
@@ -665,23 +674,21 @@ mod tests {
     }
 
     // Tests for sum().
-    proptest! {
-    #[test]
+    #[property_test]
     fn test_sum(
-        first_value in num::i32::ANY.prop_map(i32_to_value),
-        last_value in num::i32::ANY.prop_map(i32_to_value),
+        #[strategy = num::i32::ANY.prop_map(i32_to_value)] first_value: Value,
+        #[strategy = num::i32::ANY.prop_map(i32_to_value)] last_value: Value,
     ) {
         let sum = sum(START_TIME, END_TIME, &[], first_value, last_value, 0);
         prop_assert_eq!(sum, first_value + last_value);
     }
-    }
 
     // Tests for grid().
-    proptest! {
-    #[test]
-    fn test_grid(value in num::i32::ANY.prop_map(i32_to_value)) {
-        let timestamps: Vec<Timestamp> = (START_TIME ..= END_TIME)
-            .step_by(SAMPLING_INTERVAL as usize).collect();
+    #[property_test]
+    fn test_grid(#[strategy = num::i32::ANY.prop_map(i32_to_value)] value: Value) {
+        let timestamps: Vec<Timestamp> = (START_TIME..=END_TIME)
+            .step_by(SAMPLING_INTERVAL as usize)
+            .collect();
         let mut value_builder = ValueBuilder::with_capacity(timestamps.len());
 
         // The linear function represents a constant to have a known value.
@@ -697,13 +704,17 @@ mod tests {
         let values = value_builder.finish();
 
         prop_assert!(timestamps.len() == values.len());
-        prop_assert!(timestamps
-            .windows(2)
-            .all(|window| window[1] - window[0] == SAMPLING_INTERVAL));
-        prop_assert!(values
-            .iter()
-            .all(|value_option| models::equal_or_nan(value_option.unwrap() as f64, value as f64)));
-    }
+        prop_assert!(
+            timestamps
+                .windows(2)
+                .all(|window| window[1] - window[0] == SAMPLING_INTERVAL)
+        );
+        prop_assert!(
+            values.iter().all(|value_option| models::equal_or_nan(
+                value_option.unwrap() as f64,
+                value as f64
+            ))
+        );
     }
 
     fn i32_to_value(index: i32) -> Value {

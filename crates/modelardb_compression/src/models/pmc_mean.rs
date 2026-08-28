@@ -112,15 +112,12 @@ mod tests {
     use super::*;
 
     use modelardb_test::{ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX};
-    use proptest::num::f32 as ProptestValue;
-    use proptest::{prop_assert, prop_assume, proptest};
+    use proptest::{prop_assert, prop_assume, property_test};
 
     // Tests for PMCMean.
-    proptest! {
-    #[test]
-    fn test_can_fit_sequence_of_finite_value_with_lossless_error_bound(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_can_fit_sequence_of_finite_value_with_lossless_error_bound(value: Value) {
         can_fit_sequence_of_value_within_error_bound(ErrorBound::Lossless, value)
-    }
     }
 
     #[test]
@@ -151,14 +148,15 @@ mod tests {
         }
     }
 
-    proptest! {
-    #[test]
-    fn test_can_fit_one_value_with_lossless_error_bound(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_can_fit_one_value_with_lossless_error_bound(value: Value) {
         prop_assert!(PMCMean::new(ErrorBound::Lossless).fit_value(value));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_positive_infinity_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_positive_infinity_with_absolute_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -166,8 +164,10 @@ mod tests {
         prop_assert!(!model_type.fit_value(Value::INFINITY));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_positive_infinity_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_positive_infinity_with_relative_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -175,8 +175,10 @@ mod tests {
         prop_assert!(!model_type.fit_value(Value::INFINITY));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_negative_infinity_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_negative_infinity_with_absolute_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -184,8 +186,10 @@ mod tests {
         prop_assert!(!model_type.fit_value(Value::NEG_INFINITY));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_negative_infinity_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_negative_infinity_with_relative_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -193,8 +197,8 @@ mod tests {
         prop_assert!(!model_type.fit_value(Value::NEG_INFINITY));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_nan_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_nan_with_absolute_error_bound_max(value: Value) {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -202,8 +206,8 @@ mod tests {
         prop_assert!(!model_type.fit_value(Value::NAN));
     }
 
-    #[test]
-    fn test_cannot_fit_other_value_and_nan_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_other_value_and_nan_with_relative_error_bound_max(value: Value) {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -211,8 +215,10 @@ mod tests {
         prop_assert!(!model_type.fit_value(Value::NAN));
     }
 
-    #[test]
-    fn test_cannot_fit_positive_infinity_and_other_value_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_positive_infinity_and_other_value_with_absolute_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -220,8 +226,10 @@ mod tests {
         prop_assert!(!model_type.fit_value(value));
     }
 
-    #[test]
-    fn test_cannot_fit_positive_infinity_and_other_value_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_positive_infinity_and_other_value_with_relative_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -229,8 +237,10 @@ mod tests {
         prop_assert!(!model_type.fit_value(value));
     }
 
-    #[test]
-    fn test_cannot_fit_negative_infinity_and_other_value_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_negative_infinity_and_other_value_with_absolute_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -238,8 +248,10 @@ mod tests {
         prop_assert!(!model_type.fit_value(value));
     }
 
-    #[test]
-    fn test_cannot_fit_negative_infinity_and_other_value_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_negative_infinity_and_other_value_with_relative_error_bound_max(
+        value: Value,
+    ) {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -247,8 +259,8 @@ mod tests {
         prop_assert!(!model_type.fit_value(value));
     }
 
-    #[test]
-    fn test_cannot_fit_nan_and_other_value_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_nan_and_other_value_with_absolute_error_bound_max(value: Value) {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
@@ -256,14 +268,13 @@ mod tests {
         prop_assert!(!model_type.fit_value(value));
     }
 
-    #[test]
-    fn test_cannot_fit_nan_and_other_value_with_relative_error_bound_max(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_cannot_fit_nan_and_other_value_with_relative_error_bound_max(value: Value) {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
         prop_assert!(model_type.fit_value(Value::NAN));
         prop_assert!(!model_type.fit_value(value));
-    }
     }
 
     #[test]
@@ -299,38 +310,36 @@ mod tests {
     }
 
     // Tests for sum().
-    proptest! {
-    #[test]
-    fn test_sum(value in ProptestValue::ANY) {
-        prop_assert!(models::equal_or_nan(sum(10, value) as f64, (10.0 * value) as f64));
-    }
+    #[property_test]
+    fn test_sum(value: Value) {
+        prop_assert!(models::equal_or_nan(
+            sum(10, value) as f64,
+            (10.0 * value) as f64
+        ));
     }
 
     // Tests for grid().
-    proptest! {
-    #[test]
-    fn test_grid(value in ProptestValue::ANY) {
+    #[property_test]
+    fn test_grid(value: Value) {
         let sampling_interval: i64 = 60;
         let timestamps: Vec<Timestamp> = (60..=600).step_by(60).collect();
         let mut value_builder = ValueBuilder::with_capacity(10);
 
-        grid(
-            value,
-            &timestamps,
-            &mut value_builder,
-        );
+        grid(value, &timestamps, &mut value_builder);
 
         let values = value_builder.finish();
 
+        prop_assert!(timestamps.len() == 10 && timestamps.len() == values.len());
         prop_assert!(
-            timestamps.len() == 10 && timestamps.len() == values.len()
+            timestamps
+                .windows(2)
+                .all(|window| window[1] - window[0] == sampling_interval)
         );
-        prop_assert!(timestamps
-            .windows(2)
-            .all(|window| window[1] - window[0] == sampling_interval));
-        prop_assert!(values
-            .iter()
-            .all(|value_option| models::equal_or_nan(value_option.unwrap() as f64, value as f64)));
-    }
+        prop_assert!(
+            values.iter().all(|value_option| models::equal_or_nan(
+                value_option.unwrap() as f64,
+                value as f64
+            ))
+        );
     }
 }

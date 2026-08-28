@@ -297,7 +297,7 @@ mod tests {
 
     use modelardb_test::data_generation;
     use proptest::num::i64 as ProptestTimestamp;
-    use proptest::{collection, proptest};
+    use proptest::{collection, property_test};
 
     // Tests for compress_residual_timestamps() and decompress_all_timestamps().
     #[test]
@@ -416,13 +416,13 @@ mod tests {
         compress_and_decompress_timestamps_for_a_time_series(timestamps.values(), None);
     }
 
-    proptest! {
-    #[test]
-    fn test_compress_and_decompress_timestamps_for_a_random_irregular_time_series(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
+    #[property_test]
+    fn test_compress_and_decompress_timestamps_for_a_random_irregular_time_series(
+        #[strategy = collection::vec(ProptestTimestamp::ANY, 1..50)] timestamps: Vec<i64>,
+    ) {
         let mut timestamps = timestamps.iter().map(|ts| ts.abs()).collect::<Vec<i64>>();
         timestamps.sort();
         compress_and_decompress_timestamps_for_a_time_series(&timestamps, None);
-        }
     }
 
     fn compress_and_decompress_timestamps_for_a_time_series(

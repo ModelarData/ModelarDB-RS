@@ -435,8 +435,7 @@ mod tests {
     use super::*;
 
     use arrow::datatypes::{Field, TimestampMillisecondType};
-    use proptest::num;
-    use proptest::proptest;
+    use proptest::property_test;
 
     use modelardb_test::table::{self, TIME_SERIES_TABLE_NAME};
     use modelardb_test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
@@ -689,16 +688,16 @@ mod tests {
         assert_absolute_error_bound_error(ERROR_BOUND_ZERO);
     }
 
-    proptest! {
-        #[test]
-        fn test_absolute_error_bound_can_be_any_positive_value(value in num::f32::POSITIVE) {
-            assert!(ErrorBound::try_new_absolute(value).is_ok())
-        }
+    #[property_test]
+    fn test_absolute_error_bound_can_be_any_positive_value(
+        #[strategy = f32::MIN_POSITIVE..=f32::MAX] value: f32,
+    ) {
+        assert!(ErrorBound::try_new_absolute(value).is_ok())
+    }
 
-        #[test]
-        fn test_absolute_error_bound_cannot_be_negative(value in num::f32::NEGATIVE) {
-            assert_absolute_error_bound_error(value);
-        }
+    #[property_test]
+    fn test_absolute_error_bound_cannot_be_negative(#[strategy = f32::MIN..0.0] value: f32) {
+        assert_absolute_error_bound_error(value);
     }
 
     #[test]
@@ -730,20 +729,20 @@ mod tests {
         assert_relative_error_bound_error(ERROR_BOUND_ZERO);
     }
 
-    proptest! {
-        #[test]
-        fn test_relative_error_bound_can_be_positive_if_less_than_one_hundred(percentage in num::f32::POSITIVE) {
-            if percentage <= 100.0 {
-                assert!(ErrorBound::try_new_relative(percentage).is_ok())
-            } else {
-                assert_relative_error_bound_error(percentage);
-            }
-        }
-
-        #[test]
-        fn test_relative_error_bound_cannot_be_negative(percentage in num::f32::NEGATIVE) {
+    #[property_test]
+    fn test_relative_error_bound_can_be_positive_if_less_than_one_hundred(
+        #[strategy = 0.0..=f32::MAX] percentage: f32,
+    ) {
+        if percentage <= 100.0 {
+            assert!(ErrorBound::try_new_relative(percentage).is_ok())
+        } else {
             assert_relative_error_bound_error(percentage);
         }
+    }
+
+    #[property_test]
+    fn test_relative_error_bound_cannot_be_negative(#[strategy = f32::MIN..0.0] percentage: f32) {
+        assert_relative_error_bound_error(percentage);
     }
 
     #[test]
