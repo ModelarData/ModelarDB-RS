@@ -335,6 +335,13 @@ impl Context {
         // Drop the table from the Delta Lake.
         local_data_folder.drop_table(table_name).await?;
 
+        // In a cluster, the table is dropped from the remote data folder by the node that received
+        // the statement. The other nodes still have the table in their cache, so it is removed here
+        // to avoid using the cached table if a table with the same name is created later.
+        if let Some(remote_data_folder) = &self.data_folders.maybe_remote_data_folder {
+            remote_data_folder.remove_delta_table_from_cache(table_name);
+        }
+
         Ok(())
     }
 

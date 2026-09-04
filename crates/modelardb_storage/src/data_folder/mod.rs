@@ -588,7 +588,11 @@ impl DataFolder {
         self.delete_table_metadata(table_name).await?;
 
         let table_path = format!("{TABLE_FOLDER}/{table_name}");
-        self.delete_table_files(&table_path).await
+        let deleted_paths = self.delete_table_files(&table_path).await?;
+
+        self.remove_delta_table_from_cache(table_name);
+
+        Ok(deleted_paths)
     }
 
     /// Depending on the type of the table with `table_name`, delete either the normal table metadata
@@ -634,17 +638,18 @@ impl DataFolder {
             .map_ok(|object_meta| object_meta.location)
             .boxed();
 
-        let deleted_paths = self
-            .object_store
+        self.object_store
             .delete_stream(file_locations)
             .try_collect::<Vec<Path>>()
-            .await?;
+            .await
+            .map_err(|error| error.into())
+    }
 
-        // Remove the table from the cache.
-        let delta_table_path = format!("{}/{}", self.location, table_path);
-        self.delta_table_cache.remove(&delta_table_path);
-
-        Ok(deleted_paths)
+    /// Remove the [`DeltaTable`] for the table with `table_name` from the cache so the table is
+    /// opened from the Delta Lake again the next time it is used.
+    pub fn remove_delta_table_from_cache(&self, table_name: &str) {
+        self.delta_table_cache
+            .remove(&self.location_of_table(table_name));
     }
 
     /// Truncate the Delta Lake table with `table_name` by deleting all rows in the table. If the
