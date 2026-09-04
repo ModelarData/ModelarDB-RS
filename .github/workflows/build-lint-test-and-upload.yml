@@ -80,6 +80,8 @@ jobs:
     # Update Rust.
     - name: Rustup Update
       run: rustup update
+    - name: Rustup Add clippy
+      run: rustup component add clippy
     - name: Rustup Add llvm-tools
       run: rustup component add llvm-tools-preview
     - name: Cargo Install grcov
