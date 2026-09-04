@@ -55,10 +55,10 @@ rand = "0.10.1"
 rustyline = "18.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-snmalloc-rs = { version = "0.7.4", features = ["usecxx17"]} # usecxx17 to avoid error with MSVC 2026.
 sqlparser = "0.61.0"
 sysinfo = "0.38.2"
 tempfile = "3.27.0"
+tikv-jemallocator = "0.7.0"
 tokio = "1.52.2"
 tokio-stream = "0.1.18"
 toml = "1.1.2"

@@ -38,6 +38,9 @@ use rustyline::history::FileHistory;
 use crate::error::{ModelarDbClientError, Result};
 use crate::helper::ClientHelper;
 
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 /// Command line arguments for the ModelarDB client.
 #[derive(Parser)]
 #[command(

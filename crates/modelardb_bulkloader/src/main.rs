@@ -44,6 +44,9 @@ use modelardb_storage::data_folder::delta_table_writer::DeltaTableWriter;
 use modelardb_types::types::{CloudCredentials, TimeSeriesTableMetadata};
 use sysinfo::System;
 
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 /// Command line arguments for the ModelarDB bulk loader.
 #[derive(Parser)]
 #[command(

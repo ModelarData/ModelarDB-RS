@@ -31,4 +31,5 @@ futures.workspace = true
 modelardb_embedded.workspace = true
 modelardb_types.workspace = true
 rustyline.workspace = true
+tikv-jemallocator.workspace = true
 tokio.workspace = true

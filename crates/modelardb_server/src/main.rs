@@ -35,7 +35,7 @@ use crate::data_folders::DataFolders;
 use crate::error::Result;
 
 #[global_allocator]
-static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 /// Command line arguments for the ModelarDB server.
 #[derive(Parser)]
