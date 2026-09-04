@@ -34,9 +34,6 @@ use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::Result;
 
-#[global_allocator]
-static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
-
 /// Command line arguments for the ModelarDB server.
 #[derive(Parser)]
 #[command(

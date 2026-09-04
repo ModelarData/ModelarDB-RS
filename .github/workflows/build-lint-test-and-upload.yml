@@ -48,7 +48,7 @@ jobs:
     steps:
     # Retrieve Code.
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     # Setup MinIO.
     - name: Setup MinIO
@@ -77,7 +77,11 @@ jobs:
         sleep 5 # Ensure azurite has fully finished creating the endpoint.
         az storage container create -n modelardb --connection-string 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;'
 
-    # Install Cargo Tools.
+    # Update Rust.
+    - name: Rustup Update
+      run: rustup update
+    - name: Rustup Add llvm-tools
+      run: rustup component add llvm-tools-preview
     - name: Cargo Install grcov
       run: cargo install grcov
     - name: Cargo Install machete
@@ -101,9 +105,7 @@ jobs:
 
     # Run Python Tests.
     - name: Python Version
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.11
+      uses: actions/setup-python@v7
     - name: Pip Sphinx
       run: python -m pip install sphinx --break-system-packages --user
     - name: Pip Install
@@ -119,7 +121,7 @@ jobs:
     # Upload Code Coverage Report.
     - name: Grcov Upload
       run: grcov . --source-dir . --binary-path ./target/debug/ --output-types html --branch --ignore-not-existing -o ./target/debug/coverage/
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: Code Coverage ${{ matrix.operating-system }}
         path: ./target/debug/coverage/
@@ -138,7 +140,11 @@ jobs:
     steps:
     # Retrieve Code.
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
+
+    # Update Rust.
+    - name: Rustup Update
+      run: rustup update
 
     # Build Rust Binaries.
     - name: Cargo Build Binaries
@@ -146,9 +152,7 @@ jobs:
 
     # Build Python Binaries.
     - name: Python Version
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.11
+      uses: actions/setup-python@v7
     - name: Pip Dependencies
       run: python -m pip install build setuptools --break-system-packages --user
     - name: Python Build
@@ -173,7 +177,7 @@ jobs:
 
     # Upload Binaries.
     - name: Artifact Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: modelardb_${{ github.sha }}_${{ env.RUST_TRIPLE }}
         path: modelardb_${{ env.RUST_TRIPLE }}/*

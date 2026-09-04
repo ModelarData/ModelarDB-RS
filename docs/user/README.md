@@ -37,8 +37,7 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 
 ### All
 
-2. Install version 1.97.1 of the [Rust Toolchain](https://rustup.rs/).
-   - If your use `rustup` it will automatically install the correct toolchain when you run `cargo` commands.
+2. Install the latest stable [Rust Toolchain](https://rustup.rs/).
 3. Clone the repository: `git clone https://github.com/ModelarData/ModelarDB-RS`
 4. Build, test, and run the system using Cargo:
    - Debug Build: `cargo build`
