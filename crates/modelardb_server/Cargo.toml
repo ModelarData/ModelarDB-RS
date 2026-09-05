@@ -44,7 +44,6 @@ object_store = { workspace = true, features = ["aws", "azure"] }
 prost.workspace = true
 rand.workspace = true
 serde.workspace = true
-snmalloc-rs = { workspace = true, features = ["build_cc"] }
 sqlparser.workspace = true
 sysinfo.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
