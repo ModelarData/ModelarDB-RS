@@ -2657,7 +2657,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: end of statement, found: XY at Line: 1, Column: 22"
+            "Parser Error: sql parser error: TARGET unit must be B, KB, MB, GB, or TB, not 'XY'."
         );
     }
 
@@ -2680,7 +2680,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: end of statement, found: TARGET at Line: 1, Column: 22"
+            "Parser Error: sql parser error: TARGET unit must be B, KB, MB, GB, or TB, not 'TARGET'."
         );
     }
 
@@ -2710,7 +2710,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: end of statement, found: table_1 at Line: 1, Column: 22"
+            "Parser Error: sql parser error: TARGET unit must be B, KB, MB, GB, or TB, not 'table_1'."
         );
     }
 
@@ -2721,7 +2721,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: end of statement, found: CLUSTER at Line: 1, Column: 39"
+            "Parser Error: sql parser error: TARGET unit must be B, KB, MB, GB, or TB, not 'CLUSTER'."
         );
     }
 
