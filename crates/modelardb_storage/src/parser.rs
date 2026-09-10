@@ -678,8 +678,8 @@ impl ModelarDbDialect {
         let value = self.parse_unsigned_literal_u64(parser)?;
 
         let maybe_unit_and_multiplier = if let Token::Word(word) = parser.peek_nth_token(0).token {
-            self.byte_unit_multiplier(&word.value)
-                .map(|multiplier| (word.value, multiplier))
+            let multiplier = self.byte_unit_multiplier(&word.value)?;
+            Some((word.value, multiplier))
         } else {
             None
         };
@@ -697,16 +697,18 @@ impl ModelarDbDialect {
     }
 
     /// Return the number of bytes a single unit of `unit` represents if `unit` is a supported byte
-    /// unit (B, KB, MB, GB, or TB, case-insensitive), otherwise [`None`] is returned. Binary
+    /// unit (B, KB, MB, GB, or TB, case-insensitive), otherwise [`ParserError`] is returned. Binary
     /// prefixes are used, so e.g., `KB` is defined as 1024 bytes and not 1000 bytes.
-    fn byte_unit_multiplier(&self, unit: &str) -> Option<u64> {
+    fn byte_unit_multiplier(&self, unit: &str) -> StdResult<u64, ParserError> {
         match unit.to_uppercase().as_str() {
-            "B" => Some(1),
-            "KB" => Some(1024),
-            "MB" => Some(1024 * 1024),
-            "GB" => Some(1024 * 1024 * 1024),
-            "TB" => Some(1024 * 1024 * 1024 * 1024),
-            _ => None,
+            "B" => Ok(1),
+            "KB" => Ok(1024),
+            "MB" => Ok(1024 * 1024),
+            "GB" => Ok(1024 * 1024 * 1024),
+            "TB" => Ok(1024 * 1024 * 1024 * 1024),
+            _ => Err(ParserError::ParserError(format!(
+                "TARGET unit must be B, KB, MB, GB, or TB, not '{unit}'."
+            ))),
         }
     }
 
