@@ -58,7 +58,10 @@ use url::Url;
 use crate::data_folder::delta_table_writer::DeltaTableWriter;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::query::normal_table::NormalTable;
-use crate::{METADATA_FOLDER, TABLE_FOLDER, sql_and_concat};
+use crate::{
+    METADATA_FOLDER, TABLE_FOLDER, sql_and_concat,
+    writer_properties_for_metadata_and_normal_tables, writer_properties_for_time_series_table,
+};
 
 /// Types of tables supported by ModelarDB.
 enum TableType {
@@ -712,7 +715,18 @@ impl DataFolder {
             )
         })?;
 
-        delta_table.optimize().with_target_size(target_size).await?;
+        let schema = delta_table.snapshot()?.snapshot().arrow_schema();
+        let writer_properties = if is_time_series_delta_table(&delta_table)? {
+            writer_properties_for_time_series_table(&schema).await?
+        } else {
+            writer_properties_for_metadata_and_normal_tables(&schema).await?
+        };
+
+        delta_table
+            .optimize()
+            .with_writer_properties(writer_properties)
+            .with_target_size(target_size)
+            .await?;
 
         Ok(())
     }
