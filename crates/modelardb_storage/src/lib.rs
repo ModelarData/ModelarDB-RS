@@ -186,20 +186,6 @@ pub async fn read_record_batch_from_apache_parquet_file(
     let reader = ParquetObjectReader::new(object_store, file_metadata.location);
 
     // Stream the data from the Apache Parquet file into a single record batch.
-    let record_batches = read_batches_from_apache_parquet_file(reader).await?;
-
-    let schema = record_batches[0].schema();
-    compute::concat_batches(&schema, &record_batches).map_err(|error| error.into())
-}
-
-/// Read each batch of data from the Apache Parquet file given by `reader` and return them as a
-/// [`Vec`] of [`RecordBatch`]. If the file could not be read successfully,
-/// [`ModelarDbStorageError`](error::ModelarDbStorageError) is returned.
-pub async fn read_batches_from_apache_parquet_file<R>(reader: R) -> Result<Vec<RecordBatch>>
-where
-    R: AsyncFileReader + Send + Unpin + 'static,
-    ParquetRecordBatchStream<R>: StreamExt<Item = StdResult<RecordBatch, ParquetError>>,
-{
     let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
     let mut stream = builder.build()?;
 
@@ -209,7 +195,8 @@ where
         record_batches.push(record_batch);
     }
 
-    Ok(record_batches)
+    let schema = record_batches[0].schema();
+    compute::concat_batches(&schema, &record_batches).map_err(|error| error.into())
 }
 
 /// Write the rows in `record_batch` to an Apache Parquet file at the location given by `file_path`
