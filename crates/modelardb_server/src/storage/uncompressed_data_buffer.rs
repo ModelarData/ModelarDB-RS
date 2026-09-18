@@ -306,7 +306,7 @@ impl UncompressedOnDiskDataBuffer {
         modelardb_storage::write_record_batch_to_apache_parquet_file(
             &file_path,
             &data_points,
-            None,
+            data_points.schema_ref(),
             &local_object_store,
         )
         .await?;
