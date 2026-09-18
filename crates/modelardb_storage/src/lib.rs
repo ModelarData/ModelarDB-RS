@@ -224,7 +224,7 @@ pub async fn write_record_batch_to_apache_parquet_file(
 ) -> Result<()> {
     // Check if the extension of the given path is correct.
     if file_path.extension() == Some("parquet") {
-        let writer_properties = writer_properties_for_time_series_table(schema).await?;
+        let writer_properties = writer_properties_for_metadata_and_normal_tables(schema).await?;
 
         // Write the record batch to the object store.
         let mut buffer = Vec::new();

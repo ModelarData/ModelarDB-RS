@@ -34,7 +34,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::writer_properties_for_time_series_table;
+use crate::{
+    writer_properties_for_metadata_and_normal_tables, writer_properties_for_time_series_table,
+};
 
 /// Functionality for transactionally writing [`RecordBatches`](RecordBatch) to a Delta table stored
 /// in an object store.
@@ -56,7 +58,7 @@ impl DeltaTableWriter {
     /// Create a [`DeltaTableWriter`] configured for writing to a normal table.
     pub(crate) async fn try_new_for_normal_table(delta_table: DeltaTable) -> Result<Self> {
         let schema = delta_table.snapshot()?.snapshot().arrow_schema();
-        let writer_properties = writer_properties_for_time_series_table(&schema).await?;
+        let writer_properties = writer_properties_for_metadata_and_normal_tables(&schema).await?;
         Self::try_new(delta_table, vec![], writer_properties).await
     }
 
