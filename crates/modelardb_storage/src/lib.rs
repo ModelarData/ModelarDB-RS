@@ -23,7 +23,6 @@ pub mod parser;
 mod query;
 pub mod write_ahead_log;
 
-use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
@@ -35,9 +34,7 @@ use datafusion::catalog::{MemorySchemaProvider, TableProvider};
 use datafusion::datasource::sink::DataSink;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::execution::session_state::SessionStateBuilder;
-use datafusion::parquet::arrow::async_reader::{
-    AsyncFileReader, ParquetObjectReader, ParquetRecordBatchStream,
-};
+use datafusion::parquet::arrow::async_reader::ParquetObjectReader;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
