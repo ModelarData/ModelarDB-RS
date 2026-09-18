@@ -203,12 +203,12 @@ pub async fn read_record_batch_from_apache_parquet_file(
 pub async fn write_record_batch_to_apache_parquet_file(
     file_path: &Path,
     record_batch: &RecordBatch,
-    schema: &Schema,
     object_store: &dyn ObjectStore,
 ) -> Result<()> {
     // Check if the extension of the given path is correct.
     if file_path.extension() == Some("parquet") {
-        let writer_properties = writer_properties_for_metadata_and_normal_tables(schema).await?;
+        let schema = record_batch.schema_ref();
+        let writer_properties = writer_properties_for_metadata_and_normal_tables(schema)?;
 
         // Write the record batch to the object store.
         let mut buffer = Vec::new();
@@ -233,12 +233,13 @@ pub async fn write_record_batch_to_apache_parquet_file(
 
 /// Return [`WriterProperties`] optimized for storing relational data in Apache Parquet files
 /// managed by Delta Lake.
-async fn writer_properties_for_metadata_and_normal_tables(
-    schema: &Schema,
-) -> Result<WriterProperties> {
+fn writer_properties_for_metadata_and_normal_tables(schema: &Schema) -> Result<WriterProperties> {
     // Create WriterProperties with values that generally perform better than the defaults.
-    let mut writer_properties =
-        WriterProperties::builder().set_compression(Compression::ZSTD(ZstdLevel::default()));
+    let mut writer_properties = WriterProperties::builder()
+        .set_compression(Compression::ZSTD(ZstdLevel::default()))
+        .set_dictionary_enabled(false)
+        .set_statistics_enabled(EnabledStatistics::None)
+        .set_bloom_filter_enabled(false);
 
     // Specify encodings for data type where specific encodings generally are known to perform well.
     for field in schema.fields() {
@@ -261,7 +262,7 @@ async fn writer_properties_for_metadata_and_normal_tables(
 
 /// Return [`WriterProperties`] optimized for storing compressed segments in Apache Parquet files
 /// managed by Delta Lake.
-async fn writer_properties_for_time_series_table(schema: &Schema) -> Result<WriterProperties> {
+fn writer_properties_for_time_series_table(schema: &Schema) -> Result<WriterProperties> {
     // Specify that the file must be sorted by the tag columns and then by start_time.
     let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
     let compressed_schema_len = schema.fields().len();
@@ -416,13 +417,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
-        let result = write_record_batch_to_apache_parquet_file(
-            file_path,
-            record_batch,
-            record_batch.schema_ref(),
-            &object_store,
-        )
-        .await;
+        let result =
+            write_record_batch_to_apache_parquet_file(file_path, record_batch, &object_store).await;
 
         (temp_dir, result)
     }

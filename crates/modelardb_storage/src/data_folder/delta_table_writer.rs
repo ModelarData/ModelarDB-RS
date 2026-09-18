@@ -58,7 +58,7 @@ impl DeltaTableWriter {
     /// Create a [`DeltaTableWriter`] configured for writing to a normal table.
     pub(crate) async fn try_new_for_normal_table(delta_table: DeltaTable) -> Result<Self> {
         let schema = delta_table.snapshot()?.snapshot().arrow_schema();
-        let writer_properties = writer_properties_for_metadata_and_normal_tables(&schema).await?;
+        let writer_properties = writer_properties_for_metadata_and_normal_tables(&schema)?;
         Self::try_new(delta_table, vec![], writer_properties).await
     }
 
@@ -66,7 +66,7 @@ impl DeltaTableWriter {
     pub(crate) async fn try_new_for_time_series_table(delta_table: DeltaTable) -> Result<Self> {
         let partition_columns = vec![FIELD_COLUMN.to_owned()];
         let schema = delta_table.snapshot()?.snapshot().arrow_schema();
-        let writer_properties = writer_properties_for_time_series_table(&schema).await?;
+        let writer_properties = writer_properties_for_time_series_table(&schema)?;
         Self::try_new(delta_table, partition_columns, writer_properties).await
     }
 

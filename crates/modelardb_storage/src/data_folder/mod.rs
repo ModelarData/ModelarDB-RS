@@ -717,9 +717,9 @@ impl DataFolder {
 
         let schema = delta_table.snapshot()?.snapshot().arrow_schema();
         let writer_properties = if is_time_series_delta_table(&delta_table)? {
-            writer_properties_for_time_series_table(&schema).await?
+            writer_properties_for_time_series_table(&schema)?
         } else {
-            writer_properties_for_metadata_and_normal_tables(&schema).await?
+            writer_properties_for_metadata_and_normal_tables(&schema)?
         };
 
         delta_table
