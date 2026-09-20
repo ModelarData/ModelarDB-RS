@@ -53,16 +53,16 @@ pub(crate) struct ServerArgs {
     #[arg(long, default_value_t = 9999, env = "MODELARDBD_PORT")]
     port: u16,
 
-    /// Amount of memory in bytes to reserve for storing ingested time series.
-    #[arg(long, env = "MODELARDBD_INGESTED_RESERVED_MEMORY_IN_BYTES", value_parser = parse_memory_size_argument)]
+    /// Amount of memory as an absolute memory amount or percentage of system memory to reserve for storing ingested time series.
+    #[arg(long = "ingested-reserved-memory", value_name = "INGESTED_RESERVED_MEMORY", env = "MODELARDBD_INGESTED_RESERVED_MEMORY", value_parser = parse_memory_size_argument)]
     ingested_reserved_memory_in_bytes: Option<u64>,
 
-    /// Amount of memory in bytes to reserve for storing uncompressed data buffers.
-    #[arg(long, env = "MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES", value_parser = parse_memory_size_argument)]
+    /// Amount of memory as an absolute memory amount or percentage of system memory for storing uncompressed data buffers.
+    #[arg(long = "uncompressed-reserved-memory", value_name = "UNCOMPRESSED_RESERVED_MEMORY", env = "MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY", value_parser = parse_memory_size_argument)]
     uncompressed_reserved_memory_in_bytes: Option<u64>,
 
-    /// Amount of memory in bytes to reserve for storing compressed data buffers.
-    #[arg(long, env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES", value_parser = parse_memory_size_argument)]
+    /// Amount of memory as an absolute memory amount or percentage of system memory for storing compressed data buffers.
+    #[arg(long = "compressed-reserved-memory", value_name = "COMPRESSED_RESERVED_MEMORY", env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY", value_parser = parse_memory_size_argument)]
     compressed_reserved_memory_in_bytes: Option<u64>,
 
     /// Number of bytes required before transferring a batch of data to the remote object store.

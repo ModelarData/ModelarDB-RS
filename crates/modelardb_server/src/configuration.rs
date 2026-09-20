@@ -32,6 +32,7 @@ use object_store::path::Path;
 use object_store::{Error, ObjectStoreExt, PutPayload};
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use sysinfo::System;
 use tokio::sync::RwLock;
 
 use crate::ServerArgs;
@@ -171,10 +172,14 @@ impl Configuration {
 
 impl Default for Configuration {
     fn default() -> Self {
+        let mut system = System::new();
+        system.refresh_memory();
+        let total_memory_bytes = system.total_memory() as u128;
+
         Self {
-            ingested_reserved_memory_in_bytes: 512 * 1024 * 1024,
-            uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
-            compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,
+            ingested_reserved_memory_in_bytes: ((total_memory_bytes * 10) / 100) as u64,
+            uncompressed_reserved_memory_in_bytes: ((total_memory_bytes * 10) / 100) as u64,
+            compressed_reserved_memory_in_bytes: ((total_memory_bytes * 30) / 100) as u64,
             transfer_batch_size_in_bytes: Some(64 * 1024 * 1024),
             segment_size_threshold_in_bytes: 64 * 1024 * 1024,
             optimize_target_file_size_in_bytes: 64 * 1024 * 1024,
