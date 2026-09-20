@@ -236,6 +236,7 @@ mod test {
 
     #[test]
     fn test_parse_memory_size_argument_no_suffix_with_whitespace() {
+        // ast-grep-ignore as the extra spaces are purposely added for testing.
         assert_eq!(parse_memory_size_argument("  37  ").unwrap(), 37)
     }
 
@@ -246,6 +247,7 @@ mod test {
 
     #[test]
     fn test_parse_memory_size_argument_byte_suffix_with_whitespac() {
+        // ast-grep-ignore as the extra spaces are purposely added for testing.
         assert_eq!(parse_memory_size_argument(" 37   B  ").unwrap(), 37)
     }
 
