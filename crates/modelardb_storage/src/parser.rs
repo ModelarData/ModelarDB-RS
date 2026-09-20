@@ -593,7 +593,7 @@ impl ModelarDbDialect {
     /// does not have an `Optimize` variant with the required fields. A [`ParserError`] is returned
     /// if OPTIMIZE is not the first word, the table names cannot be extracted, the target file size
     /// is not a valid positive integer, or the target file size is followed by a word that is not a
-    /// supported byte unit  (B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB).
+    /// supported byte unit (B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB).
     fn parse_optimize(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // OPTIMIZE.
         parser.expect_keyword(Keyword::OPTIMIZE)?;
@@ -2381,6 +2381,16 @@ mod tests {
             parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 KB");
 
         assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1000));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_kib_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 KIB");
+
+        assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024));
         assert!(!cluster)
     }
@@ -2389,6 +2399,16 @@ mod tests {
     fn test_tokenize_and_parse_optimize_with_target_size_and_mb_unit() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
             parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1024 MB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1000 * 1000));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_mib_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1024 MIB");
 
         assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024));
@@ -2401,6 +2421,16 @@ mod tests {
             parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 GB");
 
         assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1000 * 1000 * 1000));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_gib_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 GIB");
+
+        assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024));
         assert!(!cluster)
     }
@@ -2411,6 +2441,16 @@ mod tests {
             parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 TB");
 
         assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1000 * 1000 * 1000 * 1000));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_tib_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 TIB");
+
+        assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024 * 1024));
         assert!(!cluster)
     }
@@ -2418,7 +2458,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_optimize_with_target_size_and_lowercase_unit() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
-            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 mb");
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 mib");
 
         assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024));
@@ -2428,7 +2468,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_optimize_with_target_size_and_mixed_case_unit() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
-            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 Mb");
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 MIb");
 
         assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024));
@@ -2438,7 +2478,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_optimize_with_target_size_and_unit_without_space() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
-            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1MB");
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1MIB");
 
         assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024));
@@ -2464,7 +2504,7 @@ mod tests {
     fn test_tokenize_and_parse_optimize_multiple_tables_with_target_size_and_unit() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
             parse_optimize_and_extract_table_names(
-                "OPTIMIZE table_name_1, table_name_2 TARGET 1 MB",
+                "OPTIMIZE table_name_1, table_name_2 TARGET 1 MIB",
             );
 
         assert_eq!(
@@ -2526,7 +2566,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_optimize_cluster_with_target_size_and_unit() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
-            parse_optimize_and_extract_table_names("OPTIMIZE CLUSTER TARGET 1 GB");
+            parse_optimize_and_extract_table_names("OPTIMIZE CLUSTER TARGET 1 GIB");
 
         assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024));

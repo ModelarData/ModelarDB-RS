@@ -687,12 +687,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        assert_eq!(
+        // The default is a percentage of the system's memory.
+        assert!(
             configuration_manager
                 .read()
                 .await
-                .ingested_reserved_memory_in_bytes(),
-            512 * 1024 * 1024
+                .ingested_reserved_memory_in_bytes()
+                > 0
         );
 
         let new_value = 1024;
@@ -723,12 +724,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        assert_eq!(
+        // The default is a percentage of the system's memory.
+        assert!(
             configuration_manager
                 .read()
                 .await
-                .uncompressed_reserved_memory_in_bytes(),
-            512 * 1024 * 1024
+                .uncompressed_reserved_memory_in_bytes()
+                > 0
         );
 
         let new_value = 1024;
@@ -759,12 +761,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        assert_eq!(
+        // The default is a percentage of the system's memory.
+        assert!(
             configuration_manager
                 .read()
                 .await
-                .compressed_reserved_memory_in_bytes(),
-            512 * 1024 * 1024
+                .compressed_reserved_memory_in_bytes()
+                > 0
         );
 
         let new_value = 1024;

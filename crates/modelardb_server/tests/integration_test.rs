@@ -1411,18 +1411,10 @@ async fn test_can_get_configuration() {
     let configuration_bytes = test_context.retrieve_action_bytes("GetConfiguration").await;
     let configuration = protocol::Configuration::decode(configuration_bytes).unwrap();
 
-    assert_eq!(
-        configuration.ingested_reserved_memory_in_bytes,
-        512 * 1024 * 1024
-    );
-    assert_eq!(
-        configuration.uncompressed_reserved_memory_in_bytes,
-        512 * 1024 * 1024
-    );
-    assert_eq!(
-        configuration.compressed_reserved_memory_in_bytes,
-        512 * 1024 * 1024
-    );
+    // Only stable fields are asserted exactly. Reserved memory is a percentage of the system total.
+    assert!(configuration.ingested_reserved_memory_in_bytes > 0);
+    assert!(configuration.uncompressed_reserved_memory_in_bytes > 0);
+    assert!(configuration.compressed_reserved_memory_in_bytes > 0);
     assert_eq!(
         configuration.transfer_batch_size_in_bytes,
         Some(64 * 1024 * 1024)
@@ -1650,17 +1642,11 @@ async fn test_can_get_node_metrics() {
     assert!(metrics.total_disk_space_in_bytes > 0);
 
     assert_eq!(metrics.ingested_used_memory_in_bytes, 0);
-    assert_eq!(metrics.ingested_reserved_memory_in_bytes, 512 * 1024 * 1024);
+    assert!(metrics.ingested_reserved_memory_in_bytes > 0);
 
     assert_eq!(metrics.uncompressed_used_memory_in_bytes, 0);
-    assert_eq!(
-        metrics.uncompressed_reserved_memory_in_bytes,
-        512 * 1024 * 1024
-    );
+    assert!(metrics.uncompressed_reserved_memory_in_bytes > 0);
 
     assert_eq!(metrics.compressed_used_memory_in_bytes, 0);
-    assert_eq!(
-        metrics.compressed_reserved_memory_in_bytes,
-        512 * 1024 * 1024
-    );
+    assert!(metrics.compressed_reserved_memory_in_bytes > 0);
 }
