@@ -803,7 +803,7 @@ pub fn byte_unit_multiplier(unit: &str) -> StdResult<u64, ParserError> {
         "TB" => Ok(1000 * 1000 * 1000 * 1000),
         "TIB" => Ok(1024 * 1024 * 1024 * 1024),
         _ => Err(ParserError::ParserError(format!(
-            "TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, or TB, TiB, not '{unit}'."
+            "TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not '{unit}'."
         ))),
     }
 }
