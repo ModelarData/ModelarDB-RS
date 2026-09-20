@@ -198,7 +198,7 @@ pub fn tokenize_and_parse_sql_expression(
 /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements,
 /// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] statements, and
 /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements. `unit` is an optional, case-insensitive
-/// byte unit (B, KB, MB, GB, or TB) that `num_bytes` is multiplied by.
+/// byte unit (B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB) that `num_bytes` is multiplied by.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -593,7 +593,7 @@ impl ModelarDbDialect {
     /// does not have an `Optimize` variant with the required fields. A [`ParserError`] is returned
     /// if OPTIMIZE is not the first word, the table names cannot be extracted, the target file size
     /// is not a valid positive integer, or the target file size is followed by a word that is not a
-    /// supported byte unit (B, KB, MB, GB, or TB).
+    /// supported byte unit  (B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB).
     fn parse_optimize(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // OPTIMIZE.
         parser.expect_keyword(Keyword::OPTIMIZE)?;
@@ -666,11 +666,11 @@ impl ModelarDbDialect {
 
     /// Return its value as a [`u64`] if the next [`Token`] is a [`Token::Number`], the same as
     /// [`Self::parse_unsigned_literal_u64`]. If the [`Token`] after the number is a [`Token::Word`]
-    /// matching a supported byte unit (B, KB, MB, GB, or TB, case-insensitive), it is consumed and
-    /// the number is multiplied by the number of bytes the unit represents, e.g., `1 KB` is parsed
-    /// as `1024`. A [`ParserError`] is returned if the number cannot be parsed as a [`u64`], if the
-    /// number is followed by a word that is not a supported byte unit, or if multiplying the number
-    /// by the unit does not fit in a [`u64`].
+    /// matching a supported byte unit (B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, case-insensitive)
+    /// it is consumed and the number is multiplied by the number of bytes the unit represents,
+    /// e.g., `1 KB` is parsed as `1024`. A [`ParserError`] is returned if the number cannot be
+    /// parsed as a [`u64`], if the number is followed by a word that is not a supported byte unit,
+    /// or if multiplying the number by the unit does not fit in a [`u64`].
     fn parse_unsigned_literal_u64_with_optional_byte_unit(
         &self,
         parser: &mut Parser,
@@ -678,7 +678,7 @@ impl ModelarDbDialect {
         let value = self.parse_unsigned_literal_u64(parser)?;
 
         let maybe_unit_and_multiplier = if let Token::Word(word) = parser.peek_nth_token(0).token {
-            let multiplier = self.byte_unit_multiplier(&word.value)?;
+            let multiplier = byte_unit_multiplier(&word.value)?;
             Some((word.value, multiplier))
         } else {
             None
@@ -693,22 +693,6 @@ impl ModelarDbDialect {
             })
         } else {
             Ok(value)
-        }
-    }
-
-    /// Return the number of bytes a single unit of `unit` represents if `unit` is a supported byte
-    /// unit (B, KB, MB, GB, or TB, case-insensitive), otherwise [`ParserError`] is returned. Binary
-    /// prefixes are used, so e.g., `KB` is defined as 1024 bytes and not 1000 bytes.
-    fn byte_unit_multiplier(&self, unit: &str) -> StdResult<u64, ParserError> {
-        match unit.to_uppercase().as_str() {
-            "B" => Ok(1),
-            "KB" => Ok(1024),
-            "MB" => Ok(1024 * 1024),
-            "GB" => Ok(1024 * 1024 * 1024),
-            "TB" => Ok(1024 * 1024 * 1024 * 1024),
-            _ => Err(ParserError::ParserError(format!(
-                "TARGET unit must be B, KB, MB, GB, or TB, not '{unit}'."
-            ))),
         }
     }
 
@@ -801,6 +785,26 @@ fn new_address_setting(address: String) -> Setting {
     });
 
     Setting { key, value }
+}
+
+/// Return the number of bytes a single unit of `unit` represents if `unit` is a supported byte
+/// unit (B, KB, KiB, MB, MiB, GB, GiB, TB, TiB, case-insensitive), otherwise [`ParserError`] is
+/// returned.
+pub fn byte_unit_multiplier(unit: &str) -> StdResult<u64, ParserError> {
+    match unit.to_uppercase().as_str() {
+        "B" => Ok(1),
+        "KB" => Ok(1000),
+        "KiB" => Ok(1024),
+        "MB" => Ok(1000 * 1000),
+        "MiB" => Ok(1024 * 1024),
+        "GB" => Ok(10200 * 1000 * 1000),
+        "GiB" => Ok(1024 * 1024 * 1024),
+        "TB" => Ok(1000 * 1000 * 1000 * 1000),
+        "TiB" => Ok(1024 * 1024 * 1024 * 1024),
+        _ => Err(ParserError::ParserError(format!(
+            "TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, or TB, TiB, not '{unit}'."
+        ))),
+    }
 }
 
 impl Dialect for ModelarDbDialect {
@@ -2657,7 +2661,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: TARGET unit must be B, KB, MB, GB, or TB, not 'XY'."
+            "Parser Error: sql parser error: TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'XY'."
         );
     }
 
@@ -2680,7 +2684,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: TARGET unit must be B, KB, MB, GB, or TB, not 'TARGET'."
+            "Parser Error: sql parser error: TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'TARGET'."
         );
     }
 
@@ -2710,7 +2714,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: TARGET unit must be B, KB, MB, GB, or TB, not 'table_1'."
+            "Parser Error: sql parser error: TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'table_1'."
         );
     }
 
@@ -2721,7 +2725,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: TARGET unit must be B, KB, MB, GB, or TB, not 'CLUSTER'."
+            "Parser Error: sql parser error: TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'CLUSTER'."
         );
     }
 
