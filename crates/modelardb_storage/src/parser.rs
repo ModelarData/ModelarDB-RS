@@ -668,7 +668,7 @@ impl ModelarDbDialect {
     /// [`Self::parse_unsigned_literal_u64`]. If the [`Token`] after the number is a [`Token::Word`]
     /// matching a supported byte unit (B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, case-insensitive)
     /// it is consumed and the number is multiplied by the number of bytes the unit represents,
-    /// e.g., `1 KB` is parsed as `1024`. A [`ParserError`] is returned if the number cannot be
+    /// e.g., `1 KiB` is parsed as `1024`. A [`ParserError`] is returned if the number cannot be
     /// parsed as a [`u64`], if the number is followed by a word that is not a supported byte unit,
     /// or if multiplying the number by the unit does not fit in a [`u64`].
     fn parse_unsigned_literal_u64_with_optional_byte_unit(
@@ -792,15 +792,16 @@ fn new_address_setting(address: String) -> Setting {
 /// returned.
 pub fn byte_unit_multiplier(unit: &str) -> StdResult<u64, ParserError> {
     match unit.to_uppercase().as_str() {
+        "" => Ok(1),
         "B" => Ok(1),
         "KB" => Ok(1000),
-        "KiB" => Ok(1024),
+        "KIB" => Ok(1024),
         "MB" => Ok(1000 * 1000),
-        "MiB" => Ok(1024 * 1024),
-        "GB" => Ok(10200 * 1000 * 1000),
-        "GiB" => Ok(1024 * 1024 * 1024),
+        "MIB" => Ok(1024 * 1024),
+        "GB" => Ok(1000 * 1000 * 1000),
+        "GIB" => Ok(1024 * 1024 * 1024),
         "TB" => Ok(1000 * 1000 * 1000 * 1000),
-        "TiB" => Ok(1024 * 1024 * 1024 * 1024),
+        "TIB" => Ok(1024 * 1024 * 1024 * 1024),
         _ => Err(ParserError::ParserError(format!(
             "TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, or TB, TiB, not '{unit}'."
         ))),
