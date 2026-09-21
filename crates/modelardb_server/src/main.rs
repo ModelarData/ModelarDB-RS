@@ -23,10 +23,13 @@ mod error;
 mod remote;
 mod storage;
 
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use modelardb_storage::parser;
 use modelardb_types::types::CloudCredentials;
+use sysinfo::System;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::ClusterMode;
@@ -50,16 +53,16 @@ pub(crate) struct ServerArgs {
     #[arg(long, default_value_t = 9999, env = "MODELARDBD_PORT")]
     port: u16,
 
-    /// Amount of memory in bytes to reserve for storing ingested time series.
-    #[arg(long, env = "MODELARDBD_INGESTED_RESERVED_MEMORY_IN_BYTES")]
+    /// Amount of memory as an absolute memory amount or percentage of system memory to reserve for storing ingested time series.
+    #[arg(long = "ingested-reserved-memory", value_name = "INGESTED_RESERVED_MEMORY", env = "MODELARDBD_INGESTED_RESERVED_MEMORY", value_parser = parse_memory_size_argument)]
     ingested_reserved_memory_in_bytes: Option<u64>,
 
-    /// Amount of memory in bytes to reserve for storing uncompressed data buffers.
-    #[arg(long, env = "MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")]
+    /// Amount of memory as an absolute memory amount or percentage of system memory for storing uncompressed data buffers.
+    #[arg(long = "uncompressed-reserved-memory", value_name = "UNCOMPRESSED_RESERVED_MEMORY", env = "MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY", value_parser = parse_memory_size_argument)]
     uncompressed_reserved_memory_in_bytes: Option<u64>,
 
-    /// Amount of memory in bytes to reserve for storing compressed data buffers.
-    #[arg(long, env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES")]
+    /// Amount of memory as an absolute memory amount or percentage of system memory for storing compressed data buffers.
+    #[arg(long = "compressed-reserved-memory", value_name = "COMPRESSED_RESERVED_MEMORY", env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY", value_parser = parse_memory_size_argument)]
     compressed_reserved_memory_in_bytes: Option<u64>,
 
     /// Number of bytes required before transferring a batch of data to the remote object store.
@@ -93,6 +96,38 @@ pub(crate) struct ServerArgs {
     /// Subcommand specifying the mode the server is started in and the required data folders.
     #[command(subcommand)]
     mode: ServerMode,
+}
+
+/// Parse a value followed by a percentage or a unit (B, KB, KiB, MB, MiB, GB, GiB, TB, TiB,
+/// case-insensitive). The function is designed to be used with the `clap` crate, and the error is
+/// returned as a string for control over formatting and avoid depending directly on `sqlparser`.
+/// - If a percentage is given, that percentage of the system's total memory in bytes is returned.
+/// - If a unit is given, the specified amount of memory in bytes is returned.
+/// - If a parse error occurs, that error is returned as a `String`.
+fn parse_memory_size_argument(input: &str) -> StdResult<u64, String> {
+    let input = input.trim();
+    let suffix_start = input
+        .char_indices()
+        .find_map(|(index, character)| (!character.is_numeric()).then_some(index))
+        .unwrap_or(input.len());
+
+    let value: u64 = input[0..suffix_start]
+        .parse::<u64>()
+        .map_err(|error| error.to_string())?;
+    let suffix = input[suffix_start..input.len()].trim();
+
+    let memory_in_bytes = if suffix == "%" {
+        let mut system = System::new();
+        system.refresh_memory();
+        let total_memory_bytes = system.total_memory();
+
+        // Cast to u128 to avoid overflowing when multiplying.
+        ((total_memory_bytes as u128 * value as u128) / 100) as u64
+    } else {
+        value * parser::byte_unit_multiplier(suffix).map_err(|error| error.to_string())?
+    };
+
+    Ok(memory_in_bytes)
 }
 
 /// The mode and data folders a ModelarDB server is started with.
@@ -182,4 +217,89 @@ fn setup_ctrl_c_handler(context: &Arc<Context>) {
 
         std::process::exit(0)
     });
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // Tests for parse_memory_size_argument().
+    #[test]
+    fn test_parse_memory_size_argument_empty_string() {
+        assert!(parse_memory_size_argument("").is_err())
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_no_suffix() {
+        assert_eq!(parse_memory_size_argument("37").unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_no_suffix_with_whitespace() {
+        // ast-grep-ignore as the extra spaces are purposely added for testing.
+        assert_eq!(parse_memory_size_argument("  37  ").unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_byte_suffix() {
+        assert_eq!(parse_memory_size_argument("37B").unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_byte_suffix_with_whitespace() {
+        // ast-grep-ignore as the extra spaces are purposely added for testing.
+        assert_eq!(parse_memory_size_argument(" 37   B  ").unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_kilobyte_suffix() {
+        assert_eq!(parse_memory_size_argument("37KB").unwrap(), 37000)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_kibibyte_suffix() {
+        assert_eq!(parse_memory_size_argument("37KiB").unwrap(), 37888)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_megabyte_suffix() {
+        assert_eq!(parse_memory_size_argument("37MB").unwrap(), 37000000)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_mebibyte_suffix() {
+        assert_eq!(parse_memory_size_argument("37MiB").unwrap(), 38797312)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_gigabyte_suffix() {
+        assert_eq!(parse_memory_size_argument("37GB").unwrap(), 37000000000)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_gibibyte_suffix() {
+        assert_eq!(parse_memory_size_argument("37GiB").unwrap(), 39728447488)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_terabyte_suffix() {
+        assert_eq!(parse_memory_size_argument("37TB").unwrap(), 37000000000000)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_tebibyte_suffix() {
+        assert_eq!(parse_memory_size_argument("37TiB").unwrap(), 40681930227712)
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_percentage() {
+        // As the tests will be run on different systems, it is not possible to check if the correct
+        // value is returned without doing the same calculation as parse_memory_size_argument().
+        assert!(parse_memory_size_argument("10%").is_ok())
+    }
+
+    #[test]
+    fn test_parse_memory_size_argument_wrong_suffix() {
+        assert!(parse_memory_size_argument("10#").is_err())
+    }
 }
