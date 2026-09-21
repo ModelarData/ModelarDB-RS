@@ -2737,7 +2737,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'XY'."
+            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'XY'."
         );
     }
 
@@ -2760,7 +2760,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'TARGET'."
+            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'TARGET'."
         );
     }
 
@@ -2790,7 +2790,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'table_1'."
+            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'table_1'."
         );
     }
 
@@ -2801,7 +2801,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: TARGET unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'CLUSTER'."
+            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'CLUSTER'."
         );
     }
 
