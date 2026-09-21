@@ -194,13 +194,11 @@ impl DataFolder {
     ) -> Result<Self> {
         let location = format!("s3://{bucket_name}");
 
-        // TODO: Determine if it is safe to use AWS_S3_ALLOW_UNSAFE_RENAME.
         let storage_options = HashMap::from([
             ("aws_access_key_id".to_owned(), access_key_id),
             ("aws_secret_access_key".to_owned(), secret_access_key),
             ("aws_endpoint_url".to_owned(), endpoint),
             ("aws_bucket_name".to_owned(), bucket_name),
-            ("aws_s3_allow_unsafe_rename".to_owned(), "true".to_owned()),
         ]);
 
         let url = Url::parse(&location)
