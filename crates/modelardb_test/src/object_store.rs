@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::path::Path as StdPath;
 
-use object_store::{ObjectStore, aws::AmazonS3Builder, local::LocalFileSystem, memory::InMemory};
+use object_store::{ObjectStore, local::LocalFileSystem, memory::InMemory};
 use url::Url;
 
 use crate::BUCKET_AND_CONTAINER_NAME;
@@ -37,6 +37,9 @@ pub fn local_file_system_object_store(object_store_path: &StdPath) -> Box<dyn Ob
 
 /// Return an [`AmazonS3`](object_store::aws::AmazonS3) [`ObjectStore`] for testing.
 pub fn s3_object_store() -> Box<dyn ObjectStore> {
+    let location = format!("s3://{BUCKET_AND_CONTAINER_NAME}");
+    let url = Url::parse(&location).unwrap();
+
     let storage_options = HashMap::from([
         ("aws_access_key_id".to_owned(), "minioadmin".to_owned()),
         ("aws_secret_access_key".to_owned(), "minioadmin".to_owned()),
@@ -48,27 +51,11 @@ pub fn s3_object_store() -> Box<dyn ObjectStore> {
             "aws_bucket_name".to_owned(),
             BUCKET_AND_CONTAINER_NAME.to_owned(),
         ),
-        ("aws_s3_allow_unsafe_rename".to_owned(), "true".to_owned()),
+        ("aws_allow_http".to_owned(), "true".to_owned()),
     ]);
 
-    // Build the Amazon S3 object store with the given storage options manually to allow http.
-    let location = format!("s3://{BUCKET_AND_CONTAINER_NAME}");
-    let url = Url::parse(&location).unwrap();
-
-    let amazon_s3 = storage_options
-        .iter()
-        .fold(
-            AmazonS3Builder::new()
-                .with_url(url.to_string())
-                .with_allow_http(true),
-            |builder, (key, value)| {
-                let key = key.parse().unwrap();
-                builder.with_config(key, value)
-            },
-        )
-        .build()
-        .unwrap();
-    Box::new(amazon_s3)
+    let (boxed_amazon_s3, _path) = object_store::parse_url_opts(&url, &storage_options).unwrap();
+    boxed_amazon_s3
 }
 
 /// Return a [`MicrosoftAzure`](object_store::azure::MicrosoftAzure) [`ObjectStore`] for testing.
@@ -82,6 +69,7 @@ pub fn azure_object_store() -> Box<dyn ObjectStore> {
         ("azure_container_name".to_owned(), BUCKET_AND_CONTAINER_NAME.to_owned()),
         ("azure_storage_use_emulator".to_owned(), "true".to_owned()),
     ]);
+
     let (boxed_microsoft_azure, _path) =
         object_store::parse_url_opts(&url, &storage_options).unwrap();
     boxed_microsoft_azure

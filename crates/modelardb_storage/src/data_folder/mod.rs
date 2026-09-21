@@ -48,7 +48,6 @@ use modelardb_types::types::{
     ArrowValue, CloudCredentials, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
     TimeSeriesTableMetadata,
 };
-use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
