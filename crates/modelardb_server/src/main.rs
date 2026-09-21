@@ -100,15 +100,15 @@ pub(crate) struct ServerArgs {
 
 /// Parse a value followed by a percentage or a unit (B, KB, KiB, MB, MiB, GB, GiB, TB, TiB,
 /// case-insensitive). The function is designed to be used with the `clap` crate, and the error is
-/// returned as a string to for control and avoid depending on `sqlparser` for its `ParserError`.
+/// returned as a string for control over formatting and avoid depending directly on `sqlparser`.
 /// - If a percentage is given, that percentage of the system's total memory in bytes is returned.
-/// - If a unit, the specified amount of memory in bytes is returned.
+/// - If a unit is given, the specified amount of memory in bytes is returned.
 /// - If a parse error occurs, that error is returned as a `String`.
 fn parse_memory_size_argument(input: &str) -> StdResult<u64, String> {
     let input = input.trim();
     let suffix_start = input
-        .chars()
-        .position(|c| !c.is_numeric())
+        .char_indices()
+        .find_map(|(index, character)| (!character.is_numeric()).then_some(index))
         .unwrap_or(input.len());
 
     let value: u64 = input[0..suffix_start]
@@ -246,7 +246,7 @@ mod test {
     }
 
     #[test]
-    fn test_parse_memory_size_argument_byte_suffix_with_whitespac() {
+    fn test_parse_memory_size_argument_byte_suffix_with_whitespace() {
         // ast-grep-ignore as the extra spaces are purposely added for testing.
         assert_eq!(parse_memory_size_argument(" 37   B  ").unwrap(), 37)
     }
