@@ -125,9 +125,14 @@ impl ExecutionPlan for GeneratedAsExec {
     /// Apply `f` to each root expression that this node owns and uses during execution.
     fn apply_expressions(
         &self,
-        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>,
     ) -> DataFusionResult<TreeNodeRecursion> {
-        Ok(TreeNodeRecursion::Continue)
+        datafusion::physical_plan::apply_expression_roots(
+            self.columns_to_generate
+                .iter()
+                .map(|column_to_generate| &column_to_generate.physical_expr),
+            f,
+        )
     }
 
     /// Return a new [`GeneratedAsExec`] with the execution plan to read rows from replaced.

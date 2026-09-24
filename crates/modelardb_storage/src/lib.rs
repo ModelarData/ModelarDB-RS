@@ -425,10 +425,10 @@ mod tests {
         let result = read_record_batch_from_apache_parquet_file(&path, object_store).await;
 
         // The specific error message is OS-dependent, so we only check that it contains the
-        // expected prefix and OS error code.
+        // expected prefix and that it contains the OS error code somewhere in the string.
         let actual_error_message = result.unwrap_err().to_string();
         assert!(actual_error_message.starts_with("Parquet Error: External: Object at location"));
-        assert!(actual_error_message.ends_with("No such file or directory (os error 2)"));
+        assert!(actual_error_message.contains("os error 2"));
     }
 
     // Tests for write_record_batch_to_apache_parquet_file().
