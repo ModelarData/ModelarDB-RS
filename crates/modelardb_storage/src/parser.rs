@@ -1961,7 +1961,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Schema error: No field named field_3. Did you mean 'field_1'?."
+            "Parser Error: sql parser error: Schema error: No field named field_3. Did you mean 'field_1'?\nValid fields are timestamp, field_1, field_2, tag."
         );
     }
 
