@@ -74,13 +74,15 @@ tracing-subscriber = "0.3.23"
 url = "2.5.8"
 uuid = "1.26.1"
 
-[profile.release]
-lto = true
-codegen-units = 1
-panic = "abort"
-
 [profile.dev-release]
 inherits = "release"
-lto = false
 codegen-units = 16
+lto = false
 panic = 'unwind'
+strip = "none"
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = "symbols"
