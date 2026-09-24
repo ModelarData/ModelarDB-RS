@@ -35,7 +35,9 @@ use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions::Column;
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::udaf::AggregateFunctionExpr;
-use datafusion::physical_plan::{Accumulator, ExecutionPlan, PhysicalExpr};
+use datafusion::physical_plan::{
+    Accumulator, ExecutionPlan, PhysicalExpr, replace_children_if_necessary,
+};
 use datafusion::scalar::ScalarValue;
 use modelardb_types::schemas::QUERY_COMPRESSED_SCHEMA;
 use modelardb_types::types::{ArrowValue, TimestampArray, Value, ValueArray};
@@ -236,9 +238,10 @@ fn rewrite_aggregates_to_use_segments(
                 if let Ok(input) =
                     try_new_aggregate_exec(aggregate_exec, sorted_join_exec.children())
                 {
-                    return Ok(Transformed::yes(
-                        execution_plan.with_new_children(vec![input])?,
-                    ));
+                    return Ok(Transformed::yes(replace_children_if_necessary(
+                        execution_plan,
+                        vec![input],
+                    )?));
                 };
             }
         }

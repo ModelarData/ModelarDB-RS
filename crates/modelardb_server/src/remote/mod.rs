@@ -36,7 +36,7 @@ use arrow_flight::{
 };
 use datafusion::arrow::array::{ArrayRef, RecordBatch};
 use datafusion::arrow::ipc::writer::{
-    CompressionContext, DictionaryTracker, IpcDataGenerator, IpcWriteOptions,
+    DictionaryTracker, IpcDataGenerator, IpcWriteContext, IpcWriteOptions,
 };
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
@@ -212,7 +212,7 @@ async fn send_query_result(
     let data_generator = IpcDataGenerator::default();
     let mut dictionary_tracker = DictionaryTracker::new(false);
     let writer_options = IpcWriteOptions::default();
-    let mut compression_context = CompressionContext::default();
+    let mut ipc_write_context = IpcWriteContext::default();
 
     while let Some(maybe_record_batch) = query_result_stream.next().await {
         // If a record batch is not returned the client is informed about the error.
@@ -229,7 +229,7 @@ async fn send_query_result(
                 &record_batch,
                 &mut dictionary_tracker,
                 &writer_options,
-                &mut compression_context,
+                &mut ipc_write_context,
             )
             .map_err(error_to_status_internal)?;
 
