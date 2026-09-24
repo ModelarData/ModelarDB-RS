@@ -17,6 +17,7 @@
 //! reconstructed values from a single column without filtering, so they are computed directly from
 //! segments instead of the reconstructed values.
 
+use std::any::Any;
 use std::mem;
 use std::sync::{Arc, LazyLock};
 
@@ -207,9 +208,8 @@ fn rewrite_aggregates_to_use_segments(
     let execution_plan_children = execution_plan.children();
 
     if execution_plan_children.len() == 1
-        && let Some(aggregate_exec) = execution_plan_children[0]
-            .as_any()
-            .downcast_ref::<AggregateExec>()
+        && let Some(aggregate_exec) =
+            (execution_plan_children[0].as_ref() as &dyn Any).downcast_ref::<AggregateExec>()
     {
         // Currently, only aggregates on one FIELD column without predicates are supported.
         let aggregate_exec_children = aggregate_exec.children();
@@ -221,18 +221,16 @@ fn rewrite_aggregates_to_use_segments(
             // Remove RepartitionExec if added by Apache DataFusion. Both AggregateExec and
             // RepartitionExec can only have one child, so it is not necessary to check it.
             let maybe_repartition_exec = &aggregate_exec_children[0];
-            let aggregate_exec_input = if let Some(repartition_exec) = maybe_repartition_exec
-                .as_any()
-                .downcast_ref::<RepartitionExec>()
+            let aggregate_exec_input = if let Some(repartition_exec) =
+                (maybe_repartition_exec.as_ref() as &dyn Any).downcast_ref::<RepartitionExec>()
             {
                 repartition_exec.children()[0].clone()
             } else {
                 (*maybe_repartition_exec).clone()
             };
 
-            if let Some(sorted_join_exec) = aggregate_exec_input
-                .as_any()
-                .downcast_ref::<SortedJoinExec>()
+            if let Some(sorted_join_exec) =
+                (aggregate_exec_input.as_ref() as &dyn Any).downcast_ref::<SortedJoinExec>()
             {
                 // Try to create new AggregateExec that compute aggregates directly from segments.
                 if let Ok(input) =
@@ -282,15 +280,12 @@ fn try_new_aggregate_exec(
 /// Return [`Ok`] if no predicates have been pushed to `grid_exec_child`, otherwise
 /// [`DataFusionError`] is returned.
 fn can_rewrite_aggregate(grid_exec_child: &Arc<dyn ExecutionPlan>) -> DataFusionResult<()> {
-    if let Some(data_source_exec) = grid_exec_child.as_any().downcast_ref::<DataSourceExec>()
-        && let Some(file_scan_config) = data_source_exec
-            .data_source()
-            .as_any()
-            .downcast_ref::<FileScanConfig>()
-        && let Some(parquet_source) = file_scan_config
-            .file_source
-            .as_any()
-            .downcast_ref::<ParquetSource>()
+    if let Some(data_source_exec) =
+        (grid_exec_child.as_ref() as &dyn Any).downcast_ref::<DataSourceExec>()
+        && let Some(file_scan_config) =
+            (data_source_exec.data_source().as_ref() as &dyn Any).downcast_ref::<FileScanConfig>()
+        && let Some(parquet_source) =
+            (file_scan_config.file_source.as_ref() as &dyn Any).downcast_ref::<ParquetSource>()
         && parquet_source.filter().is_none()
     {
         return Ok(());
@@ -774,7 +769,7 @@ mod tests {
             assert_eq!(current_execs.len(), expected_execs.len());
 
             for (current, expected) in current_execs.iter().zip(expected_execs) {
-                assert_eq!(current.as_any().type_id(), *expected);
+                assert_eq!((current.as_ref() as &dyn Any).type_id(), *expected);
                 next_execs.extend(current.children().iter().map(|exec| (*exec).clone()));
             }
 

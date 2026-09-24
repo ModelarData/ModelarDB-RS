@@ -23,6 +23,7 @@ pub mod parser;
 mod query;
 pub mod write_ahead_log;
 
+use std::any::Any;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
@@ -131,8 +132,7 @@ pub fn register_time_series_table(
 pub fn maybe_table_provider_to_time_series_table_metadata(
     maybe_time_series_table: Arc<dyn TableProvider>,
 ) -> Option<Arc<TimeSeriesTableMetadata>> {
-    maybe_time_series_table
-        .as_any()
+    (maybe_time_series_table.as_ref() as &dyn Any)
         .downcast_ref::<TimeSeriesTable>()
         .map(|time_series_table| time_series_table.time_series_table_metadata())
 }

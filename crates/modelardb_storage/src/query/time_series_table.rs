@@ -17,7 +17,6 @@
 //! DataFusion. It takes the projection, filters as [`Exprs`](Expr), and limit of a query as input
 //! and returns a physical query plan that produces all the data points required for the query.
 
-use std::any::Any;
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
@@ -37,6 +36,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
+use datafusion::logical_expr::physical_planning_context::PhysicalPlanningContext;
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator, utils};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{
@@ -44,7 +44,7 @@ use datafusion::physical_expr::{
 };
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
 use deltalake::kernel::LogicalFileView;
-use deltalake::{DeltaTable, ObjectMeta, PartitionFilter, PartitionValue};
+use deltalake::{DeltaTable, FilterLiteral, FilterOp, FilterValue, ObjectMeta};
 use futures::TryStreamExt;
 use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, TimeSeriesTableMetadata};
@@ -403,7 +403,12 @@ fn convert_logical_expr_to_physical_expr(
     query_schema: Arc<Schema>,
 ) -> DataFusionResult<Arc<dyn PhysicalExpr>> {
     let df_query_schema = query_schema.clone().to_dfschema()?;
-    planner::create_physical_expr(expr, &df_query_schema, &ExecutionProps::new())
+    planner::create_physical_expr(
+        expr,
+        &df_query_schema,
+        &ExecutionProps::new(),
+        &PhysicalPlanningContext::default(),
+    )
 }
 
 /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
@@ -411,7 +416,7 @@ fn convert_logical_expr_to_physical_expr(
 /// metadata cannot be retrieved from the Delta Lake.
 async fn new_data_source_exec(
     delta_table: &DeltaTable,
-    partition_filters: &[PartitionFilter],
+    partition_filters: &[FilterLiteral<'_>],
     maybe_limit: Option<usize>,
     maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
     file_schema: Arc<Schema>,
@@ -450,7 +455,7 @@ async fn new_data_source_exec(
     Ok(DataSourceExec::from_data_source(file_scan_config.build()))
 }
 
-/// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionFilter`]. A
+/// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionedFile`]. A
 /// [`DataFusionError`] is returned if the time the file was last modified cannot be read from
 /// `logical_file_view`.
 fn logical_file_view_to_partitioned_file(
@@ -475,8 +480,10 @@ fn logical_file_view_to_partitioned_file(
         range: None,
         statistics: None,
         ordering: None,
-        extensions: None,
+        extensions: Default::default(),
         metadata_size_hint: None,
+        table_reference: None,
+        arrow_schema: None,
     };
 
     Ok(partitioned_file)
@@ -484,11 +491,6 @@ fn logical_file_view_to_partitioned_file(
 
 #[async_trait]
 impl TableProvider for TimeSeriesTable {
-    /// Return `self` as [`Any`] so it can be downcast.
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     /// Return the query schema of the time series table registered with Apache DataFusion.
     fn schema(&self) -> Arc<Schema> {
         self.time_series_table_metadata.query_schema.clone()
@@ -619,14 +621,13 @@ impl TableProvider for TimeSeriesTable {
         let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
             Vec::with_capacity(stored_field_columns_in_projection.len());
 
-        let mut partition_filters = vec![PartitionFilter {
-            key: FIELD_COLUMN.to_owned(),
-            value: PartitionValue::Equal("".to_owned()),
-        }];
-
-        // An expression is added so it is simple to replace with one that filters by field column.
         for field_column_index in stored_field_columns_in_projection {
-            partition_filters[0].value = PartitionValue::Equal(field_column_index.to_string());
+            let field_column_index = field_column_index.to_string();
+            let partition_filters = [(
+                FIELD_COLUMN,
+                FilterOp::Eq,
+                FilterValue::Scalar(&field_column_index),
+            )];
 
             let lex_ordering = LexOrdering::new(self.query_order_segment.to_vec())
                 .expect("query_order_segment should not be empty.");
