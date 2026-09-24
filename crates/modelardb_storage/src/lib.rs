@@ -68,7 +68,7 @@ struct ParquetObjectReader {
 }
 
 impl AsyncFileReader for ParquetObjectReader {
-    /// Retrieve the bytes in `range`
+    /// Retrieve the bytes in `range`.
     fn get_bytes(&mut self, range: Range<u64>) -> BoxFuture<'_, ParquetResult<Bytes>> {
         self.object_store
             .get_range(&self.path, range)
