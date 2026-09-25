@@ -35,7 +35,7 @@ dashmap = "6.2.1"
 datafusion = "55.1.0"
 datafusion-proto = "55.1.0"
 delta_kernel = { package = "buoyant_kernel", version = "0.28.1" }
-deltalake = "1.0.0"
+deltalake = { git = "https://github.com/modelardata/delta-rs.git", branch="bug/macos-validation" }
 dirs = "7.0.0"
 futures = "0.3.32"
 http = "1.5.0"

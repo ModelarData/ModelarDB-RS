@@ -2315,8 +2315,7 @@ dependencies = [
 [[package]]
 name = "deltalake"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ec75e286ce53b652d00bd4be3076d8dfa5feed3bf109ae7d43b6055c1611cad"
+source = "git+https://github.com/modelardata/delta-rs.git?branch=bug%2Fmacos-validation#e28482983e6ef91b33812908fe8d38fc4ed59c35"
 dependencies = [
  "buoyant_kernel",
  "ctor",
@@ -2327,8 +2326,7 @@ dependencies = [
 [[package]]
 name = "deltalake-aws"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3e908f6f42a109ed01ce752c2dd8f92a84181cbd660f59f7af28ad93b450c93"
+source = "git+https://github.com/modelardata/delta-rs.git?branch=bug%2Fmacos-validation#e28482983e6ef91b33812908fe8d38fc4ed59c35"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2351,8 +2349,7 @@ dependencies = [
 [[package]]
 name = "deltalake-core"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da7f1714b6bf844e017d5ba0b665801ff7017c51950261172e6c874a372d3fe9"
+source = "git+https://github.com/modelardata/delta-rs.git?branch=bug%2Fmacos-validation#e28482983e6ef91b33812908fe8d38fc4ed59c35"
 dependencies = [
  "alloc-stdlib 0.2.2",
  "arrow",
@@ -2410,8 +2407,7 @@ dependencies = [
 [[package]]
 name = "deltalake-derive"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5a646e2b05608db1e5f91e75b6af841d92294ea0864789bb01f3f818e5f7b25"
+source = "git+https://github.com/modelardata/delta-rs.git?branch=bug%2Fmacos-validation#e28482983e6ef91b33812908fe8d38fc4ed59c35"
 dependencies = [
  "convert_case 0.9.0",
  "itertools 0.14.0",
