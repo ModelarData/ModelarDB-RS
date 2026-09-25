@@ -20,7 +20,7 @@
 //! [`TableProvider::insert_into()`] is also supported.
 
 use std::borrow::Cow;
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 
 use arrow::datatypes::Schema;
 use datafusion::catalog::Session;
@@ -71,11 +71,6 @@ impl NormalTable {
 
 #[async_trait]
 impl TableProvider for NormalTable {
-    /// Return `self` as [`Any`] so it can be downcast.
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     /// Return the query schema of the normal table registered with Apache DataFusion.
     fn schema(&self) -> Arc<Schema> {
         self.table_provider.schema()

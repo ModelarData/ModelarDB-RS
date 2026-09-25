@@ -25,13 +25,15 @@ use std::sync::Arc;
 
 use arrow::datatypes::TimeUnit;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
-use datafusion::common::{DFSchema, DataFusionError, ToDFSchema};
+use datafusion::common::{DFSchema, DataFusionError, TableReference, ToDFSchema};
 use datafusion::config::ConfigOptions;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::functions;
-use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSource, WindowUDF};
+use datafusion::logical_expr::physical_planning_context::PhysicalPlanningContext;
+use datafusion::logical_expr::{
+    AggregateUDF, Expr as DFExpr, HigherOrderUDF, ScalarUDF, TableSource, WindowUDF,
+};
 use datafusion::physical_expr::planner;
-use datafusion::sql::TableReference;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use modelardb_types::functions::normalize_name; // Fully imported to not conflict.
 use modelardb_types::types::{
@@ -420,6 +422,7 @@ impl ModelarDbDialect {
             transient: false,
             volatile: false,
             iceberg: true,
+            snapshot: false,
             name: table_name,
             columns,
             constraints: vec![],
@@ -453,6 +456,7 @@ impl ModelarDbDialect {
             default_ddl_collation: None,
             with_aggregation_policy: None,
             with_row_access_policy: None,
+            with_storage_lifecycle_policy: None,
             with_tags: None,
             external_volume: None,
             base_location: None,
@@ -464,6 +468,10 @@ impl ModelarDbDialect {
             refresh_mode: None,
             initialize: None,
             require_user: false,
+            diststyle: None,
+            distkey: None,
+            sortkey: None,
+            backup: None,
         })
     }
 
@@ -887,6 +895,10 @@ impl ContextProvider for ParserContextProvider {
         self.udfs.get(name).cloned()
     }
 
+    fn get_higher_order_meta(&self, _name: &str) -> Option<Arc<HigherOrderUDF>> {
+        None
+    }
+
     fn get_aggregate_meta(&self, _name: &str) -> Option<Arc<AggregateUDF>> {
         None
     }
@@ -905,6 +917,10 @@ impl ContextProvider for ParserContextProvider {
 
     fn udf_names(&self) -> Vec<String> {
         self.udfs.keys().cloned().collect()
+    }
+
+    fn higher_order_function_names(&self) -> Vec<String> {
+        vec![]
     }
 
     fn udaf_names(&self) -> Vec<String> {
@@ -1093,6 +1109,12 @@ fn check_unsupported_features_are_disabled(
         refresh_mode,
         initialize,
         require_user,
+        snapshot,
+        with_storage_lifecycle_policy,
+        diststyle,
+        distkey,
+        sortkey,
+        backup,
     } = create_table;
 
     check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
@@ -1103,6 +1125,15 @@ fn check_unsupported_features_are_disabled(
     check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
     check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
     check_unsupported_feature_is_disabled(*volatile, "VOLATILE")?;
+    check_unsupported_feature_is_disabled(*snapshot, "SNAPSHOT")?;
+    check_unsupported_feature_is_disabled(
+        with_storage_lifecycle_policy.is_some(),
+        "Storage lifecycle policy",
+    )?;
+    check_unsupported_feature_is_disabled(diststyle.is_some(), "DISTSTYLE")?;
+    check_unsupported_feature_is_disabled(distkey.is_some(), "DISTKEY")?;
+    check_unsupported_feature_is_disabled(sortkey.is_some(), "SORTKEY")?;
+    check_unsupported_feature_is_disabled(backup.is_some(), "BACKUP")?;
     check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
     check_unsupported_feature_is_disabled(
         hive_distribution != &HiveDistributionStyle::NONE,
@@ -1348,8 +1379,12 @@ fn extract_generation_exprs_for_all_columns(
                 // Ensure the logical Apache DataFusion expression can be converted to a physical
                 // Apache DataFusion expression within the context of schema. This is to improve
                 // error messages if the user-defined expression has semantic errors.
-                let _physical_expr =
-                    planner::create_physical_expr(&expr, &df_schema, &execution_props)?;
+                let _physical_expr = planner::create_physical_expr(
+                    &expr,
+                    &df_schema,
+                    &execution_props,
+                    &PhysicalPlanningContext::default(),
+                )?;
 
                 generated_column = Some(
                     GeneratedColumn::try_from_expr(expr, &df_schema)
@@ -1926,7 +1961,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Schema error: No field named field_3. Did you mean 'field_1'?."
+            "Parser Error: sql parser error: Schema error: No field named field_3. Did you mean 'field_1'?\nValid fields are timestamp, field_1, field_2, tag."
         );
     }
 

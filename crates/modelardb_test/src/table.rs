@@ -15,7 +15,6 @@
 
 //! Implementation of table related functions and constants used throughout ModelarDB for testing purposes.
 
-use std::any::Any;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
@@ -54,10 +53,6 @@ pub struct NoOpDataSink {}
 
 #[async_trait]
 impl DataSink for NoOpDataSink {
-    fn as_any(&self) -> &dyn Any {
-        unimplemented!();
-    }
-
     fn metrics(&self) -> Option<MetricsSet> {
         unimplemented!();
     }

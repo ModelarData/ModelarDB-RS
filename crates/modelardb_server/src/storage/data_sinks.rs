@@ -16,7 +16,6 @@
 //! Implementation of [`DataSinks`](`DataSink`) that writes [`RecordBatches`](RecordBatch) to
 //! [`StorageEngine`].
 
-use std::any::Any;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
@@ -61,11 +60,6 @@ impl NormalTableDataSink {
 
 #[async_trait]
 impl DataSink for NormalTableDataSink {
-    /// Return `self` as [`Any`] so it can be downcast.
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     /// Return the [`DataSink's`](DataSink) schema.
     fn schema(&self) -> &Arc<Schema> {
         &self.schema
@@ -142,11 +136,6 @@ impl TimeSeriesTableDataSink {
 
 #[async_trait]
 impl DataSink for TimeSeriesTableDataSink {
-    /// Return `self` as [`Any`] so it can be downcast.
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     /// Return the [`DataSink's`](DataSink) schema.
     fn schema(&self) -> &Arc<Schema> {
         &self.time_series_table_metadata.schema

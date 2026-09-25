@@ -33,9 +33,10 @@ use datafusion::arrow::array::{Array, Float64Array, StringArray, StringViewArray
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
 use datafusion::arrow::ipc::convert;
-use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
+use datafusion::arrow::ipc::writer::{
+    DictionaryTracker, IpcDataGenerator, IpcWriteContext, IpcWriteOptions,
+};
 use datafusion::arrow::record_batch::RecordBatch;
-use deltalake::arrow::ipc::writer::CompressionContext;
 use futures::{StreamExt, stream};
 use modelardb_test::data_generation;
 use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
@@ -357,7 +358,7 @@ impl TestContext {
         let data_generator = IpcDataGenerator::default();
         let mut dictionary_tracker = DictionaryTracker::new(false);
         let writer_options = IpcWriteOptions::default();
-        let mut compression_context = CompressionContext::default();
+        let mut ipc_write_context = IpcWriteContext::default();
 
         for data_point in time_series {
             let (_encoded_dictionaries, encoded_batch) = data_generator
@@ -365,7 +366,7 @@ impl TestContext {
                     data_point,
                     &mut dictionary_tracker,
                     &writer_options,
-                    &mut compression_context,
+                    &mut ipc_write_context,
                 )
                 .unwrap();
             flight_data.push(encoded_batch.into());
