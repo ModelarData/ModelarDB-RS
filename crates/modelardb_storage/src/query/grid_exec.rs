@@ -17,7 +17,6 @@
 //! stream [`GridStream`] which reconstructs the data points for a specific column from the
 //! compressed segments containing metadata and models.
 
-use std::any::Any;
 use std::borrow::Cow;
 use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
@@ -33,6 +32,7 @@ use datafusion::arrow::array::{
 use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
+use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, LexOrdering, OrderingRequirements};
@@ -43,6 +43,7 @@ use datafusion::physical_plan::metrics::{
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, ExecutionPlanProperties,
     PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream,
+    apply_expression_roots,
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
@@ -116,11 +117,6 @@ impl ExecutionPlan for GridExec {
         Self::static_name()
     }
 
-    /// Return `self` as [`Any`] so it can be downcast.
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     /// Return the schema of the plan.
     fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
@@ -134,6 +130,14 @@ impl ExecutionPlan for GridExec {
     /// Return the single execution plan batches of rows are read from.
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![&self.input]
+    }
+
+    /// Apply `f` to each root expression that this node owns and uses during execution.
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>,
+    ) -> DataFusionResult<TreeNodeRecursion> {
+        apply_expression_roots(self.maybe_predicate.iter(), f)
     }
 
     /// Return a new [`GridExec`] with the execution plan to read batches of compressed segments

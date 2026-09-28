@@ -63,11 +63,6 @@ impl Default for DataFolderDataSink {
 
 #[async_trait]
 impl DataSink for DataFolderDataSink {
-    /// Return `self` as [`Any`] so it can be downcast.
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     /// Return the [`DataSink's`](DataSink) schema.
     fn schema(&self) -> &Arc<Schema> {
         &self.schema
@@ -1274,8 +1269,7 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "DataFusion Error: Schema error: No field named {INVALID_COLUMN_NAME}. \
-                Valid fields are {}.",
+                "DataFusion Error: Schema error: No field named {INVALID_COLUMN_NAME}.\nValid fields are {}.",
                 time_series_table_columns()
             )
         );
@@ -1302,8 +1296,7 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "DataFusion Error: Schema error: No field named {INVALID_COLUMN_NAME}. \
-                Valid fields are {}, {}.",
+                "DataFusion Error: Schema error: No field named {INVALID_COLUMN_NAME}.\nValid fields are {}, {}.",
                 time_series_table_columns(),
                 time_series_table_columns()
             )
@@ -1413,8 +1406,7 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             format!(
-                "DataFusion Error: Schema error: No field named {INVALID_COLUMN_NAME}. \
-                Valid fields are {}.",
+                "DataFusion Error: Schema error: No field named {INVALID_COLUMN_NAME}.\nValid fields are {}.",
                 time_series_table_columns()
             )
         );

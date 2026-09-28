@@ -1796,7 +1796,11 @@ mod tests {
         let schema = test_table::time_series_table_metadata()
             .compressed_schema
             .clone();
-        let column_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+        let column_names: Vec<String> = schema
+            .fields()
+            .iter()
+            .map(|field| format!("\"{}\"", field.name()))
+            .collect();
 
         let table_provider = delta_table.table_provider().build().await.unwrap();
         data_folder

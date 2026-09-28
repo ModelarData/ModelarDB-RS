@@ -31,6 +31,7 @@ use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use deltalake::DeltaTable;
+use futures::TryStreamExt;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use tracing::{debug, info, warn};
 
@@ -500,8 +501,8 @@ impl SegmentedLog {
     async fn load_persisted_batches_from_delta_table(&self, delta_table: DeltaTable) -> Result<()> {
         let mut persisted_batch_ids = HashSet::new();
 
-        let history = delta_table.history(None).await?;
-        for commit in history.into_iter() {
+        let mut history = delta_table.history(None);
+        while let Some(commit) = history.try_next().await? {
             if let Some(batch_ids) = commit.info.get("batchIds") {
                 let batch_ids: Vec<u64> = serde_json::from_value(batch_ids.clone()).expect(
                     "The batchIds field in the commit metadata should be a JSON array of u64 values.",

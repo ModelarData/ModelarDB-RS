@@ -17,7 +17,6 @@
 //! stream [`GeneratedAsStream`] which computes generated columns and adds them to the result.
 //! Generated columns can be computed from other columns and constant values.
 
-use std::any::Any;
 use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -27,6 +26,7 @@ use arrow::datatypes::Schema;
 use datafusion::arrow::array::StringArray;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::temporal_conversions;
+use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::EquivalenceProperties;
@@ -107,11 +107,6 @@ impl ExecutionPlan for GeneratedAsExec {
         Self::static_name()
     }
 
-    /// Return `self` as [`Any`] so it can be downcast.
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     /// Return the schema of the plan.
     fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
@@ -125,6 +120,19 @@ impl ExecutionPlan for GeneratedAsExec {
     /// Return the single execution plan batches of rows are read from.
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![&self.input]
+    }
+
+    /// Apply `f` to each root expression that this node owns and uses during execution.
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>,
+    ) -> DataFusionResult<TreeNodeRecursion> {
+        datafusion::physical_plan::apply_expression_roots(
+            self.columns_to_generate
+                .iter()
+                .map(|column_to_generate| &column_to_generate.physical_expr),
+            f,
+        )
     }
 
     /// Return a new [`GeneratedAsExec`] with the execution plan to read rows from replaced.

@@ -18,7 +18,6 @@
 //! [`GridExecs`](crate::query::grid_exec::GridExec) streams to create the complete results
 //! containing a timestamp column, one or more field columns, and zero or more tag columns.
 
-use std::any::Any;
 use std::fmt::{Formatter, Result as FmtResult};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -27,6 +26,7 @@ use std::task::{Context as StdTaskContext, Poll};
 use arrow::datatypes::Schema;
 use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, OrderingRequirements};
@@ -34,7 +34,7 @@ use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, ExecutionPlanProperties,
-    PlanProperties, RecordBatchStream, SendableRecordBatchStream,
+    PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream,
 };
 use futures::stream::{Stream, StreamExt};
 
@@ -104,11 +104,6 @@ impl ExecutionPlan for SortedJoinExec {
         Self::static_name()
     }
 
-    /// Return `self` as [`Any`] so it can be downcast.
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     /// Return the schema of the plan.
     fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
@@ -123,6 +118,14 @@ impl ExecutionPlan for SortedJoinExec {
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         // iter() returns an iterator that produces elements of type &T.
         self.inputs.iter().collect()
+    }
+
+    /// Apply `f` to each root expression that this node owns and uses during execution.
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>,
+    ) -> DataFusionResult<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
     }
 
     /// Return a new [`SortedJoinExec`] with the execution plan to read batches of reconstructed
