@@ -768,7 +768,7 @@ mod tests {
 
         Request::builder()
             .uri(path)
-            .body(Body::new(Full::new(bytes::Bytes::from(frame))))
+            .body(Body::new(Full::new(Bytes::from(frame))))
             .unwrap()
     }
 
