@@ -410,14 +410,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_authorize_list_actions_calls_authenticator_with_admin() {
+    async fn test_authorize_list_actions_calls_authenticator_with_read() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(LIST_ACTIONS_PATH);
 
         let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
     }
 
     #[tokio::test]
