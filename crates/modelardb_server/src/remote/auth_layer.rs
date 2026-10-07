@@ -347,7 +347,7 @@ mod tests {
     #[tokio::test]
     async fn test_authorize_without_authenticator_allows_request_without_parsing() {
         // A body that would fail ticket decoding if authorize_do_get() ran.
-        let request = raw_frame_request(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        let request = raw_frame_request(DO_GET_PATH, &[0xFF, 0xFF, 0xFF, 0xFF]);
 
         let result = authorize(request, None, &None).await;
 
@@ -571,7 +571,7 @@ mod tests {
         let authenticator = Arc::new(MockAuthenticator::new());
 
         // Valid 5-byte gRPC frame header but invalid protobuf bytes in the message.
-        let request = raw_frame_request(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        let request = raw_frame_request(DO_GET_PATH, &[0xFF, 0xFF, 0xFF, 0xFF]);
 
         let result = authorize(request, Some(&*authenticator), &None).await;
 
@@ -621,10 +621,19 @@ mod tests {
             ticket: ticket_bytes.into(),
         };
 
-        raw_frame_request(&ticket.encode_to_vec())
+        raw_frame_request(DO_GET_PATH, &ticket.encode_to_vec())
     }
 
-    fn raw_frame_request(message_bytes: &[u8]) -> Request<Body> {
+    fn do_action_request(action_type: &str) -> Request<Body> {
+        let action = Action {
+            r#type: action_type.to_owned(),
+            body: Bytes::new(),
+        };
+
+        raw_frame_request(DO_ACTION_PATH, &action.encode_to_vec())
+    }
+
+    fn raw_frame_request(path: &str, message_bytes: &[u8]) -> Request<Body> {
         // Construct a gRPC frame with the 1-byte compression flag, 4-byte message length, and message.
         let mut frame = Vec::with_capacity(5 + message_bytes.len());
         frame.push(0u8);
@@ -632,7 +641,7 @@ mod tests {
         frame.extend_from_slice(message_bytes);
 
         Request::builder()
-            .uri(DO_GET_PATH)
+            .uri(path)
             .body(Body::new(Full::new(bytes::Bytes::from(frame))))
             .unwrap()
     }
