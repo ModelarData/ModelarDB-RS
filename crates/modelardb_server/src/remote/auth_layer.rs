@@ -750,6 +750,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_decode_request_message_with_length_mismatch() {
+        let kill_node = Action {
+            r#type: "KillNode".to_owned(),
+            body: Bytes::new(),
+        };
+
+        let list_nodes = Action {
+            r#type: "ListNodes".to_owned(),
+            body: Bytes::new(),
+        };
+
+        // Declare only the KillNode message, which is what tonic decodes, and append a ListNodes
+        // message. Decoding all bytes after the header would let the appended message replace the
+        // action type, so KillNode would be authorized as a ListNodes action.
+        let mut frame = vec![0u8];
+        frame.extend_from_slice(&(kill_node.encoded_len() as u32).to_be_bytes());
+        frame.extend_from_slice(&kill_node.encode_to_vec());
+        frame.extend_from_slice(&list_nodes.encode_to_vec());
+
+        let request = Request::builder()
+            .uri(DO_ACTION_PATH)
+            .body(Body::new(Full::new(Bytes::from(frame))))
+            .unwrap();
+
+        let result = decode_request_message::<Action>(request).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"Request body length does not match the gRPC message length.\""
+        );
+    }
+
+    #[tokio::test]
     async fn test_decode_request_message_with_invalid_protobuf() {
         // Valid 5-byte gRPC frame header but invalid protobuf bytes in the message.
         let request = raw_frame_request(DO_GET_PATH, &[0xFF, 0xFF, 0xFF, 0xFF]);
