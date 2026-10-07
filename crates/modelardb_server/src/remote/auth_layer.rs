@@ -711,6 +711,25 @@ mod tests {
         assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
     }
 
+    #[tokio::test]
+    async fn test_authorize_do_action_body_is_reconstructed_intact() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let action_type = "ListNodes";
+
+        // Capture the original body bytes before calling authorize().
+        let original_request = do_action_request(action_type);
+        let (_, original_body) = original_request.into_parts();
+        let original_bytes = original_body.collect().await.unwrap().to_bytes();
+
+        let request = do_action_request(action_type);
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        let (_, reconstructed_body) = result.unwrap().into_parts();
+        let reconstructed_bytes = reconstructed_body.collect().await.unwrap().to_bytes();
+
+        assert_eq!(original_bytes, reconstructed_bytes);
+    }
+
     fn do_get_request(sql: &str) -> Request<Body> {
         ticket_frame_request(sql.as_bytes().to_vec())
     }
