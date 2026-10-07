@@ -180,31 +180,14 @@ async fn authorize(
     Ok(request)
 }
 
-/// Buffer the DoGet body, decode the gRPC [`Ticket`] protobuf, parse the SQL, determine the
-/// required permission, authorize, then reconstruct the request byte-for-byte.
+/// Decode the DoGet [`Ticket`], parse the SQL, determine the required permission, authorize, then
+/// reconstruct the request byte-for-byte.
 async fn authorize_do_get(
     request: Request<Body>,
     authenticator: &dyn Authenticator,
     metadata: &MetadataMap,
 ) -> Result<Request<Body>, Status> {
-    let (parts, body) = request.into_parts();
-
-    // Collect the full body.
-    let bytes = body
-        .collect()
-        .await
-        .map_err(|_| Status::invalid_argument("Failed to unpack request body."))?
-        .to_bytes();
-
-    // gRPC data frames have a 1-byte compression flag, a 4-byte length, and an N bytes message as
-    // defined in https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md.
-    if bytes.len() < 5 {
-        return Err(Status::invalid_argument(
-            "Request body too short to be a valid gRPC message.",
-        ));
-    }
-
-    let ticket = Ticket::decode(&bytes[5..]).map_err(error_to_status_invalid_argument)?;
+    let (parts, bytes, ticket) = decode_request_message::<Ticket>(request).await?;
     let sql = str::from_utf8(&ticket.ticket).map_err(error_to_status_invalid_argument)?;
 
     let statement =
