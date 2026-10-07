@@ -50,6 +50,9 @@ const DO_PUT_PATH: &str = "/arrow.flight.protocol.FlightService/DoPut";
 const DO_ACTION_PATH: &str = "/arrow.flight.protocol.FlightService/DoAction";
 const LIST_ACTIONS_PATH: &str = "/arrow.flight.protocol.FlightService/ListActions";
 
+/// Size of the gRPC frame header, which is a 1-byte compression flag and a 4-byte message length.
+const GRPC_HEADER_SIZE: usize = 5;
+
 /// [`Layer`] that enforces authentication and authorization on all incoming Apache Arrow Flight
 /// requests.
 #[derive(Clone)]
@@ -268,7 +271,7 @@ async fn decode_request_message<M: Message + Default>(
 
     // Collect the full body but stop at the same limit as tonic, so a large body is not buffered
     // before the request is authorized. The limit includes the 5-byte gRPC frame header.
-    let bytes = Limited::new(body, MAX_DECODING_MESSAGE_SIZE + 5)
+    let bytes = Limited::new(body, MAX_DECODING_MESSAGE_SIZE + GRPC_HEADER_SIZE)
         .collect()
         .await
         .map_err(|error| {
@@ -278,7 +281,7 @@ async fn decode_request_message<M: Message + Default>(
 
     // gRPC data frames have a 1-byte compression flag, a 4-byte length, and an N bytes message as
     // defined in https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md.
-    if bytes.len() < 5 {
+    if bytes.len() < GRPC_HEADER_SIZE {
         return Err(Status::invalid_argument(
             "Request body too short to be a valid gRPC message.",
         ));
@@ -287,13 +290,14 @@ async fn decode_request_message<M: Message + Default>(
     // Only accept a body with exactly one message, so the message that is authorized is the same
     // message that the handler receives.
     let message_length = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
-    if message_length != bytes.len() - 5 {
+    if message_length != bytes.len() - GRPC_HEADER_SIZE {
         return Err(Status::invalid_argument(
             "Request body length does not match the gRPC message length.",
         ));
     }
 
-    let message = M::decode(&bytes[5..]).map_err(error_to_status_invalid_argument)?;
+    let message =
+        M::decode(&bytes[GRPC_HEADER_SIZE..]).map_err(error_to_status_invalid_argument)?;
 
     Ok((parts, bytes, message))
 }
@@ -717,14 +721,17 @@ mod tests {
 
         assert_eq!(parts.uri.path(), DO_ACTION_PATH);
         assert_eq!(action.r#type, "ListNodes");
-        assert_eq!(Action::decode(&bytes[5..]).unwrap(), action);
+        assert_eq!(Action::decode(&bytes[GRPC_HEADER_SIZE..]).unwrap(), action);
     }
 
     #[tokio::test]
     async fn test_decode_request_message_with_body_too_short() {
         let request = Request::builder()
             .uri(DO_GET_PATH)
-            .body(Body::new(Full::new(Bytes::from(vec![0u8; 4]))))
+            .body(Body::new(Full::new(Bytes::from(vec![
+                0u8;
+                GRPC_HEADER_SIZE - 1
+            ]))))
             .unwrap();
 
         let result = decode_request_message::<Ticket>(request).await;
@@ -820,7 +827,7 @@ mod tests {
 
     fn raw_frame_request(path: &str, message_bytes: &[u8]) -> Request<Body> {
         // Construct a gRPC frame with the 1-byte compression flag, 4-byte message length, and message.
-        let mut frame = Vec::with_capacity(5 + message_bytes.len());
+        let mut frame = Vec::with_capacity(GRPC_HEADER_SIZE + message_bytes.len());
         frame.push(0u8);
         frame.extend_from_slice(&(message_bytes.len() as u32).to_be_bytes());
         frame.extend_from_slice(message_bytes);
