@@ -539,39 +539,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_authorize_do_get_with_body_too_short() {
-        let authenticator = Arc::new(MockAuthenticator::new());
-        let request = Request::builder()
-            .uri(DO_GET_PATH)
-            .body(Body::new(Full::new(bytes::Bytes::from(vec![0u8; 4]))))
-            .unwrap();
-
-        let result = authorize(request, Some(&*authenticator), &None).await;
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "code: 'Client specified an invalid argument', \
-            message: \"Request body too short to be a valid gRPC message.\""
-        );
-    }
-
-    #[tokio::test]
-    async fn test_authorize_do_get_with_invalid_protobuf() {
-        let authenticator = Arc::new(MockAuthenticator::new());
-
-        // Valid 5-byte gRPC frame header but invalid protobuf bytes in the message.
-        let request = raw_frame_request(DO_GET_PATH, &[0xFF, 0xFF, 0xFF, 0xFF]);
-
-        let result = authorize(request, Some(&*authenticator), &None).await;
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "code: 'Client specified an invalid argument', \
-            message: \"failed to decode Protobuf message: invalid varint\""
-        );
-    }
-
-    #[tokio::test]
     async fn test_authorize_do_get_with_non_utf8_ticket() {
         let authenticator = Arc::new(MockAuthenticator::new());
 
@@ -728,6 +695,47 @@ mod tests {
         let reconstructed_bytes = reconstructed_body.collect().await.unwrap().to_bytes();
 
         assert_eq!(original_bytes, reconstructed_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_decode_request_message() {
+        let request = do_action_request("ListNodes");
+
+        let (parts, bytes, action) = decode_request_message::<Action>(request).await.unwrap();
+
+        assert_eq!(parts.uri.path(), DO_ACTION_PATH);
+        assert_eq!(action.r#type, "ListNodes");
+        assert_eq!(Action::decode(&bytes[5..]).unwrap(), action);
+    }
+
+    #[tokio::test]
+    async fn test_decode_request_message_with_body_too_short() {
+        let request = Request::builder()
+            .uri(DO_GET_PATH)
+            .body(Body::new(Full::new(Bytes::from(vec![0u8; 4]))))
+            .unwrap();
+
+        let result = decode_request_message::<Ticket>(request).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"Request body too short to be a valid gRPC message.\""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_request_message_with_invalid_protobuf() {
+        // Valid 5-byte gRPC frame header but invalid protobuf bytes in the message.
+        let request = raw_frame_request(DO_GET_PATH, &[0xFF, 0xFF, 0xFF, 0xFF]);
+
+        let result = decode_request_message::<Ticket>(request).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"failed to decode Protobuf message: invalid varint\""
+        );
     }
 
     fn do_get_request(sql: &str) -> Request<Body> {
