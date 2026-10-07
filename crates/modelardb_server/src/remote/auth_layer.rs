@@ -284,6 +284,15 @@ async fn decode_request_message<M: Message + Default>(
         ));
     }
 
+    // Only accept a body with exactly one message, so the message that is authorized is the same
+    // message that the handler receives.
+    let message_length = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
+    if message_length != bytes.len() - 5 {
+        return Err(Status::invalid_argument(
+            "Request body length does not match the gRPC message length.",
+        ));
+    }
+
     let message = M::decode(&bytes[5..]).map_err(error_to_status_invalid_argument)?;
 
     Ok((parts, bytes, message))
