@@ -29,7 +29,7 @@ use arrow_flight::{Action, Ticket};
 use bytes::Bytes;
 use http::request::Parts;
 use http::{Request, Response};
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use modelardb_auth::Permission;
 use modelardb_auth::authenticator::Authenticator;
 use modelardb_storage::parser::{self, ModelarDbStatement};
@@ -40,7 +40,7 @@ use tonic::body::Body;
 use tonic::metadata::{AsciiMetadataValue, MetadataMap};
 use tower::{Layer, Service};
 
-use crate::remote::error_to_status_invalid_argument;
+use crate::remote::{MAX_DECODING_MESSAGE_SIZE, error_to_status_invalid_argument};
 
 const LIST_FLIGHTS_PATH: &str = "/arrow.flight.protocol.FlightService/ListFlights";
 const GET_FLIGHT_INFO_PATH: &str = "/arrow.flight.protocol.FlightService/GetFlightInfo";
@@ -266,11 +266,14 @@ async fn decode_request_message<M: Message + Default>(
 ) -> Result<(Parts, Bytes, M), Status> {
     let (parts, body) = request.into_parts();
 
-    // Collect the full body.
-    let bytes = body
+    // Collect the full body but stop at the same limit as tonic, so a large body is not buffered
+    // before the request is authorized. The limit includes the 5-byte gRPC frame header.
+    let bytes = Limited::new(body, MAX_DECODING_MESSAGE_SIZE + 5)
         .collect()
         .await
-        .map_err(|_| Status::invalid_argument("Failed to unpack request body."))?
+        .map_err(|error| {
+            Status::invalid_argument(format!("Failed to unpack request body: {error}."))
+        })?
         .to_bytes();
 
     // gRPC data frames have a 1-byte compression flag, a 4-byte length, and an N bytes message as
@@ -721,6 +724,19 @@ mod tests {
             result.unwrap_err().to_string(),
             "code: 'Client specified an invalid argument', \
             message: \"Request body too short to be a valid gRPC message.\""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_request_message_with_body_too_large() {
+        let request = raw_frame_request(DO_GET_PATH, &vec![0u8; MAX_DECODING_MESSAGE_SIZE + 1]);
+
+        let result = decode_request_message::<Ticket>(request).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"Failed to unpack request body: length limit exceeded.\""
         );
     }
 
