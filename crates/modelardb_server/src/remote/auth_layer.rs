@@ -236,6 +236,34 @@ fn permission_for_statement(statement: &ModelarDbStatement) -> Permission {
     }
 }
 
+/// Buffer the body of a gRPC request that contains a single message and decode the message as
+/// `M`. Return the request parts and the original body bytes with the message so the request can
+/// be reconstructed.
+async fn decode_request_message<M: Message + Default>(
+    request: Request<Body>,
+) -> Result<(Parts, Bytes, M), Status> {
+    let (parts, body) = request.into_parts();
+
+    // Collect the full body.
+    let bytes = body
+        .collect()
+        .await
+        .map_err(|_| Status::invalid_argument("Failed to unpack request body."))?
+        .to_bytes();
+
+    // gRPC data frames have a 1-byte compression flag, a 4-byte length, and an N bytes message as
+    // defined in https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md.
+    if bytes.len() < 5 {
+        return Err(Status::invalid_argument(
+            "Request body too short to be a valid gRPC message.",
+        ));
+    }
+
+    let message = M::decode(&bytes[5..]).map_err(error_to_status_invalid_argument)?;
+
+    Ok((parts, bytes, message))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
