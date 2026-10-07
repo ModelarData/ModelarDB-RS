@@ -601,6 +601,116 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_authorize_do_action_with_create_table_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("CreateTable");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_flush_memory_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("FlushMemory");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_flush_node_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("FlushNode");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_kill_node_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("KillNode");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_get_configuration_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("GetConfiguration");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_update_configuration_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("UpdateConfiguration");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_node_type_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("NodeType");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_list_nodes_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("ListNodes");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_node_metrics_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("NodeMetrics");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_unknown_action_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("UnknownAction");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
     fn do_get_request(sql: &str) -> Request<Body> {
         ticket_frame_request(sql.as_bytes().to_vec())
     }
