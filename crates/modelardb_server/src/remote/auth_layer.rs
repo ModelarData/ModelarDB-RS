@@ -219,6 +219,39 @@ fn permission_for_statement(statement: &ModelarDbStatement) -> Permission {
     }
 }
 
+/// Decode the DoAction [`Action`], determine the required permission from the action type,
+/// authorize, then reconstruct the request byte-for-byte.
+async fn authorize_do_action(
+    request: Request<Body>,
+    authenticator: &dyn Authenticator,
+    metadata: &MetadataMap,
+) -> Result<Request<Body>, Status> {
+    let (parts, bytes, action) = decode_request_message::<Action>(request).await?;
+
+    authenticator
+        .authorize(metadata, permission_for_action(&action.r#type))
+        .await?;
+
+    // Reconstruct the request with the original bytes so the server receives it intact.
+    Ok(Request::from_parts(parts, Body::new(Full::new(bytes))))
+}
+
+/// Map an [`Action`] type to the required [`Permission`].
+fn permission_for_action(action_type: &str) -> Permission {
+    match action_type {
+        "CreateTable" => Permission::Admin,
+        "FlushMemory" => Permission::Admin,
+        "FlushNode" => Permission::Admin,
+        "KillNode" => Permission::Admin,
+        "GetConfiguration" => Permission::Admin,
+        "UpdateConfiguration" => Permission::Admin,
+        "NodeType" => Permission::Read,
+        "ListNodes" => Permission::Read,
+        "NodeMetrics" => Permission::Admin,
+        _ => Permission::Admin,
+    }
+}
+
 /// Buffer the body of a gRPC request that contains a single message and decode the message as
 /// `M`. Return the request parts and the original body bytes with the message so the request can
 /// be reconstructed.
