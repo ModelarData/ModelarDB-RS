@@ -17,16 +17,19 @@
 //! Arrow Flight requests. The layer runs before [`FlightServiceHandler`](super::FlightServiceHandler)
 //! and checks the cluster key or bearer token before the request reaches the handler. For DoGet
 //! requests the SQL ticket is decoded, and the required permission is determined from the parsed
-//! statement.
+//! statement. For DoAction requests the action is decoded, and the required permission is
+//! determined from the action type.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use arrow_flight::Ticket;
+use arrow_flight::{Action, Ticket};
+use bytes::Bytes;
+use http::request::Parts;
 use http::{Request, Response};
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use modelardb_auth::Permission;
 use modelardb_auth::authenticator::Authenticator;
 use modelardb_storage::parser::{self, ModelarDbStatement};
@@ -37,7 +40,7 @@ use tonic::body::Body;
 use tonic::metadata::{AsciiMetadataValue, MetadataMap};
 use tower::{Layer, Service};
 
-use crate::remote::error_to_status_invalid_argument;
+use crate::remote::{MAX_DECODING_MESSAGE_SIZE, error_to_status_invalid_argument};
 
 const LIST_FLIGHTS_PATH: &str = "/arrow.flight.protocol.FlightService/ListFlights";
 const GET_FLIGHT_INFO_PATH: &str = "/arrow.flight.protocol.FlightService/GetFlightInfo";
@@ -46,6 +49,9 @@ const DO_GET_PATH: &str = "/arrow.flight.protocol.FlightService/DoGet";
 const DO_PUT_PATH: &str = "/arrow.flight.protocol.FlightService/DoPut";
 const DO_ACTION_PATH: &str = "/arrow.flight.protocol.FlightService/DoAction";
 const LIST_ACTIONS_PATH: &str = "/arrow.flight.protocol.FlightService/ListActions";
+
+/// Size of the gRPC frame header, which is a 1-byte compression flag and a 4-byte message length.
+const GRPC_HEADER_SIZE: usize = 5;
 
 /// [`Layer`] that enforces authentication and authorization on all incoming Apache Arrow Flight
 /// requests.
@@ -157,17 +163,20 @@ async fn authorize(
         return Ok(request);
     };
 
-    // Decode the ticket and parse the SQL to determine the required permission.
+    // Decode the request body to determine the required permission.
     let path = request.uri().path().to_owned();
     if path == DO_GET_PATH {
         return authorize_do_get(request, authenticator, &metadata).await;
+    } else if path == DO_ACTION_PATH {
+        return authorize_do_action(request, authenticator, &metadata).await;
     }
 
     // For all other endpoints the path determines the permission.
     let required_permission = match path.as_str() {
-        LIST_FLIGHTS_PATH | GET_FLIGHT_INFO_PATH | GET_SCHEMA_PATH => Permission::Read,
+        LIST_FLIGHTS_PATH | GET_FLIGHT_INFO_PATH | GET_SCHEMA_PATH | LIST_ACTIONS_PATH => {
+            Permission::Read
+        }
         DO_PUT_PATH => Permission::Write,
-        DO_ACTION_PATH | LIST_ACTIONS_PATH => Permission::Admin,
         _ => {
             return Err(Status::invalid_argument("Unknown path."));
         }
@@ -180,33 +189,16 @@ async fn authorize(
     Ok(request)
 }
 
-/// Buffer the DoGet body, decode the gRPC [`Ticket`] protobuf, parse the SQL, determine the
-/// required permission, authorize, then reconstruct the request byte-for-byte.
+/// Decode the DoGet [`Ticket`], parse the SQL, determine the required permission, authorize, then
+/// reconstruct the request byte-for-byte.
 async fn authorize_do_get(
     request: Request<Body>,
     authenticator: &dyn Authenticator,
     metadata: &MetadataMap,
 ) -> Result<Request<Body>, Status> {
-    let (parts, body) = request.into_parts();
+    let (parts, bytes, ticket) = decode_request_message::<Ticket>(request).await?;
 
-    // Collect the full body.
-    let bytes = body
-        .collect()
-        .await
-        .map_err(|_| Status::invalid_argument("Failed to unpack request body."))?
-        .to_bytes();
-
-    // gRPC data frames have a 1-byte compression flag, a 4-byte length, and an N bytes message as
-    // defined in https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md.
-    if bytes.len() < 5 {
-        return Err(Status::invalid_argument(
-            "Request body too short to be a valid gRPC message.",
-        ));
-    }
-
-    let ticket = Ticket::decode(&bytes[5..]).map_err(error_to_status_invalid_argument)?;
     let sql = str::from_utf8(&ticket.ticket).map_err(error_to_status_invalid_argument)?;
-
     let statement =
         parser::tokenize_and_parse_sql_statement(sql).map_err(error_to_status_invalid_argument)?;
 
@@ -234,6 +226,80 @@ fn permission_for_statement(statement: &ModelarDbStatement) -> Permission {
             _ => Permission::Admin,
         },
     }
+}
+
+/// Decode the DoAction [`Action`], determine the required permission from the action type,
+/// authorize, then reconstruct the request byte-for-byte.
+async fn authorize_do_action(
+    request: Request<Body>,
+    authenticator: &dyn Authenticator,
+    metadata: &MetadataMap,
+) -> Result<Request<Body>, Status> {
+    let (parts, bytes, action) = decode_request_message::<Action>(request).await?;
+
+    authenticator
+        .authorize(metadata, permission_for_action(&action.r#type))
+        .await?;
+
+    // Reconstruct the request with the original bytes so the server receives it intact.
+    Ok(Request::from_parts(parts, Body::new(Full::new(bytes))))
+}
+
+/// Map an [`Action`] type to the required [`Permission`].
+fn permission_for_action(action_type: &str) -> Permission {
+    match action_type {
+        "CreateTable" => Permission::Admin,
+        "FlushMemory" => Permission::Admin,
+        "FlushNode" => Permission::Admin,
+        "KillNode" => Permission::Admin,
+        "GetConfiguration" => Permission::Admin,
+        "UpdateConfiguration" => Permission::Admin,
+        "NodeType" => Permission::Read,
+        "ListNodes" => Permission::Read,
+        "NodeMetrics" => Permission::Admin,
+        _ => Permission::Admin,
+    }
+}
+
+/// Buffer the body of a gRPC request that contains a single message and decode the message as
+/// `M`. Return the request parts and the original body bytes with the message so the request can
+/// be reconstructed.
+async fn decode_request_message<M: Message + Default>(
+    request: Request<Body>,
+) -> Result<(Parts, Bytes, M), Status> {
+    let (parts, body) = request.into_parts();
+
+    // Collect the full body but stop at the same limit as tonic, so a large body is not buffered
+    // before the request is authorized. The limit includes the 5-byte gRPC frame header.
+    let bytes = Limited::new(body, MAX_DECODING_MESSAGE_SIZE + GRPC_HEADER_SIZE)
+        .collect()
+        .await
+        .map_err(|error| {
+            Status::invalid_argument(format!("Failed to unpack request body: {error}."))
+        })?
+        .to_bytes();
+
+    // gRPC data frames have a 1-byte compression flag, a 4-byte length, and an N bytes message as
+    // defined in https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md.
+    if bytes.len() < GRPC_HEADER_SIZE {
+        return Err(Status::invalid_argument(
+            "Request body too short to be a valid gRPC message.",
+        ));
+    }
+
+    // Only accept a body with exactly one message, so the message that is authorized is the same
+    // message that the handler receives.
+    let message_length = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
+    if message_length != bytes.len() - GRPC_HEADER_SIZE {
+        return Err(Status::invalid_argument(
+            "Request body length does not match the gRPC message length.",
+        ));
+    }
+
+    let message =
+        M::decode(&bytes[GRPC_HEADER_SIZE..]).map_err(error_to_status_invalid_argument)?;
+
+    Ok((parts, bytes, message))
 }
 
 #[cfg(test)]
@@ -297,7 +363,7 @@ mod tests {
     #[tokio::test]
     async fn test_authorize_without_authenticator_allows_request_without_parsing() {
         // A body that would fail ticket decoding if authorize_do_get() ran.
-        let request = raw_frame_request(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        let request = raw_frame_request(DO_GET_PATH, &[0xFF, 0xFF, 0xFF, 0xFF]);
 
         let result = authorize(request, None, &None).await;
 
@@ -349,25 +415,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_authorize_do_action_calls_authenticator_with_admin() {
-        let authenticator = Arc::new(MockAuthenticator::new());
-        let request = empty_request(DO_ACTION_PATH);
-
-        let result = authorize(request, Some(&*authenticator), &None).await;
-
-        assert!(result.is_ok());
-        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
-    }
-
-    #[tokio::test]
-    async fn test_authorize_list_actions_calls_authenticator_with_admin() {
+    async fn test_authorize_list_actions_calls_authenticator_with_read() {
         let authenticator = Arc::new(MockAuthenticator::new());
         let request = empty_request(LIST_ACTIONS_PATH);
 
         let result = authorize(request, Some(&*authenticator), &None).await;
 
         assert!(result.is_ok());
-        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
     }
 
     #[tokio::test]
@@ -500,39 +555,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_authorize_do_get_with_body_too_short() {
-        let authenticator = Arc::new(MockAuthenticator::new());
-        let request = Request::builder()
-            .uri(DO_GET_PATH)
-            .body(Body::new(Full::new(bytes::Bytes::from(vec![0u8; 4]))))
-            .unwrap();
-
-        let result = authorize(request, Some(&*authenticator), &None).await;
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "code: 'Client specified an invalid argument', \
-            message: \"Request body too short to be a valid gRPC message.\""
-        );
-    }
-
-    #[tokio::test]
-    async fn test_authorize_do_get_with_invalid_protobuf() {
-        let authenticator = Arc::new(MockAuthenticator::new());
-
-        // Valid 5-byte gRPC frame header but invalid protobuf bytes in the message.
-        let request = raw_frame_request(&[0xFF, 0xFF, 0xFF, 0xFF]);
-
-        let result = authorize(request, Some(&*authenticator), &None).await;
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "code: 'Client specified an invalid argument', \
-            message: \"failed to decode Protobuf message: invalid varint\""
-        );
-    }
-
-    #[tokio::test]
     async fn test_authorize_do_get_with_non_utf8_ticket() {
         let authenticator = Arc::new(MockAuthenticator::new());
 
@@ -562,6 +584,226 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_authorize_do_action_with_create_table_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("CreateTable");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_flush_memory_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("FlushMemory");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_flush_node_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("FlushNode");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_kill_node_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("KillNode");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_get_configuration_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("GetConfiguration");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_update_configuration_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("UpdateConfiguration");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_node_type_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("NodeType");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_list_nodes_calls_authenticator_with_read() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("ListNodes");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Read]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_node_metrics_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("NodeMetrics");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_with_unknown_action_calls_authenticator_with_admin() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let request = do_action_request("UnknownAction");
+
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        assert!(result.is_ok());
+        assert_eq!(authenticator.permissions(), vec![Permission::Admin]);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_do_action_body_is_reconstructed_intact() {
+        let authenticator = Arc::new(MockAuthenticator::new());
+        let action_type = "ListNodes";
+
+        // Capture the original body bytes before calling authorize().
+        let original_request = do_action_request(action_type);
+        let (_, original_body) = original_request.into_parts();
+        let original_bytes = original_body.collect().await.unwrap().to_bytes();
+
+        let request = do_action_request(action_type);
+        let result = authorize(request, Some(&*authenticator), &None).await;
+
+        let (_, reconstructed_body) = result.unwrap().into_parts();
+        let reconstructed_bytes = reconstructed_body.collect().await.unwrap().to_bytes();
+
+        assert_eq!(original_bytes, reconstructed_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_decode_request_message() {
+        let request = do_action_request("ListNodes");
+
+        let (parts, bytes, action) = decode_request_message::<Action>(request).await.unwrap();
+
+        assert_eq!(parts.uri.path(), DO_ACTION_PATH);
+        assert_eq!(action.r#type, "ListNodes");
+        assert_eq!(Action::decode(&bytes[GRPC_HEADER_SIZE..]).unwrap(), action);
+    }
+
+    #[tokio::test]
+    async fn test_decode_request_message_with_body_too_short() {
+        let request = Request::builder()
+            .uri(DO_GET_PATH)
+            .body(Body::new(Full::new(Bytes::from(vec![
+                0u8;
+                GRPC_HEADER_SIZE - 1
+            ]))))
+            .unwrap();
+
+        let result = decode_request_message::<Ticket>(request).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"Request body too short to be a valid gRPC message.\""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_request_message_with_body_too_large() {
+        let request = raw_frame_request(DO_GET_PATH, &vec![0u8; MAX_DECODING_MESSAGE_SIZE + 1]);
+
+        let result = decode_request_message::<Ticket>(request).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"Failed to unpack request body: length limit exceeded.\""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_request_message_with_length_mismatch() {
+        let kill_node = Action {
+            r#type: "KillNode".to_owned(),
+            body: Bytes::new(),
+        };
+
+        let list_nodes = Action {
+            r#type: "ListNodes".to_owned(),
+            body: Bytes::new(),
+        };
+
+        // Declare only the KillNode message, which is what tonic decodes, and append a ListNodes
+        // message. Decoding all bytes after the header would let the appended message replace the
+        // action type, so KillNode would be authorized as a ListNodes action.
+        let mut frame = vec![0u8];
+        frame.extend_from_slice(&(kill_node.encoded_len() as u32).to_be_bytes());
+        frame.extend_from_slice(&kill_node.encode_to_vec());
+        frame.extend_from_slice(&list_nodes.encode_to_vec());
+
+        let request = Request::builder()
+            .uri(DO_ACTION_PATH)
+            .body(Body::new(Full::new(Bytes::from(frame))))
+            .unwrap();
+
+        let result = decode_request_message::<Action>(request).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"Request body length does not match the gRPC message length.\""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_request_message_with_invalid_protobuf() {
+        // Valid 5-byte gRPC frame header but invalid protobuf bytes in the message.
+        let request = raw_frame_request(DO_GET_PATH, &[0xFF, 0xFF, 0xFF, 0xFF]);
+
+        let result = decode_request_message::<Ticket>(request).await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "code: 'Client specified an invalid argument', \
+            message: \"failed to decode Protobuf message: invalid varint\""
+        );
+    }
+
     fn do_get_request(sql: &str) -> Request<Body> {
         ticket_frame_request(sql.as_bytes().to_vec())
     }
@@ -571,19 +813,28 @@ mod tests {
             ticket: ticket_bytes.into(),
         };
 
-        raw_frame_request(&ticket.encode_to_vec())
+        raw_frame_request(DO_GET_PATH, &ticket.encode_to_vec())
     }
 
-    fn raw_frame_request(message_bytes: &[u8]) -> Request<Body> {
+    fn do_action_request(action_type: &str) -> Request<Body> {
+        let action = Action {
+            r#type: action_type.to_owned(),
+            body: Bytes::new(),
+        };
+
+        raw_frame_request(DO_ACTION_PATH, &action.encode_to_vec())
+    }
+
+    fn raw_frame_request(path: &str, message_bytes: &[u8]) -> Request<Body> {
         // Construct a gRPC frame with the 1-byte compression flag, 4-byte message length, and message.
-        let mut frame = Vec::with_capacity(5 + message_bytes.len());
+        let mut frame = Vec::with_capacity(GRPC_HEADER_SIZE + message_bytes.len());
         frame.push(0u8);
         frame.extend_from_slice(&(message_bytes.len() as u32).to_be_bytes());
         frame.extend_from_slice(message_bytes);
 
         Request::builder()
-            .uri(DO_GET_PATH)
-            .body(Body::new(Full::new(bytes::Bytes::from(frame))))
+            .uri(path)
+            .body(Body::new(Full::new(Bytes::from(frame))))
             .unwrap()
     }
 
