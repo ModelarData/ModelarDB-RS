@@ -17,14 +17,17 @@
 //! Arrow Flight requests. The layer runs before [`FlightServiceHandler`](super::FlightServiceHandler)
 //! and checks the cluster key or bearer token before the request reaches the handler. For DoGet
 //! requests the SQL ticket is decoded, and the required permission is determined from the parsed
-//! statement.
+//! statement. For DoAction requests the action is decoded, and the required permission is
+//! determined from the action type.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use arrow_flight::Ticket;
+use arrow_flight::{Action, Ticket};
+use bytes::Bytes;
+use http::request::Parts;
 use http::{Request, Response};
 use http_body_util::{BodyExt, Full};
 use modelardb_auth::Permission;
@@ -157,17 +160,20 @@ async fn authorize(
         return Ok(request);
     };
 
-    // Decode the ticket and parse the SQL to determine the required permission.
+    // Decode the request body to determine the required permission.
     let path = request.uri().path().to_owned();
     if path == DO_GET_PATH {
         return authorize_do_get(request, authenticator, &metadata).await;
+    } else if path == DO_ACTION_PATH {
+        return authorize_do_action(request, authenticator, &metadata).await;
     }
 
     // For all other endpoints the path determines the permission.
     let required_permission = match path.as_str() {
-        LIST_FLIGHTS_PATH | GET_FLIGHT_INFO_PATH | GET_SCHEMA_PATH => Permission::Read,
+        LIST_FLIGHTS_PATH | GET_FLIGHT_INFO_PATH | GET_SCHEMA_PATH | LIST_ACTIONS_PATH => {
+            Permission::Read
+        }
         DO_PUT_PATH => Permission::Write,
-        DO_ACTION_PATH | LIST_ACTIONS_PATH => Permission::Admin,
         _ => {
             return Err(Status::invalid_argument("Unknown path."));
         }
@@ -188,8 +194,8 @@ async fn authorize_do_get(
     metadata: &MetadataMap,
 ) -> Result<Request<Body>, Status> {
     let (parts, bytes, ticket) = decode_request_message::<Ticket>(request).await?;
-    let sql = str::from_utf8(&ticket.ticket).map_err(error_to_status_invalid_argument)?;
 
+    let sql = str::from_utf8(&ticket.ticket).map_err(error_to_status_invalid_argument)?;
     let statement =
         parser::tokenize_and_parse_sql_statement(sql).map_err(error_to_status_invalid_argument)?;
 
