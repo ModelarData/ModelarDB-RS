@@ -802,16 +802,20 @@ pub fn byte_unit_multiplier(unit: &str) -> StdResult<u64, ParserError> {
     match unit.to_uppercase().as_str() {
         "" => Ok(1),
         "B" => Ok(1),
+        "K" => Ok(1024),
         "KB" => Ok(1000),
         "KIB" => Ok(1024),
+        "M" => Ok(1024 * 1024),
         "MB" => Ok(1000 * 1000),
         "MIB" => Ok(1024 * 1024),
+        "G" => Ok(1024 * 1024 * 1024),
         "GB" => Ok(1000 * 1000 * 1000),
         "GIB" => Ok(1024 * 1024 * 1024),
+        "T" => Ok(1024 * 1024 * 1024 * 1024),
         "TB" => Ok(1000 * 1000 * 1000 * 1000),
         "TIB" => Ok(1024 * 1024 * 1024 * 1024),
         _ => Err(ParserError::ParserError(format!(
-            "Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not '{unit}'."
+            "Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not '{unit}'."
         ))),
     }
 }
@@ -2737,7 +2741,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'XY'."
+            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'XY'."
         );
     }
 
@@ -2760,7 +2764,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'TARGET'."
+            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'TARGET'."
         );
     }
 
@@ -2790,7 +2794,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'table_1'."
+            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'table_1'."
         );
     }
 
@@ -2801,7 +2805,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not 'CLUSTER'."
+            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'CLUSTER'."
         );
     }
 

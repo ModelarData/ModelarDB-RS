@@ -143,7 +143,7 @@ impl Default for ConfigurationFile {
             transfer_batch_size: Some("64 MIB".to_owned()),
             segment_size_threshold: "64 MIB".to_owned(),
             optimize_target_file_size: "64 MIB".to_owned(),
-            vacuum_retention_period: "7 DAYS".to_owned(),
+            vacuum_retention_period: "7D".to_owned(),
             wal_enabled: true,
         }
     }
@@ -167,8 +167,8 @@ fn parse_size_argument(input: &str, maybe_total: Option<u64>) -> Result<u64> {
     Ok(bytes)
 }
 
-/// Parse a value followed by a unit (S, M, H, DAY, and DAYS case-insensitive). If a parse error
-/// occurs it is returned.
+/// Parse a value followed by a unit (S, M, H, and D case-insensitive). If a parse error occurs it
+/// is returned.
 fn parse_time_argument(input: &str) -> Result<u64> {
     let (value, unit) = split_at_unit(input)?;
     let seconds = value
@@ -177,10 +177,9 @@ fn parse_time_argument(input: &str) -> Result<u64> {
             "S" => Ok(1),
             "M" => Ok(60),
             "H" => Ok(60 * 60),
-            "DAY" => Ok(60 * 60 * 24),
-            "DAYS" => Ok(60 * 60 * 24),
+            "D" => Ok(60 * 60 * 24),
             _ => Err(ModelarDbServerError::InvalidArgument(format!(
-                "Unit must be S, M, H, DAY, or DAYS, not '{unit}'."
+                "Unit must be S, M, H, or D, not '{unit}'."
             ))),
         }?;
 
@@ -1296,7 +1295,7 @@ mod tests {
             parse_size_argument("10#", Some(10240))
                 .unwrap_err()
                 .to_string(),
-            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not '#'."
+            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not '#'."
         )
     }
 
@@ -1343,11 +1342,14 @@ mod tests {
 
     #[test]
     fn test_parse_time_argument_day_suffix() {
-        assert_eq!(parse_time_argument("37DAY").unwrap(), 3196800)
+        assert_eq!(parse_time_argument("37D").unwrap(), 3196800)
     }
 
     #[test]
-    fn test_parse_time_argument_days_suffix() {
-        assert_eq!(parse_time_argument("37DAYS").unwrap(), 3196800)
+    fn test_parse_time_argument_wrong_suffix() {
+        assert_eq!(
+            parse_time_argument("10MS").unwrap_err().to_string(),
+            "Invalid Argument Error: Unit must be S, M, H, or D, not 'MS'."
+        )
     }
 }
