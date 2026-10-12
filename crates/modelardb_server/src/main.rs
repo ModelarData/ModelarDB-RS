@@ -34,8 +34,8 @@ use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::Result;
 
-/// Command line arguments for the ModelarDB server. Sizes are purposely not parsed in
-/// [`configuration`] instead of by [`Parser`] to support units.
+/// Command line arguments for the ModelarDB server. Sizes are purposely parsed in [`configuration`]
+/// instead of by [`Parser`] to support units.
 #[derive(Parser)]
 #[command(
     about = "ModelarDB server",

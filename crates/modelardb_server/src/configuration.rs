@@ -149,8 +149,8 @@ impl Default for ConfigurationFile {
     }
 }
 
-/// Parse a value followed by a percentage or a unit (B, KB, KiB, MB, MiB, GB, GiB, TB, TiB,
-/// case-insensitive).
+/// Parse a value followed by a percentage or a unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB,
+/// TiB, case-insensitive).
 /// - If `input` is a percentage and a total is given, that percentage of the total in bytes is returned.
 /// - If `input` has a unit as a suffix, the specified amount of `input` in bytes is returned.
 /// - If a parse error occurs it is returned.
