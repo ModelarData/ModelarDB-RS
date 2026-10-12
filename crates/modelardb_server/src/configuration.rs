@@ -159,7 +159,7 @@ fn parse_size_argument(input: &str, maybe_total: Option<u64>) -> Result<u64> {
     let bytes = if let Some(total) = maybe_total
         && suffix == "%"
     {
-        ((total / 100) * value) as u64
+        ((total as f64 / 100.0) * value as f64) as u64
     } else {
         value * parser::byte_unit_multiplier(suffix)?
     };
@@ -664,10 +664,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        let configuration_from_manager = configuration_manager.read().await.configuration.clone();
+        let configuration_from_manager = &configuration_manager.read().await.configuration_file;
         let configuration_from_file = configuration_from_file(&temp_dir).await;
 
-        assert_eq!(configuration_from_manager, configuration_from_file);
+        assert_eq!(*configuration_from_manager, configuration_from_file);
     }
 
     #[tokio::test]
@@ -676,15 +676,15 @@ mod tests {
         let local_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
 
-        let existing_configuration = Configuration {
-            ingested_reserved_memory_in_bytes: 1,
-            uncompressed_reserved_memory_in_bytes: 1,
-            compressed_reserved_memory_in_bytes: 1,
-            transfer_batch_size_in_bytes: Some(1),
-            segment_size_threshold_in_bytes: 1,
-            optimize_target_file_size_in_bytes: 1,
-            vacuum_retention_period_in_seconds: 1,
-            ..Configuration::default()
+        let existing_configuration = ConfigurationFile {
+            ingested_reserved_memory: "1".to_owned(),
+            uncompressed_reserved_memory: "1".to_owned(),
+            compressed_reserved_memory: "1".to_owned(),
+            transfer_batch_size: Some("1".to_owned()),
+            segment_size_threshold: "1".to_owned(),
+            optimize_target_file_size: "1".to_owned(),
+            vacuum_retention_period: "1".to_owned(),
+            ..ConfigurationFile::default()
         };
 
         existing_configuration
@@ -694,7 +694,11 @@ mod tests {
 
         let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        let configuration_from_manager = configuration_manager.read().await.configuration.clone();
+        let configuration_from_manager = configuration_manager
+            .read()
+            .await
+            .configuration_file
+            .clone();
         let configuration_from_file = configuration_from_file(&temp_dir).await;
 
         assert_eq!(existing_configuration, configuration_from_manager);
@@ -707,10 +711,10 @@ mod tests {
         let local_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = Arc::new(DataFolder::open_local_url(local_url).await.unwrap());
 
-        // Multiple threads per component are not supported.
-        let invalid_configuration = Configuration {
-            ingestion_threads: 2,
-            ..Configuration::default()
+        // Percentage must be a numeric value..
+        let invalid_configuration = ConfigurationFile {
+            ingested_reserved_memory: "half".to_owned(),
+            ..ConfigurationFile::default()
         };
 
         invalid_configuration
@@ -722,13 +726,13 @@ mod tests {
         let result = ConfigurationManager::try_new(
             local_data_folder,
             ClusterMode::SingleNode(node),
-            &default_args(),
+            default_args(),
         )
         .await;
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            "Invalid State Error: Only one thread per component is currently supported.".to_owned()
+            "Parse Int Error: cannot parse integer from empty string".to_owned()
         );
     }
 
@@ -746,7 +750,7 @@ mod tests {
         let result = ConfigurationManager::try_new(
             local_data_folder,
             ClusterMode::SingleNode(node),
-            &default_args(),
+            default_args(),
         )
         .await;
 
@@ -759,32 +763,66 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_validate_rejects_zero_optimize_target_file_size() {
-        let configuration = Configuration {
-            optimize_target_file_size_in_bytes: 0,
-            ..Configuration::default()
+    #[tokio::test]
+    async fn test_validate_rejects_zero_optimize_target_file_size() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let local_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(local_url).await.unwrap());
+
+        // Write the configuration file.
+        let configuration = ConfigurationFile {
+            optimize_target_file_size: "0".to_owned(),
+            ..ConfigurationFile::default()
         };
 
-        let result = configuration.validate();
+        configuration
+            .save_to_toml(&local_data_folder)
+            .await
+            .unwrap();
+
+        // Validate configuration file.
+        let node = Node::new("edge".to_owned(), ServerMode::Edge);
+        let result = ConfigurationManager::try_new(
+            local_data_folder,
+            ClusterMode::SingleNode(node),
+            default_args(),
+        )
+        .await;
 
         assert_eq!(
-            result.unwrap_err().to_string(),
+            result.err().unwrap().to_string(),
             "Invalid State Error: Optimize target file size must be greater than zero."
         );
     }
 
-    #[test]
-    fn test_validate_rejects_too_large_vacuum_retention_period() {
-        let configuration = Configuration {
-            vacuum_retention_period_in_seconds: MAX_RETENTION_PERIOD_IN_SECONDS + 1,
-            ..Configuration::default()
+    #[tokio::test]
+    async fn test_validate_rejects_too_large_vacuum_retention_period() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let local_url = temp_dir.path().to_str().unwrap();
+        let local_data_folder = Arc::new(DataFolder::open_local_url(local_url).await.unwrap());
+
+        // Write the configuration file.
+        let configuration = ConfigurationFile {
+            vacuum_retention_period: format!("{}", MAX_RETENTION_PERIOD_IN_SECONDS + 1),
+            ..ConfigurationFile::default()
         };
 
-        let result = configuration.validate();
+        configuration
+            .save_to_toml(&local_data_folder)
+            .await
+            .unwrap();
+
+        // Validate configuration file.
+        let node = Node::new("edge".to_owned(), ServerMode::Edge);
+        let result = ConfigurationManager::try_new(
+            local_data_folder,
+            ClusterMode::SingleNode(node),
+            default_args(),
+        )
+        .await;
 
         assert_eq!(
-            result.unwrap_err().to_string(),
+            result.err().unwrap().to_string(),
             format!(
                 "Invalid State Error: Vacuum retention period cannot be more than {} seconds.",
                 MAX_RETENTION_PERIOD_IN_SECONDS
@@ -824,8 +862,8 @@ mod tests {
 
         let configuration_from_file = configuration_from_file(&temp_dir).await;
         assert_eq!(
-            configuration_from_file.ingested_reserved_memory_in_bytes,
-            new_value
+            configuration_from_file.ingested_reserved_memory,
+            new_value.to_string()
         );
     }
 
@@ -861,8 +899,8 @@ mod tests {
 
         let configuration_from_file = configuration_from_file(&temp_dir).await;
         assert_eq!(
-            configuration_from_file.uncompressed_reserved_memory_in_bytes,
-            new_value
+            configuration_from_file.uncompressed_reserved_memory,
+            new_value.to_string()
         );
     }
 
@@ -898,8 +936,8 @@ mod tests {
 
         let configuration_from_file = configuration_from_file(&temp_dir).await;
         assert_eq!(
-            configuration_from_file.compressed_reserved_memory_in_bytes,
-            new_value
+            configuration_from_file.compressed_reserved_memory,
+            new_value.to_string()
         );
     }
 
@@ -934,8 +972,8 @@ mod tests {
 
         let configuration_from_file = configuration_from_file(&temp_dir).await;
         assert_eq!(
-            configuration_from_file.transfer_batch_size_in_bytes,
-            new_value
+            configuration_from_file.transfer_batch_size.unwrap(),
+            new_value.unwrap().to_string()
         );
     }
 
@@ -970,8 +1008,8 @@ mod tests {
 
         let configuration_from_file = configuration_from_file(&temp_dir).await;
         assert_eq!(
-            configuration_from_file.segment_size_threshold_in_bytes,
-            new_value
+            configuration_from_file.segment_size_threshold,
+            new_value.to_string()
         );
     }
 
@@ -1024,8 +1062,8 @@ mod tests {
 
         let configuration_from_file = configuration_from_file(&temp_dir).await;
         assert_eq!(
-            configuration_from_file.optimize_target_file_size_in_bytes,
-            new_value
+            configuration_from_file.optimize_target_file_size,
+            new_value.to_string()
         );
     }
 
@@ -1077,8 +1115,8 @@ mod tests {
 
         let configuration_from_file = configuration_from_file(&temp_dir).await;
         assert_eq!(
-            configuration_from_file.vacuum_retention_period_in_seconds,
-            new_value
+            configuration_from_file.vacuum_retention_period,
+            new_value.to_string()
         );
     }
 
@@ -1106,11 +1144,10 @@ mod tests {
     }
 
     /// Return the configuration from the configuration file at the root of `temp_dir`.
-    async fn configuration_from_file(temp_dir: &TempDir) -> Configuration {
+    async fn configuration_from_file(temp_dir: &TempDir) -> ConfigurationFile {
         let configuration_file_path = temp_dir.path().join(CONFIGURATION_FILE_NAME);
         let file_content = std::fs::read_to_string(&configuration_file_path).unwrap();
-
-        toml::from_str::<Configuration>(&file_content).unwrap()
+        toml::from_str::<ConfigurationFile>(&file_content).unwrap()
     }
 
     /// Create a [`StorageEngine`] and a [`ConfigurationManager`].
@@ -1142,7 +1179,7 @@ mod tests {
             ConfigurationManager::try_new(
                 local_data_folder.clone(),
                 ClusterMode::MultiNode(cluster),
-                &default_args(),
+                default_args(),
             )
             .await
             .unwrap(),
@@ -1161,5 +1198,95 @@ mod tests {
 
     fn default_args() -> ServerArgs {
         ServerArgs::parse_from(["modelardbd", "edge", "data"])
+    }
+
+    // Tests for parse_size_argument().
+    #[test]
+    fn test_parse_size_argument_empty_string() {
+        assert!(parse_size_argument("", Some(10240)).is_err())
+    }
+
+    #[test]
+    fn test_parse_size_argument_no_suffix() {
+        assert_eq!(parse_size_argument("37", Some(10240)).unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_size_argument_no_suffix_with_whitespace() {
+        // ast-grep-ignore as the extra spaces are purposely added for testing.
+        assert_eq!(parse_size_argument("  37  ", Some(10240)).unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_size_argument_byte_suffix() {
+        assert_eq!(parse_size_argument("37B", Some(10240)).unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_size_argument_byte_suffix_with_whitespace() {
+        // ast-grep-ignore as the extra spaces are purposely added for testing.
+        assert_eq!(parse_size_argument(" 37   B  ", Some(10240)).unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_size_argument_kilobyte_suffix() {
+        assert_eq!(parse_size_argument("37KB", Some(10240)).unwrap(), 37000)
+    }
+
+    #[test]
+    fn test_parse_size_argument_kibibyte_suffix() {
+        assert_eq!(parse_size_argument("37KiB", Some(10240)).unwrap(), 37888)
+    }
+
+    #[test]
+    fn test_parse_size_argument_megabyte_suffix() {
+        assert_eq!(parse_size_argument("37MB", Some(10240)).unwrap(), 37000000)
+    }
+
+    #[test]
+    fn test_parse_size_argument_mebibyte_suffix() {
+        assert_eq!(parse_size_argument("37MiB", Some(10240)).unwrap(), 38797312)
+    }
+
+    #[test]
+    fn test_parse_size_argument_gigabyte_suffix() {
+        assert_eq!(
+            parse_size_argument("37GB", Some(10240)).unwrap(),
+            37000000000
+        )
+    }
+
+    #[test]
+    fn test_parse_size_argument_gibibyte_suffix() {
+        assert_eq!(
+            parse_size_argument("37GiB", Some(10240)).unwrap(),
+            39728447488
+        )
+    }
+
+    #[test]
+    fn test_parse_size_argument_terabyte_suffix() {
+        assert_eq!(
+            parse_size_argument("37TB", Some(10240)).unwrap(),
+            37000000000000
+        )
+    }
+
+    #[test]
+    fn test_parse_size_argument_tebibyte_suffix() {
+        assert_eq!(
+            parse_size_argument("37TiB", Some(10240)).unwrap(),
+            40681930227712
+        )
+    }
+
+    #[test]
+    fn test_parse_size_argument_percentage() {
+        assert_eq!(parse_size_argument("10%", Some(10240)).unwrap(), 1024);
+    }
+
+    #[test]
+    fn test_parse_size_argument_wrong_suffix() {
+        assert!(parse_size_argument("10#", Some(10240)).is_err())
     }
 }
