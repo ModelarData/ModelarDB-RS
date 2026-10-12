@@ -25,6 +25,7 @@
 use std::sync::Arc;
 
 use modelardb_storage::data_folder::DataFolder;
+use modelardb_storage::parser;
 use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::flight::protocol;
 use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
@@ -49,16 +50,171 @@ pub(crate) enum WalMode {
     Disabled,
 }
 
-/// The system's configuration. The configuration can be serialized into a [`CONFIGURATION_FILE_NAME`]
-/// configuration file and deserialized from it. Accessing and modifying the configuration should
-/// only be done through the [`ConfigurationManager`].
+/// The system's unparsed configuration file. The configuration file is stored in a data folder as
+/// [`CONFIGURATION_FILE_NAME`]. It should only be updated through a [`ConfigurationManager`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct Configuration {
+struct ConfigurationFile {
     /// Amount of memory to reserve for storing ingested time series.
-    ingested_reserved_memory_in_bytes: u64,
+    ingested_reserved_memory: String,
     /// Amount of memory to reserve for storing uncompressed data buffers.
-    uncompressed_reserved_memory_in_bytes: u64,
+    uncompressed_reserved_memory: String,
     /// Amount of memory to reserve for storing compressed data buffers.
+    compressed_reserved_memory: String,
+    /// The number of data that are required before transferring a batch of data to the remote
+    /// object store. If [`None`], data is only transferred on an explicit flush.
+    transfer_batch_size: Option<String>,
+    /// The approximate maximum size of a single WAL segment file before it is closed and a new one
+    /// is started.
+    segment_size_threshold: String,
+    /// Target size of the files produced when automatically compacting a table's storage. This is
+    /// also the default value used when an OPTIMIZE query is executed without an explicit target
+    /// size.
+    optimize_target_file_size: String,
+    /// Retention period used when automatically vacuuming a table during compaction.
+    /// This is also the default value used when a VACUUM query is executed without an explicit
+    /// retention period.
+    vacuum_retention_period: String,
+    /// Whether the write-ahead log is enabled. If enabled, data is logged before ingestion and the
+    /// log is replayed on crash recovery.
+    wal_enabled: bool,
+}
+
+impl ConfigurationFile {
+    /// Update the configuration file's parameters with the corresponding flags or environment
+    /// variables from the command line if they are set.
+    fn update_from_args(&mut self, args: ServerArgs) {
+        if let Some(value) = args.ingested_reserved_memory {
+            self.ingested_reserved_memory = value;
+        }
+
+        if let Some(value) = args.uncompressed_reserved_memory {
+            self.uncompressed_reserved_memory = value;
+        }
+
+        if let Some(value) = args.compressed_reserved_memory {
+            self.compressed_reserved_memory = value;
+        }
+
+        if let Some(value) = args.transfer_batch_size {
+            self.transfer_batch_size = Some(value);
+        }
+
+        if let Some(value) = args.segment_size_threshold {
+            self.segment_size_threshold = value;
+        }
+
+        if let Some(value) = args.optimize_target_file_size {
+            self.optimize_target_file_size = value;
+        }
+
+        if let Some(value) = args.vacuum_retention_period {
+            self.vacuum_retention_period = value;
+        }
+
+        if let Some(value) = args.wal_enabled {
+            self.wal_enabled = value;
+        }
+    }
+
+    /// Write the configuration file to the root of `local_data_folder`. If the file does not exist,
+    /// it is created. If the configuration file could not be updated or created, return
+    /// [`ModelarDbServerError`].
+    async fn save_to_toml(&self, local_data_folder: &DataFolder) -> Result<()> {
+        let toml = toml::to_string(self)?;
+        let object_store = local_data_folder.object_store();
+
+        object_store
+            .put(
+                &Path::from(CONFIGURATION_FILE_NAME),
+                PutPayload::from(toml.into_bytes()),
+            )
+            .await?;
+
+        Ok(())
+    }
+}
+
+impl Default for ConfigurationFile {
+    fn default() -> Self {
+        Self {
+            ingested_reserved_memory: "10%".to_owned(),
+            uncompressed_reserved_memory: "10%".to_owned(),
+            compressed_reserved_memory: "30%".to_owned(),
+            transfer_batch_size: Some("64 MIB".to_owned()),
+            segment_size_threshold: "64 MIB".to_owned(),
+            optimize_target_file_size: "64 MIB".to_owned(),
+            vacuum_retention_period: "7 DAYS".to_owned(),
+            wal_enabled: true,
+        }
+    }
+}
+
+/// Parse a value followed by a percentage or a unit (B, KB, KiB, MB, MiB, GB, GiB, TB, TiB,
+/// case-insensitive).
+/// - If `input` is a percentage and a total is given, that percentage of the total in bytes is returned.
+/// - If `input` has a unit as a suffix, the specified amount of `input` in bytes is returned.
+/// - If a parse error occurs it is returned.
+fn parse_size_argument(input: &str, maybe_total: Option<u64>) -> Result<u64> {
+    let (value, suffix) = split_at_unit(input)?;
+    let bytes = if let Some(total) = maybe_total
+        && suffix == "%"
+    {
+        ((total / 100) * value) as u64
+    } else {
+        value * parser::byte_unit_multiplier(suffix)?
+    };
+
+    Ok(bytes)
+}
+
+/// Parse a value followed by a unit (S, M, H, DAY, and DAYS case-insensitive). If a parse error
+/// occurs it is returned.
+fn parse_time_argument(input: &str) -> Result<u64> {
+    let (value, unit) = split_at_unit(input)?;
+    let seconds = value
+        * match unit.to_uppercase().as_str() {
+            "" => Ok(1),
+            "S" => Ok(1),
+            "M" => Ok(60),
+            "H" => Ok(60 * 60),
+            "DAY" => Ok(60 * 60 * 24),
+            "DAYS" => Ok(60 * 60 * 24),
+            _ => Err(ModelarDbServerError::InvalidArgument(format!(
+                "Unit must be S, M, H, DAY, or DAYS, not '{unit}'."
+            ))),
+        }?;
+
+    Ok(seconds)
+}
+
+/// Split `input` into its value and unit.
+fn split_at_unit(input: &str) -> Result<(u64, &str)> {
+    let input = input.trim();
+    let unit_start = input
+        .char_indices()
+        .find_map(|(index, character)| (!character.is_numeric()).then_some(index))
+        .unwrap_or(input.len());
+
+    let value: u64 = input[0..unit_start].parse::<u64>()?;
+    let unit = input[unit_start..input.len()].trim();
+
+    Ok((value, unit))
+}
+
+/// Manages the system's configuration and provides functionality for updating the configuration.
+pub struct ConfigurationManager {
+    /// The local data folder that stores the configuration file at the root.
+    local_data_folder: Arc<DataFolder>,
+    /// The configuration file in local data folder. This is stored in simplify updating it.
+    configuration_file: ConfigurationFile,
+    /// The mode of the cluster used to determine the behaviour when starting the server,
+    /// creating tables, updating the remote object store, and querying.
+    cluster_mode: ClusterMode,
+    /// Amount of memory in bytes to reserve for storing ingested time series.
+    ingested_reserved_memory_in_bytes: u64,
+    /// Amount of memory in bytes to reserve for storing uncompressed data buffers.
+    uncompressed_reserved_memory_in_bytes: u64,
+    /// Amount of memory in bytes to reserve for storing compressed data buffers.
     compressed_reserved_memory_in_bytes: u64,
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store. If [`None`], data is only transferred on an explicit flush.
@@ -84,127 +240,8 @@ struct Configuration {
     /// Whether the write-ahead log is enabled. If enabled, data is logged before ingestion and the
     /// log is replayed on crash recovery.
     wal_enabled: bool,
-}
-
-impl Configuration {
-    /// Update the configuration parameters with the corresponding flags or environment variables
-    /// from the command line if they are set.
-    fn update_from_args(&mut self, args: &ServerArgs) {
-        if let Some(value) = args.ingested_reserved_memory_in_bytes {
-            self.ingested_reserved_memory_in_bytes = value;
-        }
-
-        if let Some(value) = args.uncompressed_reserved_memory_in_bytes {
-            self.uncompressed_reserved_memory_in_bytes = value;
-        }
-
-        if let Some(value) = args.compressed_reserved_memory_in_bytes {
-            self.compressed_reserved_memory_in_bytes = value;
-        }
-
-        if let Some(value) = args.transfer_batch_size_in_bytes {
-            self.transfer_batch_size_in_bytes = Some(value);
-        }
-
-        if let Some(value) = args.segment_size_threshold_in_bytes {
-            self.segment_size_threshold_in_bytes = value;
-        }
-
-        if let Some(value) = args.optimize_target_file_size_in_bytes {
-            self.optimize_target_file_size_in_bytes = value;
-        }
-
-        if let Some(value) = args.vacuum_retention_period_in_seconds {
-            self.vacuum_retention_period_in_seconds = value;
-        }
-
-        if let Some(value) = args.wal_enabled {
-            self.wal_enabled = value;
-        }
-    }
-
-    /// Validate the fields in the configuration and return [`Ok`] if they are valid. If the
-    /// configuration is invalid, return [`ModelarDbServerError`].
-    fn validate(&self) -> Result<()> {
-        // TODO: Add support for running multiple threads per component. The individual
-        //       components in the storage engine have not been validated with multiple threads, e.g.,
-        //       UncompressedDataManager may have race conditions finishing buffers if multiple
-        //       different data points are added by multiple different clients in parallel.
-        if self.ingestion_threads != 1 || self.compression_threads != 1 || self.writer_threads != 1
-        {
-            return Err(ModelarDbServerError::InvalidState(
-                "Only one thread per component is currently supported.".to_owned(),
-            ));
-        };
-
-        if self.optimize_target_file_size_in_bytes == 0 {
-            return Err(ModelarDbServerError::InvalidState(
-                "Optimize target file size must be greater than zero.".to_owned(),
-            ));
-        }
-
-        if self.vacuum_retention_period_in_seconds > MAX_RETENTION_PERIOD_IN_SECONDS {
-            return Err(ModelarDbServerError::InvalidState(format!(
-                "Vacuum retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
-            )));
-        }
-
-        Ok(())
-    }
-
-    /// Save the configuration to the configuration file at the root of `local_data_folder`. If the
-    /// file does not exist, it is created. If the configuration file could not be updated or
-    /// created, return [`ModelarDbServerError`].
-    async fn save_to_toml(&self, local_data_folder: &DataFolder) -> Result<()> {
-        let toml = toml::to_string(self)?;
-        let object_store = local_data_folder.object_store();
-
-        object_store
-            .put(
-                &Path::from(CONFIGURATION_FILE_NAME),
-                PutPayload::from(toml.into_bytes()),
-            )
-            .await?;
-
-        Ok(())
-    }
-}
-
-impl Default for Configuration {
-    fn default() -> Self {
-        let mut system = System::new();
-        system.refresh_memory();
-        let total_memory_bytes = system.total_memory() as u128;
-
-        Self {
-            ingested_reserved_memory_in_bytes: ((total_memory_bytes * 10) / 100) as u64,
-            uncompressed_reserved_memory_in_bytes: ((total_memory_bytes * 10) / 100) as u64,
-            compressed_reserved_memory_in_bytes: ((total_memory_bytes * 30) / 100) as u64,
-            transfer_batch_size_in_bytes: Some(64 * 1024 * 1024),
-            segment_size_threshold_in_bytes: 64 * 1024 * 1024,
-            optimize_target_file_size_in_bytes: 64 * 1024 * 1024,
-            vacuum_retention_period_in_seconds: 60 * 60 * 24 * 7,
-            ingestion_threads: 1,
-            compression_threads: 1,
-            writer_threads: 1,
-            wal_enabled: true,
-        }
-    }
-}
-
-/// Manages the system's configuration and provides functionality for updating the configuration.
-#[derive(Clone)]
-pub struct ConfigurationManager {
-    /// The mode of the cluster used to determine the behaviour when starting the server,
-    /// creating tables, updating the remote object store, and querying.
-    cluster_mode: ClusterMode,
     /// The mode of the write-ahead log used to determine whether data is logged before ingestion.
     wal_mode: WalMode,
-    /// The local data folder that stores the configuration file at the root.
-    local_data_folder: Arc<DataFolder>,
-    /// The configuration of the system. This is stored in a separate type to allow for easier
-    /// serialization and deserialization.
-    configuration: Configuration,
 }
 
 impl ConfigurationManager {
@@ -216,22 +253,22 @@ impl ConfigurationManager {
     pub async fn try_new(
         local_data_folder: Arc<DataFolder>,
         cluster_mode: ClusterMode,
-        args: &ServerArgs,
+        args: ServerArgs,
     ) -> Result<Self> {
         // Check if there is a configuration file in the local data folder.
         let object_store = local_data_folder.object_store();
-        let maybe_conf_file = object_store.get(&Path::from(CONFIGURATION_FILE_NAME)).await;
+        let maybe_config_file = object_store.get(&Path::from(CONFIGURATION_FILE_NAME)).await;
 
-        let mut configuration = match maybe_conf_file {
-            Ok(conf_file) => {
+        let mut configuration_file = match maybe_config_file {
+            Ok(config_file) => {
                 // If the configuration file exists, load the configuration from the file.
-                let bytes = conf_file.bytes().await?;
-                toml::from_slice::<Configuration>(&bytes)?
+                let bytes = config_file.bytes().await?;
+                toml::from_slice::<ConfigurationFile>(&bytes)?
             }
             Err(error) => match error {
                 Error::NotFound { .. } => {
                     // If the configuration file does not exist, create one with the default values.
-                    Configuration::default()
+                    ConfigurationFile::default()
                 }
                 error => {
                     return Err(ModelarDbServerError::InvalidState(format!(
@@ -241,31 +278,96 @@ impl ConfigurationManager {
             },
         };
 
-        configuration.update_from_args(args);
-        configuration.validate()?;
-        configuration.save_to_toml(&local_data_folder).await?;
+        // Parameters specified on the command-line take precedence over the configuration file.
+        configuration_file.update_from_args(args);
 
-        // Create the write-ahead log if enabled. The WAL is enabled by default.
-        let wal_mode = if configuration.wal_enabled {
-            let write_ahead_log = WriteAheadLog::try_new(
-                &local_data_folder,
-                configuration.segment_size_threshold_in_bytes,
-            )
-            .await?;
+        // Parse the configuration and prepare the values for the creating manager.
+        // The values is parsed outside Self as configuration_file is moved into it.
+        let mut system = System::new();
+        system.refresh_memory();
+        let total_memory_in_bytes = Some(system.total_memory());
+
+        let ingested_reserved_memory_in_bytes = parse_size_argument(
+            &configuration_file.ingested_reserved_memory,
+            total_memory_in_bytes,
+        )?;
+        let uncompressed_reserved_memory_in_bytes = parse_size_argument(
+            &configuration_file.uncompressed_reserved_memory,
+            total_memory_in_bytes,
+        )?;
+        let compressed_reserved_memory_in_bytes = parse_size_argument(
+            &configuration_file.compressed_reserved_memory,
+            total_memory_in_bytes,
+        )?;
+        let transfer_batch_size_in_bytes =
+            if let Some(transfer_batch_size) = &configuration_file.transfer_batch_size {
+                Some(parse_size_argument(transfer_batch_size, None)?)
+            } else {
+                None
+            };
+        let segment_size_threshold_in_bytes =
+            parse_size_argument(&configuration_file.segment_size_threshold, None)?;
+        let optimize_target_file_size_in_bytes =
+            parse_size_argument(&configuration_file.optimize_target_file_size, None)?;
+        let vacuum_retention_period_in_seconds =
+            parse_time_argument(&configuration_file.vacuum_retention_period)?;
+        let ingestion_threads = 1;
+        let compression_threads = 1;
+        let writer_threads = 1;
+        let wal_enabled = configuration_file.wal_enabled;
+        let wal_mode = if wal_enabled {
+            let write_ahead_log =
+                WriteAheadLog::try_new(&local_data_folder, segment_size_threshold_in_bytes).await?;
 
             WalMode::Enabled(Arc::new(RwLock::new(write_ahead_log)))
         } else {
             WalMode::Disabled
         };
 
+        // Validate the configuration and prepare the values for the creating manager.
+        // TODO: Add support for running multiple threads per component. The individual
+        //       components in the storage engine have not been validated with multiple threads, e.g.,
+        //       UncompressedDataManager may have race conditions finishing buffers if multiple
+        //       different data points are added by multiple different clients in parallel.
+        if ingestion_threads != 1 || compression_threads != 1 || writer_threads != 1 {
+            return Err(ModelarDbServerError::InvalidState(
+                "Only one thread per component is currently supported.".to_owned(),
+            ));
+        };
+
+        if optimize_target_file_size_in_bytes == 0 {
+            return Err(ModelarDbServerError::InvalidState(
+                "Optimize target file size must be greater than zero.".to_owned(),
+            ));
+        }
+
+        if vacuum_retention_period_in_seconds > MAX_RETENTION_PERIOD_IN_SECONDS {
+            return Err(ModelarDbServerError::InvalidState(format!(
+                "Vacuum retention period cannot be more than {MAX_RETENTION_PERIOD_IN_SECONDS} seconds."
+            )));
+        }
+
+        // The configuration is correct, so it can be saved to the data folder.
+        configuration_file.save_to_toml(&local_data_folder).await?;
+
         Ok(Self {
-            cluster_mode,
-            wal_mode,
             local_data_folder,
-            configuration,
+            configuration_file,
+            cluster_mode,
+            ingested_reserved_memory_in_bytes,
+            uncompressed_reserved_memory_in_bytes,
+            compressed_reserved_memory_in_bytes,
+            transfer_batch_size_in_bytes,
+            segment_size_threshold_in_bytes,
+            optimize_target_file_size_in_bytes,
+            vacuum_retention_period_in_seconds,
+            ingestion_threads,
+            compression_threads,
+            writer_threads,
+            wal_enabled,
+            wal_mode,
         })
     }
-
     pub(crate) fn cluster_mode(&self) -> &ClusterMode {
         &self.cluster_mode
     }
@@ -275,7 +377,7 @@ impl ConfigurationManager {
     }
 
     pub(crate) fn ingested_reserved_memory_in_bytes(&self) -> u64 {
-        self.configuration.ingested_reserved_memory_in_bytes
+        self.ingested_reserved_memory_in_bytes
     }
 
     /// Set the new value and update the amount of memory for ingested data in the storage
@@ -289,7 +391,7 @@ impl ConfigurationManager {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
         let value_change = new_ingested_reserved_memory_in_bytes as i64
-            - self.configuration.ingested_reserved_memory_in_bytes as i64;
+            - self.ingested_reserved_memory_in_bytes as i64;
 
         storage_engine
             .write()
@@ -297,16 +399,18 @@ impl ConfigurationManager {
             .adjust_ingested_remaining_memory_in_bytes(value_change)
             .await;
 
-        self.configuration.ingested_reserved_memory_in_bytes =
-            new_ingested_reserved_memory_in_bytes;
+        self.ingested_reserved_memory_in_bytes = new_ingested_reserved_memory_in_bytes;
 
-        self.configuration
+        // Update the configuration file.
+        self.configuration_file.ingested_reserved_memory =
+            self.ingested_reserved_memory_in_bytes.to_string();
+        self.configuration_file
             .save_to_toml(&self.local_data_folder)
             .await
     }
 
     pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> u64 {
-        self.configuration.uncompressed_reserved_memory_in_bytes
+        self.uncompressed_reserved_memory_in_bytes
     }
 
     /// Set the new value and update the amount of memory for uncompressed data in the storage
@@ -321,7 +425,7 @@ impl ConfigurationManager {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
         let value_change = new_uncompressed_reserved_memory_in_bytes as i64
-            - self.configuration.uncompressed_reserved_memory_in_bytes as i64;
+            - self.uncompressed_reserved_memory_in_bytes as i64;
 
         storage_engine
             .write()
@@ -329,16 +433,18 @@ impl ConfigurationManager {
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
             .await?;
 
-        self.configuration.uncompressed_reserved_memory_in_bytes =
-            new_uncompressed_reserved_memory_in_bytes;
+        self.uncompressed_reserved_memory_in_bytes = new_uncompressed_reserved_memory_in_bytes;
 
-        self.configuration
+        // Update the configuration file.
+        self.configuration_file.uncompressed_reserved_memory =
+            self.uncompressed_reserved_memory_in_bytes.to_string();
+        self.configuration_file
             .save_to_toml(&self.local_data_folder)
             .await
     }
 
     pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> u64 {
-        self.configuration.compressed_reserved_memory_in_bytes
+        self.compressed_reserved_memory_in_bytes
     }
 
     /// Set the new value and update the amount of memory for compressed data in the storage engine.
@@ -352,7 +458,7 @@ impl ConfigurationManager {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
         let value_change = new_compressed_reserved_memory_in_bytes as i64
-            - self.configuration.compressed_reserved_memory_in_bytes as i64;
+            - self.compressed_reserved_memory_in_bytes as i64;
 
         storage_engine
             .write()
@@ -360,16 +466,18 @@ impl ConfigurationManager {
             .adjust_compressed_remaining_memory_in_bytes(value_change)
             .await?;
 
-        self.configuration.compressed_reserved_memory_in_bytes =
-            new_compressed_reserved_memory_in_bytes;
+        self.compressed_reserved_memory_in_bytes = new_compressed_reserved_memory_in_bytes;
 
-        self.configuration
+        // Update the configuration file.
+        self.configuration_file.compressed_reserved_memory =
+            self.compressed_reserved_memory_in_bytes.to_string();
+        self.configuration_file
             .save_to_toml(&self.local_data_folder)
             .await
     }
 
     pub(crate) fn transfer_batch_size_in_bytes(&self) -> Option<u64> {
-        self.configuration.transfer_batch_size_in_bytes
+        self.transfer_batch_size_in_bytes
     }
 
     /// Set the new value and update the transfer batch size in the storage engine. If the batch
@@ -386,16 +494,20 @@ impl ConfigurationManager {
             .set_transfer_batch_size_in_bytes(new_transfer_batch_size_in_bytes)
             .await?;
 
-        self.configuration.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
+        self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
 
-        self.configuration
+        // Update the configuration file.
+        self.configuration_file.transfer_batch_size = self
+            .transfer_batch_size_in_bytes
+            .map(|value| value.to_string());
+        self.configuration_file
             .save_to_toml(&self.local_data_folder)
             .await
     }
 
     #[allow(dead_code)]
     pub(crate) fn segment_size_threshold_in_bytes(&self) -> u64 {
-        self.configuration.segment_size_threshold_in_bytes
+        self.segment_size_threshold_in_bytes
     }
 
     /// Set the new value and update the segment size threshold in the write-ahead log. If the
@@ -419,15 +531,18 @@ impl ConfigurationManager {
             .await
             .set_segment_size_threshold_in_bytes(new_segment_size_threshold_in_bytes);
 
-        self.configuration.segment_size_threshold_in_bytes = new_segment_size_threshold_in_bytes;
+        self.segment_size_threshold_in_bytes = new_segment_size_threshold_in_bytes;
 
-        self.configuration
+        // Update the configuration file.
+        self.configuration_file.segment_size_threshold =
+            self.segment_size_threshold_in_bytes.to_string();
+        self.configuration_file
             .save_to_toml(&self.local_data_folder)
             .await
     }
 
     pub(crate) fn optimize_target_file_size_in_bytes(&self) -> u64 {
-        self.configuration.optimize_target_file_size_in_bytes
+        self.optimize_target_file_size_in_bytes
     }
 
     /// Set the target file size used by the data storage compactor and as the default for OPTIMIZE
@@ -450,16 +565,18 @@ impl ConfigurationManager {
             .set_optimize_target_file_size_in_bytes(new_optimize_target_file_size_in_bytes)
             .await;
 
-        self.configuration.optimize_target_file_size_in_bytes =
-            new_optimize_target_file_size_in_bytes;
+        self.optimize_target_file_size_in_bytes = new_optimize_target_file_size_in_bytes;
 
-        self.configuration
+        // Update the configuration file.
+        self.configuration_file.optimize_target_file_size =
+            self.optimize_target_file_size_in_bytes.to_string();
+        self.configuration_file
             .save_to_toml(&self.local_data_folder)
             .await
     }
 
     pub(crate) fn vacuum_retention_period_in_seconds(&self) -> u64 {
-        self.configuration.vacuum_retention_period_in_seconds
+        self.vacuum_retention_period_in_seconds
     }
 
     /// Set the retention period used by the data storage compactor and as the default for VACUUM
@@ -483,49 +600,42 @@ impl ConfigurationManager {
             .set_vacuum_retention_period_in_seconds(new_vacuum_retention_period_in_seconds)
             .await;
 
-        self.configuration.vacuum_retention_period_in_seconds =
-            new_vacuum_retention_period_in_seconds;
+        self.vacuum_retention_period_in_seconds = new_vacuum_retention_period_in_seconds;
 
-        self.configuration
+        // Update the configuration file.
+        self.configuration_file.vacuum_retention_period =
+            self.vacuum_retention_period_in_seconds.to_string();
+        self.configuration_file
             .save_to_toml(&self.local_data_folder)
             .await
     }
-
     pub(crate) fn ingestion_threads(&self) -> u8 {
-        self.configuration.ingestion_threads
+        self.ingestion_threads
     }
 
     pub(crate) fn compression_threads(&self) -> u8 {
-        self.configuration.compression_threads
+        self.compression_threads
     }
 
     pub(crate) fn writer_threads(&self) -> u8 {
-        self.configuration.writer_threads
+        self.writer_threads
     }
 
     /// Encode the current configuration into a [`Configuration`](protocol::Configuration)
     /// protobuf message and serialize it.
     pub(crate) fn encode_and_serialize(&self) -> Vec<u8> {
         let configuration = protocol::Configuration {
-            ingested_reserved_memory_in_bytes: self.configuration.ingested_reserved_memory_in_bytes,
-            uncompressed_reserved_memory_in_bytes: self
-                .configuration
-                .uncompressed_reserved_memory_in_bytes,
-            compressed_reserved_memory_in_bytes: self
-                .configuration
-                .compressed_reserved_memory_in_bytes,
-            transfer_batch_size_in_bytes: self.configuration.transfer_batch_size_in_bytes,
-            segment_size_threshold_in_bytes: self.configuration.segment_size_threshold_in_bytes,
-            ingestion_threads: self.configuration.ingestion_threads as u32,
-            compression_threads: self.configuration.compression_threads as u32,
-            writer_threads: self.configuration.writer_threads as u32,
-            wal_enabled: self.configuration.wal_enabled,
-            optimize_target_file_size_in_bytes: self
-                .configuration
-                .optimize_target_file_size_in_bytes,
-            vacuum_retention_period_in_seconds: self
-                .configuration
-                .vacuum_retention_period_in_seconds,
+            ingested_reserved_memory_in_bytes: self.ingested_reserved_memory_in_bytes,
+            uncompressed_reserved_memory_in_bytes: self.uncompressed_reserved_memory_in_bytes,
+            compressed_reserved_memory_in_bytes: self.compressed_reserved_memory_in_bytes,
+            transfer_batch_size_in_bytes: self.transfer_batch_size_in_bytes,
+            segment_size_threshold_in_bytes: self.segment_size_threshold_in_bytes,
+            ingestion_threads: self.ingestion_threads as u32,
+            compression_threads: self.compression_threads as u32,
+            writer_threads: self.writer_threads as u32,
+            wal_enabled: self.wal_enabled,
+            optimize_target_file_size_in_bytes: self.optimize_target_file_size_in_bytes,
+            vacuum_retention_period_in_seconds: self.vacuum_retention_period_in_seconds,
         };
 
         configuration.encode_to_vec()
