@@ -751,7 +751,7 @@ mod test {
                     local_data_folder,
                 ),
                 ClusterMode::MultiNode(cluster),
-                &ServerArgs::parse_from(["modelardbd", "edge", "data", "s3://bucket"]),
+                ServerArgs::parse_from(["modelardbd", "edge", "data", "s3://bucket"]),
             )
             .await
             .unwrap(),
