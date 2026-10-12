@@ -676,7 +676,7 @@ mod tests {
         let local_url = temp_dir.path().to_str().unwrap();
         let local_data_folder = DataFolder::open_local_url(local_url).await.unwrap();
 
-        let existing_configuration = ConfigurationFile {
+        let input_configuration_file = ConfigurationFile {
             ingested_reserved_memory: "1".to_owned(),
             uncompressed_reserved_memory: "1".to_owned(),
             compressed_reserved_memory: "1".to_owned(),
@@ -687,22 +687,22 @@ mod tests {
             ..ConfigurationFile::default()
         };
 
-        existing_configuration
+        input_configuration_file
             .save_to_toml(&local_data_folder)
             .await
             .unwrap();
 
         let (_storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        let configuration_from_manager = configuration_manager
+        let configuration_file_from_manager = configuration_manager
             .read()
             .await
             .configuration_file
             .clone();
-        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(input_configuration_file, configuration_file_from_manager);
 
-        assert_eq!(existing_configuration, configuration_from_manager);
-        assert_eq!(existing_configuration, configuration_from_file);
+        let configuration_from_file = configuration_from_file(&temp_dir).await;
+        assert_eq!(input_configuration_file, configuration_from_file);
     }
 
     #[tokio::test]
@@ -770,12 +770,12 @@ mod tests {
         let local_data_folder = Arc::new(DataFolder::open_local_url(local_url).await.unwrap());
 
         // Write the configuration file.
-        let configuration = ConfigurationFile {
+        let input_configuration = ConfigurationFile {
             optimize_target_file_size: "0".to_owned(),
             ..ConfigurationFile::default()
         };
 
-        configuration
+        input_configuration
             .save_to_toml(&local_data_folder)
             .await
             .unwrap();
@@ -802,12 +802,12 @@ mod tests {
         let local_data_folder = Arc::new(DataFolder::open_local_url(local_url).await.unwrap());
 
         // Write the configuration file.
-        let configuration = ConfigurationFile {
+        let input_configuration = ConfigurationFile {
             vacuum_retention_period: format!("{}", MAX_RETENTION_PERIOD_IN_SECONDS + 1),
             ..ConfigurationFile::default()
         };
 
-        configuration
+        input_configuration
             .save_to_toml(&local_data_folder)
             .await
             .unwrap();
