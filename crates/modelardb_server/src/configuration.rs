@@ -1203,7 +1203,12 @@ mod tests {
     // Tests for parse_size_argument().
     #[test]
     fn test_parse_size_argument_empty_string() {
-        assert!(parse_size_argument("", Some(10240)).is_err())
+        assert_eq!(
+            parse_size_argument("", Some(10240))
+                .unwrap_err()
+                .to_string(),
+            "Parse Int Error: cannot parse integer from empty string"
+        )
     }
 
     #[test]
@@ -1287,6 +1292,62 @@ mod tests {
 
     #[test]
     fn test_parse_size_argument_wrong_suffix() {
-        assert!(parse_size_argument("10#", Some(10240)).is_err())
+        assert_eq!(
+            parse_size_argument("10#", Some(10240))
+                .unwrap_err()
+                .to_string(),
+            "Parser Error: sql parser error: Unit must be B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, not '#'."
+        )
+    }
+
+    // Tests for parse_time_argument().
+    #[test]
+    fn test_parse_time_argument_empty_string() {
+        assert_eq!(
+            parse_time_argument("").unwrap_err().to_string(),
+            "Parse Int Error: cannot parse integer from empty string"
+        )
+    }
+
+    #[test]
+    fn test_parse_time_argument_no_suffix() {
+        assert_eq!(parse_time_argument("37").unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_time_argument_no_suffix_with_whitespace() {
+        // ast-grep-ignore as the extra spaces are purposely added for testing.
+        assert_eq!(parse_time_argument("  37  ").unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_time_argument_second_suffix() {
+        assert_eq!(parse_time_argument("37S").unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_time_argument_second_suffix_with_whitespace() {
+        // ast-grep-ignore as the extra spaces are purposely added for testing.
+        assert_eq!(parse_time_argument(" 37   S  ").unwrap(), 37)
+    }
+
+    #[test]
+    fn test_parse_time_argument_minute_suffix() {
+        assert_eq!(parse_time_argument("37M").unwrap(), 2220)
+    }
+
+    #[test]
+    fn test_parse_time_argument_hour_suffix() {
+        assert_eq!(parse_time_argument("37H").unwrap(), 133200)
+    }
+
+    #[test]
+    fn test_parse_time_argument_day_suffix() {
+        assert_eq!(parse_time_argument("37DAY").unwrap(), 3196800)
+    }
+
+    #[test]
+    fn test_parse_time_argument_days_suffix() {
+        assert_eq!(parse_time_argument("37DAYS").unwrap(), 3196800)
     }
 }
