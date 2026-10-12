@@ -953,11 +953,11 @@ mod tests {
             Some(64 * 1024 * 1024)
         );
 
-        let new_value = Some(1024);
+        let new_value = 1024;
         configuration_manager
             .write()
             .await
-            .set_transfer_batch_size_in_bytes(new_value, storage_engine)
+            .set_transfer_batch_size_in_bytes(Some(new_value), storage_engine)
             .await
             .unwrap();
 
@@ -965,14 +965,15 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .transfer_batch_size_in_bytes(),
+                .transfer_batch_size_in_bytes()
+                .unwrap(),
             new_value
         );
 
         let configuration_from_file = configuration_from_file(&temp_dir).await;
         assert_eq!(
             configuration_from_file.transfer_batch_size.unwrap(),
-            new_value.unwrap().to_string()
+            new_value.to_string()
         );
     }
 
