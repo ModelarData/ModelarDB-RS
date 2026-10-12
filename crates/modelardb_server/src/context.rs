@@ -1264,7 +1264,7 @@ mod tests {
             Context::try_new(
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode(node),
-                &ServerArgs::parse_from(["modelardbd", "edge", "data"]),
+                ServerArgs::parse_from(["modelardbd", "edge", "data"]),
             )
             .await
             .unwrap(),
