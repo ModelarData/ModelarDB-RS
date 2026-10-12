@@ -51,7 +51,7 @@ impl Context {
     pub async fn try_new(
         data_folders: DataFolders,
         cluster_mode: ClusterMode,
-        args: &ServerArgs,
+        args: ServerArgs,
     ) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(
             ConfigurationManager::try_new(

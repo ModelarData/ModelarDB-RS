@@ -23,13 +23,10 @@ mod error;
 mod remote;
 mod storage;
 
-use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use modelardb_storage::parser;
 use modelardb_types::types::CloudCredentials;
-use sysinfo::System;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::ClusterMode;
@@ -37,7 +34,8 @@ use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::Result;
 
-/// Command line arguments for the ModelarDB server.
+/// Command line arguments for the ModelarDB server. Sizes are purposely not parsed in
+/// [`configuration`] instead of by [`Parser`] to support units.
 #[derive(Parser)]
 #[command(
     about = "ModelarDB server",
@@ -54,40 +52,39 @@ pub(crate) struct ServerArgs {
     port: u16,
 
     /// Amount of memory as an absolute memory amount or percentage of system memory to reserve for storing ingested time series.
-    #[arg(long = "ingested-reserved-memory", value_name = "INGESTED_RESERVED_MEMORY", env = "MODELARDBD_INGESTED_RESERVED_MEMORY", value_parser = parse_memory_size_argument)]
-    ingested_reserved_memory_in_bytes: Option<u64>,
+    #[arg(long, env = "MODELARDBD_INGESTED_RESERVED_MEMORY")]
+    ingested_reserved_memory: Option<String>,
 
     /// Amount of memory as an absolute memory amount or percentage of system memory for storing uncompressed data buffers.
-    #[arg(long = "uncompressed-reserved-memory", value_name = "UNCOMPRESSED_RESERVED_MEMORY", env = "MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY", value_parser = parse_memory_size_argument)]
-    uncompressed_reserved_memory_in_bytes: Option<u64>,
+    #[arg(long, env = "MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY")]
+    uncompressed_reserved_memory: Option<String>,
 
     /// Amount of memory as an absolute memory amount or percentage of system memory for storing compressed data buffers.
-    #[arg(long = "compressed-reserved-memory", value_name = "COMPRESSED_RESERVED_MEMORY", env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY", value_parser = parse_memory_size_argument)]
-    compressed_reserved_memory_in_bytes: Option<u64>,
+    #[arg(long, env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY")]
+    compressed_reserved_memory: Option<String>,
 
-    /// Number of bytes required before transferring a batch of data to the remote object store.
+    /// Amount of data required before transferring a batch of data to the remote object store.
     /// If not set, data is only transferred on an explicit flush.
-    #[arg(long, env = "MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")]
-    transfer_batch_size_in_bytes: Option<u64>,
+    #[arg(long, env = "MODELARDBD_TRANSFER_BATCH_SIZE")]
+    transfer_batch_size: Option<String>,
 
-    /// Approximate maximum size in bytes of a single WAL segment file before a new one is started.
+    /// Approximate maximum size of a single WAL segment file before a new one is started.
     /// The size is approximate since the in-memory size of each batch is used instead of its
     /// on-disk size to avoid the overhead of reading the file size after each write.
-    #[arg(long, env = "MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES")]
-    segment_size_threshold_in_bytes: Option<u64>,
+    #[arg(long, env = "MODELARDBD_SEGMENT_SIZE_THRESHOLD")]
+    segment_size_threshold: Option<String>,
 
-    /// Target size, in bytes, of the files produced when automatically compacting a table's
-    /// storage. This is also the default value used when an OPTIMIZE query is executed without an
-    /// explicit target size.
-    #[arg(long, env = "MODELARDBD_OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES")]
-    optimize_target_file_size_in_bytes: Option<u64>,
+    /// Target size of the files produced when automatically compacting a table's storage. This is
+    /// also the default value used when an OPTIMIZE query is executed without an explicit target
+    /// size.
+    #[arg(long, env = "MODELARDBD_OPTIMIZE_TARGET_FILE_SIZE")]
+    optimize_target_file_size: Option<String>,
 
-    /// Retention period, in seconds, used when automatically vacuuming a table during compaction.
-    /// This is also the default value used when a VACUUM query is executed without an explicit
-    /// retention period. Note that a very low value can delete files an in-progress query is still
-    /// scanning.
-    #[arg(long, env = "MODELARDBD_VACUUM_RETENTION_PERIOD_IN_SECONDS")]
-    vacuum_retention_period_in_seconds: Option<u64>,
+    /// Retention period used when automatically vacuuming a table during compaction. This is also
+    /// the default value used when a VACUUM query is executed without an explicit retention period.
+    /// Note that a very low value can delete files an in-progress query is still scanning.
+    #[arg(long, env = "MODELARDBD_VACUUM_RETENTION_PERIOD")]
+    vacuum_retention_period: Option<String>,
 
     /// Whether the write-ahead log is enabled.
     #[arg(long, env = "MODELARDBD_WAL_ENABLED")]
@@ -96,38 +93,6 @@ pub(crate) struct ServerArgs {
     /// Subcommand specifying the mode the server is started in and the required data folders.
     #[command(subcommand)]
     mode: ServerMode,
-}
-
-/// Parse a value followed by a percentage or a unit (B, KB, KiB, MB, MiB, GB, GiB, TB, TiB,
-/// case-insensitive). The function is designed to be used with the `clap` crate, and the error is
-/// returned as a string for control over formatting and avoid depending directly on `sqlparser`.
-/// - If a percentage is given, that percentage of the system's total memory in bytes is returned.
-/// - If a unit is given, the specified amount of memory in bytes is returned.
-/// - If a parse error occurs, that error is returned as a `String`.
-fn parse_memory_size_argument(input: &str) -> StdResult<u64, String> {
-    let input = input.trim();
-    let suffix_start = input
-        .char_indices()
-        .find_map(|(index, character)| (!character.is_numeric()).then_some(index))
-        .unwrap_or(input.len());
-
-    let value: u64 = input[0..suffix_start]
-        .parse::<u64>()
-        .map_err(|error| error.to_string())?;
-    let suffix = input[suffix_start..input.len()].trim();
-
-    let memory_in_bytes = if suffix == "%" {
-        let mut system = System::new();
-        system.refresh_memory();
-        let total_memory_bytes = system.total_memory();
-
-        // Cast to u128 to avoid overflowing when multiplying.
-        ((total_memory_bytes as u128 * value as u128) / 100) as u64
-    } else {
-        value * parser::byte_unit_multiplier(suffix).map_err(|error| error.to_string())?
-    };
-
-    Ok(memory_in_bytes)
 }
 
 /// The mode and data folders a ModelarDB server is started with.
@@ -170,11 +135,12 @@ async fn main() -> Result<()> {
     tracing_subscriber::registry().with(stdout_log).init();
 
     let args = ServerArgs::parse();
+    let port = args.port;
 
     let (cluster_mode, data_folders) =
         DataFolders::try_from_args(&args.mode, &args.host, args.port).await?;
 
-    let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone(), &args).await?);
+    let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone(), args).await?);
 
     // Register normal tables and time series tables.
     context.register_normal_tables().await?;
@@ -191,7 +157,7 @@ async fn main() -> Result<()> {
     context.replay_write_ahead_log().await?;
 
     // Start the Apache Arrow Flight interface.
-    remote::start_apache_arrow_flight_server(context, None, args.port).await?;
+    remote::start_apache_arrow_flight_server(context, None, port).await?;
 
     Ok(())
 }
