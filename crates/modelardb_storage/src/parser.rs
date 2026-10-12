@@ -200,7 +200,7 @@ pub fn tokenize_and_parse_sql_expression(
 /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements,
 /// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] statements, and
 /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements. `unit` is an optional, case-insensitive
-/// byte unit (B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB) that `num_bytes` is multiplied by.
+/// byte unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB) that `num_bytes` is multiplied by.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
@@ -601,7 +601,7 @@ impl ModelarDbDialect {
     /// does not have an `Optimize` variant with the required fields. A [`ParserError`] is returned
     /// if OPTIMIZE is not the first word, the table names cannot be extracted, the target file size
     /// is not a valid positive integer, or the target file size is followed by a word that is not a
-    /// supported byte unit (B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB).
+    /// supported byte unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB).
     fn parse_optimize(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
         // OPTIMIZE.
         parser.expect_keyword(Keyword::OPTIMIZE)?;
@@ -674,11 +674,11 @@ impl ModelarDbDialect {
 
     /// Return its value as a [`u64`] if the next [`Token`] is a [`Token::Number`], the same as
     /// [`Self::parse_unsigned_literal_u64`]. If the [`Token`] after the number is a [`Token::Word`]
-    /// matching a supported byte unit (B, KB, KiB, MB, MiB, GB, GiB, TB, or TiB, case-insensitive)
-    /// it is consumed and the number is multiplied by the number of bytes the unit represents,
-    /// e.g., `1 KiB` is parsed as `1024`. A [`ParserError`] is returned if the number cannot be
-    /// parsed as a [`u64`], if the number is followed by a word that is not a supported byte unit,
-    /// or if multiplying the number by the unit does not fit in a [`u64`].
+    /// matching a supported byte unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB,
+    /// case-insensitive) it is consumed and the number is multiplied by the number of bytes the
+    /// unit represents, e.g., `1 KiB` is parsed as `1024`. A [`ParserError`] is returned if the
+    /// number cannot be parsed as a [`u64`], if the number is followed by a word that is not a
+    /// supported byte unit, or if multiplying the number by the unit does not fit in a [`u64`].
     fn parse_unsigned_literal_u64_with_optional_byte_unit(
         &self,
         parser: &mut Parser,
@@ -795,25 +795,21 @@ fn new_address_setting(address: String) -> Setting {
     Setting { key, value }
 }
 
-/// Return the number of bytes a single unit of `unit` represents if `unit` is a supported byte
-/// unit (B, KB, KiB, MB, MiB, GB, GiB, TB, TiB, case-insensitive), otherwise [`ParserError`] is
-/// returned.
+/// Return the number of bytes a single unit of `unit` represents if `unit` is a supported byte unit
+/// (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, TiB, case-insensitive), otherwise [`ParserError`]
+/// is returned.
 pub fn byte_unit_multiplier(unit: &str) -> StdResult<u64, ParserError> {
     match unit.to_uppercase().as_str() {
         "" => Ok(1),
         "B" => Ok(1),
-        "K" => Ok(1024),
         "KB" => Ok(1000),
-        "KIB" => Ok(1024),
-        "M" => Ok(1024 * 1024),
+        "K" | "KIB" => Ok(1024),
         "MB" => Ok(1000 * 1000),
-        "MIB" => Ok(1024 * 1024),
-        "G" => Ok(1024 * 1024 * 1024),
+        "M" | "MIB" => Ok(1024 * 1024),
         "GB" => Ok(1000 * 1000 * 1000),
-        "GIB" => Ok(1024 * 1024 * 1024),
-        "T" => Ok(1024 * 1024 * 1024 * 1024),
+        "G" | "GIB" => Ok(1024 * 1024 * 1024),
         "TB" => Ok(1000 * 1000 * 1000 * 1000),
-        "TIB" => Ok(1024 * 1024 * 1024 * 1024),
+        "T" | "TIB" => Ok(1024 * 1024 * 1024 * 1024),
         _ => Err(ParserError::ParserError(format!(
             "Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not '{unit}'."
         ))),
