@@ -17,6 +17,7 @@
 //! DataFusion. It takes the projection, filters as [`Exprs`](Expr), and limit of a query as input
 //! and returns a physical query plan that produces all the data points required for the query.
 
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
@@ -43,7 +44,7 @@ use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{
     LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement, planner,
 };
-use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
+use datafusion::physical_plan::{ExecutionPlan, Partitioning, PhysicalExpr, Statistics};
 use deltalake::kernel::LogicalFileView;
 use deltalake::{DeltaTable, FilterLiteral, FilterOp, FilterValue, ObjectMeta};
 use futures::TryStreamExt;
@@ -421,23 +422,22 @@ async fn new_data_source_exec(
     maybe_limit: Option<usize>,
     maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
     file_schema: Arc<Schema>,
-    output_ordering: Vec<LexOrdering>,
+    output_ordering: &LexOrdering,
 ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
     // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
-    let mut logical_file_views = delta_table
+    let logical_file_views = delta_table
         .get_active_add_actions_by_partitions(partition_filters)
         .try_collect::<Vec<_>>()
         .await?;
 
-    logical_file_views.sort_by_key(|logical_file_view| logical_file_view.modification_time());
-
     // Create the data source operator. Assumes the ObjectStore exists.
-    let partitioned_files = logical_file_views
+    let mut partitioned_files = logical_file_views
         .iter()
         .map(|logical_file_view| {
             logical_file_view_to_partitioned_file(logical_file_view, &file_schema)
         })
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
+    sort_partitioned_files_by_tag_and_start_time(&mut partitioned_files);
     let file_group = FileGroup::new(partitioned_files);
 
     let log_store = delta_table.log_store();
@@ -453,7 +453,8 @@ async fn new_data_source_exec(
     let file_scan_config = FileScanConfigBuilder::new(log_store.object_store_url(), file_source)
         .with_file_group(file_group)
         .with_limit(maybe_limit)
-        .with_output_ordering(output_ordering); // Also sets preserve_order.
+        .with_output_partitioning(Some(Partitioning::UnknownPartitioning(1)))
+        .with_output_ordering(vec![output_ordering.clone()]); // Also sets preserve_order.
 
     Ok(DataSourceExec::from_data_source(file_scan_config.build()))
 }
@@ -504,9 +505,8 @@ fn logical_file_view_statistics(
     // The raw JSON statistics are used instead of the method on LogicalFileView for extracting
     // null_counts, min_values, and max_values as they are not always populated.
     let json_statistics = logical_file_view.stats()?;
-    let parsed_statistics = serde_json::from_str::<serde_json::Value>(&statistics_json)
-        .ok()?
-        .as_object()?;
+    let parsed_statistics = serde_json::from_str::<serde_json::Value>(&json_statistics).ok()?;
+    let parsed_statistics = parsed_statistics.as_object()?;
 
     // Create a Statistics with everything absent and then overwrite values with those we have.
     let mut datafusion_statistics = Statistics::new_unknown(file_schema);
@@ -559,7 +559,6 @@ fn logical_file_view_statistics(
         }
     }
 
-    dbg!(&datafusion_statistics);
     Some(Arc::new(datafusion_statistics))
 }
 
@@ -578,6 +577,43 @@ fn json_value_to_datafusion_value(
         }
         value => ScalarValue::try_from_string(value.to_string(), data_type).ok(),
     }
+}
+
+/// Sort `partitioned_files` by tag columns and then `start_time`.
+fn sort_partitioned_files_by_tag_and_start_time(partitioned_files: &mut [PartitionedFile]) {
+    let error = "All Apache Parquet files in a time series table should have statitics.";
+
+    // Compute the location of the tag column in the Parquet files once as the schema is the same.
+    let start_time_index = 1;
+    let total_columns = partitioned_files[0]
+        .statistics
+        .as_ref()
+        .expect(error)
+        .column_statistics
+        .len();
+
+    partitioned_files.sort_by(|left, right| {
+        let left_statistics = left.statistics.as_ref().expect(error);
+        let right_statistics = right.statistics.as_ref().expect(error);
+        let tag_column_indices = QUERY_COMPRESSED_SCHEMA.0.fields().len()..total_columns;
+
+        // Order by tag columns first and then start time.
+        tag_column_indices
+            .chain(std::iter::once(start_time_index))
+            .find_map(|column_index| {
+                let left_minimum = left_statistics.column_statistics[column_index]
+                    .min_value
+                    .get_value()
+                    .expect(error);
+                let right_minimum = right_statistics.column_statistics[column_index]
+                    .min_value
+                    .get_value()
+                    .expect(error);
+                let ordering = left_minimum.partial_cmp(right_minimum).expect(error);
+                (ordering != Ordering::Equal).then_some(ordering)
+            })
+            .expect(error)
+    });
 }
 
 #[async_trait]
@@ -720,15 +756,13 @@ impl TableProvider for TimeSeriesTable {
                 FilterValue::Scalar(&field_column_index),
             )];
 
-            let lex_ordering = LexOrdering::new(self.query_order_segment.to_vec())
-                .expect("query_order_segment should not be empty.");
             let data_source_exec = new_data_source_exec(
                 &delta_table,
                 &partition_filters,
                 limit,
                 &maybe_physical_parquet_filters,
                 self.query_compressed_schema.clone(),
-                vec![lex_ordering],
+                &self.query_order_segment,
             )
             .await?;
 
