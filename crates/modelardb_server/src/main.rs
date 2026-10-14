@@ -27,7 +27,8 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use modelardb_types::types::CloudCredentials;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::{Layer, filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::ClusterMode;
 use crate::context::Context;
@@ -130,9 +131,22 @@ pub(crate) enum ServerMode {
 /// interface cannot be started.
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize a tracing layer that logs events to stdout.
-    let stdout_log = tracing_subscriber::fmt::layer();
-    tracing_subscriber::registry().with(stdout_log).init();
+    // Initialize a tracing layer that logs events to stdout. A small amount of code is duplicated
+    // between the branches as the returned types requires boxing to be the same for both branches.
+    let cargo_tracing_level = tracing::level_filters::STATIC_MAX_LEVEL;
+    if cargo_tracing_level == LevelFilter::INFO {
+        // For buoyant_kernel, messages at levels below the WARN level are filtered out as it is very
+        // noisy and the messages given at the INFO level are generally not useful for normal users.
+        let env_filter = EnvFilter::new(format!("{},buoyant_kernel=warn", cargo_tracing_level));
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
+            .init();
+    } else {
+        // Do no do any filtering if this is a debug build as we then purposely want everything.
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
 
     let args = ServerArgs::parse();
     let port = args.port;
