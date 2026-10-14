@@ -437,8 +437,8 @@ async fn new_data_source_exec(
             logical_file_view_to_partitioned_file(logical_file_view, &file_schema)
         })
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
-    sort_partitioned_files_by_tag_and_start_time(&mut partitioned_files);
-    let file_group = FileGroup::new(partitioned_files);
+    sort_partitioned_files_by_tags_and_start_time(&mut partitioned_files);
+    let file_group = FileGroup::new(vec![partitioned_files[0].clone()]);
 
     let log_store = delta_table.log_store();
     let mut table_parquet_options = TableParquetOptions::new();
@@ -580,7 +580,11 @@ fn json_value_to_datafusion_value(
 }
 
 /// Sort `partitioned_files` by tag columns and then `start_time`.
-fn sort_partitioned_files_by_tag_and_start_time(partitioned_files: &mut [PartitionedFile]) {
+fn sort_partitioned_files_by_tags_and_start_time(partitioned_files: &mut [PartitionedFile]) {
+    if partitioned_files.len() < 2 {
+        return;
+    }
+
     let error = "All Apache Parquet files in a time series table should have statitics.";
 
     // Compute the location of the tag column in the Parquet files once as the schema is the same.
@@ -605,14 +609,21 @@ fn sort_partitioned_files_by_tag_and_start_time(partitioned_files: &mut [Partiti
                     .min_value
                     .get_value()
                     .expect(error);
+
                 let right_minimum = right_statistics.column_statistics[column_index]
                     .min_value
                     .get_value()
                     .expect(error);
+
                 let ordering = left_minimum.partial_cmp(right_minimum).expect(error);
+
+                // find_map() keeps iterating while None is returned, so equal tag values cause it
+                // to compare the next tag or start_time. However, it must stop when something is
+                // not Equal as that have to be moved for the list of files to be sorted.
                 (ordering != Ordering::Equal).then_some(ordering)
             })
-            .expect(error)
+            // Files with identical tag values and start times are considered equivalent.
+            .unwrap_or(Ordering::Equal)
     });
 }
 
