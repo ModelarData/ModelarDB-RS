@@ -132,7 +132,7 @@ pub(crate) enum ServerMode {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize a tracing layer that logs events to stdout. A small amount of code is duplicated
-    // between the branches as the returned types requires boxing to be the same for both branches.
+    // between the branches because boxing would be required to make their return types identical.
     let cargo_tracing_level = tracing::level_filters::STATIC_MAX_LEVEL;
     if cargo_tracing_level == LevelFilter::INFO {
         // For buoyant_kernel, messages at levels below the WARN level are filtered out as it is very
@@ -142,7 +142,7 @@ async fn main() -> Result<()> {
             .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
             .init();
     } else {
-        // Do no do any filtering if this is a debug build as we then purposely want everything.
+        // Do not do any filtering if this is a debug build as we then purposely want everything.
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer())
             .init();
