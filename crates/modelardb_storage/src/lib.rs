@@ -364,7 +364,7 @@ fn writer_properties_for_time_series_table(schema: &Schema) -> Result<WriterProp
         .set_encoding(Encoding::PLAIN)
         .set_compression(Compression::ZSTD(ZstdLevel::default()))
         .set_dictionary_enabled(false)
-        .set_statistics_enabled(EnabledStatistics::None)
+        .set_statistics_enabled(EnabledStatistics::Page)
         .set_bloom_filter_enabled(false)
         .set_sorting_columns(Some(sorting_columns))
         .build())

@@ -26,7 +26,8 @@ use async_trait::async_trait;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, TimeUnit};
 use datafusion::catalog::Session;
 use datafusion::catalog::memory::DataSourceExec;
-use datafusion::common::ToDFSchema;
+use datafusion::common::stats::Precision;
+use datafusion::common::{ScalarValue, ToDFSchema};
 use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
@@ -42,7 +43,7 @@ use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{
     LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement, planner,
 };
-use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
+use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
 use deltalake::kernel::LogicalFileView;
 use deltalake::{DeltaTable, FilterLiteral, FilterOp, FilterValue, ObjectMeta};
 use futures::TryStreamExt;
@@ -433,7 +434,9 @@ async fn new_data_source_exec(
     // Create the data source operator. Assumes the ObjectStore exists.
     let partitioned_files = logical_file_views
         .iter()
-        .map(logical_file_view_to_partitioned_file)
+        .map(|logical_file_view| {
+            logical_file_view_to_partitioned_file(logical_file_view, &file_schema)
+        })
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
     let file_group = FileGroup::new(partitioned_files);
 
@@ -450,16 +453,18 @@ async fn new_data_source_exec(
     let file_scan_config = FileScanConfigBuilder::new(log_store.object_store_url(), file_source)
         .with_file_group(file_group)
         .with_limit(maybe_limit)
-        .with_output_ordering(output_ordering);
+        .with_output_ordering(output_ordering); // Also sets preserve_order.
 
     Ok(DataSourceExec::from_data_source(file_scan_config.build()))
 }
 
-/// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionedFile`]. A
-/// [`DataFusionError`] is returned if the time the file was last modified cannot be read from
-/// `logical_file_view`.
+/// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionedFile`] with [`Statistics`]
+/// and [`LexOrdering`] so DataFusion's optimizer can check if the sort order for each field is
+/// correct. A [`DataFusionError`] is returned if the time the file was last modified cannot be read
+/// from `logical_file_view`.
 fn logical_file_view_to_partitioned_file(
     logical_file_view: &LogicalFileView,
+    file_schema: &Schema,
 ) -> DataFusionResult<PartitionedFile> {
     let last_modified = logical_file_view
         .modification_datetime()
@@ -478,7 +483,7 @@ fn logical_file_view_to_partitioned_file(
         object_meta,
         partition_values: vec![],
         range: None,
-        statistics: None,
+        statistics: logical_file_view_statistics(logical_file_view, file_schema),
         ordering: None,
         extensions: Default::default(),
         metadata_size_hint: None,
@@ -487,6 +492,92 @@ fn logical_file_view_to_partitioned_file(
     };
 
     Ok(partitioned_file)
+}
+
+/// Extract the raw JSON statistics stored in `logical_file_view`, parse it, and then convert it to
+/// a [`Statistics`] with the columns in `file_schema`. Returns [`None`] if the statistics are
+/// absent or cannot be parsed as both result in the statistics not being available.
+fn logical_file_view_statistics(
+    logical_file_view: &LogicalFileView,
+    file_schema: &Schema,
+) -> Option<Arc<Statistics>> {
+    // The raw JSON statistics are used instead of the method on LogicalFileView for extracting
+    // null_counts, min_values, and max_values as they are not always populated.
+    let json_statistics = logical_file_view.stats()?;
+    let parsed_statistics = serde_json::from_str::<serde_json::Value>(&statistics_json)
+        .ok()?
+        .as_object()?;
+
+    // Create a Statistics with everything absent and then overwrite values with those we have.
+    let mut datafusion_statistics = Statistics::new_unknown(file_schema);
+
+    // Overwrite statistics for the entire file.
+    if let Some(num_records) = parsed_statistics
+        .get("numRecords")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|num_records| usize::try_from(num_records).ok())
+    {
+        datafusion_statistics.num_rows = Precision::Exact(num_records);
+    }
+
+    // Extract statistics for the each field.
+    let min_values = parsed_statistics
+        .get("minValues")
+        .and_then(serde_json::Value::as_object);
+    let max_values = parsed_statistics
+        .get("maxValues")
+        .and_then(serde_json::Value::as_object);
+    let null_counts = parsed_statistics
+        .get("nullCount")
+        .and_then(serde_json::Value::as_object);
+
+    // Overwrite statistics for the each field.
+    for (index, field) in file_schema.fields().iter().enumerate() {
+        let column_statistics = &mut datafusion_statistics.column_statistics[index];
+        let column_name = field.name();
+
+        if let Some(null_count) = null_counts
+            .and_then(|null_counts| null_counts.get(column_name))
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|null_count| usize::try_from(null_count).ok())
+        {
+            column_statistics.null_count = Precision::Exact(null_count);
+        }
+
+        if let Some(min_value) = min_values
+            .and_then(|min_values| min_values.get(column_name))
+            .and_then(|value| json_value_to_datafusion_value(value, field.data_type()))
+        {
+            column_statistics.min_value = Precision::Exact(min_value);
+        }
+
+        if let Some(max_value) = max_values
+            .and_then(|max_values| max_values.get(column_name))
+            .and_then(|value| json_value_to_datafusion_value(value, field.data_type()))
+        {
+            column_statistics.max_value = Precision::Exact(max_value);
+        }
+    }
+
+    dbg!(&datafusion_statistics);
+    Some(Arc::new(datafusion_statistics))
+}
+
+/// Convert a [`serde_json::Value`] to a scalar value of [`DataType`]. Return [`None`] for all
+/// values that cannot be used in a [`Statistics`], e.g., nested values.
+fn json_value_to_datafusion_value(
+    value: &serde_json::Value,
+    data_type: &DataType,
+) -> Option<ScalarValue> {
+    match value {
+        serde_json::Value::Null | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            None
+        }
+        serde_json::Value::String(value) => {
+            ScalarValue::try_from_string(value.clone(), data_type).ok()
+        }
+        value => ScalarValue::try_from_string(value.to_string(), data_type).ok(),
+    }
 }
 
 #[async_trait]
