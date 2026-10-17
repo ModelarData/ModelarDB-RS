@@ -221,7 +221,7 @@ mod tests {
     use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
     use tempfile::{self, TempDir};
 
-    const EXPECTED_TIME_SERIES_TABLE_FILE_SIZE: u64 = 2128;
+    const EXPECTED_TIME_SERIES_TABLE_FILE_SIZE: u64 = 2672;
 
     // Tests for data transfer component.
     #[tokio::test]
