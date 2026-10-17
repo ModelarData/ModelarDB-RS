@@ -790,7 +790,7 @@ mod tests {
         write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([6, 7, 8])).await;
 
         let column_path = format!(
-            "{}/tables/{}/field_column=0",
+            "{}/tables/{}/field_column=0/tag=tag",
             temp_dir.path().to_str().unwrap(),
             TIME_SERIES_TABLE_NAME
         );

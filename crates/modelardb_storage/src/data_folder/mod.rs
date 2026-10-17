@@ -43,7 +43,7 @@ use deltalake::protocol::SaveMode;
 use deltalake::{DeltaTable, DeltaTableError};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use modelardb_types::schemas::FIELD_COLUMN;
+use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use modelardb_types::types::{
     ArrowValue, CloudCredentials, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
     TimeSeriesTableMetadata,
@@ -430,11 +430,24 @@ impl DataFolder {
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<DeltaTable> {
+        let mut partition_columns = vec![FIELD_COLUMN.to_owned()];
+
+        // Compressed segments have the tag columns after the fixed compressed schema, including
+        // the field column. Partition by field first and then by each tag.
+        partition_columns.extend(
+            time_series_table_metadata
+                .compressed_schema
+                .fields()
+                .iter()
+                .skip(COMPRESSED_SCHEMA.0.fields().len())
+                .map(|field| field.name().to_owned()),
+        );
+
         let delta_table = self
             .create_delta_lake_table(
                 &time_series_table_metadata.name,
                 &time_series_table_metadata.compressed_schema,
-                &[FIELD_COLUMN.to_owned()],
+                &partition_columns,
                 self.location_of_table(&time_series_table_metadata.name),
                 SaveMode::ErrorIfExists,
             )
@@ -705,7 +718,7 @@ impl DataFolder {
 
         let schema = delta_table.snapshot()?.snapshot().arrow_schema();
         let writer_properties = if is_time_series_delta_table(&delta_table)? {
-            writer_properties_for_time_series_table(&schema)?
+            writer_properties_for_time_series_table()?
         } else {
             writer_properties_for_metadata_and_normal_tables(&schema)?
         };
@@ -1137,6 +1150,7 @@ fn is_time_series_delta_table(delta_table: &DeltaTable) -> Result<bool> {
 mod tests {
     use super::*;
 
+    use arrow::compute;
     use arrow::datatypes::{ArrowPrimitiveType, Field};
     use datafusion::arrow::datatypes::DataType;
     use datafusion::common::ScalarValue::Int64;
@@ -1534,9 +1548,9 @@ mod tests {
             .await
             .unwrap();
 
-        // The stale Parquet file should still exist in the partition folder.
+        // The stale Parquet file should still exist in the tag partition folder.
         let column_path = format!(
-            "{}/tables/{}/field_column=0",
+            "{}/tables/{}/field_column=0/tag=tag",
             temp_dir.path().to_str().unwrap(),
             TIME_SERIES_TABLE_NAME
         );
@@ -1791,8 +1805,8 @@ mod tests {
         // Verify the write produced a Parquet file.
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
 
-        // Read the data back and verify the content. The partition column (field_column) is
-        // moved to the end by Delta Lake, so SELECT the columns in the original schema order.
+        // Read the data back and verify the content. Partition columns are moved to the end by
+        // Delta Lake, so SELECT the columns in the original schema order.
         let schema = test_table::time_series_table_metadata()
             .compressed_schema
             .clone();
@@ -1818,6 +1832,14 @@ mod tests {
         )
         .await
         .unwrap();
+
+        // Delta Lake represents string partition columns as dictionary arrays. Convert the tag
+        // column back to its schema type before comparing it to the written batch.
+        let mut read_columns = read_batch.columns().to_vec();
+        let tag_column_index = read_batch.schema().index_of("tag").unwrap();
+        read_columns[tag_column_index] =
+            compute::cast(read_batch.column(tag_column_index), &DataType::Utf8View).unwrap();
+        let read_batch = RecordBatch::try_new(batch_to_write.schema(), read_columns).unwrap();
 
         assert_eq!(read_batch, batch_to_write);
     }

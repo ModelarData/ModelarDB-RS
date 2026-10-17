@@ -17,7 +17,6 @@
 //! DataFusion. It takes the projection, filters as [`Exprs`](Expr), and limit of a query as input
 //! and returns a physical query plan that produces all the data points required for the query.
 
-use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
@@ -437,7 +436,7 @@ async fn new_data_source_exec(
             logical_file_view_to_partitioned_file(logical_file_view, &file_schema)
         })
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
-    sort_partitioned_files_by_tags_and_start_time(&mut partitioned_files);
+    sort_partitioned_files_by_start_time(&mut partitioned_files);
     let file_group = FileGroup::new(partitioned_files);
 
     let log_store = delta_table.log_store();
@@ -454,15 +453,16 @@ async fn new_data_source_exec(
         .with_file_group(file_group)
         .with_limit(maybe_limit)
         .with_output_partitioning(Some(Partitioning::UnknownPartitioning(1)))
-        .with_output_ordering(vec![output_ordering.clone()]); // Also sets preserve_order.
+        .with_output_ordering(vec![output_ordering.clone()]) // Also sets preserve_order.
+        .build();
 
-    Ok(DataSourceExec::from_data_source(file_scan_config.build()))
+    let exec = DataSourceExec::from_data_source(file_scan_config);
+    Ok(exec)
 }
 
 /// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionedFile`] with [`Statistics`]
-/// and [`LexOrdering`] so DataFusion's optimizer can check if the sort order for each field is
-/// correct. A [`DataFusionError`] is returned if the time the file was last modified cannot be read
-/// from `logical_file_view`.
+/// so DataFusion's optimizer can check if the sort order for each field is correct. A
+/// [`DataFusionError`] is returned if the required metadata is not in `logical_file_view`.
 fn logical_file_view_to_partitioned_file(
     logical_file_view: &LogicalFileView,
     file_schema: &Schema,
@@ -480,9 +480,20 @@ fn logical_file_view_to_partitioned_file(
         version: None,
     };
 
+    let partition_values_map = logical_file_view.partition_values_map();
+    let partition_values = file_schema
+        .fields()
+        .iter()
+        .skip(QUERY_COMPRESSED_SCHEMA.0.fields().len())
+        .map(|field| {
+            let partition_value = partition_values_map.get(field.name());
+            ScalarValue::Utf8View(partition_value.unwrap().clone())
+        })
+        .collect::<Vec<_>>();
+
     let partitioned_file = PartitionedFile {
         object_meta,
-        partition_values: vec![],
+        partition_values,
         range: None,
         statistics: logical_file_view_statistics(logical_file_view, file_schema),
         ordering: None,
@@ -579,51 +590,33 @@ fn json_value_to_datafusion_value(
     }
 }
 
-/// Sort `partitioned_files` by tag columns and then `start_time`.
-fn sort_partitioned_files_by_tags_and_start_time(partitioned_files: &mut [PartitionedFile]) {
+/// Sort `partitioned_files` by tag columns, which is used for partitioning, and then `start_time`.
+fn sort_partitioned_files_by_start_time(partitioned_files: &mut [PartitionedFile]) {
     if partitioned_files.len() < 2 {
         return;
     }
 
-    let error = "All Apache Parquet files in a time series table should have statitics.";
-
-    // Compute the location of the tag column in the Parquet files once as the schema is the same.
+    // Compressed segments store their start time in the second column.
     let start_time_index = 1;
-    let total_columns = partitioned_files[0]
-        .statistics
-        .as_ref()
-        .expect(error)
-        .column_statistics
-        .len();
-
+    let error = "All Apache Parquet files in a time series table should have comparable statitics.";
     partitioned_files.sort_by(|left, right| {
+        // Extract the statistics for the start time of the compressed segments.
         let left_statistics = left.statistics.as_ref().expect(error);
         let right_statistics = right.statistics.as_ref().expect(error);
-        let tag_column_indices = QUERY_COMPRESSED_SCHEMA.0.fields().len()..total_columns;
+        let left_minimum = left_statistics.column_statistics[start_time_index]
+            .min_value
+            .get_value()
+            .expect(error);
+        let right_minimum = right_statistics.column_statistics[start_time_index]
+            .min_value
+            .get_value()
+            .expect(error);
 
-        // Order by tag columns first and then start time.
-        tag_column_indices
-            .chain(std::iter::once(start_time_index))
-            .find_map(|column_index| {
-                let left_minimum = left_statistics.column_statistics[column_index]
-                    .min_value
-                    .get_value()
-                    .expect(error);
-
-                let right_minimum = right_statistics.column_statistics[column_index]
-                    .min_value
-                    .get_value()
-                    .expect(error);
-
-                let ordering = left_minimum.partial_cmp(right_minimum).expect(error);
-
-                // find_map() keeps iterating while None is returned, so equal tag values cause it
-                // to compare the next tag or start_time. However, it must stop when something is
-                // not Equal as that have to be moved for the list of files to be sorted.
-                (ordering != Ordering::Equal).then_some(ordering)
-            })
-            // Files with identical tag values and start times are considered equivalent.
-            .unwrap_or(Ordering::Equal)
+        // Sort the files by tags followed by start time.
+        left.partition_values
+            .partial_cmp(&right.partition_values)
+            .expect("Partition values should be Utf8View and thus comparable.")
+            .then_with(|| left_minimum.partial_cmp(right_minimum).expect(error))
     });
 }
 

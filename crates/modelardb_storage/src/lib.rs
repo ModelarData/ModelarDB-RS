@@ -49,7 +49,6 @@ use deltalake::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use deltalake::parquet::schema::types::ColumnPath;
 use futures::StreamExt;
 use futures::future::{BoxFuture, FutureExt, TryFutureExt};
-use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::TimeSeriesTableMetadata;
 use object_store::path::Path;
 use object_store::{Error as ObjectStoreError, GetOptions, GetRange, ObjectStore, ObjectStoreExt};
@@ -335,28 +334,13 @@ fn writer_properties_for_metadata_and_normal_tables(schema: &Schema) -> Result<W
 
 /// Return [`WriterProperties`] optimized for storing compressed segments in Apache Parquet files
 /// managed by Delta Lake.
-fn writer_properties_for_time_series_table(schema: &Schema) -> Result<WriterProperties> {
-    // Specify that the file must be sorted by the tag columns and then by start_time.
-    let base_compressed_schema_len = COMPRESSED_SCHEMA.0.fields().len();
-    let compressed_schema_len = schema.fields().len();
-    let sorting_columns_len = (compressed_schema_len - base_compressed_schema_len) + 1;
-    let mut sorting_columns = Vec::with_capacity(sorting_columns_len);
-
-    // Compressed segments have the tag columns at the end of the schema.
-    for tag_column_index in base_compressed_schema_len..compressed_schema_len {
-        sorting_columns.push(SortingColumn {
-            column_idx: tag_column_index as i32,
-            descending: false,
-            nulls_first: false,
-        });
-    }
-
-    // Compressed segments store the first timestamp in the second column.
-    sorting_columns.push(SortingColumn {
+fn writer_properties_for_time_series_table() -> Result<WriterProperties> {
+    // Sort the time series segments by their start time, which is stored in the second column.
+    let sorting_columns = vec![SortingColumn {
         column_idx: 1,
         descending: false,
         nulls_first: false,
-    });
+    }];
 
     // Statistics are purposely not written for binary fields as deltalake_core::writer::stats skips
     // writing them anyway with the warning message: skipping column because it's a binary field.
