@@ -438,7 +438,7 @@ async fn new_data_source_exec(
         })
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
     sort_partitioned_files_by_tags_and_start_time(&mut partitioned_files);
-    let file_group = FileGroup::new(vec![partitioned_files[0].clone()]);
+    let file_group = FileGroup::new(partitioned_files);
 
     let log_store = delta_table.log_store();
     let mut table_parquet_options = TableParquetOptions::new();
