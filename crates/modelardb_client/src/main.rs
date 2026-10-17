@@ -160,16 +160,32 @@ async fn execute_and_print_command_or_query(client: &mut Client, command_or_quer
         return;
     }
 
-    let result = if command_or_query.starts_with('\\') {
-        execute_command(client, command_or_query).await
-    } else {
-        execute_query_and_print_result(client, command_or_query).await
-    };
+    // Try commands at most two times as Tonic will automatically reconnect if possible. Queries are
+    // not retried as the client does not parse them to see if they are read-only, nor does the
+    // client know if the server already executed the query before the connection was lost. Thus,
+    // the client cannot know if it can retry without the server tracking which queries have failed.
+    let is_command = command_or_query.starts_with('\\');
+    for retries in 0..2 {
+        let result = if is_command {
+            execute_command(client, command_or_query).await
+        } else {
+            execute_query_and_print_result(client, command_or_query).await
+        };
 
-    if let Err(message) = result {
-        eprintln!("{message}");
+        // The first argument to println!() is not put an a variable as it must be a string literal.
+        match result {
+            Ok(()) => {
+                println!("\nTime: {:?}\n", start_time.elapsed());
+                return;
+            }
+            Err(error) if the_connection_was_closed(&error) && is_command && retries == 0 => (),
+            Err(error) => {
+                eprintln!("{error}");
+                println!("\nTime: {:?}\n", start_time.elapsed());
+                return;
+            }
+        }
     }
-    println!("\nTime: {:?}\n", start_time.elapsed());
 }
 
 /// Execute a command. Returns [`ModelarDbClientError`] if:
@@ -404,4 +420,15 @@ fn print_node_metrics(node_metrics: &protocol::NodeMetrics) {
     println!("uncompressed_reserved_memory_in_bytes: {uncompressed_reserved_memory_in_bytes}");
     println!("compressed_used_memory_in_bytes: {compressed_used_memory_in_bytes}");
     println!("compressed_reserved_memory_in_bytes: {compressed_reserved_memory_in_bytes}");
+}
+
+/// Return true if `error` is due to the server-side connection being closed.
+fn the_connection_was_closed(error: &ModelarDbClientError) -> bool {
+    if let ModelarDbClientError::ModelarDbEmbedded(ModelarDbEmbeddedError::TonicStatus(status)) =
+        error
+    {
+        status.message() == "transport error"
+    } else {
+        false
+    }
 }
