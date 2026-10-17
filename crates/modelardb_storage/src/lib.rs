@@ -358,6 +358,8 @@ fn writer_properties_for_time_series_table(schema: &Schema) -> Result<WriterProp
         nulls_first: false,
     });
 
+    // Statistics are purposely not written for binary fields as deltalake_core::writer::stats skips
+    // writing them anyway with the warning message: skipping column because it's a binary field.
     Ok(WriterProperties::builder()
         .set_data_page_size_limit(16384)
         .set_max_row_group_row_count(Some(65536))
@@ -365,6 +367,9 @@ fn writer_properties_for_time_series_table(schema: &Schema) -> Result<WriterProp
         .set_compression(Compression::ZSTD(ZstdLevel::default()))
         .set_dictionary_enabled(false)
         .set_statistics_enabled(EnabledStatistics::Page)
+        .set_column_statistics_enabled(ColumnPath::from("timestamps"), EnabledStatistics::None)
+        .set_column_statistics_enabled(ColumnPath::from("values"), EnabledStatistics::None)
+        .set_column_statistics_enabled(ColumnPath::from("residuals"), EnabledStatistics::None)
         .set_bloom_filter_enabled(false)
         .set_sorting_columns(Some(sorting_columns))
         .build())
