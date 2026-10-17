@@ -27,7 +27,7 @@ use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add};
 use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
 use deltalake::protocol::{DeltaOperation, SaveMode};
-use modelardb_types::schemas::FIELD_COLUMN;
+use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use object_store::path::Path;
 use object_store::{ObjectStore, ObjectStoreExt};
 use serde_json::json;
@@ -64,9 +64,20 @@ impl DeltaTableWriter {
 
     /// Create a [`DeltaTableWriter`] configured for writing to a time series table.
     pub(crate) async fn try_new_for_time_series_table(delta_table: DeltaTable) -> Result<Self> {
-        let partition_columns = vec![FIELD_COLUMN.to_owned()];
         let schema = delta_table.snapshot()?.snapshot().arrow_schema();
-        let writer_properties = writer_properties_for_time_series_table(&schema)?;
+        let mut partition_columns = vec![FIELD_COLUMN.to_owned()];
+
+        // Compressed segments store tag columns after the fixed compressed schema. The segments
+        // are partitioned by their tags to minimize the change of overlapping timestamps.
+        partition_columns.extend(
+            schema
+                .fields()
+                .iter()
+                .skip(COMPRESSED_SCHEMA.0.fields().len())
+                .map(|field| field.name().to_owned()),
+        );
+
+        let writer_properties = writer_properties_for_time_series_table()?;
         Self::try_new(delta_table, partition_columns, writer_properties).await
     }
 
@@ -356,9 +367,9 @@ mod tests {
             .unwrap();
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
 
-        // Verify the physical files were cleaned up from the partition folder.
+        // Verify the physical files were cleaned up from the partition folders.
         let column_path = format!(
-            "{}/tables/{TIME_SERIES_TABLE_NAME}/field_column=0",
+            "{}/tables/{TIME_SERIES_TABLE_NAME}/field_column=0/tag=tag",
             temp_dir.path().to_str().unwrap()
         );
         assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 0);
@@ -384,9 +395,9 @@ mod tests {
         let delta_table = writer.rollback().await.unwrap();
         assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
 
-        // Verify the physical files were cleaned up from the partition folder.
+        // Verify the physical files were cleaned up from the partition folders.
         let column_path = format!(
-            "{}/tables/{TIME_SERIES_TABLE_NAME}/field_column=0",
+            "{}/tables/{TIME_SERIES_TABLE_NAME}/field_column=0/tag=tag",
             temp_dir.path().to_str().unwrap()
         );
         assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 0);
