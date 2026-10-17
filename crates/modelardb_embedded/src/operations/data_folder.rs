@@ -1317,8 +1317,8 @@ mod tests {
             TIME_SERIES_TABLE_NAME,
             &[],
             &[],
-            Some("1970-01-01T00:00:00.000150"),
-            Some("1970-01-01T00:00:00.000250"),
+            Some("1970-01-01T00:00:00.150"),
+            Some("1970-01-01T00:00:00.250"),
             HashMap::new(),
         )
         .await
@@ -1678,8 +1678,8 @@ mod tests {
                 TIME_SERIES_TABLE_NAME,
                 &target,
                 TIME_SERIES_TABLE_NAME,
-                Some("1970-01-01T00:00:00.000150"),
-                Some("1970-01-01T00:00:00.000250"),
+                Some("1970-01-01T00:00:00.150"),
+                Some("1970-01-01T00:00:00.250"),
                 HashMap::new(),
             )
             .await
@@ -2913,7 +2913,8 @@ mod tests {
     }
 
     fn time_series_table_data() -> RecordBatch {
-        let timestamps = TimestampArray::from(vec![100, 100, 200, 200, 300, 300]);
+        let timestamps =
+            TimestampArray::from(vec![100_000, 100_000, 200_000, 200_000, 300_000, 300_000]);
         let tag_1 =
             StringViewArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
         let tag_2 =
@@ -2976,7 +2977,8 @@ mod tests {
     }
 
     fn invalid_table_data() -> RecordBatch {
-        let timestamps = TimestampArray::from(vec![100, 100, 200, 200, 300, 300]);
+        let timestamps =
+            TimestampArray::from(vec![100_000, 100_000, 200_000, 200_000, 300_000, 300_000]);
         let tag = StringViewArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
         let field = ValueArray::from(vec![37.0, 73.0, 38.0, 72.0, 39.0, 71.0]);
 
