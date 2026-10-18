@@ -33,6 +33,7 @@ use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
 use datafusion::datasource::provider::TableProviderFilterPushDown;
 use datafusion::datasource::sink::{DataSink, DataSinkExec};
+use datafusion::datasource::table_schema::TableSchema;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
@@ -413,14 +414,17 @@ fn convert_logical_expr_to_physical_expr(
 }
 
 /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
-/// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError`] if the necessary
-/// metadata cannot be retrieved from the Delta Lake.
+/// points for `field_column_index` in `delta_table`. `table_schema` must contain the columns in
+/// [`QUERY_COMPRESSED_SCHEMA`] followed by the tag columns. The tag columns are partition columns
+/// and thus not stored in the Apache Parquet files, so their values are added from the Delta Lake
+/// partition values. Returns a [`DataFusionError`] if the necessary metadata cannot be retrieved
+/// from the Delta Lake.
 async fn new_data_source_exec(
     delta_table: &DeltaTable,
     partition_filters: &[FilterLiteral<'_>],
     maybe_limit: Option<usize>,
     maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
-    file_schema: Arc<Schema>,
+    table_schema: Arc<Schema>,
     output_ordering: &LexOrdering,
 ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
     // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
@@ -433,20 +437,35 @@ async fn new_data_source_exec(
     let mut partitioned_files = logical_file_views
         .iter()
         .map(|logical_file_view| {
-            logical_file_view_to_partitioned_file(logical_file_view, &file_schema)
+            logical_file_view_to_partitioned_file(logical_file_view, &table_schema)
         })
         .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
     sort_partitioned_files_by_start_time(&mut partitioned_files);
     let file_group = FileGroup::new(partitioned_files);
 
+    // Only the columns in QUERY_COMPRESSED_SCHEMA are stored in the Apache Parquet files, so the
+    // tag columns are added as partition columns after the columns read from the files.
+    let tag_columns = table_schema
+        .fields()
+        .iter()
+        .skip(QUERY_COMPRESSED_SCHEMA.0.fields().len())
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let table_schema = TableSchema::builder(QUERY_COMPRESSED_SCHEMA.0.clone())
+        .with_table_partition_cols(tag_columns)
+        .build();
+
     let log_store = delta_table.log_store();
     let mut table_parquet_options = TableParquetOptions::new();
     table_parquet_options.global.pushdown_filters = true;
     table_parquet_options.global.reorder_filters = true;
+    let parquet_source =
+        ParquetSource::new(table_schema).with_table_parquet_options(table_parquet_options);
     let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
-        Arc::new(ParquetSource::new(file_schema).with_predicate(parquet_filters.to_owned()))
+        Arc::new(parquet_source.with_predicate(parquet_filters.to_owned()))
     } else {
-        Arc::new(ParquetSource::new(file_schema))
+        Arc::new(parquet_source)
     };
 
     let file_scan_config = FileScanConfigBuilder::new(log_store.object_store_url(), file_source)
@@ -465,7 +484,7 @@ async fn new_data_source_exec(
 /// [`DataFusionError`] is returned if the required metadata is not in `logical_file_view`.
 fn logical_file_view_to_partitioned_file(
     logical_file_view: &LogicalFileView,
-    file_schema: &Schema,
+    table_schema: &Schema,
 ) -> DataFusionResult<PartitionedFile> {
     let last_modified = logical_file_view
         .modification_datetime()
@@ -481,7 +500,7 @@ fn logical_file_view_to_partitioned_file(
     };
 
     let partition_values_map = logical_file_view.partition_values_map();
-    let partition_values = file_schema
+    let partition_values = table_schema
         .fields()
         .iter()
         .skip(QUERY_COMPRESSED_SCHEMA.0.fields().len())
@@ -495,7 +514,7 @@ fn logical_file_view_to_partitioned_file(
         object_meta,
         partition_values,
         range: None,
-        statistics: logical_file_view_statistics(logical_file_view, file_schema),
+        statistics: logical_file_view_statistics(logical_file_view, table_schema),
         ordering: None,
         extensions: Default::default(),
         metadata_size_hint: None,
@@ -507,11 +526,11 @@ fn logical_file_view_to_partitioned_file(
 }
 
 /// Extract the raw JSON statistics stored in `logical_file_view`, parse it, and then convert it to
-/// a [`Statistics`] with the columns in `file_schema`. Returns [`None`] if the statistics are
+/// a [`Statistics`] with the columns in `table_schema`. Returns [`None`] if the statistics are
 /// absent or cannot be parsed as both result in the statistics not being available.
 fn logical_file_view_statistics(
     logical_file_view: &LogicalFileView,
-    file_schema: &Schema,
+    table_schema: &Schema,
 ) -> Option<Arc<Statistics>> {
     // The raw JSON statistics are used instead of the method on LogicalFileView for extracting
     // null_counts, min_values, and max_values as they are not always populated.
@@ -520,7 +539,7 @@ fn logical_file_view_statistics(
     let parsed_statistics = parsed_statistics.as_object()?;
 
     // Create a Statistics with everything absent and then overwrite values with those we have.
-    let mut datafusion_statistics = Statistics::new_unknown(file_schema);
+    let mut datafusion_statistics = Statistics::new_unknown(table_schema);
 
     // Overwrite statistics for the entire file.
     if let Some(num_records) = parsed_statistics
@@ -543,7 +562,7 @@ fn logical_file_view_statistics(
         .and_then(serde_json::Value::as_object);
 
     // Overwrite statistics for the each field.
-    for (index, field) in file_schema.fields().iter().enumerate() {
+    for (index, field) in table_schema.fields().iter().enumerate() {
         let column_statistics = &mut datafusion_statistics.column_statistics[index];
         let column_name = field.name();
 
