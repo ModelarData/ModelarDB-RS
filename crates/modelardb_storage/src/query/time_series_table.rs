@@ -206,24 +206,211 @@ impl TimeSeriesTable {
             .schema
             .index_of(column_name)?)
     }
-}
 
-/// The implementation is not derived as many instance variables does not implement [`fmt::Debug`].
-impl fmt::Debug for TimeSeriesTable {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "TimeSeriesTable: {}\n {:?}",
-            self.time_series_table_metadata.name, self.time_series_table_metadata
-        )
+    /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
+    /// points for `field_column_index` in `delta_table`. `physical_table_schema` must contain the
+    /// columns in [`QUERY_COMPRESSED_SCHEMA`] followed by the tag columns. The tag columns are
+    /// partition columns and thus not stored in the Apache Parquet files, so their values are added
+    /// from the Delta Lake partition values. Returns a [`DataFusionError`] if the necessary metadata
+    /// cannot be retrieved from the Delta Lake.
+    async fn new_data_source_exec(
+        &self,
+        delta_table: &DeltaTable,
+        partition_filters: &[FilterLiteral<'_>],
+        maybe_limit: Option<usize>,
+        maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
+        let logical_file_views = delta_table
+            .get_active_add_actions_by_partitions(partition_filters)
+            .try_collect::<Vec<_>>()
+            .await?;
+        //self.query_compressed_schema
+
+        // Create the data source operator. Assumes the ObjectStore exists.
+        let mut partitioned_files = logical_file_views
+            .iter()
+            .map(|logical_file_view| self.logical_file_view_to_partitioned_file(logical_file_view))
+            .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
+        sort_partitioned_files_by_start_time(&mut partitioned_files);
+        let file_group = FileGroup::new(partitioned_files);
+
+        // Only the columns in QUERY_COMPRESSED_SCHEMA are stored in the Apache Parquet files, so the
+        // tag columns are added as partition columns after the columns read from the files.
+        let tag_columns = self
+            .query_compressed_schema
+            .fields()
+            .iter()
+            .skip(QUERY_COMPRESSED_SCHEMA.0.fields().len())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let table_schema = TableSchema::builder(QUERY_COMPRESSED_SCHEMA.0.clone())
+            .with_table_partition_cols(tag_columns)
+            .build();
+
+        let log_store = delta_table.log_store();
+        let mut table_parquet_options = TableParquetOptions::new();
+        table_parquet_options.global.pushdown_filters = true;
+        table_parquet_options.global.reorder_filters = true;
+        let parquet_source =
+            ParquetSource::new(table_schema).with_table_parquet_options(table_parquet_options);
+        let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
+            Arc::new(parquet_source.with_predicate(parquet_filters.to_owned()))
+        } else {
+            Arc::new(parquet_source)
+        };
+
+        let file_scan_config =
+            FileScanConfigBuilder::new(log_store.object_store_url(), file_source)
+                .with_file_group(file_group)
+                .with_limit(maybe_limit)
+                .with_output_partitioning(Some(Partitioning::UnknownPartitioning(1)))
+                .with_output_ordering(vec![self.query_order_segment.clone()]) // Also sets preserve_order.
+                .build();
+
+        let exec = DataSourceExec::from_data_source(file_scan_config);
+        Ok(exec)
+    }
+
+    /// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionedFile`] with [`Statistics`]
+    /// so DataFusion's optimizer can check if the sort order for each field is correct. A
+    /// [`DataFusionError`] is returned if the required metadata is not in `logical_file_view`.
+    fn logical_file_view_to_partitioned_file(
+        &self,
+        logical_file_view: &LogicalFileView,
+    ) -> DataFusionResult<PartitionedFile> {
+        let last_modified = logical_file_view
+            .modification_datetime()
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+
+        let location = Path::parse(logical_file_view.path().as_ref())?;
+        let object_meta = ObjectMeta {
+            location,
+            last_modified,
+            size: logical_file_view.size() as u64,
+            e_tag: None,
+            version: None,
+        };
+
+        let partition_values_map = logical_file_view.partition_values_map();
+        let partition_values = self
+            .query_compressed_schema
+            .fields()
+            .iter()
+            .skip(QUERY_COMPRESSED_SCHEMA.0.fields().len())
+            .map(|field| {
+                let partition_value = partition_values_map.get(field.name());
+                ScalarValue::Utf8View(partition_value.unwrap().clone())
+            })
+            .collect::<Vec<_>>();
+
+        let partitioned_file = PartitionedFile {
+            object_meta,
+            partition_values,
+            range: None,
+            statistics: self.logical_file_view_statistics(logical_file_view),
+            ordering: None,
+            extensions: Default::default(),
+            metadata_size_hint: None,
+            table_reference: None,
+            arrow_schema: None,
+        };
+
+        Ok(partitioned_file)
+    }
+
+    /// Extract the raw JSON statistics stored in `logical_file_view`, parse it, and then convert it
+    /// to a [`Statistics`]. Returns [`None`] if the statistics are absent or cannot be parsed as
+    /// both result in the statistics not being available.
+    fn logical_file_view_statistics(
+        &self,
+        logical_file_view: &LogicalFileView,
+    ) -> Option<Arc<Statistics>> {
+        // The raw JSON statistics are used instead of the method on LogicalFileView for extracting
+        // null_counts, min_values, and max_values as they are not always populated.
+        let json_statistics = logical_file_view.stats()?;
+        let parsed_statistics = serde_json::from_str::<serde_json::Value>(&json_statistics).ok()?;
+        let parsed_statistics = parsed_statistics.as_object()?;
+
+        // Create a Statistics with everything absent and then overwrite values with those we have.
+        let mut datafusion_statistics = Statistics::new_unknown(&self.query_compressed_schema);
+
+        // Overwrite statistics for the entire file.
+        if let Some(num_records) = parsed_statistics
+            .get("numRecords")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|num_records| usize::try_from(num_records).ok())
+        {
+            datafusion_statistics.num_rows = Precision::Exact(num_records);
+        }
+
+        // Extract statistics for the each field.
+        let min_values = parsed_statistics
+            .get("minValues")
+            .and_then(serde_json::Value::as_object);
+        let max_values = parsed_statistics
+            .get("maxValues")
+            .and_then(serde_json::Value::as_object);
+        let null_counts = parsed_statistics
+            .get("nullCount")
+            .and_then(serde_json::Value::as_object);
+
+        // Overwrite statistics for the each field.
+        for (index, field) in self.query_compressed_schema.fields().iter().enumerate() {
+            let column_statistics = &mut datafusion_statistics.column_statistics[index];
+            let column_name = field.name();
+
+            if let Some(null_count) = null_counts
+                .and_then(|null_counts| null_counts.get(column_name))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|null_count| usize::try_from(null_count).ok())
+            {
+                column_statistics.null_count = Precision::Exact(null_count);
+            }
+
+            if let Some(min_value) = min_values
+                .and_then(|min_values| min_values.get(column_name))
+                .and_then(|value| self.json_value_to_datafusion_value(value, field.data_type()))
+            {
+                column_statistics.min_value = Precision::Exact(min_value);
+            }
+
+            if let Some(max_value) = max_values
+                .and_then(|max_values| max_values.get(column_name))
+                .and_then(|value| self.json_value_to_datafusion_value(value, field.data_type()))
+            {
+                column_statistics.max_value = Precision::Exact(max_value);
+            }
+        }
+
+        Some(Arc::new(datafusion_statistics))
+    }
+
+    /// Convert a [`serde_json::Value`] to a scalar value of [`DataType`]. Return [`None`] for all
+    /// values that cannot be used in a [`Statistics`], e.g., nested values.
+    fn json_value_to_datafusion_value(
+        &self,
+        value: &serde_json::Value,
+        data_type: &DataType,
+    ) -> Option<ScalarValue> {
+        match value {
+            serde_json::Value::Null
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_) => None,
+            serde_json::Value::String(value) => {
+                ScalarValue::try_from_string(value.clone(), data_type).ok()
+            }
+            value => ScalarValue::try_from_string(value.to_string(), data_type).ok(),
+        }
     }
 }
 
 /// Return a [`LexOrdering`] and [`LexRequirement`] that sort by the tag columns from
-/// `time_series_table_metadata` in `schema` first and then by `time_column`.
+/// `time_series_table_metadata` in `grid_schema` first and then by `time_column`.
 fn query_order_and_requirement(
     time_series_table_metadata: &TimeSeriesTableMetadata,
-    schema: &Schema,
+    grid_schema: &Schema,
     time_column: Column,
 ) -> (LexOrdering, LexRequirement) {
     let sort_options = SortOptions {
@@ -236,7 +423,7 @@ fn query_order_and_requirement(
     for index in &time_series_table_metadata.tag_column_indices {
         let tag_column_name = time_series_table_metadata.schema.field(*index).name();
 
-        let schema_index = schema
+        let schema_index = grid_schema
             .index_of(tag_column_name)
             .expect("Tag columns should always be in the schema.");
 
@@ -262,6 +449,15 @@ fn query_order_and_requirement(
         LexRequirement::new(physical_sort_requirements)
             .expect("LexRequirement should not be empty."),
     )
+}
+
+/// Create a [`Expr::BinaryExpr`].
+fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
+    Expr::BinaryExpr(BinaryExpr {
+        left: Box::new(left),
+        op,
+        right: Box::new(right),
+    })
 }
 
 /// Rewrite and combine the `filters` that are written in terms of the time series table's query schema,
@@ -374,15 +570,6 @@ fn rewrite_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> 
     }
 }
 
-/// Create a [`Expr::BinaryExpr`].
-fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
-    Expr::BinaryExpr(BinaryExpr {
-        left: Box::new(left),
-        op,
-        right: Box::new(right),
-    })
-}
-
 /// Convert `maybe_expr` to a [`PhysicalExpr`] with the types in `query_schema` if possible.
 fn try_convert_logical_expr_to_physical_expr(
     maybe_expr: Option<&Expr>,
@@ -413,202 +600,6 @@ fn convert_logical_expr_to_physical_expr(
     )
 }
 
-/// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
-/// points for `field_column_index` in `delta_table`. `table_schema` must contain the columns in
-/// [`QUERY_COMPRESSED_SCHEMA`] followed by the tag columns. The tag columns are partition columns
-/// and thus not stored in the Apache Parquet files, so their values are added from the Delta Lake
-/// partition values. Returns a [`DataFusionError`] if the necessary metadata cannot be retrieved
-/// from the Delta Lake.
-async fn new_data_source_exec(
-    delta_table: &DeltaTable,
-    partition_filters: &[FilterLiteral<'_>],
-    maybe_limit: Option<usize>,
-    maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
-    table_schema: Arc<Schema>,
-    output_ordering: &LexOrdering,
-) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-    // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
-    let logical_file_views = delta_table
-        .get_active_add_actions_by_partitions(partition_filters)
-        .try_collect::<Vec<_>>()
-        .await?;
-
-    // Create the data source operator. Assumes the ObjectStore exists.
-    let mut partitioned_files = logical_file_views
-        .iter()
-        .map(|logical_file_view| {
-            logical_file_view_to_partitioned_file(logical_file_view, &table_schema)
-        })
-        .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
-    sort_partitioned_files_by_start_time(&mut partitioned_files);
-    let file_group = FileGroup::new(partitioned_files);
-
-    // Only the columns in QUERY_COMPRESSED_SCHEMA are stored in the Apache Parquet files, so the
-    // tag columns are added as partition columns after the columns read from the files.
-    let tag_columns = table_schema
-        .fields()
-        .iter()
-        .skip(QUERY_COMPRESSED_SCHEMA.0.fields().len())
-        .cloned()
-        .collect::<Vec<_>>();
-
-    let table_schema = TableSchema::builder(QUERY_COMPRESSED_SCHEMA.0.clone())
-        .with_table_partition_cols(tag_columns)
-        .build();
-
-    let log_store = delta_table.log_store();
-    let mut table_parquet_options = TableParquetOptions::new();
-    table_parquet_options.global.pushdown_filters = true;
-    table_parquet_options.global.reorder_filters = true;
-    let parquet_source =
-        ParquetSource::new(table_schema).with_table_parquet_options(table_parquet_options);
-    let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
-        Arc::new(parquet_source.with_predicate(parquet_filters.to_owned()))
-    } else {
-        Arc::new(parquet_source)
-    };
-
-    let file_scan_config = FileScanConfigBuilder::new(log_store.object_store_url(), file_source)
-        .with_file_group(file_group)
-        .with_limit(maybe_limit)
-        .with_output_partitioning(Some(Partitioning::UnknownPartitioning(1)))
-        .with_output_ordering(vec![output_ordering.clone()]) // Also sets preserve_order.
-        .build();
-
-    let exec = DataSourceExec::from_data_source(file_scan_config);
-    Ok(exec)
-}
-
-/// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionedFile`] with [`Statistics`]
-/// so DataFusion's optimizer can check if the sort order for each field is correct. A
-/// [`DataFusionError`] is returned if the required metadata is not in `logical_file_view`.
-fn logical_file_view_to_partitioned_file(
-    logical_file_view: &LogicalFileView,
-    table_schema: &Schema,
-) -> DataFusionResult<PartitionedFile> {
-    let last_modified = logical_file_view
-        .modification_datetime()
-        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
-
-    let location = Path::parse(logical_file_view.path().as_ref())?;
-    let object_meta = ObjectMeta {
-        location,
-        last_modified,
-        size: logical_file_view.size() as u64,
-        e_tag: None,
-        version: None,
-    };
-
-    let partition_values_map = logical_file_view.partition_values_map();
-    let partition_values = table_schema
-        .fields()
-        .iter()
-        .skip(QUERY_COMPRESSED_SCHEMA.0.fields().len())
-        .map(|field| {
-            let partition_value = partition_values_map.get(field.name());
-            ScalarValue::Utf8View(partition_value.unwrap().clone())
-        })
-        .collect::<Vec<_>>();
-
-    let partitioned_file = PartitionedFile {
-        object_meta,
-        partition_values,
-        range: None,
-        statistics: logical_file_view_statistics(logical_file_view, table_schema),
-        ordering: None,
-        extensions: Default::default(),
-        metadata_size_hint: None,
-        table_reference: None,
-        arrow_schema: None,
-    };
-
-    Ok(partitioned_file)
-}
-
-/// Extract the raw JSON statistics stored in `logical_file_view`, parse it, and then convert it to
-/// a [`Statistics`] with the columns in `table_schema`. Returns [`None`] if the statistics are
-/// absent or cannot be parsed as both result in the statistics not being available.
-fn logical_file_view_statistics(
-    logical_file_view: &LogicalFileView,
-    table_schema: &Schema,
-) -> Option<Arc<Statistics>> {
-    // The raw JSON statistics are used instead of the method on LogicalFileView for extracting
-    // null_counts, min_values, and max_values as they are not always populated.
-    let json_statistics = logical_file_view.stats()?;
-    let parsed_statistics = serde_json::from_str::<serde_json::Value>(&json_statistics).ok()?;
-    let parsed_statistics = parsed_statistics.as_object()?;
-
-    // Create a Statistics with everything absent and then overwrite values with those we have.
-    let mut datafusion_statistics = Statistics::new_unknown(table_schema);
-
-    // Overwrite statistics for the entire file.
-    if let Some(num_records) = parsed_statistics
-        .get("numRecords")
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|num_records| usize::try_from(num_records).ok())
-    {
-        datafusion_statistics.num_rows = Precision::Exact(num_records);
-    }
-
-    // Extract statistics for the each field.
-    let min_values = parsed_statistics
-        .get("minValues")
-        .and_then(serde_json::Value::as_object);
-    let max_values = parsed_statistics
-        .get("maxValues")
-        .and_then(serde_json::Value::as_object);
-    let null_counts = parsed_statistics
-        .get("nullCount")
-        .and_then(serde_json::Value::as_object);
-
-    // Overwrite statistics for the each field.
-    for (index, field) in table_schema.fields().iter().enumerate() {
-        let column_statistics = &mut datafusion_statistics.column_statistics[index];
-        let column_name = field.name();
-
-        if let Some(null_count) = null_counts
-            .and_then(|null_counts| null_counts.get(column_name))
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|null_count| usize::try_from(null_count).ok())
-        {
-            column_statistics.null_count = Precision::Exact(null_count);
-        }
-
-        if let Some(min_value) = min_values
-            .and_then(|min_values| min_values.get(column_name))
-            .and_then(|value| json_value_to_datafusion_value(value, field.data_type()))
-        {
-            column_statistics.min_value = Precision::Exact(min_value);
-        }
-
-        if let Some(max_value) = max_values
-            .and_then(|max_values| max_values.get(column_name))
-            .and_then(|value| json_value_to_datafusion_value(value, field.data_type()))
-        {
-            column_statistics.max_value = Precision::Exact(max_value);
-        }
-    }
-
-    Some(Arc::new(datafusion_statistics))
-}
-
-/// Convert a [`serde_json::Value`] to a scalar value of [`DataType`]. Return [`None`] for all
-/// values that cannot be used in a [`Statistics`], e.g., nested values.
-fn json_value_to_datafusion_value(
-    value: &serde_json::Value,
-    data_type: &DataType,
-) -> Option<ScalarValue> {
-    match value {
-        serde_json::Value::Null | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            None
-        }
-        serde_json::Value::String(value) => {
-            ScalarValue::try_from_string(value.clone(), data_type).ok()
-        }
-        value => ScalarValue::try_from_string(value.to_string(), data_type).ok(),
-    }
-}
-
 /// Sort `partitioned_files` by tag columns, which is used for partitioning, and then `start_time`.
 fn sort_partitioned_files_by_start_time(partitioned_files: &mut [PartitionedFile]) {
     if partitioned_files.len() < 2 {
@@ -637,6 +628,17 @@ fn sort_partitioned_files_by_start_time(partitioned_files: &mut [PartitionedFile
             .expect("Partition values should be Utf8View and thus comparable.")
             .then_with(|| left_minimum.partial_cmp(right_minimum).expect(error))
     });
+}
+
+/// The implementation is not derived as many instance variables does not implement [`fmt::Debug`].
+impl fmt::Debug for TimeSeriesTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "TimeSeriesTable: {}\n {:?}",
+            self.time_series_table_metadata.name, self.time_series_table_metadata
+        )
+    }
 }
 
 #[async_trait]
@@ -779,15 +781,14 @@ impl TableProvider for TimeSeriesTable {
                 FilterValue::Scalar(&field_column_index),
             )];
 
-            let data_source_exec = new_data_source_exec(
-                &delta_table,
-                &partition_filters,
-                limit,
-                &maybe_physical_parquet_filters,
-                self.query_compressed_schema.clone(),
-                &self.query_order_segment,
-            )
-            .await?;
+            let data_source_exec = self
+                .new_data_source_exec(
+                    &delta_table,
+                    &partition_filters,
+                    limit,
+                    &maybe_physical_parquet_filters,
+                )
+                .await?;
 
             let grid_exec = GridExec::new(
                 self.grid_schema.clone(),
