@@ -38,6 +38,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
+use datafusion::logical_expr::expr::InList;
 use datafusion::logical_expr::physical_planning_context::PhysicalPlanningContext;
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator, utils};
 use datafusion::physical_expr::expressions::Column;
@@ -467,7 +468,7 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
 fn rewrite_and_combine_filters(schema: &Schema, filters: &[Expr]) -> (Option<Expr>, Option<Expr>) {
     let rewritten_filters = filters
         .iter()
-        .filter_map(|filter| rewrite_filter(schema, filter));
+        .filter_map(|filter| rewrite_timestamp_filter(schema, filter));
 
     let (parquet_rewritten_filters, grid_rewritten_filters): (Vec<Expr>, Vec<Expr>) =
         rewritten_filters.unzip();
@@ -481,11 +482,11 @@ fn rewrite_and_combine_filters(schema: &Schema, filters: &[Expr]) -> (Option<Exp
     )
 }
 
-/// Rewrite the `filter` that is written in terms of the time series table's query schema, to a filter
-/// that is written in terms of the schema used for compressed segments by the storage engine and a
-/// filter that is written in terms of the schema used for univariate time series by [`GridExec`].
-/// If the filter cannot be rewritten, [`None`] is returned.
-fn rewrite_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> {
+/// Rewrite a `filter` that prunes timestamps that is written in terms of the time series table's
+/// query schema, to a filter that is written in terms of the schema used for compressed segments by
+/// the storage engine and a filter that is written in terms of the schema used for univariate time
+/// series by [`GridExec`]. If the filter cannot be rewritten, [`None`] is returned.
+fn rewrite_timestamp_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> {
     match filter {
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
             if let Expr::Column(column) = &**left {
@@ -566,6 +567,73 @@ fn rewrite_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> 
                 None
             }
         }
+        _other => None,
+    }
+}
+
+/// Rewrite `filter` to a Delta Lake [`FilterLiteral`] for a tag column if `filter` is for a tag
+/// column, otherwise [`None`] is returned.
+fn rewrite_tag_filter<'a>(
+    tag_column_names: &HashSet<&str>,
+    filter: &'a Expr,
+) -> Option<FilterLiteral<'a>> {
+    match filter {
+        Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
+            let filter_op = match op {
+                Operator::Eq => FilterOp::Eq,
+                Operator::NotEq => FilterOp::Ne,
+                _ => return None,
+            };
+
+            // Equality and inequality are symmetric, so the operands can be in either order.
+            let (tag_column_name, value) = match (&**left, &**right) {
+                (Expr::Column(column), literal) | (literal, Expr::Column(column)) => {
+                    (column.name.as_str(), string_literal(literal)?)
+                }
+                _ => return None,
+            };
+
+            tag_column_names.contains(tag_column_name).then_some((
+                tag_column_name,
+                filter_op,
+                FilterValue::Scalar(value),
+            ))
+        }
+        Expr::InList(InList {
+            expr,
+            list,
+            negated,
+        }) => {
+            let Expr::Column(column) = &**expr else {
+                return None;
+            };
+
+            let tag_column_name = column.name.as_str();
+            if !tag_column_names.contains(tag_column_name) {
+                return None;
+            }
+
+            let values = list
+                .iter()
+                .map(string_literal)
+                .collect::<Option<Vec<&str>>>()?;
+
+            let filter_op = if *negated {
+                FilterOp::NotIn
+            } else {
+                FilterOp::In
+            };
+
+            Some((tag_column_name, filter_op, FilterValue::Set(values)))
+        }
+        _other => None,
+    }
+}
+
+/// Return the value of `expr` if it is a non-null string literal, otherwise [`None`] is returned.
+fn string_literal(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Literal(value, _metadata) => value.try_as_str().flatten(),
         _other => None,
     }
 }
@@ -773,13 +841,26 @@ impl TableProvider for TimeSeriesTable {
         let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
             Vec::with_capacity(stored_field_columns_in_projection.len());
 
+        // The tag columns are partition columns, so filters on them can be used to only retrieve the
+        // files that contain segments for the time series that are required by the query.
+        let tag_column_names: HashSet<&str> = tag_column_indices
+            .iter()
+            .map(|index| schema.field(*index).name().as_str())
+            .collect();
+        let tag_partition_filters: Vec<FilterLiteral> = filters
+            .iter()
+            .filter_map(|filter| rewrite_tag_filter(&tag_column_names, filter))
+            .collect();
+
         for field_column_index in stored_field_columns_in_projection {
             let field_column_index = field_column_index.to_string();
-            let partition_filters = [(
+            let mut partition_filters = Vec::with_capacity(1 + tag_partition_filters.len());
+            partition_filters.push((
                 FIELD_COLUMN,
                 FilterOp::Eq,
-                FilterValue::Scalar(&field_column_index),
-            )];
+                FilterValue::Scalar(field_column_index.as_str()),
+            ));
+            partition_filters.extend(tag_partition_filters.iter().cloned());
 
             let data_source_exec = self
                 .new_data_source_exec(
@@ -982,6 +1063,40 @@ mod tests {
             "timestamp",
             Operator::Eq,
             lit(TIMESTAMP_PREDICATE_VALUE),
+        );
+    }
+
+    // Tests for rewrite_tag_filter().
+    #[test]
+    fn test_rewrite_tag_filters_equal_and_not_equal() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag"]),
+                &logical_expr::col("tag").eq(lit("a"))
+            ),
+            Some(("tag", FilterOp::Eq, FilterValue::Scalar("a")))
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_rewrite_tag_in_list() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag"]),
+                &logical_expr::col("tag").in_list(vec![lit("a"), lit("b")], false)
+            ),
+            Some(("tag", FilterOp::In, FilterValue::Set(vec!["a", "b"]))),
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_return_none_for_non_tags() {
+        assert!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag"]),
+                &logical_expr::col("field").eq(lit("a"))
+            )
+            .is_none()
         );
     }
 

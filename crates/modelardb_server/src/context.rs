@@ -947,7 +947,7 @@ mod tests {
 
         // The files should still exist on disk even though they are no longer active.
         let column_path = format!(
-            "{}/tables/{}/field_column=0",
+            "{}/tables/{}/field_column=0/tag=tag",
             temp_dir.path().to_str().unwrap(),
             TIME_SERIES_TABLE_NAME
         );
@@ -959,7 +959,7 @@ mod tests {
             .await
             .unwrap();
 
-        // No files should remain in the column folder.
+        // No files should remain in the partition folder.
         let files = std::fs::read_dir(&column_path).unwrap();
         assert_eq!(files.count(), 0);
     }

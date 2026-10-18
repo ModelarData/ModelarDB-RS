@@ -1009,7 +1009,7 @@ mod tests {
             .unwrap();
 
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
     }
 
     #[tokio::test]
@@ -2183,7 +2183,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
 
         data_folder.truncate(TIME_SERIES_TABLE_NAME).await.unwrap();
 
@@ -2257,7 +2257,7 @@ mod tests {
 
         // The files should still exist on disk even though they are no longer active.
         let column_path = format!(
-            "{}/tables/{}/field_column=3",
+            "{}/tables/{}/field_column=3/tag_1=tag_x/tag_2=tag_a",
             temp_dir.path().to_str().unwrap(),
             TIME_SERIES_TABLE_NAME
         );
@@ -2269,7 +2269,7 @@ mod tests {
             .await
             .unwrap();
 
-        // No files should remain in the column folder.
+        // No files should remain in the partition folder.
         let files = std::fs::read_dir(&column_path).unwrap();
         assert_eq!(files.count(), 0);
     }
@@ -2315,8 +2315,8 @@ mod tests {
     async fn test_optimize_time_series_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
-        // Each write commits one file per field column partition, so four writes to the two
-        // partitions produce eight small files.
+        // Each write commits one file per partition and the data contains two time series with two
+        // field columns, so four writes to the four partitions produce sixteen small files.
         for _ in 0..4 {
             data_folder
                 .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
@@ -2328,19 +2328,19 @@ mod tests {
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 8);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 16);
 
         data_folder
             .optimize(TIME_SERIES_TABLE_NAME, None)
             .await
             .unwrap();
 
-        // The files in each of the two partitions should be merged into a single active file.
+        // The files in each of the four partitions should be merged into a single active file.
         let delta_table = data_folder
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
     }
 
     #[tokio::test]
@@ -2535,7 +2535,7 @@ mod tests {
 
         let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
 
         source
             .r#move(TIME_SERIES_TABLE_NAME, &target, TIME_SERIES_TABLE_NAME)
@@ -2574,7 +2574,7 @@ mod tests {
 
         let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
 
         // Even though the query schemas are different, the data should still be moved.
         source
