@@ -38,6 +38,9 @@ use rustyline::history::FileHistory;
 use crate::error::{ModelarDbClientError, Result};
 use crate::helper::ClientHelper;
 
+/// The number of times to retry an operation before giving up.
+const RETRY_COUNT: u8 = 1;
+
 /// Command line arguments for the ModelarDB client.
 #[derive(Parser)]
 #[command(
@@ -160,25 +163,27 @@ async fn execute_and_print_command_or_query(client: &mut Client, command_or_quer
         return;
     }
 
-    // Try commands at most two times as Tonic will automatically reconnect if possible. Queries are
-    // not retried as the client does not parse them to see if they are read-only, nor does the
-    // client know if the server already executed the query before the connection was lost. Thus,
+    // Try commands at most RETRY_COUNT times as Tonic will automatically reconnect if possible.
+    // Queries are not retried as the client does not parse them to see if they are read-only, nor
+    // does the client know if the server executed the query before the connection was lost. Thus,
     // the client cannot know if it can retry without the server tracking which queries have failed.
     let is_command = command_or_query.starts_with('\\');
-    for retries in 0..2 {
+    for attempt in 0..=RETRY_COUNT {
         let result = if is_command {
             execute_command(client, command_or_query).await
         } else {
             execute_query_and_print_result(client, command_or_query).await
         };
 
-        // The first argument to println!() is not put an a variable as it must be a string literal.
+        // The first argument to println!() is not put in a variable as it must be a string literal.
         match result {
             Ok(()) => {
                 println!("\nTime: {:?}\n", start_time.elapsed());
                 return;
             }
-            Err(error) if the_connection_was_closed(&error) && is_command && retries == 0 => (),
+            Err(error) if connection_was_closed(&error) && is_command && attempt < RETRY_COUNT => {
+                ()
+            }
             Err(error) => {
                 eprintln!("{error}");
                 println!("\nTime: {:?}\n", start_time.elapsed());
@@ -423,7 +428,7 @@ fn print_node_metrics(node_metrics: &protocol::NodeMetrics) {
 }
 
 /// Return true if `error` is due to the server-side connection being closed.
-fn the_connection_was_closed(error: &ModelarDbClientError) -> bool {
+fn connection_was_closed(error: &ModelarDbClientError) -> bool {
     if let ModelarDbClientError::ModelarDbEmbedded(ModelarDbEmbeddedError::TonicStatus(status)) =
         error
     {
