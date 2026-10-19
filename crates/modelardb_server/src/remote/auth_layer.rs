@@ -50,7 +50,8 @@ const DO_PUT_PATH: &str = "/arrow.flight.protocol.FlightService/DoPut";
 const DO_ACTION_PATH: &str = "/arrow.flight.protocol.FlightService/DoAction";
 const LIST_ACTIONS_PATH: &str = "/arrow.flight.protocol.FlightService/ListActions";
 
-/// Size of the gRPC frame header, which is a 1-byte compression flag and a 4-byte message length.
+/// Size of the gRPC frame header, which is a 1-byte compression flag and a 4-byte message length,
+/// as defined by the gRPC protocol in https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md.
 const GRPC_HEADER_SIZE: usize = 5;
 
 /// [`Layer`] that enforces authentication and authorization on all incoming Apache Arrow Flight
