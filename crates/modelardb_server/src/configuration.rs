@@ -25,9 +25,9 @@
 use std::sync::Arc;
 
 use modelardb_storage::data_folder::DataFolder;
-use modelardb_storage::parser;
 use modelardb_storage::write_ahead_log::WriteAheadLog;
 use modelardb_types::flight::protocol;
+use modelardb_types::functions;
 use modelardb_types::types::MAX_RETENTION_PERIOD_IN_SECONDS;
 use object_store::path::Path;
 use object_store::{Error, ObjectStoreExt, PutPayload};
@@ -60,8 +60,8 @@ struct ConfigurationFile {
     uncompressed_reserved_memory: String,
     /// Amount of memory to reserve for storing compressed data buffers.
     compressed_reserved_memory: String,
-    /// The number of data that are required before transferring a batch of data to the remote
-    /// object store. If [`None`], data is only transferred on an explicit flush.
+    /// The amount of data that is required before transferring a batch of data to the remote object
+    /// store. If [`None`], data is only transferred on an explicit flush.
     transfer_batch_size: Option<String>,
     /// The approximate maximum size of a single WAL segment file before it is closed and a new one
     /// is started.
@@ -149,62 +149,11 @@ impl Default for ConfigurationFile {
     }
 }
 
-/// Parse a value followed by a percentage or a unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB,
-/// TiB, case-insensitive).
-/// - If `input` is a percentage and a total is given, that percentage of the total in bytes is returned.
-/// - If `input` has a unit as a suffix, the specified amount of `input` in bytes is returned.
-/// - If a parse error occurs it is returned.
-fn parse_size_argument(input: &str, maybe_total: Option<u64>) -> Result<u64> {
-    let (value, suffix) = split_at_unit(input)?;
-    let bytes = if let Some(total) = maybe_total
-        && suffix == "%"
-    {
-        ((total as f64 / 100.0) * value as f64) as u64
-    } else {
-        value * parser::byte_unit_multiplier(suffix)?
-    };
-
-    Ok(bytes)
-}
-
-/// Parse a value followed by a unit (S, M, H, and D case-insensitive). If a parse error occurs it
-/// is returned.
-fn parse_time_argument(input: &str) -> Result<u64> {
-    let (value, unit) = split_at_unit(input)?;
-    let seconds = value
-        * match unit.to_uppercase().as_str() {
-            "" => Ok(1),
-            "S" => Ok(1),
-            "M" => Ok(60),
-            "H" => Ok(60 * 60),
-            "D" => Ok(60 * 60 * 24),
-            _ => Err(ModelarDbServerError::InvalidArgument(format!(
-                "Unit must be S, M, H, or D, not '{unit}'."
-            ))),
-        }?;
-
-    Ok(seconds)
-}
-
-/// Split `input` into its value and unit.
-fn split_at_unit(input: &str) -> Result<(u64, &str)> {
-    let input = input.trim();
-    let unit_start = input
-        .char_indices()
-        .find_map(|(index, character)| (!character.is_numeric()).then_some(index))
-        .unwrap_or(input.len());
-
-    let value: u64 = input[0..unit_start].parse::<u64>()?;
-    let unit = input[unit_start..input.len()].trim();
-
-    Ok((value, unit))
-}
-
 /// Manages the system's configuration and provides functionality for updating the configuration.
 pub struct ConfigurationManager {
     /// The local data folder that stores the configuration file at the root.
     local_data_folder: Arc<DataFolder>,
-    /// The configuration file in local data folder. This is stored in simplify updating it.
+    /// The configuration file in local data folder. This is stored to simplify updating it.
     configuration_file: ConfigurationFile,
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
@@ -280,36 +229,36 @@ impl ConfigurationManager {
         // Parameters specified on the command-line take precedence over the configuration file.
         configuration_file.update_from_args(args);
 
-        // Parse the configuration and prepare the values for the creating manager.
-        // The values is parsed outside Self as configuration_file is moved into it.
+        // Parse the configuration and prepare the values for creating the ConfigurationManager.
+        // The values are all parsed outside Self as the configuration_file is moved into it.
         let mut system = System::new();
         system.refresh_memory();
         let total_memory_in_bytes = Some(system.total_memory());
 
-        let ingested_reserved_memory_in_bytes = parse_size_argument(
+        let ingested_reserved_memory_in_bytes = functions::parse_size_argument(
             &configuration_file.ingested_reserved_memory,
             total_memory_in_bytes,
         )?;
-        let uncompressed_reserved_memory_in_bytes = parse_size_argument(
+        let uncompressed_reserved_memory_in_bytes = functions::parse_size_argument(
             &configuration_file.uncompressed_reserved_memory,
             total_memory_in_bytes,
         )?;
-        let compressed_reserved_memory_in_bytes = parse_size_argument(
+        let compressed_reserved_memory_in_bytes = functions::parse_size_argument(
             &configuration_file.compressed_reserved_memory,
             total_memory_in_bytes,
         )?;
         let transfer_batch_size_in_bytes =
             if let Some(transfer_batch_size) = &configuration_file.transfer_batch_size {
-                Some(parse_size_argument(transfer_batch_size, None)?)
+                Some(functions::parse_size_argument(transfer_batch_size, None)?)
             } else {
                 None
             };
         let segment_size_threshold_in_bytes =
-            parse_size_argument(&configuration_file.segment_size_threshold, None)?;
+            functions::parse_size_argument(&configuration_file.segment_size_threshold, None)?;
         let optimize_target_file_size_in_bytes =
-            parse_size_argument(&configuration_file.optimize_target_file_size, None)?;
+            functions::parse_size_argument(&configuration_file.optimize_target_file_size, None)?;
         let vacuum_retention_period_in_seconds =
-            parse_time_argument(&configuration_file.vacuum_retention_period)?;
+            functions::parse_time_argument(&configuration_file.vacuum_retention_period)?;
         let ingestion_threads = 1;
         let compression_threads = 1;
         let writer_threads = 1;
@@ -323,7 +272,7 @@ impl ConfigurationManager {
             WalMode::Disabled
         };
 
-        // Validate the configuration and prepare the values for the creating manager.
+        // Validate the values are correct before creating the ConfigurationManager.
         // TODO: Add support for running multiple threads per component. The individual
         //       components in the storage engine have not been validated with multiple threads, e.g.,
         //       UncompressedDataManager may have race conditions finishing buffers if multiple
@@ -649,6 +598,7 @@ mod tests {
 
     use clap::Parser;
     use modelardb_storage::data_folder::DataFolder;
+    use modelardb_test::system;
     use modelardb_types::types::{Node, ServerMode};
     use tempfile::TempDir;
     use tokio::sync::RwLock;
@@ -731,7 +681,8 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            "Parse Int Error: cannot parse integer from empty string".to_owned()
+            "ModelarDB Types Error: Parse Int Error: cannot parse integer from empty string"
+                .to_owned()
         );
     }
 
@@ -834,13 +785,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        // The default is a percentage of the system's memory.
-        assert!(
+        // The default is 10% of the system's memory.
+        assert_eq!(
             configuration_manager
                 .read()
                 .await
-                .ingested_reserved_memory_in_bytes()
-                > 0
+                .ingested_reserved_memory_in_bytes(),
+            system::percentage_of_total_memory(10.0)
         );
 
         let new_value = 1024;
@@ -871,13 +822,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        // The default is a percentage of the system's memory.
-        assert!(
+        // The default is 10% of the system's memory.
+        assert_eq!(
             configuration_manager
                 .read()
                 .await
-                .uncompressed_reserved_memory_in_bytes()
-                > 0
+                .uncompressed_reserved_memory_in_bytes(),
+            system::percentage_of_total_memory(10.0)
         );
 
         let new_value = 1024;
@@ -908,13 +859,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
-        // The default is a percentage of the system's memory.
-        assert!(
+        // The default is 30% of the system's memory.
+        assert_eq!(
             configuration_manager
                 .read()
                 .await
-                .compressed_reserved_memory_in_bytes()
-                > 0
+                .compressed_reserved_memory_in_bytes(),
+            system::percentage_of_total_memory(30.0)
         );
 
         let new_value = 1024;
@@ -1198,159 +1149,5 @@ mod tests {
 
     fn default_args() -> ServerArgs {
         ServerArgs::parse_from(["modelardbd", "edge", "data"])
-    }
-
-    // Tests for parse_size_argument().
-    #[test]
-    fn test_parse_size_argument_empty_string() {
-        assert_eq!(
-            parse_size_argument("", Some(10240))
-                .unwrap_err()
-                .to_string(),
-            "Parse Int Error: cannot parse integer from empty string"
-        )
-    }
-
-    #[test]
-    fn test_parse_size_argument_no_suffix() {
-        assert_eq!(parse_size_argument("37", Some(10240)).unwrap(), 37)
-    }
-
-    #[test]
-    fn test_parse_size_argument_no_suffix_with_whitespace() {
-        // ast-grep-ignore as the extra spaces are purposely added for testing.
-        assert_eq!(parse_size_argument("  37  ", Some(10240)).unwrap(), 37)
-    }
-
-    #[test]
-    fn test_parse_size_argument_byte_suffix() {
-        assert_eq!(parse_size_argument("37B", Some(10240)).unwrap(), 37)
-    }
-
-    #[test]
-    fn test_parse_size_argument_byte_suffix_with_whitespace() {
-        // ast-grep-ignore as the extra spaces are purposely added for testing.
-        assert_eq!(parse_size_argument(" 37   B  ", Some(10240)).unwrap(), 37)
-    }
-
-    #[test]
-    fn test_parse_size_argument_kilobyte_suffix() {
-        assert_eq!(parse_size_argument("37KB", Some(10240)).unwrap(), 37000)
-    }
-
-    #[test]
-    fn test_parse_size_argument_kibibyte_suffix() {
-        assert_eq!(parse_size_argument("37KiB", Some(10240)).unwrap(), 37888)
-    }
-
-    #[test]
-    fn test_parse_size_argument_megabyte_suffix() {
-        assert_eq!(parse_size_argument("37MB", Some(10240)).unwrap(), 37000000)
-    }
-
-    #[test]
-    fn test_parse_size_argument_mebibyte_suffix() {
-        assert_eq!(parse_size_argument("37MiB", Some(10240)).unwrap(), 38797312)
-    }
-
-    #[test]
-    fn test_parse_size_argument_gigabyte_suffix() {
-        assert_eq!(
-            parse_size_argument("37GB", Some(10240)).unwrap(),
-            37000000000
-        )
-    }
-
-    #[test]
-    fn test_parse_size_argument_gibibyte_suffix() {
-        assert_eq!(
-            parse_size_argument("37GiB", Some(10240)).unwrap(),
-            39728447488
-        )
-    }
-
-    #[test]
-    fn test_parse_size_argument_terabyte_suffix() {
-        assert_eq!(
-            parse_size_argument("37TB", Some(10240)).unwrap(),
-            37000000000000
-        )
-    }
-
-    #[test]
-    fn test_parse_size_argument_tebibyte_suffix() {
-        assert_eq!(
-            parse_size_argument("37TiB", Some(10240)).unwrap(),
-            40681930227712
-        )
-    }
-
-    #[test]
-    fn test_parse_size_argument_percentage() {
-        assert_eq!(parse_size_argument("10%", Some(10240)).unwrap(), 1024);
-    }
-
-    #[test]
-    fn test_parse_size_argument_wrong_suffix() {
-        assert_eq!(
-            parse_size_argument("10#", Some(10240))
-                .unwrap_err()
-                .to_string(),
-            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not '#'."
-        )
-    }
-
-    // Tests for parse_time_argument().
-    #[test]
-    fn test_parse_time_argument_empty_string() {
-        assert_eq!(
-            parse_time_argument("").unwrap_err().to_string(),
-            "Parse Int Error: cannot parse integer from empty string"
-        )
-    }
-
-    #[test]
-    fn test_parse_time_argument_no_suffix() {
-        assert_eq!(parse_time_argument("37").unwrap(), 37)
-    }
-
-    #[test]
-    fn test_parse_time_argument_no_suffix_with_whitespace() {
-        // ast-grep-ignore as the extra spaces are purposely added for testing.
-        assert_eq!(parse_time_argument("  37  ").unwrap(), 37)
-    }
-
-    #[test]
-    fn test_parse_time_argument_second_suffix() {
-        assert_eq!(parse_time_argument("37S").unwrap(), 37)
-    }
-
-    #[test]
-    fn test_parse_time_argument_second_suffix_with_whitespace() {
-        // ast-grep-ignore as the extra spaces are purposely added for testing.
-        assert_eq!(parse_time_argument(" 37   S  ").unwrap(), 37)
-    }
-
-    #[test]
-    fn test_parse_time_argument_minute_suffix() {
-        assert_eq!(parse_time_argument("37M").unwrap(), 2220)
-    }
-
-    #[test]
-    fn test_parse_time_argument_hour_suffix() {
-        assert_eq!(parse_time_argument("37H").unwrap(), 133200)
-    }
-
-    #[test]
-    fn test_parse_time_argument_day_suffix() {
-        assert_eq!(parse_time_argument("37D").unwrap(), 3196800)
-    }
-
-    #[test]
-    fn test_parse_time_argument_wrong_suffix() {
-        assert_eq!(
-            parse_time_argument("10MS").unwrap_err().to_string(),
-            "Invalid Argument Error: Unit must be S, M, H, or D, not 'MS'."
-        )
     }
 }

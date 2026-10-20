@@ -3714,6 +3714,7 @@ dependencies = [
  "modelardb_types",
  "object_store",
  "rand 0.10.3",
+ "sysinfo 0.39.6",
  "url",
 ]
 

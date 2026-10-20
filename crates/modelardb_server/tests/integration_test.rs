@@ -38,8 +38,8 @@ use datafusion::arrow::ipc::writer::{
 };
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{StreamExt, stream};
-use modelardb_test::data_generation;
 use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
+use modelardb_test::{data_generation, system};
 use modelardb_types::flight::protocol;
 use modelardb_types::types::{ErrorBound, Node, ServerMode};
 use prost::Message;
@@ -1413,9 +1413,18 @@ async fn test_can_get_configuration() {
     let configuration = protocol::Configuration::decode(configuration_bytes).unwrap();
 
     // Only stable fields are asserted exactly. Reserved memory is a percentage of the system total.
-    assert!(configuration.ingested_reserved_memory_in_bytes > 0);
-    assert!(configuration.uncompressed_reserved_memory_in_bytes > 0);
-    assert!(configuration.compressed_reserved_memory_in_bytes > 0);
+    assert_eq!(
+        configuration.ingested_reserved_memory_in_bytes,
+        system::percentage_of_total_memory(10.0)
+    );
+    assert_eq!(
+        configuration.uncompressed_reserved_memory_in_bytes,
+        system::percentage_of_total_memory(10.0)
+    );
+    assert_eq!(
+        configuration.compressed_reserved_memory_in_bytes,
+        system::percentage_of_total_memory(30.0)
+    );
     assert_eq!(
         configuration.transfer_batch_size_in_bytes,
         Some(64 * 1024 * 1024)

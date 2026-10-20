@@ -35,7 +35,7 @@ use datafusion::logical_expr::{
 };
 use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
-use modelardb_types::functions::normalize_name; // Fully imported to not conflict.
+use modelardb_types::functions::{byte_unit_multiplier, normalize_name}; // Fully imported to not conflict.
 use modelardb_types::types::{
     ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
     TimeSeriesTableMetadata,
@@ -686,7 +686,8 @@ impl ModelarDbDialect {
         let value = self.parse_unsigned_literal_u64(parser)?;
 
         let maybe_unit_and_multiplier = if let Token::Word(word) = parser.peek_nth_token(0).token {
-            let multiplier = byte_unit_multiplier(&word.value)?;
+            let multiplier = byte_unit_multiplier(&word.value)
+                .map_err(|error| ParserError::ParserError(error.to_string()))?;
             Some((word.value, multiplier))
         } else {
             None
@@ -793,27 +794,6 @@ fn new_address_setting(address: String) -> Setting {
     });
 
     Setting { key, value }
-}
-
-/// Return the number of bytes a single unit of `unit` represents if `unit` is a supported byte unit
-/// (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, TiB, case-insensitive), otherwise [`ParserError`]
-/// is returned.
-pub fn byte_unit_multiplier(unit: &str) -> StdResult<u64, ParserError> {
-    match unit.to_uppercase().as_str() {
-        "" => Ok(1),
-        "B" => Ok(1),
-        "KB" => Ok(1000),
-        "K" | "KIB" => Ok(1024),
-        "MB" => Ok(1000 * 1000),
-        "M" | "MIB" => Ok(1024 * 1024),
-        "GB" => Ok(1000 * 1000 * 1000),
-        "G" | "GIB" => Ok(1024 * 1024 * 1024),
-        "TB" => Ok(1000 * 1000 * 1000 * 1000),
-        "T" | "TIB" => Ok(1024 * 1024 * 1024 * 1024),
-        _ => Err(ParserError::ParserError(format!(
-            "Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not '{unit}'."
-        ))),
-    }
 }
 
 impl Dialect for ModelarDbDialect {
@@ -2431,6 +2411,16 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_short_kib_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 K");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024));
+        assert!(!cluster)
+    }
+
+    #[test]
     fn test_tokenize_and_parse_optimize_with_target_size_and_mb_unit() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
             parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1024 MB");
@@ -2444,6 +2434,16 @@ mod tests {
     fn test_tokenize_and_parse_optimize_with_target_size_and_mib_unit() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
             parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1024 MIB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_short_mib_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1024 M");
 
         assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024));
@@ -2471,6 +2471,16 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_short_gib_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 G");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
     fn test_tokenize_and_parse_optimize_with_target_size_and_tb_unit() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
             parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 TB");
@@ -2484,6 +2494,16 @@ mod tests {
     fn test_tokenize_and_parse_optimize_with_target_size_and_tib_unit() {
         let (table_names, maybe_target_size_in_bytes, cluster) =
             parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 TIB");
+
+        assert!(table_names.is_empty());
+        assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024 * 1024));
+        assert!(!cluster)
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_optimize_with_target_size_and_short_tib_unit() {
+        let (table_names, maybe_target_size_in_bytes, cluster) =
+            parse_optimize_and_extract_table_names("OPTIMIZE TARGET 1 T");
 
         assert!(table_names.is_empty());
         assert_eq!(maybe_target_size_in_bytes, Some(1024 * 1024 * 1024 * 1024));
@@ -2737,7 +2757,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'XY'."
+            "Parser Error: sql parser error: Invalid Argument Error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'XY'."
         );
     }
 
@@ -2760,7 +2780,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'TARGET'."
+            "Parser Error: sql parser error: Invalid Argument Error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'TARGET'."
         );
     }
 
@@ -2790,7 +2810,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'table_1'."
+            "Parser Error: sql parser error: Invalid Argument Error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'table_1'."
         );
     }
 
@@ -2801,7 +2821,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'CLUSTER'."
+            "Parser Error: sql parser error: Invalid Argument Error: Unit must be B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB, not 'CLUSTER'."
         );
     }
 
