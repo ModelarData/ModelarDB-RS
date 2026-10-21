@@ -1412,7 +1412,6 @@ async fn test_can_get_configuration() {
     let configuration_bytes = test_context.retrieve_action_bytes("GetConfiguration").await;
     let configuration = protocol::Configuration::decode(configuration_bytes).unwrap();
 
-    // Only stable fields are asserted exactly. Reserved memory is a percentage of the system total.
     assert_eq!(
         configuration.ingested_reserved_memory_in_bytes,
         system::percentage_of_total_memory(10.0)
