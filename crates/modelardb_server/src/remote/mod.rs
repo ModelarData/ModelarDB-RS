@@ -64,6 +64,10 @@ use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 use crate::remote::auth_layer::AuthLayer;
 
+/// Maximum size of a decoded gRPC message. It is increased from the default of 4 MiB to 16 MiB to
+/// allow bulk-loading larger batches.
+const MAX_DECODING_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
 /// process the requests through [`FlightServiceHandler`]. All requests are passed through the
 /// [`AuthLayer`], which authenticates them using `maybe_authenticator` before they are passed to
@@ -89,9 +93,8 @@ pub async fn start_apache_arrow_flight_server(
     let auth_layer = AuthLayer::new(maybe_authenticator, maybe_cluster_key);
     let handler = FlightServiceHandler::new(context);
 
-    // Increase the maximum message size from 4 MiB to 16 MiB to allow bulk-loading larger batches.
     let flight_service_server =
-        FlightServiceServer::new(handler).max_decoding_message_size(16777216);
+        FlightServiceServer::new(handler).max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE);
 
     info!("Starting Apache Arrow Flight on {}.", localhost_with_port);
 
