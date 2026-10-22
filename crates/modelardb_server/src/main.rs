@@ -63,7 +63,7 @@ pub(crate) struct ServerArgs {
     #[arg(long, env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY")]
     compressed_reserved_memory: Option<String>,
 
-    /// Amount of data required before transferring a batch of data to the remote object store.
+    /// Size of data required before transferring a batch of data to the remote object store.
     /// If not set, data is only transferred on an explicit flush.
     #[arg(long, env = "MODELARDBD_TRANSFER_BATCH_SIZE")]
     transfer_batch_size: Option<String>,
@@ -82,7 +82,7 @@ pub(crate) struct ServerArgs {
 
     /// Retention period used when automatically vacuuming a table during compaction. This is also
     /// the default value used when a VACUUM query is executed without an explicit retention period.
-    /// Note that a very low value can delete files an in-progress query is still scanning.
+    /// Note that a very low value can delete files that an in-progress query is still scanning.
     #[arg(long, env = "MODELARDBD_VACUUM_RETENTION_PERIOD")]
     vacuum_retention_period: Option<String>,
 
