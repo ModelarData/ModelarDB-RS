@@ -18,6 +18,7 @@
 pub mod data_folder;
 pub mod data_generation;
 pub mod object_store;
+pub mod system;
 pub mod table;
 
 /// Bucket and container name used by MinIO and Azurite.

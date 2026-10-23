@@ -27,4 +27,5 @@ modelardb_types.workspace = true
 modelardb_storage.workspace = true
 object_store = { workspace = true, features = ["aws", "azure"] }
 rand.workspace = true
+sysinfo.workspace = true
 url.workspace = true

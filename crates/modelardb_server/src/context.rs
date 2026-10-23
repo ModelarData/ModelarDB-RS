@@ -51,7 +51,7 @@ impl Context {
     pub async fn try_new(
         data_folders: DataFolders,
         cluster_mode: ClusterMode,
-        args: &ServerArgs,
+        args: ServerArgs,
     ) -> Result<Self> {
         let configuration_manager = Arc::new(RwLock::new(
             ConfigurationManager::try_new(
@@ -1264,7 +1264,7 @@ mod tests {
             Context::try_new(
                 DataFolders::new(local_data_folder.clone(), None, local_data_folder),
                 ClusterMode::SingleNode(node),
-                &ServerArgs::parse_from(["modelardbd", "edge", "data"]),
+                ServerArgs::parse_from(["modelardbd", "edge", "data"]),
             )
             .await
             .unwrap(),

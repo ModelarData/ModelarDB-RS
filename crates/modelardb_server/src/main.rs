@@ -34,7 +34,8 @@ use crate::context::Context;
 use crate::data_folders::DataFolders;
 use crate::error::Result;
 
-/// Command line arguments for the ModelarDB server.
+/// Command line arguments for the ModelarDB server. Sizes are purposely parsed in [`configuration`]
+/// instead of by [`Parser`] to support units.
 #[derive(Parser)]
 #[command(
     about = "ModelarDB server",
@@ -50,41 +51,40 @@ pub(crate) struct ServerArgs {
     #[arg(long, default_value_t = 9999, env = "MODELARDBD_PORT")]
     port: u16,
 
-    /// Amount of memory in bytes to reserve for storing ingested time series.
-    #[arg(long, env = "MODELARDBD_INGESTED_RESERVED_MEMORY_IN_BYTES")]
-    ingested_reserved_memory_in_bytes: Option<u64>,
+    /// Amount of memory as an absolute memory amount or percentage of system memory to reserve for storing ingested time series.
+    #[arg(long, env = "MODELARDBD_INGESTED_RESERVED_MEMORY")]
+    ingested_reserved_memory: Option<String>,
 
-    /// Amount of memory in bytes to reserve for storing uncompressed data buffers.
-    #[arg(long, env = "MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")]
-    uncompressed_reserved_memory_in_bytes: Option<u64>,
+    /// Amount of memory as an absolute memory amount or percentage of system memory for storing uncompressed data buffers.
+    #[arg(long, env = "MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY")]
+    uncompressed_reserved_memory: Option<String>,
 
-    /// Amount of memory in bytes to reserve for storing compressed data buffers.
-    #[arg(long, env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES")]
-    compressed_reserved_memory_in_bytes: Option<u64>,
+    /// Amount of memory as an absolute memory amount or percentage of system memory for storing compressed data buffers.
+    #[arg(long, env = "MODELARDBD_COMPRESSED_RESERVED_MEMORY")]
+    compressed_reserved_memory: Option<String>,
 
-    /// Number of bytes required before transferring a batch of data to the remote object store.
+    /// Size of data required before transferring a batch of data to the remote object store.
     /// If not set, data is only transferred on an explicit flush.
-    #[arg(long, env = "MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")]
-    transfer_batch_size_in_bytes: Option<u64>,
+    #[arg(long, env = "MODELARDBD_TRANSFER_BATCH_SIZE")]
+    transfer_batch_size: Option<String>,
 
-    /// Approximate maximum size in bytes of a single WAL segment file before a new one is started.
+    /// Approximate maximum size of a single WAL segment file before a new one is started.
     /// The size is approximate since the in-memory size of each batch is used instead of its
     /// on-disk size to avoid the overhead of reading the file size after each write.
-    #[arg(long, env = "MODELARDBD_SEGMENT_SIZE_THRESHOLD_IN_BYTES")]
-    segment_size_threshold_in_bytes: Option<u64>,
+    #[arg(long, env = "MODELARDBD_SEGMENT_SIZE_THRESHOLD")]
+    segment_size_threshold: Option<String>,
 
-    /// Target size, in bytes, of the files produced when automatically compacting a table's
-    /// storage. This is also the default value used when an OPTIMIZE query is executed without an
-    /// explicit target size.
-    #[arg(long, env = "MODELARDBD_OPTIMIZE_TARGET_FILE_SIZE_IN_BYTES")]
-    optimize_target_file_size_in_bytes: Option<u64>,
+    /// Target size of the files produced when automatically compacting a table's storage. This is
+    /// also the default value used when an OPTIMIZE query is executed without an explicit target
+    /// size.
+    #[arg(long, env = "MODELARDBD_OPTIMIZE_TARGET_FILE_SIZE")]
+    optimize_target_file_size: Option<String>,
 
-    /// Retention period, in seconds, used when automatically vacuuming a table during compaction.
-    /// This is also the default value used when a VACUUM query is executed without an explicit
-    /// retention period. Note that a very low value can delete files an in-progress query is still
-    /// scanning.
-    #[arg(long, env = "MODELARDBD_VACUUM_RETENTION_PERIOD_IN_SECONDS")]
-    vacuum_retention_period_in_seconds: Option<u64>,
+    /// Retention period used when automatically vacuuming a table during compaction. This is also
+    /// the default value used when a VACUUM query is executed without an explicit retention period.
+    /// Note that a very low value can delete files that an in-progress query is still scanning.
+    #[arg(long, env = "MODELARDBD_VACUUM_RETENTION_PERIOD")]
+    vacuum_retention_period: Option<String>,
 
     /// Whether the write-ahead log is enabled.
     #[arg(long, env = "MODELARDBD_WAL_ENABLED")]
@@ -135,11 +135,12 @@ async fn main() -> Result<()> {
     tracing_subscriber::registry().with(stdout_log).init();
 
     let args = ServerArgs::parse();
+    let port = args.port;
 
     let (cluster_mode, data_folders) =
         DataFolders::try_from_args(&args.mode, &args.host, args.port).await?;
 
-    let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone(), &args).await?);
+    let context = Arc::new(Context::try_new(data_folders, cluster_mode.clone(), args).await?);
 
     // Register normal tables and time series tables.
     context.register_normal_tables().await?;
@@ -156,7 +157,7 @@ async fn main() -> Result<()> {
     context.replay_write_ahead_log().await?;
 
     // Start the Apache Arrow Flight interface.
-    remote::start_apache_arrow_flight_server(context, None, args.port).await?;
+    remote::start_apache_arrow_flight_server(context, None, port).await?;
 
     Ok(())
 }

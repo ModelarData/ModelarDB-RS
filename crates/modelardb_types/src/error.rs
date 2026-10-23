@@ -18,6 +18,7 @@
 use std::env::VarError;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::num::ParseIntError;
 use std::result::Result as StdResult;
 
 use arrow::error::ArrowError;
@@ -38,6 +39,8 @@ pub enum ModelarDbTypesError {
     EnvironmentVar(VarError),
     /// Error returned when an invalid argument was passed.
     InvalidArgument(String),
+    /// Error returned when parsing an int that is not valid.
+    ParseInt(ParseIntError),
     /// Error returned by Prost when decoding a message that is not valid.
     ProstDecode(DecodeError),
 }
@@ -49,6 +52,7 @@ impl Display for ModelarDbTypesError {
             Self::DataFusion(reason) => write!(f, "DataFusion Error: {reason}"),
             Self::EnvironmentVar(reason) => write!(f, "Environment Variable Error: {reason}"),
             Self::InvalidArgument(reason) => write!(f, "Invalid Argument Error: {reason}"),
+            Self::ParseInt(reason) => write!(f, "Parse Int Error: {reason}"),
             Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
         }
     }
@@ -62,6 +66,7 @@ impl Error for ModelarDbTypesError {
             Self::DataFusion(reason) => Some(reason),
             Self::EnvironmentVar(reason) => Some(reason),
             Self::InvalidArgument(_reason) => None,
+            Self::ParseInt(reason) => Some(reason),
             Self::ProstDecode(reason) => Some(reason),
         }
     }
@@ -82,6 +87,12 @@ impl From<DataFusionError> for ModelarDbTypesError {
 impl From<VarError> for ModelarDbTypesError {
     fn from(error: VarError) -> Self {
         Self::EnvironmentVar(error)
+    }
+}
+
+impl From<ParseIntError> for ModelarDbTypesError {
+    fn from(error: ParseIntError) -> Self {
+        Self::ParseInt(error)
     }
 }
 

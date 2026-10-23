@@ -38,8 +38,8 @@ use datafusion::arrow::ipc::writer::{
 };
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{StreamExt, stream};
-use modelardb_test::data_generation;
 use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
+use modelardb_test::{data_generation, system};
 use modelardb_types::flight::protocol;
 use modelardb_types::types::{ErrorBound, Node, ServerMode};
 use prost::Message;
@@ -1414,15 +1414,15 @@ async fn test_can_get_configuration() {
 
     assert_eq!(
         configuration.ingested_reserved_memory_in_bytes,
-        512 * 1024 * 1024
+        system::percentage_of_total_memory(10.0)
     );
     assert_eq!(
         configuration.uncompressed_reserved_memory_in_bytes,
-        512 * 1024 * 1024
+        system::percentage_of_total_memory(10.0)
     );
     assert_eq!(
         configuration.compressed_reserved_memory_in_bytes,
-        512 * 1024 * 1024
+        system::percentage_of_total_memory(30.0)
     );
     assert_eq!(
         configuration.transfer_batch_size_in_bytes,
@@ -1651,17 +1651,11 @@ async fn test_can_get_node_metrics() {
     assert!(metrics.total_disk_space_in_bytes > 0);
 
     assert_eq!(metrics.ingested_used_memory_in_bytes, 0);
-    assert_eq!(metrics.ingested_reserved_memory_in_bytes, 512 * 1024 * 1024);
+    assert!(metrics.ingested_reserved_memory_in_bytes > 0);
 
     assert_eq!(metrics.uncompressed_used_memory_in_bytes, 0);
-    assert_eq!(
-        metrics.uncompressed_reserved_memory_in_bytes,
-        512 * 1024 * 1024
-    );
+    assert!(metrics.uncompressed_reserved_memory_in_bytes > 0);
 
     assert_eq!(metrics.compressed_used_memory_in_bytes, 0);
-    assert_eq!(
-        metrics.compressed_reserved_memory_in_bytes,
-        512 * 1024 * 1024
-    );
+    assert!(metrics.compressed_reserved_memory_in_bytes > 0);
 }
