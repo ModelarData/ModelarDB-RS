@@ -48,6 +48,7 @@ services:
   # ModelarDB services.
   modelardb-edge-1:
     build: .
+    pull_policy: build
     image: modelardb
     container_name: modelardb-edge-1
     command: [ "target/release/modelardbd", "edge", "data/edge", "s3://modelardb" ]
@@ -66,6 +67,7 @@ services:
 
   modelardb-edge-2:
     image: modelardb
+    pull_policy: never
     container_name: modelardb-edge-2
     command: [ "target/release/modelardbd", "edge", "data/edge", "s3://modelardb" ]
     ports:
@@ -83,6 +85,7 @@ services:
 
   modelardb-cloud-1:
     image: modelardb
+    pull_policy: never
     container_name: modelardb-cloud-1
     command: [ "target/release/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
     ports:
@@ -100,6 +103,7 @@ services:
 
   modelardb-cloud-2:
     image: modelardb
+    pull_policy: never
     container_name: modelardb-cloud-2
     command: [ "target/release/modelardbd", "cloud", "data/cloud", "s3://modelardb" ]
     ports:
