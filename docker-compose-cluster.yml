@@ -16,14 +16,14 @@ x-aws-variables: &aws-variables
   AWS_ACCESS_KEY_ID: minioadmin
   AWS_SECRET_ACCESS_KEY: minioadmin
   AWS_DEFAULT_REGION: eu-central-1
-  AWS_ENDPOINT: http://minio-server:9000
+  AWS_ENDPOINT: http://object-store:9000
   AWS_ALLOW_HTTP: true
 
 services:
   # Object store services.
-  minio-server:
-    image: pgsty/minio
-    container_name: minio-server
+  object-store:
+    image: pgsty/silo
+    container_name: object-store
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -36,12 +36,12 @@ services:
     image: pgsty/mc
     container_name: create-bucket
     depends_on:
-      - minio-server
+      - object-store
     entrypoint:
       /bin/sh -c "
       sleep 2;
-      /usr/bin/mc alias set modelardb-minio http://minio-server:9000 minioadmin minioadmin;
-      /usr/bin/mc mb modelardb-minio/modelardb;
+      /usr/bin/mc alias set object-store http://object-store:9000 minioadmin minioadmin;
+      /usr/bin/mc mb object-store/modelardb;
       exit 0;
       "
 
