@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-target
-Dockerfile
-docker-compose.yml
-docker-compose-minio.yml
 .dockerignore
 .git
-.gitignore
 .github
+.gitignore
+.idea
+/data
+Dockerfile
+docker-compose-*.yml
+docs
 LICENSE
 README.md
+rules
+sgconfig.yml
+target

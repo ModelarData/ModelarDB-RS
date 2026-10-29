@@ -472,8 +472,8 @@ docker-compose -p modelardb-cluster start
 docker-compose -p modelardb-cluster stop
 ```
 
-The cluster deployment sets up a Silo object store and a S3-compatible client is used to initialize the bucket 
-`modelardb` in the object store. Silo can be administered through its [web interface](http://127.0.0.1:9001). The 
+The cluster deployment sets up a Silo object store and a S3-compatible client is used to initialize the bucket
+`modelardb` in the object store. Silo can be administered through its [web interface](http://127.0.0.1:9001). The
 default username and password, `minioadmin`, can be used to log in.
 
 The cluster itself consists of two edge nodes and two cloud nodes. The edge nodes can be accessed using
