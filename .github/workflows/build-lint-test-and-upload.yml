@@ -27,7 +27,7 @@ env:
   RUSTDOCFLAGS: -D warnings
   LLVM_PROFILE_FILE: modelardb-%p-%m.profraw
 
-  # MinIO.
+  # Object Store.
   AWS_ACCESS_KEY_ID: minioadmin
   AWS_SECRET_ACCESS_KEY: minioadmin
   AWS_DEFAULT_REGION: eu-central-1
@@ -50,22 +50,24 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v7
 
-    # Setup MinIO.
-    - name: Setup MinIO
+    # Setup Silo.
+    - name: Setup Silo
       shell: bash
       run: |
         case $(uname) in
         'Linux')
-          curl -L -O https://github.com/pgsty/minio/releases/download/RELEASE.2026-06-18T00-00-00Z/minio_20260618000000.0.0_linux_amd64.tar.gz ;;
+          curl -L -O https://github.com/pgsty/silo/releases/download/RELEASE.2026-10-26T00-00-00Z/silo_20261026000000.0.0_linux_amd64.tar.gz
+          tar -xf silo_*.tar.gz silo ;;
         'Darwin')
-          curl -L -O https://github.com/pgsty/minio/releases/download/RELEASE.2026-06-18T00-00-00Z/minio_20260618000000.0.0_darwin_arm64.tar.gz ;;
+          curl -L -O https://github.com/pgsty/silo/releases/download/RELEASE.2026-10-26T00-00-00Z/silo_20261026000000.0.0_darwin_arm64.tar.gz
+          tar -xf silo_*.tar.gz silo ;;
         *)
-          curl -L -O https://github.com/pgsty/minio/releases/download/RELEASE.2026-06-18T00-00-00Z/minio_20260618000000.0.0_windows_amd64.tar.gz ;;
+          curl -L -O https://github.com/pgsty/silo/releases/download/RELEASE.2026-10-26T00-00-00Z/silo_20261026000000.0.0_windows_amd64.zip
+          unzip silo_*.zip silo.exe ;;
         esac
 
-        tar -xf minio_*.tar.gz
-        ./minio server minio_data_folder --console-address :9001 &
-        sleep 5 # Ensure minio has fully finished creating the endpoint.
+        ./silo server silo_data_folder --console-address :9001 &
+        sleep 5 # Ensure silo has fully finished creating the endpoint.
         aws s3 mb s3://modelardb --endpoint-url http://localhost:9000
 
     # Setup Azurite.

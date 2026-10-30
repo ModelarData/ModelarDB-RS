@@ -31,7 +31,7 @@ pub async fn local_file_system_data_folder(data_folder_path: &StdPath) -> DataFo
     DataFolder::open_local(data_folder_path).await.unwrap()
 }
 
-/// Return a [`DataFolder`] storing data in an Amazon S3 compatible object store for testing using MinIO.
+/// Return a [`DataFolder`] storing data in an Amazon S3 compatible object store for testing using Silo.
 pub async fn s3_data_folder() -> DataFolder {
     DataFolder::open_s3(
         "http://localhost:9000".to_owned(),

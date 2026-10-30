@@ -106,9 +106,9 @@ store is used:
 --aws-secret-access-key / AWS_SECRET_ACCESS_KEY
 ```
 
-For example, to use a local instance of [MinIO](https://github.com/pgsty/minio), assuming the access key id `KURo1eQeMhDeVsrz` and the
-secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` have been created through MinIO's command line tool or web
-interface, set the environment variables as follows:
+For example, to use a local instance of [Silo](https://github.com/pgsty/silo), a maintained fork of MinIO, assuming the
+access key id `KURo1eQeMhDeVsrz` and the secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` have been created through
+Silo's command line tool or web interface, set the environment variables as follows:
 
 ```shell
 AWS_ENDPOINT="http://127.0.0.1:9000"
@@ -116,7 +116,7 @@ AWS_ACCESS_KEY_ID="KURo1eQeMhDeVsrz"
 AWS_SECRET_ACCESS_KEY="sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p"
 ```
 
-Then, assuming a bucket named `wind-turbine` has been created through MinIO's command line tool or web interface,
+Then, assuming a bucket named `wind-turbine` has been created through Silo's command line tool or web interface,
 `modelardbd` can be started in edge mode with transfer of the ingested data to the object store using the
 following command:
 
@@ -472,11 +472,11 @@ docker-compose -p modelardb-cluster start
 docker-compose -p modelardb-cluster stop
 ```
 
-The cluster deployment sets up a MinIO object store and a MinIO client is used to initialize the bucket `modelardb` in
-the object store. MinIO can be administered through its [web interface](http://127.0.0.1:9001). The default username and
-password, `minioadmin`, can be used to log in.
+The cluster deployment sets up a Silo object store and a S3-compatible client is used to initialize the bucket
+`modelardb` in the object store. Silo can be administered through its [web interface](http://127.0.0.1:9001). The
+default username and password, `minioadmin`, can be used to log in.
 
 The cluster itself consists of two edge nodes and two cloud nodes. The edge nodes can be accessed using
 the URLs `grpc://127.0.0.1:9999` and `grpc://127.0.0.1:9998`, and the cloud nodes using the URLs `grpc://127.0.0.1:9997`
 and `grpc://127.0.0.1:9996`. Tables can be created and data can be ingested, compressed, and transferred to the object
-store through all four nodes. The compressed data in the MinIO object store can then be queried through the cloud nodes.
+store through all four nodes. The compressed data in the Silo object store can then be queried through the cloud nodes.

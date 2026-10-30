@@ -21,7 +21,7 @@ pub mod object_store;
 pub mod system;
 pub mod table;
 
-/// Bucket and container name used by MinIO and Azurite.
+/// Bucket and container name used by Silo and Azurite.
 pub const BUCKET_AND_CONTAINER_NAME: &str = "modelardb";
 
 /// Expected size of the uncompressed data buffers produced in the tests.
