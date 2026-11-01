@@ -322,24 +322,21 @@ impl TimeSeriesTable {
             })
             .collect::<Vec<_>>();
 
-        let partitioned_file = PartitionedFile {
-            object_meta,
-            partition_values,
-            range: None,
-            statistics: self.logical_file_view_statistics(logical_file_view),
-            ordering: None,
-            extensions: Default::default(),
-            metadata_size_hint: None,
-            table_reference: None,
-            arrow_schema: None,
+        let partitioned_file =
+            PartitionedFile::new_from_meta(object_meta).with_partition_values(partition_values);
+        let partitioned_file = match self.logical_file_view_statistics(logical_file_view) {
+            Some(statistics) => partitioned_file.with_statistics(statistics),
+            None => partitioned_file,
         };
 
         Ok(partitioned_file)
     }
 
     /// Extract the raw JSON statistics stored in `logical_file_view`, parse it, and then convert it
-    /// to a [`Statistics`]. Returns [`None`] if the statistics are absent or cannot be parsed as
-    /// both result in the statistics not being available.
+    /// to a [`Statistics`] for the columns in [`QUERY_COMPRESSED_SCHEMA`]. The tag columns are not
+    /// included as they are partition columns and thus not stored in the Apache Parquet files.
+    /// Returns [`None`] if the statistics are absent or cannot be parsed as both result in the
+    /// statistics not being available.
     fn logical_file_view_statistics(
         &self,
         logical_file_view: &LogicalFileView,
@@ -351,7 +348,7 @@ impl TimeSeriesTable {
         let parsed_statistics = parsed_statistics.as_object()?;
 
         // Create a Statistics with everything absent and then overwrite values with those we have.
-        let mut datafusion_statistics = Statistics::new_unknown(&self.query_compressed_schema);
+        let mut datafusion_statistics = Statistics::new_unknown(&QUERY_COMPRESSED_SCHEMA.0);
 
         // Overwrite statistics for the entire file.
         if let Some(num_records) = parsed_statistics
@@ -374,7 +371,7 @@ impl TimeSeriesTable {
             .and_then(serde_json::Value::as_object);
 
         // Overwrite statistics for the each field.
-        for (index, field) in self.query_compressed_schema.fields().iter().enumerate() {
+        for (index, field) in QUERY_COMPRESSED_SCHEMA.0.fields().iter().enumerate() {
             let column_statistics = &mut datafusion_statistics.column_statistics[index];
             let column_name = field.name();
 
