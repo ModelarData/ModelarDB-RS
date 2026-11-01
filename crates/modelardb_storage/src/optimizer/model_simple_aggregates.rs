@@ -28,6 +28,7 @@ use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
 use datafusion::datasource::physical_plan::{FileScanConfig, FileSource, ParquetSource};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::functions_aggregate::min_max::{MaxAccumulator, MinAccumulator};
 use datafusion::logical_expr::{self, Volatility};
 use datafusion::physical_expr::aggregate::AggregateExprBuilder;
 use datafusion::physical_optimizer::PhysicalOptimizerRule;
@@ -40,7 +41,7 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue;
 use modelardb_types::schemas::QUERY_COMPRESSED_SCHEMA;
-use modelardb_types::types::{ArrowValue, TimestampArray, Value, ValueArray};
+use modelardb_types::types::{ArrowValue, TimestampArray, ValueArray};
 
 use crate::query::sorted_join_exec::SortedJoinExec;
 
@@ -97,7 +98,10 @@ static MODEL_AGGREGATE_MIN: LazyLock<Arc<AggregateFunctionExpr>> = LazyLock::new
         MODEL_AGGREGATE_TYPES.to_vec(),
         Arc::new(ArrowValue::DATA_TYPE),
         Volatility::Immutable,
-        Arc::new(|_| Ok(Box::new(ModelMinAccumulator { min: Value::MAX }))),
+        Arc::new(|_| {
+            let accumulator = Box::new(MinAccumulator::try_new(&ArrowValue::DATA_TYPE)?);
+            Ok(Box::new(ModelMinMaxAccumulator::new(4, accumulator)))
+        }),
         Arc::new(vec![ArrowValue::DATA_TYPE]),
     ));
 
@@ -117,7 +121,10 @@ static MODEL_AGGREGATE_MAX: LazyLock<Arc<AggregateFunctionExpr>> = LazyLock::new
         MODEL_AGGREGATE_TYPES.to_vec(),
         Arc::new(ArrowValue::DATA_TYPE),
         Volatility::Immutable,
-        Arc::new(|_| Ok(Box::new(ModelMaxAccumulator { max: Value::MIN }))),
+        Arc::new(|_| {
+            let accumulator = Box::new(MaxAccumulator::try_new(&ArrowValue::DATA_TYPE)?);
+            Ok(Box::new(ModelMinMaxAccumulator::new(5, accumulator)))
+        }),
         Arc::new(vec![ArrowValue::DATA_TYPE]),
     ));
 
@@ -137,7 +144,7 @@ static MODEL_AGGREGATE_SUM: LazyLock<Arc<AggregateFunctionExpr>> = LazyLock::new
         MODEL_AGGREGATE_TYPES.to_vec(),
         Arc::new(DataType::Float64),
         Volatility::Immutable,
-        Arc::new(|_| Ok(Box::new(ModelSumAccumulator { sum: 0.0 }))),
+        Arc::new(|_| Ok(Box::new(ModelSumAccumulator { sum: None }))),
         Arc::new(vec![DataType::Float64]),
     ));
 
@@ -381,65 +388,31 @@ impl Accumulator for ModelCountAccumulator {
     }
 }
 
-/// [`Accumulator`] that computes `MIN` directly from segments containing metadata and models.
+/// [`Accumulator`] that computes `MIN` or `MAX` directly from segments containing metadata and
+/// models. The minimum or maximum value of each segment is passed to Apache DataFusion's
+/// [`MinAccumulator`] or [`MaxAccumulator`] so the result matches the value-based aggregates.
 #[derive(Debug)]
-struct ModelMinAccumulator {
-    /// Current minimum value stored by the [`Accumulator`].
-    min: f32,
+struct ModelMinMaxAccumulator {
+    /// Index of the column in the segments with the minimum or maximum value of each segment.
+    column_index: usize,
+    /// Apache DataFusion's [`MinAccumulator`] or [`MaxAccumulator`] that computes the aggregate.
+    accumulator: Box<dyn Accumulator>,
 }
 
-impl Accumulator for ModelMinAccumulator {
-    /// Update the [`Accumulators`](Accumulator) state from `values`.
-    fn update_batch(&mut self, values: &[ArrayRef]) -> DataFusionResult<()> {
-        let min_values = modelardb_types::value!(values, 4, ValueArray);
-        for row_index in 0..min_values.len() {
-            self.min = Value::min(self.min, min_values.value(row_index));
+impl ModelMinMaxAccumulator {
+    fn new(column_index: usize, accumulator: Box<dyn Accumulator>) -> Self {
+        Self {
+            column_index,
+            accumulator,
         }
-
-        Ok(())
-    }
-
-    /// Panics as this method should never be called.
-    fn merge_batch(&mut self, _states: &[ArrayRef]) -> DataFusionResult<()> {
-        unreachable!()
-    }
-
-    /// Return the current state of the [`Accumulator`].
-    fn state(&mut self) -> DataFusionResult<Vec<ScalarValue>> {
-        // After this, the accumulators state should be equivalent to when it was created.
-        let state = vec![ScalarValue::Float32(Some(self.min))];
-        self.min = f32::MAX;
-        Ok(state)
-    }
-
-    /// Panics as this method should never be called.
-    fn evaluate(&mut self) -> DataFusionResult<ScalarValue> {
-        // After this, the accumulators state should be equivalent to when it was created.
-        unreachable!()
-    }
-
-    /// Return the size of the [`Accumulator`] including `Self`.
-    fn size(&self) -> usize {
-        mem::size_of_val(self)
     }
 }
 
-/// [`Accumulator`] that computes `MAX` directly from segments containing metadata and models.
-#[derive(Debug)]
-struct ModelMaxAccumulator {
-    /// Current maximum value stored by the [`Accumulator`].
-    max: f32,
-}
-
-impl Accumulator for ModelMaxAccumulator {
-    /// Update the [`Accumulators`](Accumulator) state from `values`.
+impl Accumulator for ModelMinMaxAccumulator {
+    /// Update the [`Accumulators`](Accumulator) state from `arrays`.
     fn update_batch(&mut self, arrays: &[ArrayRef]) -> DataFusionResult<()> {
-        let max_values = modelardb_types::value!(arrays, 5, ValueArray);
-        for row_index in 0..max_values.len() {
-            self.max = Value::max(self.max, max_values.value(row_index));
-        }
-
-        Ok(())
+        self.accumulator
+            .update_batch(&arrays[self.column_index..=self.column_index])
     }
 
     /// Panics as this method should never be called.
@@ -449,29 +422,25 @@ impl Accumulator for ModelMaxAccumulator {
 
     /// Return the current state of the [`Accumulator`].
     fn state(&mut self) -> DataFusionResult<Vec<ScalarValue>> {
-        // After this, the accumulators state should be equivalent to when it was created.
-        let state = vec![ScalarValue::Float32(Some(self.max))];
-        self.max = f32::MIN;
-        Ok(state)
+        self.accumulator.state()
     }
 
     /// Panics as this method should never be called.
     fn evaluate(&mut self) -> DataFusionResult<ScalarValue> {
-        // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
 
     /// Return the size of the [`Accumulator`] including `Self`.
     fn size(&self) -> usize {
-        mem::size_of_val(self)
+        mem::size_of_val(self) + self.accumulator.size()
     }
 }
 
 /// [`Accumulator`] that computes `SUM` directly from segments containing metadata and models.
 #[derive(Debug)]
 struct ModelSumAccumulator {
-    /// Current sum stored by the [`Accumulator`].
-    sum: f64,
+    /// Current sum stored by the [`Accumulator`]. [`None`] if no values have been seen.
+    sum: Option<f64>,
 }
 
 impl Accumulator for ModelSumAccumulator {
@@ -496,7 +465,7 @@ impl Accumulator for ModelSumAccumulator {
             let values = values.value(row_index);
             let residuals = residuals.value(row_index);
 
-            self.sum += modelardb_compression::sum(
+            *self.sum.get_or_insert(0.0) += modelardb_compression::sum(
                 model_type_id,
                 start_time,
                 end_time,
@@ -520,9 +489,8 @@ impl Accumulator for ModelSumAccumulator {
     /// [SumAccumulator](repository/datafusion/physical-expr/src/aggregate/sum.rs).
     fn state(&mut self) -> DataFusionResult<Vec<ScalarValue>> {
         // After this, the accumulators state should be equivalent to when it was created.
-        let state = vec![ScalarValue::Float64(Some(self.sum))];
-        self.sum = 0.0;
-        Ok(state)
+        // The state is NULL if no values have been seen, so it matches SumAccumulator.
+        Ok(vec![ScalarValue::Float64(self.sum.take())])
     }
 
     /// Panics as this method should never be called.
