@@ -70,6 +70,8 @@ pub(crate) struct TimeSeriesTable {
     data_sink: Arc<dyn DataSink>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u16,
+    /// Names of the tag columns which are used to rewrite filters on tags to partition filters.
+    tag_column_names: HashSet<String>,
     /// Schema of the compressed segments stored on disk.
     query_compressed_schema: Arc<Schema>,
     /// The sort order [`DataSourceExec`] guarantees for the segments it produces. It is guaranteed
@@ -110,6 +112,19 @@ impl TimeSeriesTable {
                 })
                 .expect("Time series tables should contain at least one field.") as u16
         };
+
+        // Compute the names of the tag columns once as they are used when planning each query.
+        let tag_column_names = time_series_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| {
+                time_series_table_metadata
+                    .schema
+                    .field(*index)
+                    .name()
+                    .clone()
+            })
+            .collect();
 
         // Add the tag columns to the base schema for queryable compressed segments.
         let mut query_compressed_schema_fields = Vec::with_capacity(
@@ -157,6 +172,7 @@ impl TimeSeriesTable {
             time_series_table_metadata,
             data_sink,
             fallback_field_column,
+            tag_column_names,
             query_compressed_schema,
             query_order_segment,
             query_requirement_segment,
@@ -572,9 +588,9 @@ fn rewrite_timestamp_filter(query_schema: &Schema, filter: &Expr) -> Option<(Exp
 }
 
 /// Rewrite `filter` to a Delta Lake [`FilterLiteral`] for a tag column if `filter` is for a tag
-/// column, otherwise [`None`] is returned.
+/// column and the predicate is equality or inequality, otherwise [`None`] is returned.
 fn rewrite_tag_filter<'a>(
-    tag_column_names: &HashSet<&str>,
+    tag_column_names: &HashSet<String>,
     filter: &'a Expr,
 ) -> Option<FilterLiteral<'a>> {
     match filter {
@@ -585,7 +601,6 @@ fn rewrite_tag_filter<'a>(
                 _ => return None,
             };
 
-            // Equality and inequality are symmetric, so the operands can be in either order.
             let (tag_column_name, value) = match (&**left, &**right) {
                 (Expr::Column(column), literal) | (literal, Expr::Column(column)) => {
                     (column.name.as_str(), string_literal(literal)?)
@@ -843,13 +858,9 @@ impl TableProvider for TimeSeriesTable {
 
         // The tag columns are partition columns, so filters on them can be used to only retrieve the
         // files that contain segments for the time series that are required by the query.
-        let tag_column_names: HashSet<&str> = tag_column_indices
-            .iter()
-            .map(|index| schema.field(*index).name().as_str())
-            .collect();
         let tag_partition_filters: Vec<FilterLiteral> = filters
             .iter()
-            .filter_map(|filter| rewrite_tag_filter(&tag_column_names, filter))
+            .filter_map(|filter| rewrite_tag_filter(&self.tag_column_names, filter))
             .collect();
 
         for field_column_index in stored_field_columns_in_projection {
@@ -902,14 +913,25 @@ impl TableProvider for TimeSeriesTable {
         }
     }
 
-    /// Specify that time series tables perform inexact predicate push-down.
+    /// Specify that time series tables perform exact predicate push-down for filters that can be
+    /// converted to Delta Lake partition filters and inexact predicate push-down for other filters.
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
     ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        // Iterate over the individual predicates so we can check if each individual filter is
+        // Exact, Inxact, or Unsupported. For example, Delta Lake partition filters are exact.
         Ok(filters
             .iter()
-            .map(|_filter| TableProviderFilterPushDown::Inexact)
+            .map(|filter| {
+                // rewrite_tag_filter() is used directly to check if the filter is tag filter that
+                // can be push to Delta Lake as the only extra step it does is return a new filter.
+                if rewrite_tag_filter(&self.tag_column_names, filter).is_some() {
+                    TableProviderFilterPushDown::Exact
+                } else {
+                    TableProviderFilterPushDown::Inexact
+                }
+            })
             .collect())
     }
 
@@ -934,7 +956,7 @@ impl TableProvider for TimeSeriesTable {
 mod tests {
     use super::*;
 
-    use datafusion::logical_expr::lit;
+    use datafusion::logical_expr::{col, lit};
     use datafusion::prelude::Expr;
     use modelardb_test::table;
     use modelardb_types::types::Timestamp;
@@ -1066,43 +1088,9 @@ mod tests {
         );
     }
 
-    // Tests for rewrite_tag_filter().
-    #[test]
-    fn test_rewrite_tag_filters_equal_and_not_equal() {
-        assert_eq!(
-            rewrite_tag_filter(
-                &HashSet::from(["tag"]),
-                &logical_expr::col("tag").eq(lit("a"))
-            ),
-            Some(("tag", FilterOp::Eq, FilterValue::Scalar("a")))
-        );
-    }
-
-    #[test]
-    fn test_rewrite_tag_filter_rewrite_tag_in_list() {
-        assert_eq!(
-            rewrite_tag_filter(
-                &HashSet::from(["tag"]),
-                &logical_expr::col("tag").in_list(vec![lit("a"), lit("b")], false)
-            ),
-            Some(("tag", FilterOp::In, FilterValue::Set(vec!["a", "b"]))),
-        );
-    }
-
-    #[test]
-    fn test_rewrite_tag_filter_return_none_for_non_tags() {
-        assert!(
-            rewrite_tag_filter(
-                &HashSet::from(["tag"]),
-                &logical_expr::col("field").eq(lit("a"))
-            )
-            .is_none()
-        );
-    }
-
     fn new_timestamp_filters(operator: Operator) -> Vec<Expr> {
         vec![new_binary_expr(
-            logical_expr::col("timestamp"),
+            col("timestamp"),
             operator,
             lit(TIMESTAMP_PREDICATE_VALUE),
         )]
@@ -1110,11 +1098,132 @@ mod tests {
 
     fn assert_binary_expr(expr: Expr, column: &str, operator: Operator, value: Expr) {
         if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = expr {
-            assert_eq!(*left, logical_expr::col(column));
+            assert_eq!(*left, col(column));
             assert_eq!(op, operator);
             assert_eq!(*right, value);
         } else {
             panic!("Expr is not a BinaryExpr.");
         }
+    }
+
+    // Tests for rewrite_tag_filter().
+    #[test]
+    fn test_rewrite_tag_filter_equal() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag").eq(lit("tag_value"))
+            ),
+            Some(("tag", FilterOp::Eq, FilterValue::Scalar("tag_value")))
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_equal_reversed() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag").eq(lit("tag_value"))
+            ),
+            Some(("tag", FilterOp::Eq, FilterValue::Scalar("tag_value")))
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_not_equal() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag").eq(lit("tag_value"))
+            ),
+            Some(("tag", FilterOp::Eq, FilterValue::Scalar("tag_value")))
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_not_equal_reversed() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &lit("tag").eq(col("tag_value"))
+            ),
+            Some(("tag", FilterOp::Eq, FilterValue::Scalar("tag_value")))
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_rewrite_tag_in_list() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag").in_list(vec![lit("tag_value_one"), lit("tag_value_two")], false)
+            ),
+            Some((
+                "tag",
+                FilterOp::In,
+                FilterValue::Set(vec!["tag_value_one", "tag_value_two"])
+            )),
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_return_none_for_non_tags() {
+        assert!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("field").eq(lit(37.0))
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_return_none_for_tag_and_non_tags() {
+        assert!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag")
+                    .eq(lit("tag_value"))
+                    .or(col("field").eq(lit(37.0)))
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_rewrite_multiple_tag_filters_on_one_column() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag")
+                    .eq(lit("tag_value_one"))
+                    .or(col("tag").eq(lit("tag_value_two")))
+                    .or(col("tag")
+                        .in_list(vec![lit("tag_value_three"), lit("tag_value_four")], false))
+            ),
+            Some((
+                "tag",
+                FilterOp::In,
+                FilterValue::Set(vec![
+                    "tag_value_one",
+                    "tag_value_two",
+                    "tag_value_three",
+                    "tag_value_four"
+                ])
+            )),
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_rewrite_return_none_multiple_tag_filters_on_different_columns() {
+        assert!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag_one".to_owned(), "tag_two".to_owned()]),
+                &col("tag_one")
+                    .eq(lit("tag_one_value"))
+                    .or(col("tag_two").eq(lit("tag_two_value")))
+            )
+            .is_none()
+        );
     }
 }
