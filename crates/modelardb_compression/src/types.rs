@@ -31,7 +31,7 @@ use modelardb_types::types::{
 use crate::models::macaque_v::MacaqueV;
 use crate::models::pmc_mean::PMCMean;
 use crate::models::swing::Swing;
-use crate::models::{PMC_MEAN_ID, SWING_ID};
+use crate::models::{self, PMC_MEAN_ID, SWING_ID};
 use crate::models::{VALUE_SIZE_IN_BYTES, timestamps};
 
 /// A model being built from an uncompressed segment using the potentially lossy model types in
@@ -123,9 +123,9 @@ impl ModelBuilder {
         let end_index = start_index + swing.len() - 1;
         let bytes_per_value = swing.bytes_per_value();
         let (first_value, last_value) = swing.model();
-        let min_value = Value::min(first_value, last_value);
-        let max_value = Value::max(first_value, last_value);
-        let values = if first_value < last_value {
+        let min_value = models::total_min(first_value, last_value);
+        let max_value = models::total_max(first_value, last_value);
+        let values = if first_value.total_cmp(&last_value).is_lt() {
             vec![]
         } else {
             vec![0]
@@ -243,8 +243,8 @@ impl CompressedSegmentBuilder {
                 _ => panic!("Unknown model type."),
             };
 
-            self.min_value = Value::min(self.min_value, residuals_min_value);
-            self.max_value = Value::max(self.max_value, residuals_max_value);
+            self.min_value = models::total_min(self.min_value, residuals_min_value);
+            self.max_value = models::total_max(self.max_value, residuals_max_value);
 
             // The length is known to be at most RESIDUAL_VALUES_MAX_LENGTH: u8.
             residuals.push((residuals_end_index - residuals_start_index) as u8 + 1);
@@ -288,9 +288,9 @@ impl CompressedSegmentBuilder {
     ) -> Vec<u8> {
         let mut values = vec![];
 
-        if min_value > residuals_min_value {
+        if residuals_min_value.total_cmp(&min_value).is_lt() {
             // The models minimum is overwritten so another value must be used.
-            if max_value >= residuals_max_value {
+            if max_value.total_cmp(&residuals_max_value).is_ge() {
                 // Minimum and maximum is the same for PMC-Mean, so maximum can be used with a flag.
                 values.push(1);
             } else {
@@ -329,7 +329,10 @@ impl CompressedSegmentBuilder {
         residuals_min_value: Value,
         residuals_max_value: Value,
     ) -> Vec<u8> {
-        if residuals_min_value < min_value && max_value < residuals_max_value {
+        let min_is_overwritten = residuals_min_value.total_cmp(&min_value).is_lt();
+        let max_is_overwritten = max_value.total_cmp(&residuals_max_value).is_lt();
+
+        if min_is_overwritten && max_is_overwritten {
             // Minimum and maximum is overwritten so first and last value are stored.
             let mut values = Vec::with_capacity(2 * VALUE_SIZE_IN_BYTES as usize);
             if min_value_is_first {
@@ -340,7 +343,7 @@ impl CompressedSegmentBuilder {
                 values.extend_from_slice(&min_value.to_le_bytes());
             }
             values
-        } else if residuals_min_value < min_value {
+        } else if min_is_overwritten {
             // Minimum is overwritten so a flag is stored for the order and then the models minimum.
             let mut values = Vec::with_capacity(1 + VALUE_SIZE_IN_BYTES as usize);
             if min_value_is_first {
@@ -351,7 +354,7 @@ impl CompressedSegmentBuilder {
                 values.extend(min_value.to_le_bytes());
             }
             values
-        } else if max_value < residuals_max_value {
+        } else if max_is_overwritten {
             // Maximum is overwritten so a flag is stored for the order and then the models maximum.
             let mut values = Vec::with_capacity(1 + VALUE_SIZE_IN_BYTES as usize);
             if min_value_is_first {

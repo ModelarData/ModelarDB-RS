@@ -1324,7 +1324,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(actual_result, time_series_table_data().slice(2, 2));
+        // The timestamp filter use parallel streams, so the order of the rows is not deterministic.
+        assert_eq!(
+            sort_by_tags_and_timestamp(&actual_result),
+            time_series_table_data().slice(2, 2)
+        );
     }
 
     #[tokio::test]
@@ -2630,9 +2634,11 @@ mod tests {
     }
 
     fn assert_generated_column_result_eq(
-        mut actual_result: RecordBatch,
+        actual_result: RecordBatch,
         expected_result_without_generated_column: RecordBatch,
     ) {
+        // GeneratedAsExec use parallel streams, so the order of the rows is not deterministic.
+        let mut actual_result = sort_by_tags_and_timestamp(&actual_result);
         let generated_column_result = actual_result.remove_column(5);
         assert_eq!(actual_result, expected_result_without_generated_column);
         assert_eq!(
@@ -2884,6 +2890,11 @@ mod tests {
     }
 
     fn sorted_time_series_table_data() -> RecordBatch {
+        sort_by_tags_and_timestamp(&time_series_table_data())
+    }
+
+    /// Sort `record_batch` by `tag_1`, `tag_2`, and `timestamp` so tests are not flaky.
+    fn sort_by_tags_and_timestamp(record_batch: &RecordBatch) -> RecordBatch {
         let sort_options = SortOptions {
             descending: false,
             nulls_first: false,
@@ -2905,7 +2916,7 @@ mod tests {
         ];
 
         sort::sort_batch(
-            &time_series_table_data(),
+            record_batch,
             &LexOrdering::new(physical_sort_exprs).unwrap(),
             None,
         )
