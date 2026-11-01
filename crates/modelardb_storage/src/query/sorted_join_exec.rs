@@ -25,7 +25,7 @@ use std::task::{Context as StdTaskContext, Poll};
 
 use arrow::datatypes::Schema;
 use datafusion::arrow::array::ArrayRef;
-use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
@@ -306,7 +306,9 @@ impl SortedJoinStream {
             }
         }
 
-        let batch = RecordBatch::try_new(self.schema.clone(), columns)
+        // The number of rows must be set explicitly as COUNT(*) makes DataFusion request zero columns.
+        let options = RecordBatchOptions::new().with_row_count(Some(batch.num_rows()));
+        let batch = RecordBatch::try_new_with_options(self.schema.clone(), columns, &options)
             .expect("SortedJoinStream should have ordered columns to match the schema.");
 
         Poll::Ready(Some(Ok(batch)))

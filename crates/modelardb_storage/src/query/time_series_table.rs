@@ -846,6 +846,7 @@ impl TableProvider for TimeSeriesTable {
             self.grid_schema.clone(),
         )?;
 
+        // At least one field column must be part of the query, otherwise nothing is returned.
         if stored_field_columns_in_projection.is_empty() {
             stored_field_columns_in_projection.push(self.fallback_field_column);
         }
