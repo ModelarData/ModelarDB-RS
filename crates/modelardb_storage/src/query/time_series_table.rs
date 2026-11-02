@@ -135,21 +135,18 @@ impl TimeSeriesTable {
             .build();
 
         let (query_order_segment, query_requirement_segment) = query_order_and_requirement(
-            &time_series_table_metadata,
+            &tag_columns,
             compressed_table_schema.table_schema(),
             Column::new("start_time", 1),
         );
 
         // Add the tag columns to the base schema for data points.
         let mut grid_schema_fields = GRID_SCHEMA.0.fields.to_vec();
-        grid_schema_fields.extend(tag_columns);
+        grid_schema_fields.extend(tag_columns.clone());
         let grid_schema = Arc::new(Schema::new(grid_schema_fields));
 
-        let (query_order_data_point, query_requirement_data_point) = query_order_and_requirement(
-            &time_series_table_metadata,
-            &grid_schema,
-            Column::new("timestamp", 0),
-        );
+        let (query_order_data_point, query_requirement_data_point) =
+            query_order_and_requirement(&tag_columns, &grid_schema, Column::new("timestamp", 0));
 
         Arc::new(TimeSeriesTable {
             delta_table,
@@ -386,11 +383,11 @@ impl TimeSeriesTable {
     }
 }
 
-/// Return a [`LexOrdering`] and [`LexRequirement`] that sort by the tag columns from
-/// `time_series_table_metadata` in `grid_schema` first and then by `time_column`.
+/// Return a [`LexOrdering`] and [`LexRequirement`] that sort by `tag_columns` in `schema` first
+/// and then by `time_column`.
 fn query_order_and_requirement(
-    time_series_table_metadata: &TimeSeriesTableMetadata,
-    grid_schema: &Schema,
+    tag_columns: &[FieldRef],
+    schema: &Schema,
     time_column: Column,
 ) -> (LexOrdering, LexRequirement) {
     let sort_options = SortOptions {
@@ -398,12 +395,11 @@ fn query_order_and_requirement(
         nulls_first: false,
     };
 
-    let mut physical_sort_exprs =
-        Vec::with_capacity(time_series_table_metadata.tag_column_indices.len() + 1);
-    for index in &time_series_table_metadata.tag_column_indices {
-        let tag_column_name = time_series_table_metadata.schema.field(*index).name();
+    let mut physical_sort_exprs = Vec::with_capacity(tag_columns.len() + 1);
+    for tag_column in tag_columns {
+        let tag_column_name = tag_column.name();
 
-        let schema_index = grid_schema
+        let schema_index = schema
             .index_of(tag_column_name)
             .expect("Tag columns should always be in the schema.");
 
