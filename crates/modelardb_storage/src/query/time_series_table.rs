@@ -49,7 +49,7 @@ use datafusion::physical_plan::{ExecutionPlan, Partitioning, PhysicalExpr, Stati
 use deltalake::kernel::LogicalFileView;
 use deltalake::{DeltaTable, FilterLiteral, FilterOp, FilterValue, ObjectMeta};
 use futures::TryStreamExt;
-use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
+use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, TimeSeriesTableMetadata};
 use object_store::path::Path;
 
@@ -128,11 +128,10 @@ impl TimeSeriesTable {
 
         // Add the tag columns to the base schema for queryable compressed segments.
         let mut query_compressed_schema_fields = Vec::with_capacity(
-            QUERY_COMPRESSED_SCHEMA.0.fields.len()
-                + time_series_table_metadata.tag_column_indices.len(),
+            COMPRESSED_SCHEMA.0.fields.len() + time_series_table_metadata.tag_column_indices.len(),
         );
 
-        query_compressed_schema_fields.extend(QUERY_COMPRESSED_SCHEMA.0.fields.clone().to_vec());
+        query_compressed_schema_fields.extend(COMPRESSED_SCHEMA.0.fields.clone().to_vec());
         for index in &time_series_table_metadata.tag_column_indices {
             query_compressed_schema_fields.push(Arc::new(
                 time_series_table_metadata.schema.field(*index).clone(),
@@ -226,7 +225,7 @@ impl TimeSeriesTable {
 
     /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
     /// points for `field_column_index` in `delta_table`. `physical_table_schema` must contain the
-    /// columns in [`QUERY_COMPRESSED_SCHEMA`] followed by the tag columns. The tag columns are
+    /// columns in [`COMPRESSED_SCHEMA`] followed by the tag columns. The tag columns are
     /// partition columns and thus not stored in the Apache Parquet files, so their values are added
     /// from the Delta Lake partition values. Returns a [`DataFusionError`] if the necessary metadata
     /// cannot be retrieved from the Delta Lake.
@@ -252,17 +251,17 @@ impl TimeSeriesTable {
         sort_partitioned_files_by_start_time(&mut partitioned_files);
         let file_group = FileGroup::new(partitioned_files);
 
-        // Only the columns in QUERY_COMPRESSED_SCHEMA are stored in the Apache Parquet files, so the
+        // Only the columns in COMPRESSED_SCHEMA are stored in the Apache Parquet files, so the
         // tag columns are added as partition columns after the columns read from the files.
         let tag_columns = self
             .query_compressed_schema
             .fields()
             .iter()
-            .skip(QUERY_COMPRESSED_SCHEMA.0.fields().len())
+            .skip(COMPRESSED_SCHEMA.0.fields().len())
             .cloned()
             .collect::<Vec<_>>();
 
-        let table_schema = TableSchema::builder(QUERY_COMPRESSED_SCHEMA.0.clone())
+        let table_schema = TableSchema::builder(COMPRESSED_SCHEMA.0.clone())
             .with_table_partition_cols(tag_columns)
             .build();
 
@@ -315,7 +314,7 @@ impl TimeSeriesTable {
             .query_compressed_schema
             .fields()
             .iter()
-            .skip(QUERY_COMPRESSED_SCHEMA.0.fields().len())
+            .skip(COMPRESSED_SCHEMA.0.fields().len())
             .map(|field| {
                 let partition_value = partition_values_map.get(field.name());
                 ScalarValue::Utf8View(partition_value.unwrap().clone())
@@ -333,7 +332,7 @@ impl TimeSeriesTable {
     }
 
     /// Extract the raw JSON statistics stored in `logical_file_view`, parse it, and then convert it
-    /// to a [`Statistics`] for the columns in [`QUERY_COMPRESSED_SCHEMA`]. The tag columns are not
+    /// to a [`Statistics`] for the columns in [`COMPRESSED_SCHEMA`]. The tag columns are not
     /// included as they are partition columns and thus not stored in the Apache Parquet files.
     /// Returns [`None`] if the statistics are absent or cannot be parsed as both result in the
     /// statistics not being available.
@@ -348,7 +347,7 @@ impl TimeSeriesTable {
         let parsed_statistics = parsed_statistics.as_object()?;
 
         // Create a Statistics with everything absent and then overwrite values with those we have.
-        let mut datafusion_statistics = Statistics::new_unknown(&QUERY_COMPRESSED_SCHEMA.0);
+        let mut datafusion_statistics = Statistics::new_unknown(&COMPRESSED_SCHEMA.0);
 
         // Overwrite statistics for the entire file.
         if let Some(num_records) = parsed_statistics
@@ -371,7 +370,7 @@ impl TimeSeriesTable {
             .and_then(serde_json::Value::as_object);
 
         // Overwrite statistics for the each field.
-        for (index, field) in QUERY_COMPRESSED_SCHEMA.0.fields().iter().enumerate() {
+        for (index, field) in COMPRESSED_SCHEMA.0.fields().iter().enumerate() {
             let column_statistics = &mut datafusion_statistics.column_statistics[index];
             let column_name = field.name();
 
@@ -585,13 +584,40 @@ fn rewrite_timestamp_filter(query_schema: &Schema, filter: &Expr) -> Option<(Exp
 }
 
 /// Rewrite `filter` to a Delta Lake [`FilterLiteral`] for a tag column if `filter` is for a tag
-/// column and the predicate is equality or inequality, otherwise [`None`] is returned.
+/// column and the predicate is equality, inequality, IN, NOT IN, or a disjunction of equality and
+/// IN predicates for the same tag column, otherwise [`None`] is returned.
 fn rewrite_tag_filter<'a>(
     tag_column_names: &HashSet<String>,
     filter: &'a Expr,
 ) -> Option<FilterLiteral<'a>> {
     match filter {
+        Expr::BinaryExpr(BinaryExpr {
+            left,
+            op: Operator::Or,
+            right,
+        }) => {
+            // Handle BinaryExpr that combine multiple filters on the same tag column with OR.
+            let left_rewritten_filter = rewrite_tag_filter(tag_column_names, left)?;
+            let right_rewritten_filter = rewrite_tag_filter(tag_column_names, right)?;
+
+            let (left_tag_column_name, mut left_values) =
+                extract_tag_column_name_and_values(left_rewritten_filter)?;
+            let (right_tag_column_name, right_values) =
+                extract_tag_column_name_and_values(right_rewritten_filter)?;
+
+            if left_tag_column_name != right_tag_column_name {
+                return None;
+            }
+
+            left_values.extend(right_values);
+            Some((
+                left_tag_column_name,
+                FilterOp::In,
+                FilterValue::Set(left_values),
+            ))
+        }
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
+            // Handle BinaryExpr that check if a tag columns is equal or not equal to a value.
             let filter_op = match op {
                 Operator::Eq => FilterOp::Eq,
                 Operator::NotEq => FilterOp::Ne,
@@ -637,6 +663,23 @@ fn rewrite_tag_filter<'a>(
             };
 
             Some((tag_column_name, filter_op, FilterValue::Set(values)))
+        }
+        _other => None,
+    }
+}
+
+/// Return the name of the tag column and the associated values in `filter_literal`, i.e., if
+/// `filter_literal` is equality one value is return while multiple values may be returned for IN.
+/// For any other predicate [`None`] is returned so a combined IN [`FilterLiteral`] can be created.
+fn extract_tag_column_name_and_values(
+    filter_literal: FilterLiteral<'_>,
+) -> Option<(&str, Vec<&str>)> {
+    match filter_literal {
+        (tag_column_name, FilterOp::Eq, FilterValue::Scalar(value)) => {
+            Some((tag_column_name, vec![value]))
+        }
+        (tag_column_name, FilterOp::In, FilterValue::Set(values)) => {
+            Some((tag_column_name, values))
         }
         _other => None,
     }
@@ -1121,7 +1164,7 @@ mod tests {
         assert_eq!(
             rewrite_tag_filter(
                 &HashSet::from(["tag".to_owned()]),
-                &col("tag").eq(lit("tag_value"))
+                &lit("tag_value").eq(col("tag"))
             ),
             Some(("tag", FilterOp::Eq, FilterValue::Scalar("tag_value")))
         );
@@ -1132,9 +1175,9 @@ mod tests {
         assert_eq!(
             rewrite_tag_filter(
                 &HashSet::from(["tag".to_owned()]),
-                &col("tag").eq(lit("tag_value"))
+                &col("tag").not_eq(lit("tag_value"))
             ),
-            Some(("tag", FilterOp::Eq, FilterValue::Scalar("tag_value")))
+            Some(("tag", FilterOp::Ne, FilterValue::Scalar("tag_value")))
         );
     }
 
@@ -1143,9 +1186,9 @@ mod tests {
         assert_eq!(
             rewrite_tag_filter(
                 &HashSet::from(["tag".to_owned()]),
-                &lit("tag").eq(col("tag_value"))
+                &lit("tag_value").not_eq(col("tag"))
             ),
-            Some(("tag", FilterOp::Eq, FilterValue::Scalar("tag_value")))
+            Some(("tag", FilterOp::Ne, FilterValue::Scalar("tag_value")))
         );
     }
 
@@ -1220,6 +1263,19 @@ mod tests {
                 &col("tag_one")
                     .eq(lit("tag_one_value"))
                     .or(col("tag_two").eq(lit("tag_two_value")))
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_rewrite_return_none_multiple_not_equal_tag_filters_on_one_column() {
+        assert!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag")
+                    .not_eq(lit("tag_value_one"))
+                    .or(col("tag").not_eq(lit("tag_value_two")))
             )
             .is_none()
         );

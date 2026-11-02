@@ -524,10 +524,9 @@ mod tests {
     use super::*;
 
     use arrow::array::BinaryViewArray;
-    use arrow::datatypes::{DataType, Field};
     use modelardb_test::ERROR_BOUND_TEN;
     use modelardb_test::data_generation::{self, ValuesStructure};
-    use modelardb_types::schemas::COMPRESSED_SCHEMA;
+    use modelardb_test::table;
     use modelardb_types::types::{TimestampArray, ValueArray};
 
     use crate::compression;
@@ -827,9 +826,7 @@ mod tests {
         // residuals using MacaqueV, and then assert that the expected encoding is used for it.
         let residuals_end_index = uncompressed_timestamps.len() - 1;
 
-        let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
-        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8View, false)));
-        let compressed_schema = Arc::new(Schema::new(compressed_schema_fields));
+        let compressed_schema = table::time_series_table_metadata().compressed_schema;
 
         let mut compressed_segment_batch_builder =
             CompressedSegmentBatchBuilder::new(compressed_schema, vec!["tag".to_owned()], 0, 1);

@@ -430,18 +430,16 @@ impl DataFolder {
         &self,
         time_series_table_metadata: &TimeSeriesTableMetadata,
     ) -> Result<DeltaTable> {
-        let mut partition_columns = vec![FIELD_COLUMN.to_owned()];
-
-        // Compressed segments have the tag columns after the fixed compressed schema, including
-        // the field column. Partition by field first and then by each tag.
-        partition_columns.extend(
-            time_series_table_metadata
-                .compressed_schema
-                .fields()
-                .iter()
-                .skip(COMPRESSED_SCHEMA.0.fields().len())
-                .map(|field| field.name().to_owned()),
-        );
+        // Compressed segments have the partition columns, i.e., the field column and the tag
+        // columns, after the fixed compressed schema. The segments are partitioned by their field
+        // column and tags to only read the required fields and minimize overlapping timestamps.
+        let partition_columns: Vec<String> = time_series_table_metadata
+            .compressed_schema
+            .fields()
+            .iter()
+            .skip(COMPRESSED_SCHEMA.0.fields().len())
+            .map(|field| field.name().to_owned())
+            .collect();
 
         let delta_table = self
             .create_delta_lake_table(

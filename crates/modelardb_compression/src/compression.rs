@@ -406,10 +406,9 @@ mod tests {
     use super::*;
 
     use arrow::array::{ArrayBuilder, BinaryViewArray, Float32Array, Int8Array};
-    use arrow::datatypes::{DataType, Field};
     use modelardb_test::ERROR_BOUND_FIVE;
     use modelardb_test::data_generation::{self, ValuesStructure};
-    use modelardb_types::schemas::COMPRESSED_SCHEMA;
+    use modelardb_test::table;
     use modelardb_types::types::{TimestampBuilder, ValueBuilder};
 
     use crate::{MODEL_TYPE_NAMES, models};
@@ -977,10 +976,7 @@ mod tests {
         assert!(errors.value(0).is_nan());
     }
 
-    pub fn compressed_schema() -> Arc<Schema> {
-        let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
-        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8View, false)));
-
-        Arc::new(Schema::new(compressed_schema_fields))
+    fn compressed_schema() -> Arc<Schema> {
+        table::time_series_table_metadata().compressed_schema
     }
 }

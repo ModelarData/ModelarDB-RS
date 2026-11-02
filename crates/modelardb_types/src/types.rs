@@ -25,13 +25,13 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::array::{RecordBatch, StringViewArray};
-use arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
+use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use clap::Args;
 use datafusion::common::{DFSchema, DataFusionError};
 use datafusion::logical_expr::Expr;
 
 use crate::error::{ModelarDbTypesError, Result};
-use crate::schemas::COMPRESSED_SCHEMA;
+use crate::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 
 // Types used for a single timestamp.
 pub type Timestamp = std::primitive::i64; // It is signed to match TimestampMicrosecondType.
@@ -52,9 +52,6 @@ pub type ValueArray = arrow::array::PrimitiveArray<ArrowValue>;
 // Types used for the schema of compressed data, the configuration, and table metadata.
 #[derive(Clone)]
 pub struct CompressedSchema(pub Arc<Schema>);
-
-#[derive(Clone)]
-pub struct QueryCompressedSchema(pub Arc<Schema>);
 
 #[derive(Clone)]
 pub struct GridSchema(pub Arc<Schema>);
@@ -213,10 +210,12 @@ impl TimeSeriesTableMetadata {
             DataType::Utf8View,
         );
 
-        // Add the tag columns to the base schema for compressed segments.
+        // Add the partition columns, i.e., the field column and the tag columns, to the base schema
+        // for compressed segments.
         let mut compressed_schema_fields =
-            Vec::with_capacity(COMPRESSED_SCHEMA.0.fields().len() + tag_column_indices.len());
+            Vec::with_capacity(COMPRESSED_SCHEMA.0.fields().len() + 1 + tag_column_indices.len());
         compressed_schema_fields.extend(COMPRESSED_SCHEMA.0.fields.clone().to_vec());
+        compressed_schema_fields.push(Arc::new(Field::new(FIELD_COLUMN, DataType::Int16, false)));
 
         for index in &tag_column_indices {
             compressed_schema_fields.push(Arc::new(schema_without_generated.field(*index).clone()));

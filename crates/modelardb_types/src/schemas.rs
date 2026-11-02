@@ -20,25 +20,17 @@ use std::sync::LazyLock;
 
 use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
-use crate::types::{
-    ArrowTimestamp, ArrowValue, CompressedSchema, GridSchema, QueryCompressedSchema,
-};
+use crate::types::{ArrowTimestamp, ArrowValue, CompressedSchema, GridSchema};
 
 /// Name of the column used to partition the compressed segments.
 pub const FIELD_COLUMN: &str = "field_column";
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] with the columns of compressed
+/// segments that are stored in the Apache Parquet files. The schema of a time series table's
+/// compressed segments is this schema followed by the partition columns, i.e., [`FIELD_COLUMN`]
+/// and the tag columns, which are stored in the Delta Lake partition values instead.
 pub static COMPRESSED_SCHEMA: LazyLock<CompressedSchema> = LazyLock::new(|| {
-    let mut query_compressed_schema_fields = QUERY_COMPRESSED_SCHEMA.0.fields().to_vec();
-    let field_column = Arc::new(Field::new(FIELD_COLUMN, DataType::Int16, false));
-    query_compressed_schema_fields.push(field_column);
-    CompressedSchema(Arc::new(Schema::new(query_compressed_schema_fields)))
-});
-
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments when
-/// executing queries as [`FIELD_COLUMN`] is not stored in the Apache Parquet files.
-pub static QUERY_COMPRESSED_SCHEMA: LazyLock<QueryCompressedSchema> = LazyLock::new(|| {
-    QueryCompressedSchema(Arc::new(Schema::new(vec![
+    CompressedSchema(Arc::new(Schema::new(vec![
         Field::new("model_type_id", DataType::Int8, false),
         Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
         Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
@@ -55,7 +47,7 @@ pub static QUERY_COMPRESSED_SCHEMA: LazyLock<QueryCompressedSchema> = LazyLock::
 /// `timestamps` and `values` are not included as they are [`DataType::BinaryView`] and thus their
 /// size depend on which model is selected to represent the values for that compressed segment.
 pub static COMPRESSED_METADATA_SIZE_IN_BYTES: LazyLock<usize> = LazyLock::new(|| {
-    QUERY_COMPRESSED_SCHEMA
+    COMPRESSED_SCHEMA
         .0
         .fields()
         .iter()

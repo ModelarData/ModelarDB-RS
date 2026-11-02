@@ -40,7 +40,7 @@ use datafusion::physical_plan::{
     Accumulator, ExecutionPlan, PhysicalExpr, replace_children_if_necessary,
 };
 use datafusion::scalar::ScalarValue;
-use modelardb_types::schemas::QUERY_COMPRESSED_SCHEMA;
+use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{ArrowValue, TimestampArray, ValueArray};
 
 use crate::query::sorted_join_exec::SortedJoinExec;
@@ -48,7 +48,7 @@ use crate::query::sorted_join_exec::SortedJoinExec;
 /// The expressions extracting the arguments for the model-based aggregate functions from the
 /// [`RecordBatches`](RecordBatch). They must match [`MODEL_AGGREGATE_TYPES`].
 static MODEL_AGGREGATE_ARGS: LazyLock<Vec<Arc<dyn PhysicalExpr>>> = LazyLock::new(|| {
-    QUERY_COMPRESSED_SCHEMA
+    COMPRESSED_SCHEMA
         .0
         .fields()
         .iter()
@@ -63,7 +63,7 @@ static MODEL_AGGREGATE_ARGS: LazyLock<Vec<Arc<dyn PhysicalExpr>>> = LazyLock::ne
 /// The types of the arguments for the model-based aggregate functions. They must match
 /// [`MODEL_AGGREGATE_ARGS`].
 static MODEL_AGGREGATE_TYPES: LazyLock<Vec<DataType>> = LazyLock::new(|| {
-    QUERY_COMPRESSED_SCHEMA
+    COMPRESSED_SCHEMA
         .0
         .fields()
         .iter()
@@ -84,7 +84,7 @@ static MODEL_AGGREGATE_COUNT: LazyLock<Arc<AggregateFunctionExpr>> = LazyLock::n
 
     let aggregate_expr_builder = AggregateExprBuilder::new(fun, MODEL_AGGREGATE_ARGS.to_vec())
         .alias("model_count")
-        .schema(QUERY_COMPRESSED_SCHEMA.0.clone())
+        .schema(COMPRESSED_SCHEMA.0.clone())
         .build()
         .expect("Failed to create a model-based aggregate function for COUNT.");
 
@@ -107,7 +107,7 @@ static MODEL_AGGREGATE_MIN: LazyLock<Arc<AggregateFunctionExpr>> = LazyLock::new
 
     let aggregate_expr_builder = AggregateExprBuilder::new(fun, MODEL_AGGREGATE_ARGS.to_vec())
         .alias("model_min")
-        .schema(QUERY_COMPRESSED_SCHEMA.0.clone())
+        .schema(COMPRESSED_SCHEMA.0.clone())
         .build()
         .expect("Failed to create a model-based aggregate function for MIN.");
 
@@ -130,7 +130,7 @@ static MODEL_AGGREGATE_MAX: LazyLock<Arc<AggregateFunctionExpr>> = LazyLock::new
 
     let aggregate_expr_builder = AggregateExprBuilder::new(fun, MODEL_AGGREGATE_ARGS.to_vec())
         .alias("model_max")
-        .schema(QUERY_COMPRESSED_SCHEMA.0.clone())
+        .schema(COMPRESSED_SCHEMA.0.clone())
         .build()
         .expect("Failed to create a model-based aggregate function for MAX.");
 
@@ -150,7 +150,7 @@ static MODEL_AGGREGATE_SUM: LazyLock<Arc<AggregateFunctionExpr>> = LazyLock::new
 
     let aggregate_expr_builder = AggregateExprBuilder::new(fun, MODEL_AGGREGATE_ARGS.to_vec())
         .alias("model_sum")
-        .schema(QUERY_COMPRESSED_SCHEMA.0.clone())
+        .schema(COMPRESSED_SCHEMA.0.clone())
         .build()
         .expect("Failed to create a model-based aggregate function for SUM.");
 
@@ -170,7 +170,7 @@ static MODEL_AGGREGATE_AVG: LazyLock<Arc<AggregateFunctionExpr>> = LazyLock::new
 
     let aggregate_expr_builder = AggregateExprBuilder::new(fun, MODEL_AGGREGATE_ARGS.to_vec())
         .alias("model_avg")
-        .schema(QUERY_COMPRESSED_SCHEMA.0.clone())
+        .schema(COMPRESSED_SCHEMA.0.clone())
         .build()
         .expect("Failed to create a model-based aggregate function for AVG.");
 

@@ -27,7 +27,7 @@ use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add};
 use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
 use deltalake::protocol::{DeltaOperation, SaveMode};
-use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
+use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use object_store::path::Path;
 use object_store::{ObjectStore, ObjectStoreExt};
 use serde_json::json;
@@ -65,17 +65,16 @@ impl DeltaTableWriter {
     /// Create a [`DeltaTableWriter`] configured for writing to a time series table.
     pub(crate) async fn try_new_for_time_series_table(delta_table: DeltaTable) -> Result<Self> {
         let schema = delta_table.snapshot()?.snapshot().arrow_schema();
-        let mut partition_columns = vec![FIELD_COLUMN.to_owned()];
 
-        // Compressed segments store tag columns after the fixed compressed schema. The segments
-        // are partitioned by their tags to minimize the change of overlapping timestamps.
-        partition_columns.extend(
-            schema
-                .fields()
-                .iter()
-                .skip(COMPRESSED_SCHEMA.0.fields().len())
-                .map(|field| field.name().to_owned()),
-        );
+        // Compressed segments have the partition columns, i.e., the field column and the tag
+        // columns, after the fixed compressed schema. The segments are partitioned by their field
+        // column and tags to only read the required fields and minimize overlapping timestamps.
+        let partition_columns = schema
+            .fields()
+            .iter()
+            .skip(COMPRESSED_SCHEMA.0.fields().len())
+            .map(|field| field.name().to_owned())
+            .collect();
 
         let writer_properties = writer_properties_for_time_series_table()?;
         Self::try_new(delta_table, partition_columns, writer_properties).await
