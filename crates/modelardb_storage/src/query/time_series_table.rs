@@ -23,7 +23,9 @@ use std::sync::Arc;
 
 use arrow::compute::SortOptions;
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, TimeUnit};
+use datafusion::arrow::datatypes::{
+    ArrowPrimitiveType, DataType, Field, FieldRef, Schema, TimeUnit,
+};
 use datafusion::catalog::Session;
 use datafusion::catalog::memory::DataSourceExec;
 use datafusion::common::stats::Precision;
@@ -72,8 +74,10 @@ pub(crate) struct TimeSeriesTable {
     fallback_field_column: u16,
     /// Names of the tag columns which are used to rewrite filters on tags to partition filters.
     tag_column_names: HashSet<String>,
-    /// Schema of the compressed segments stored on disk.
-    query_compressed_schema: Arc<Schema>,
+    /// Schema of the compressed segments read by [`DataSourceExec`]. The columns in
+    /// [`COMPRESSED_SCHEMA`] are read from the Apache Parquet files while the tag columns are
+    /// partition columns, so their values are added from the Delta Lake partition values.
+    compressed_table_schema: TableSchema,
     /// The sort order [`DataSourceExec`] guarantees for the segments it produces. It is guaranteed
     /// by [`DataSourceExec`] because the storage engine uses this sort order for each Apache
     /// Parquet file in this time series table and these files are read sequentially by
@@ -113,51 +117,32 @@ impl TimeSeriesTable {
                 .expect("Time series tables should contain at least one field.") as u16
         };
 
-        // Compute the names of the tag columns once as they are used when planning each query.
-        let tag_column_names = time_series_table_metadata
+        // Compute the tag columns once as they are used when planning each query.
+        let tag_columns: Vec<FieldRef> = time_series_table_metadata
             .tag_column_indices
             .iter()
-            .map(|index| {
-                time_series_table_metadata
-                    .schema
-                    .field(*index)
-                    .name()
-                    .clone()
-            })
+            .map(|index| Arc::new(time_series_table_metadata.schema.field(*index).clone()))
             .collect();
 
-        // Add the tag columns to the base schema for queryable compressed segments.
-        let mut query_compressed_schema_fields = Vec::with_capacity(
-            COMPRESSED_SCHEMA.0.fields.len() + time_series_table_metadata.tag_column_indices.len(),
-        );
+        let tag_column_names = tag_columns
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
 
-        query_compressed_schema_fields.extend(COMPRESSED_SCHEMA.0.fields.clone().to_vec());
-        for index in &time_series_table_metadata.tag_column_indices {
-            query_compressed_schema_fields.push(Arc::new(
-                time_series_table_metadata.schema.field(*index).clone(),
-            ));
-        }
-
-        let query_compressed_schema = Arc::new(Schema::new(query_compressed_schema_fields));
+        // Add the tag columns as partition columns to the base schema for compressed segments.
+        let compressed_table_schema = TableSchema::builder(COMPRESSED_SCHEMA.0.clone())
+            .with_table_partition_cols(tag_columns.clone())
+            .build();
 
         let (query_order_segment, query_requirement_segment) = query_order_and_requirement(
             &time_series_table_metadata,
-            &query_compressed_schema,
+            compressed_table_schema.table_schema(),
             Column::new("start_time", 1),
         );
 
         // Add the tag columns to the base schema for data points.
-        let mut grid_schema_fields = Vec::with_capacity(
-            GRID_SCHEMA.0.fields.len() + time_series_table_metadata.tag_column_indices.len(),
-        );
-
-        grid_schema_fields.extend(GRID_SCHEMA.0.fields.clone().to_vec());
-        for index in &time_series_table_metadata.tag_column_indices {
-            grid_schema_fields.push(Arc::new(
-                time_series_table_metadata.schema.field(*index).clone(),
-            ));
-        }
-
+        let mut grid_schema_fields = GRID_SCHEMA.0.fields.to_vec();
+        grid_schema_fields.extend(tag_columns);
         let grid_schema = Arc::new(Schema::new(grid_schema_fields));
 
         let (query_order_data_point, query_requirement_data_point) = query_order_and_requirement(
@@ -172,7 +157,7 @@ impl TimeSeriesTable {
             data_sink,
             fallback_field_column,
             tag_column_names,
-            query_compressed_schema,
+            compressed_table_schema,
             query_order_segment,
             query_requirement_segment,
             grid_schema,
@@ -223,12 +208,10 @@ impl TimeSeriesTable {
             .index_of(column_name)?)
     }
 
-    /// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
-    /// points for `field_column_index` in `delta_table`. `physical_table_schema` must contain the
-    /// columns in [`COMPRESSED_SCHEMA`] followed by the tag columns. The tag columns are
-    /// partition columns and thus not stored in the Apache Parquet files, so their values are added
-    /// from the Delta Lake partition values. Returns a [`DataFusionError`] if the necessary metadata
-    /// cannot be retrieved from the Delta Lake.
+    /// Create an [`ExecutionPlan`] that will return the compressed segments in the files in
+    /// `delta_table` that match `partition_filters`. The compressed segments all have the schema in
+    /// `compressed_table_schema`. Returns a [`DataFusionError`] if the necessary metadata cannot be
+    /// retrieved from the Delta Lake.
     async fn new_data_source_exec(
         &self,
         delta_table: &DeltaTable,
@@ -241,7 +224,6 @@ impl TimeSeriesTable {
             .get_active_add_actions_by_partitions(partition_filters)
             .try_collect::<Vec<_>>()
             .await?;
-        //self.query_compressed_schema
 
         // Create the data source operator. Assumes the ObjectStore exists.
         let mut partitioned_files = logical_file_views
@@ -251,26 +233,12 @@ impl TimeSeriesTable {
         sort_partitioned_files_by_start_time(&mut partitioned_files);
         let file_group = FileGroup::new(partitioned_files);
 
-        // Only the columns in COMPRESSED_SCHEMA are stored in the Apache Parquet files, so the
-        // tag columns are added as partition columns after the columns read from the files.
-        let tag_columns = self
-            .query_compressed_schema
-            .fields()
-            .iter()
-            .skip(COMPRESSED_SCHEMA.0.fields().len())
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let table_schema = TableSchema::builder(COMPRESSED_SCHEMA.0.clone())
-            .with_table_partition_cols(tag_columns)
-            .build();
-
         let log_store = delta_table.log_store();
         let mut table_parquet_options = TableParquetOptions::new();
         table_parquet_options.global.pushdown_filters = true;
         table_parquet_options.global.reorder_filters = true;
-        let parquet_source =
-            ParquetSource::new(table_schema).with_table_parquet_options(table_parquet_options);
+        let parquet_source = ParquetSource::new(self.compressed_table_schema.clone())
+            .with_table_parquet_options(table_parquet_options);
         let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
             Arc::new(parquet_source.with_predicate(parquet_filters.to_owned()))
         } else {
@@ -311,10 +279,9 @@ impl TimeSeriesTable {
 
         let partition_values_map = logical_file_view.partition_values_map();
         let partition_values = self
-            .query_compressed_schema
-            .fields()
+            .compressed_table_schema
+            .table_partition_cols()
             .iter()
-            .skip(COMPRESSED_SCHEMA.0.fields().len())
             .map(|field| {
                 let partition_value = partition_values_map.get(field.name());
                 ScalarValue::Utf8View(partition_value.unwrap().clone())
@@ -878,7 +845,7 @@ impl TableProvider for TimeSeriesTable {
 
         let maybe_physical_parquet_filters = try_convert_logical_expr_to_physical_expr(
             maybe_rewritten_parquet_filters.as_ref(),
-            self.query_compressed_schema.clone(),
+            self.compressed_table_schema.table_schema().clone(),
         )?;
 
         let maybe_physical_grid_filters = try_convert_logical_expr_to_physical_expr(
