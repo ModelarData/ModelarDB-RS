@@ -1009,7 +1009,7 @@ mod tests {
             .unwrap();
 
         delta_table.load().await.unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
     }
 
     #[tokio::test]
@@ -1317,14 +1317,18 @@ mod tests {
             TIME_SERIES_TABLE_NAME,
             &[],
             &[],
-            Some("1970-01-01T00:00:00.000150"),
-            Some("1970-01-01T00:00:00.000250"),
+            Some("1970-01-01T00:00:00.150"),
+            Some("1970-01-01T00:00:00.250"),
             HashMap::new(),
         )
         .await
         .unwrap();
 
-        assert_eq!(actual_result, time_series_table_data().slice(2, 2));
+        // The timestamp filter use parallel streams, so the order of the rows is not deterministic.
+        assert_eq!(
+            sort_by_tags_and_timestamp(&actual_result),
+            time_series_table_data().slice(2, 2)
+        );
     }
 
     #[tokio::test]
@@ -1678,8 +1682,8 @@ mod tests {
                 TIME_SERIES_TABLE_NAME,
                 &target,
                 TIME_SERIES_TABLE_NAME,
-                Some("1970-01-01T00:00:00.000150"),
-                Some("1970-01-01T00:00:00.000250"),
+                Some("1970-01-01T00:00:00.150"),
+                Some("1970-01-01T00:00:00.250"),
                 HashMap::new(),
             )
             .await
@@ -2183,7 +2187,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
 
         data_folder.truncate(TIME_SERIES_TABLE_NAME).await.unwrap();
 
@@ -2257,7 +2261,7 @@ mod tests {
 
         // The files should still exist on disk even though they are no longer active.
         let column_path = format!(
-            "{}/tables/{}/field_column=3",
+            "{}/tables/{}/field_column=3/tag_1=tag_x/tag_2=tag_a",
             temp_dir.path().to_str().unwrap(),
             TIME_SERIES_TABLE_NAME
         );
@@ -2269,7 +2273,7 @@ mod tests {
             .await
             .unwrap();
 
-        // No files should remain in the column folder.
+        // No files should remain in the partition folder.
         let files = std::fs::read_dir(&column_path).unwrap();
         assert_eq!(files.count(), 0);
     }
@@ -2315,8 +2319,8 @@ mod tests {
     async fn test_optimize_time_series_table() {
         let (_temp_dir, mut data_folder) = create_data_folder_with_time_series_table().await;
 
-        // Each write commits one file per field column partition, so four writes to the two
-        // partitions produce eight small files.
+        // Each write commits one file per partition and the data contains two time series with two
+        // field columns, so four writes to the four partitions produce sixteen small files.
         for _ in 0..4 {
             data_folder
                 .write(TIME_SERIES_TABLE_NAME, time_series_table_data())
@@ -2328,19 +2332,19 @@ mod tests {
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 8);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 16);
 
         data_folder
             .optimize(TIME_SERIES_TABLE_NAME, None)
             .await
             .unwrap();
 
-        // The files in each of the two partitions should be merged into a single active file.
+        // The files in each of the four partitions should be merged into a single active file.
         let delta_table = data_folder
             .delta_table(TIME_SERIES_TABLE_NAME)
             .await
             .unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
     }
 
     #[tokio::test]
@@ -2535,7 +2539,7 @@ mod tests {
 
         let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
 
         source
             .r#move(TIME_SERIES_TABLE_NAME, &target, TIME_SERIES_TABLE_NAME)
@@ -2574,7 +2578,7 @@ mod tests {
 
         let mut delta_table = source.delta_table(TIME_SERIES_TABLE_NAME).await.unwrap();
 
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 2);
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 4);
 
         // Even though the query schemas are different, the data should still be moved.
         source
@@ -2630,9 +2634,11 @@ mod tests {
     }
 
     fn assert_generated_column_result_eq(
-        mut actual_result: RecordBatch,
+        actual_result: RecordBatch,
         expected_result_without_generated_column: RecordBatch,
     ) {
+        // GeneratedAsExec use parallel streams, so the order of the rows is not deterministic.
+        let mut actual_result = sort_by_tags_and_timestamp(&actual_result);
         let generated_column_result = actual_result.remove_column(5);
         assert_eq!(actual_result, expected_result_without_generated_column);
         assert_eq!(
@@ -2884,6 +2890,11 @@ mod tests {
     }
 
     fn sorted_time_series_table_data() -> RecordBatch {
+        sort_by_tags_and_timestamp(&time_series_table_data())
+    }
+
+    /// Sort `record_batch` by `tag_1`, `tag_2`, and `timestamp` so tests are not flaky.
+    fn sort_by_tags_and_timestamp(record_batch: &RecordBatch) -> RecordBatch {
         let sort_options = SortOptions {
             descending: false,
             nulls_first: false,
@@ -2905,7 +2916,7 @@ mod tests {
         ];
 
         sort::sort_batch(
-            &time_series_table_data(),
+            record_batch,
             &LexOrdering::new(physical_sort_exprs).unwrap(),
             None,
         )
@@ -2913,7 +2924,8 @@ mod tests {
     }
 
     fn time_series_table_data() -> RecordBatch {
-        let timestamps = TimestampArray::from(vec![100, 100, 200, 200, 300, 300]);
+        let timestamps =
+            TimestampArray::from(vec![100_000, 100_000, 200_000, 200_000, 300_000, 300_000]);
         let tag_1 =
             StringViewArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
         let tag_2 =
@@ -2976,7 +2988,8 @@ mod tests {
     }
 
     fn invalid_table_data() -> RecordBatch {
-        let timestamps = TimestampArray::from(vec![100, 100, 200, 200, 300, 300]);
+        let timestamps =
+            TimestampArray::from(vec![100_000, 100_000, 200_000, 200_000, 300_000, 300_000]);
         let tag = StringViewArray::from(vec!["tag_x", "tag_y", "tag_x", "tag_y", "tag_x", "tag_y"]);
         let field = ValueArray::from(vec![37.0, 73.0, 38.0, 72.0, 39.0, 71.0]);
 

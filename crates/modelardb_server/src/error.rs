@@ -18,6 +18,7 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::Error as IoError;
+use std::num::ParseIntError;
 use std::result::Result as StdResult;
 
 use crossbeam_channel::RecvError as CrossbeamRecvError;
@@ -30,6 +31,7 @@ use modelardb_types::error::ModelarDbTypesError;
 use object_store::Error as ObjectStoreError;
 use object_store::path::Error as ObjectStorePathError;
 use prost::DecodeError;
+use sqlparser::parser::ParserError;
 use toml::de::Error as TomlDeserializeError;
 use toml::ser::Error as TomlSerializeError;
 use tonic::Status as TonicStatusError;
@@ -65,6 +67,10 @@ pub enum ModelarDbServerError {
     ObjectStore(ObjectStoreError),
     /// Error returned by ObjectStorePath.
     ObjectStorePath(ObjectStorePathError),
+    /// Error returned when parsing an int that is not valid.
+    ParseInt(ParseIntError),
+    /// Error returned when parsing text that is not valid.
+    Parser(ParserError),
     /// Error returned by Prost when decoding a message that is not valid.
     ProstDecode(DecodeError),
     /// Error returned by TOML when deserializing a configuration file.
@@ -92,6 +98,8 @@ impl Display for ModelarDbServerError {
             Self::ModelarDbTypes(reason) => write!(f, "ModelarDB Types Error: {reason}"),
             Self::ObjectStore(reason) => write!(f, "Object Store Error: {reason}"),
             Self::ObjectStorePath(reason) => write!(f, "Object Store Path Error: {reason}"),
+            Self::ParseInt(reason) => write!(f, "Parse Int Error: {reason}"),
+            Self::Parser(reason) => write!(f, "Parser Error: {reason}"),
             Self::ProstDecode(reason) => write!(f, "Prost Decode Error: {reason}"),
             Self::TomlDeserialize(reason) => write!(f, "TOML Deserialize Error: {reason}"),
             Self::TomlSerialize(reason) => write!(f, "TOML Serialize Error: {reason}"),
@@ -117,6 +125,8 @@ impl Error for ModelarDbServerError {
             Self::ModelarDbTypes(reason) => Some(reason),
             Self::ObjectStore(reason) => Some(reason),
             Self::ObjectStorePath(reason) => Some(reason),
+            Self::ParseInt(reason) => Some(reason),
+            Self::Parser(reason) => Some(reason),
             Self::ProstDecode(reason) => Some(reason),
             Self::TomlDeserialize(reason) => Some(reason),
             Self::TomlSerialize(reason) => Some(reason),
@@ -183,6 +193,18 @@ impl From<ObjectStoreError> for ModelarDbServerError {
 impl From<ObjectStorePathError> for ModelarDbServerError {
     fn from(error: ObjectStorePathError) -> Self {
         Self::ObjectStorePath(error)
+    }
+}
+
+impl From<ParserError> for ModelarDbServerError {
+    fn from(error: ParserError) -> Self {
+        Self::Parser(error)
+    }
+}
+
+impl From<ParseIntError> for ModelarDbServerError {
+    fn from(error: ParseIntError) -> Self {
+        Self::ParseInt(error)
     }
 }
 

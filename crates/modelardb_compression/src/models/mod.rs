@@ -89,6 +89,16 @@ pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
     }
 }
 
+/// Return the minimum of `v1` and `v2` using the total order to match Apache DataFusion's MIN.
+pub fn total_min(v1: Value, v2: Value) -> Value {
+    if v1.total_cmp(&v2).is_le() { v1 } else { v2 }
+}
+
+/// Return the minimum of `v1` and `v2` using the total order to match Apache DataFusion's MAX.
+pub fn total_max(v1: Value, v2: Value) -> Value {
+    if v1.total_cmp(&v2).is_ge() { v1 } else { v2 }
+}
+
 /// Returns true if `v1` and `v2` are equivalent or both values are NAN.
 fn equal_or_nan(v1: f64, v2: f64) -> bool {
     v1 == v2 || (v1.is_nan() && v2.is_nan())

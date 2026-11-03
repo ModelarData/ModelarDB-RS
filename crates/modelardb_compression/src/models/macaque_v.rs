@@ -197,8 +197,13 @@ impl MacaqueV {
 
     /// Update the current minimum, maximum, and last value based on `value`.
     fn update_min_max_and_last_value(&mut self, value: Value) {
-        self.min_value = Value::min(self.min_value, value);
-        self.max_value = Value::max(self.max_value, value);
+        if self.length == 0 {
+            self.min_value = value;
+            self.max_value = value;
+        } else {
+            self.min_value = models::total_min(self.min_value, value);
+            self.max_value = models::total_max(self.max_value, value);
+        }
         self.last_value = value;
         self.length += 1;
     }

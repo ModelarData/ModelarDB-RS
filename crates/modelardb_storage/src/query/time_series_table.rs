@@ -23,30 +23,35 @@ use std::sync::Arc;
 
 use arrow::compute::SortOptions;
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, TimeUnit};
+use datafusion::arrow::datatypes::{
+    ArrowPrimitiveType, DataType, Field, FieldRef, Schema, TimeUnit,
+};
 use datafusion::catalog::Session;
 use datafusion::catalog::memory::DataSourceExec;
-use datafusion::common::ToDFSchema;
+use datafusion::common::stats::Precision;
+use datafusion::common::{ScalarValue, ToDFSchema};
 use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
 use datafusion::datasource::provider::TableProviderFilterPushDown;
 use datafusion::datasource::sink::{DataSink, DataSinkExec};
+use datafusion::datasource::table_schema::TableSchema;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
+use datafusion::logical_expr::expr::InList;
 use datafusion::logical_expr::physical_planning_context::PhysicalPlanningContext;
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator, utils};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{
     LexOrdering, LexRequirement, PhysicalSortExpr, PhysicalSortRequirement, planner,
 };
-use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
+use datafusion::physical_plan::{ExecutionPlan, Partitioning, PhysicalExpr, Statistics};
 use deltalake::kernel::LogicalFileView;
 use deltalake::{DeltaTable, FilterLiteral, FilterOp, FilterValue, ObjectMeta};
 use futures::TryStreamExt;
-use modelardb_types::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
+use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN, GRID_SCHEMA};
 use modelardb_types::types::{ArrowTimestamp, ArrowValue, TimeSeriesTableMetadata};
 use object_store::path::Path;
 
@@ -67,8 +72,12 @@ pub(crate) struct TimeSeriesTable {
     data_sink: Arc<dyn DataSink>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u16,
-    /// Schema of the compressed segments stored on disk.
-    query_compressed_schema: Arc<Schema>,
+    /// Names of the tag columns which are used to rewrite filters on tags to partition filters.
+    tag_column_names: HashSet<String>,
+    /// Schema of the compressed segments read by [`DataSourceExec`]. The columns in
+    /// [`COMPRESSED_SCHEMA`] are read from the Apache Parquet files while the tag columns are
+    /// partition columns, so their values are added from the Delta Lake partition values.
+    compressed_table_schema: TableSchema,
     /// The sort order [`DataSourceExec`] guarantees for the segments it produces. It is guaranteed
     /// by [`DataSourceExec`] because the storage engine uses this sort order for each Apache
     /// Parquet file in this time series table and these files are read sequentially by
@@ -108,53 +117,44 @@ impl TimeSeriesTable {
                 .expect("Time series tables should contain at least one field.") as u16
         };
 
-        // Add the tag columns to the base schema for queryable compressed segments.
-        let mut query_compressed_schema_fields = Vec::with_capacity(
-            QUERY_COMPRESSED_SCHEMA.0.fields.len()
-                + time_series_table_metadata.tag_column_indices.len(),
-        );
+        // Compute the tag columns once as they are used when planning each query.
+        let tag_columns: Vec<FieldRef> = time_series_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| Arc::new(time_series_table_metadata.schema.field(*index).clone()))
+            .collect();
 
-        query_compressed_schema_fields.extend(QUERY_COMPRESSED_SCHEMA.0.fields.clone().to_vec());
-        for index in &time_series_table_metadata.tag_column_indices {
-            query_compressed_schema_fields.push(Arc::new(
-                time_series_table_metadata.schema.field(*index).clone(),
-            ));
-        }
+        let tag_column_names = tag_columns
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
 
-        let query_compressed_schema = Arc::new(Schema::new(query_compressed_schema_fields));
+        // Add the tag columns as partition columns to the base schema for compressed segments.
+        let compressed_table_schema = TableSchema::builder(COMPRESSED_SCHEMA.0.clone())
+            .with_table_partition_cols(tag_columns.clone())
+            .build();
 
         let (query_order_segment, query_requirement_segment) = query_order_and_requirement(
-            &time_series_table_metadata,
-            &query_compressed_schema,
+            &tag_columns,
+            compressed_table_schema.table_schema(),
             Column::new("start_time", 1),
         );
 
         // Add the tag columns to the base schema for data points.
-        let mut grid_schema_fields = Vec::with_capacity(
-            GRID_SCHEMA.0.fields.len() + time_series_table_metadata.tag_column_indices.len(),
-        );
-
-        grid_schema_fields.extend(GRID_SCHEMA.0.fields.clone().to_vec());
-        for index in &time_series_table_metadata.tag_column_indices {
-            grid_schema_fields.push(Arc::new(
-                time_series_table_metadata.schema.field(*index).clone(),
-            ));
-        }
-
+        let mut grid_schema_fields = GRID_SCHEMA.0.fields.to_vec();
+        grid_schema_fields.extend(tag_columns.clone());
         let grid_schema = Arc::new(Schema::new(grid_schema_fields));
 
-        let (query_order_data_point, query_requirement_data_point) = query_order_and_requirement(
-            &time_series_table_metadata,
-            &grid_schema,
-            Column::new("timestamp", 0),
-        );
+        let (query_order_data_point, query_requirement_data_point) =
+            query_order_and_requirement(&tag_columns, &grid_schema, Column::new("timestamp", 0));
 
         Arc::new(TimeSeriesTable {
             delta_table,
             time_series_table_metadata,
             data_sink,
             fallback_field_column,
-            query_compressed_schema,
+            tag_column_names,
+            compressed_table_schema,
             query_order_segment,
             query_requirement_segment,
             grid_schema,
@@ -204,23 +204,189 @@ impl TimeSeriesTable {
             .schema
             .index_of(column_name)?)
     }
-}
 
-/// The implementation is not derived as many instance variables does not implement [`fmt::Debug`].
-impl fmt::Debug for TimeSeriesTable {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "TimeSeriesTable: {}\n {:?}",
-            self.time_series_table_metadata.name, self.time_series_table_metadata
-        )
+    /// Create an [`ExecutionPlan`] that will return the compressed segments in the files in
+    /// `delta_table` that match `partition_filters`. The compressed segments all have the schema in
+    /// `compressed_table_schema`. Returns a [`DataFusionError`] if the necessary metadata cannot be
+    /// retrieved from the Delta Lake.
+    async fn new_data_source_exec(
+        &self,
+        delta_table: &DeltaTable,
+        partition_filters: &[FilterLiteral<'_>],
+        maybe_limit: Option<usize>,
+        maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
+        let logical_file_views = delta_table
+            .get_active_add_actions_by_partitions(partition_filters)
+            .try_collect::<Vec<_>>()
+            .await?;
+
+        // Create the data source operator. Assumes the ObjectStore exists.
+        let mut partitioned_files = logical_file_views
+            .iter()
+            .map(|logical_file_view| self.logical_file_view_to_partitioned_file(logical_file_view))
+            .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
+        sort_partitioned_files_by_start_time(&mut partitioned_files);
+        let file_group = FileGroup::new(partitioned_files);
+
+        let log_store = delta_table.log_store();
+        let mut table_parquet_options = TableParquetOptions::new();
+        table_parquet_options.global.pushdown_filters = true;
+        table_parquet_options.global.reorder_filters = true;
+        let parquet_source = ParquetSource::new(self.compressed_table_schema.clone())
+            .with_table_parquet_options(table_parquet_options);
+        let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
+            Arc::new(parquet_source.with_predicate(parquet_filters.to_owned()))
+        } else {
+            Arc::new(parquet_source)
+        };
+
+        let file_scan_config =
+            FileScanConfigBuilder::new(log_store.object_store_url(), file_source)
+                .with_file_group(file_group)
+                .with_limit(maybe_limit)
+                .with_output_partitioning(Some(Partitioning::UnknownPartitioning(1)))
+                .with_output_ordering(vec![self.query_order_segment.clone()]) // Also sets preserve_order.
+                .build();
+
+        let exec = DataSourceExec::from_data_source(file_scan_config);
+        Ok(exec)
+    }
+
+    /// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionedFile`] with [`Statistics`]
+    /// so DataFusion's optimizer can check if the sort order for each field is correct. A
+    /// [`DataFusionError`] is returned if the required metadata is not in `logical_file_view`.
+    fn logical_file_view_to_partitioned_file(
+        &self,
+        logical_file_view: &LogicalFileView,
+    ) -> DataFusionResult<PartitionedFile> {
+        let last_modified = logical_file_view
+            .modification_datetime()
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+
+        let location = Path::parse(logical_file_view.path().as_ref())?;
+        let object_meta = ObjectMeta {
+            location,
+            last_modified,
+            size: logical_file_view.size() as u64,
+            e_tag: None,
+            version: None,
+        };
+
+        let partition_values_map = logical_file_view.partition_values_map();
+        let partition_values = self
+            .compressed_table_schema
+            .table_partition_cols()
+            .iter()
+            .map(|field| {
+                let partition_value = partition_values_map.get(field.name());
+                ScalarValue::Utf8View(partition_value.unwrap().clone())
+            })
+            .collect::<Vec<_>>();
+
+        let partitioned_file =
+            PartitionedFile::new_from_meta(object_meta).with_partition_values(partition_values);
+        let partitioned_file = match self.logical_file_view_statistics(logical_file_view) {
+            Some(statistics) => partitioned_file.with_statistics(statistics),
+            None => partitioned_file,
+        };
+
+        Ok(partitioned_file)
+    }
+
+    /// Extract the raw JSON statistics stored in `logical_file_view`, parse it, and then convert it
+    /// to a [`Statistics`] for the columns in [`COMPRESSED_SCHEMA`]. The tag columns are not
+    /// included as they are partition columns and thus not stored in the Apache Parquet files.
+    /// Returns [`None`] if the statistics are absent or cannot be parsed as both result in the
+    /// statistics not being available.
+    fn logical_file_view_statistics(
+        &self,
+        logical_file_view: &LogicalFileView,
+    ) -> Option<Arc<Statistics>> {
+        // The raw JSON statistics are used instead of the method on LogicalFileView for extracting
+        // null_counts, min_values, and max_values as they are not always populated.
+        let json_statistics = logical_file_view.stats()?;
+        let parsed_statistics = serde_json::from_str::<serde_json::Value>(&json_statistics).ok()?;
+        let parsed_statistics = parsed_statistics.as_object()?;
+
+        // Create a Statistics with everything absent and then overwrite values with those we have.
+        let mut datafusion_statistics = Statistics::new_unknown(&COMPRESSED_SCHEMA.0);
+
+        // Overwrite statistics for the entire file.
+        if let Some(num_records) = parsed_statistics
+            .get("numRecords")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|num_records| usize::try_from(num_records).ok())
+        {
+            datafusion_statistics.num_rows = Precision::Exact(num_records);
+        }
+
+        // Extract statistics for the each field.
+        let min_values = parsed_statistics
+            .get("minValues")
+            .and_then(serde_json::Value::as_object);
+        let max_values = parsed_statistics
+            .get("maxValues")
+            .and_then(serde_json::Value::as_object);
+        let null_counts = parsed_statistics
+            .get("nullCount")
+            .and_then(serde_json::Value::as_object);
+
+        // Overwrite statistics for the each field.
+        for (index, field) in COMPRESSED_SCHEMA.0.fields().iter().enumerate() {
+            let column_statistics = &mut datafusion_statistics.column_statistics[index];
+            let column_name = field.name();
+
+            if let Some(null_count) = null_counts
+                .and_then(|null_counts| null_counts.get(column_name))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|null_count| usize::try_from(null_count).ok())
+            {
+                column_statistics.null_count = Precision::Exact(null_count);
+            }
+
+            if let Some(min_value) = min_values
+                .and_then(|min_values| min_values.get(column_name))
+                .and_then(|value| self.json_value_to_datafusion_value(value, field.data_type()))
+            {
+                column_statistics.min_value = Precision::Exact(min_value);
+            }
+
+            if let Some(max_value) = max_values
+                .and_then(|max_values| max_values.get(column_name))
+                .and_then(|value| self.json_value_to_datafusion_value(value, field.data_type()))
+            {
+                column_statistics.max_value = Precision::Exact(max_value);
+            }
+        }
+
+        Some(Arc::new(datafusion_statistics))
+    }
+
+    /// Convert a [`serde_json::Value`] to a scalar value of [`DataType`]. Return [`None`] for all
+    /// values that cannot be used in a [`Statistics`], e.g., nested values.
+    fn json_value_to_datafusion_value(
+        &self,
+        value: &serde_json::Value,
+        data_type: &DataType,
+    ) -> Option<ScalarValue> {
+        match value {
+            serde_json::Value::Null
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_) => None,
+            serde_json::Value::String(value) => {
+                ScalarValue::try_from_string(value.clone(), data_type).ok()
+            }
+            value => ScalarValue::try_from_string(value.to_string(), data_type).ok(),
+        }
     }
 }
 
-/// Return a [`LexOrdering`] and [`LexRequirement`] that sort by the tag columns from
-/// `time_series_table_metadata` in `schema` first and then by `time_column`.
+/// Return a [`LexOrdering`] and [`LexRequirement`] that sort by `tag_columns` in `schema` first
+/// and then by `time_column`.
 fn query_order_and_requirement(
-    time_series_table_metadata: &TimeSeriesTableMetadata,
+    tag_columns: &[FieldRef],
     schema: &Schema,
     time_column: Column,
 ) -> (LexOrdering, LexRequirement) {
@@ -229,10 +395,9 @@ fn query_order_and_requirement(
         nulls_first: false,
     };
 
-    let mut physical_sort_exprs =
-        Vec::with_capacity(time_series_table_metadata.tag_column_indices.len() + 1);
-    for index in &time_series_table_metadata.tag_column_indices {
-        let tag_column_name = time_series_table_metadata.schema.field(*index).name();
+    let mut physical_sort_exprs = Vec::with_capacity(tag_columns.len() + 1);
+    for tag_column in tag_columns {
+        let tag_column_name = tag_column.name();
 
         let schema_index = schema
             .index_of(tag_column_name)
@@ -262,6 +427,15 @@ fn query_order_and_requirement(
     )
 }
 
+/// Create a [`Expr::BinaryExpr`].
+fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
+    Expr::BinaryExpr(BinaryExpr {
+        left: Box::new(left),
+        op,
+        right: Box::new(right),
+    })
+}
+
 /// Rewrite and combine the `filters` that are written in terms of the time series table's query schema,
 /// to a filter that is written in terms of the schema used for compressed segments by the storage
 /// engine and a filter that is written in terms of the schema used for univariate time series by
@@ -269,7 +443,7 @@ fn query_order_and_requirement(
 fn rewrite_and_combine_filters(schema: &Schema, filters: &[Expr]) -> (Option<Expr>, Option<Expr>) {
     let rewritten_filters = filters
         .iter()
-        .filter_map(|filter| rewrite_filter(schema, filter));
+        .filter_map(|filter| rewrite_timestamp_filter(schema, filter));
 
     let (parquet_rewritten_filters, grid_rewritten_filters): (Vec<Expr>, Vec<Expr>) =
         rewritten_filters.unzip();
@@ -283,11 +457,11 @@ fn rewrite_and_combine_filters(schema: &Schema, filters: &[Expr]) -> (Option<Exp
     )
 }
 
-/// Rewrite the `filter` that is written in terms of the time series table's query schema, to a filter
-/// that is written in terms of the schema used for compressed segments by the storage engine and a
-/// filter that is written in terms of the schema used for univariate time series by [`GridExec`].
-/// If the filter cannot be rewritten, [`None`] is returned.
-fn rewrite_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> {
+/// Rewrite a `filter` that prunes timestamps that is written in terms of the time series table's
+/// query schema, to a filter that is written in terms of the schema used for compressed segments by
+/// the storage engine and a filter that is written in terms of the schema used for univariate time
+/// series by [`GridExec`]. If the filter cannot be rewritten, [`None`] is returned.
+fn rewrite_timestamp_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> {
     match filter {
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
             if let Expr::Column(column) = &**left {
@@ -372,13 +546,114 @@ fn rewrite_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> 
     }
 }
 
-/// Create a [`Expr::BinaryExpr`].
-fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
-    Expr::BinaryExpr(BinaryExpr {
-        left: Box::new(left),
-        op,
-        right: Box::new(right),
-    })
+/// Rewrite `filter` to a Delta Lake [`FilterLiteral`] for a tag column if `filter` is for a tag
+/// column and the predicate is equality, inequality, IN, NOT IN, or a disjunction of equality and
+/// IN predicates for the same tag column, otherwise [`None`] is returned.
+fn rewrite_tag_filter<'a>(
+    tag_column_names: &HashSet<String>,
+    filter: &'a Expr,
+) -> Option<FilterLiteral<'a>> {
+    match filter {
+        Expr::BinaryExpr(BinaryExpr {
+            left,
+            op: Operator::Or,
+            right,
+        }) => {
+            // Handle BinaryExpr that combine multiple filters on the same tag column with OR.
+            let left_rewritten_filter = rewrite_tag_filter(tag_column_names, left)?;
+            let right_rewritten_filter = rewrite_tag_filter(tag_column_names, right)?;
+
+            let (left_tag_column_name, mut left_values) =
+                extract_tag_column_name_and_values(left_rewritten_filter)?;
+            let (right_tag_column_name, right_values) =
+                extract_tag_column_name_and_values(right_rewritten_filter)?;
+
+            if left_tag_column_name != right_tag_column_name {
+                return None;
+            }
+
+            left_values.extend(right_values);
+            Some((
+                left_tag_column_name,
+                FilterOp::In,
+                FilterValue::Set(left_values),
+            ))
+        }
+        Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
+            // Handle BinaryExpr that check if a tag columns is equal or not equal to a value.
+            let filter_op = match op {
+                Operator::Eq => FilterOp::Eq,
+                Operator::NotEq => FilterOp::Ne,
+                _ => return None,
+            };
+
+            let (tag_column_name, value) = match (&**left, &**right) {
+                (Expr::Column(column), literal) | (literal, Expr::Column(column)) => {
+                    (column.name.as_str(), string_literal(literal)?)
+                }
+                _ => return None,
+            };
+
+            tag_column_names.contains(tag_column_name).then_some((
+                tag_column_name,
+                filter_op,
+                FilterValue::Scalar(value),
+            ))
+        }
+        Expr::InList(InList {
+            expr,
+            list,
+            negated,
+        }) => {
+            let Expr::Column(column) = &**expr else {
+                return None;
+            };
+
+            let tag_column_name = column.name.as_str();
+            if !tag_column_names.contains(tag_column_name) {
+                return None;
+            }
+
+            let values = list
+                .iter()
+                .map(string_literal)
+                .collect::<Option<Vec<&str>>>()?;
+
+            let filter_op = if *negated {
+                FilterOp::NotIn
+            } else {
+                FilterOp::In
+            };
+
+            Some((tag_column_name, filter_op, FilterValue::Set(values)))
+        }
+        _other => None,
+    }
+}
+
+/// Return the name of the tag column and the associated values in `filter_literal`, i.e., if
+/// `filter_literal` is equality one value is return while multiple values may be returned for IN.
+/// For any other predicate [`None`] is returned so a combined IN [`FilterLiteral`] can be created.
+fn extract_tag_column_name_and_values(
+    filter_literal: FilterLiteral<'_>,
+) -> Option<(&str, Vec<&str>)> {
+    match filter_literal {
+        (tag_column_name, FilterOp::Eq, FilterValue::Scalar(value)) => {
+            Some((tag_column_name, vec![value]))
+        }
+        (tag_column_name, FilterOp::In, FilterValue::Set(values)) => {
+            Some((tag_column_name, values))
+        }
+        _other => None,
+    }
+}
+
+/// Return the value of `expr` if it is a non-null string literal, otherwise [`None`] is returned.
+fn string_literal(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Literal(value, _metadata) => value.try_as_str().flatten(),
+        _other => None,
+    }
 }
 
 /// Convert `maybe_expr` to a [`PhysicalExpr`] with the types in `query_schema` if possible.
@@ -411,82 +686,45 @@ fn convert_logical_expr_to_physical_expr(
     )
 }
 
-/// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
-/// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError`] if the necessary
-/// metadata cannot be retrieved from the Delta Lake.
-async fn new_data_source_exec(
-    delta_table: &DeltaTable,
-    partition_filters: &[FilterLiteral<'_>],
-    maybe_limit: Option<usize>,
-    maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
-    file_schema: Arc<Schema>,
-    output_ordering: Vec<LexOrdering>,
-) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-    // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
-    let mut logical_file_views = delta_table
-        .get_active_add_actions_by_partitions(partition_filters)
-        .try_collect::<Vec<_>>()
-        .await?;
+/// Sort `partitioned_files` by tag columns, which is used for partitioning, and then `start_time`.
+fn sort_partitioned_files_by_start_time(partitioned_files: &mut [PartitionedFile]) {
+    if partitioned_files.len() < 2 {
+        return;
+    }
 
-    logical_file_views.sort_by_key(|logical_file_view| logical_file_view.modification_time());
+    // Compressed segments store their start time in the second column.
+    let start_time_index = 1;
+    let error = "All Apache Parquet files in a time series table should have comparable statitics.";
+    partitioned_files.sort_by(|left, right| {
+        // Extract the statistics for the start time of the compressed segments.
+        let left_statistics = left.statistics.as_ref().expect(error);
+        let right_statistics = right.statistics.as_ref().expect(error);
+        let left_minimum = left_statistics.column_statistics[start_time_index]
+            .min_value
+            .get_value()
+            .expect(error);
+        let right_minimum = right_statistics.column_statistics[start_time_index]
+            .min_value
+            .get_value()
+            .expect(error);
 
-    // Create the data source operator. Assumes the ObjectStore exists.
-    let partitioned_files = logical_file_views
-        .iter()
-        .map(logical_file_view_to_partitioned_file)
-        .collect::<DataFusionResult<Vec<PartitionedFile>>>()?;
-    let file_group = FileGroup::new(partitioned_files);
-
-    let log_store = delta_table.log_store();
-    let mut table_parquet_options = TableParquetOptions::new();
-    table_parquet_options.global.pushdown_filters = true;
-    table_parquet_options.global.reorder_filters = true;
-    let file_source = if let Some(parquet_filters) = maybe_parquet_filters {
-        Arc::new(ParquetSource::new(file_schema).with_predicate(parquet_filters.to_owned()))
-    } else {
-        Arc::new(ParquetSource::new(file_schema))
-    };
-
-    let file_scan_config = FileScanConfigBuilder::new(log_store.object_store_url(), file_source)
-        .with_file_group(file_group)
-        .with_limit(maybe_limit)
-        .with_output_ordering(output_ordering);
-
-    Ok(DataSourceExec::from_data_source(file_scan_config.build()))
+        // Sort the files by tags followed by start time.
+        left.partition_values
+            .partial_cmp(&right.partition_values)
+            .expect("Partition values should be Utf8View and thus comparable.")
+            .then_with(|| left_minimum.partial_cmp(right_minimum).expect(error))
+    });
 }
 
-/// Convert the [`LogicalFileView`] `logical_file_view` to a [`PartitionedFile`]. A
-/// [`DataFusionError`] is returned if the time the file was last modified cannot be read from
-/// `logical_file_view`.
-fn logical_file_view_to_partitioned_file(
-    logical_file_view: &LogicalFileView,
-) -> DataFusionResult<PartitionedFile> {
-    let last_modified = logical_file_view
-        .modification_datetime()
-        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
-
-    let location = Path::parse(logical_file_view.path().as_ref())?;
-    let object_meta = ObjectMeta {
-        location,
-        last_modified,
-        size: logical_file_view.size() as u64,
-        e_tag: None,
-        version: None,
-    };
-
-    let partitioned_file = PartitionedFile {
-        object_meta,
-        partition_values: vec![],
-        range: None,
-        statistics: None,
-        ordering: None,
-        extensions: Default::default(),
-        metadata_size_hint: None,
-        table_reference: None,
-        arrow_schema: None,
-    };
-
-    Ok(partitioned_file)
+/// The implementation is not derived as many instance variables does not implement [`fmt::Debug`].
+impl fmt::Debug for TimeSeriesTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "TimeSeriesTable: {}\n {:?}",
+            self.time_series_table_metadata.name, self.time_series_table_metadata
+        )
+    }
 }
 
 #[async_trait]
@@ -603,7 +841,7 @@ impl TableProvider for TimeSeriesTable {
 
         let maybe_physical_parquet_filters = try_convert_logical_expr_to_physical_expr(
             maybe_rewritten_parquet_filters.as_ref(),
-            self.query_compressed_schema.clone(),
+            self.compressed_table_schema.table_schema().clone(),
         )?;
 
         let maybe_physical_grid_filters = try_convert_logical_expr_to_physical_expr(
@@ -611,6 +849,7 @@ impl TableProvider for TimeSeriesTable {
             self.grid_schema.clone(),
         )?;
 
+        // At least one field column must be part of the query, otherwise nothing is returned.
         if stored_field_columns_in_projection.is_empty() {
             stored_field_columns_in_projection.push(self.fallback_field_column);
         }
@@ -621,25 +860,31 @@ impl TableProvider for TimeSeriesTable {
         let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
             Vec::with_capacity(stored_field_columns_in_projection.len());
 
+        // The tag columns are partition columns, so filters on them can be used to only retrieve the
+        // files that contain segments for the time series that are required by the query.
+        let tag_partition_filters: Vec<FilterLiteral> = filters
+            .iter()
+            .filter_map(|filter| rewrite_tag_filter(&self.tag_column_names, filter))
+            .collect();
+
         for field_column_index in stored_field_columns_in_projection {
             let field_column_index = field_column_index.to_string();
-            let partition_filters = [(
+            let mut partition_filters = Vec::with_capacity(1 + tag_partition_filters.len());
+            partition_filters.push((
                 FIELD_COLUMN,
                 FilterOp::Eq,
-                FilterValue::Scalar(&field_column_index),
-            )];
+                FilterValue::Scalar(field_column_index.as_str()),
+            ));
+            partition_filters.extend(tag_partition_filters.iter().cloned());
 
-            let lex_ordering = LexOrdering::new(self.query_order_segment.to_vec())
-                .expect("query_order_segment should not be empty.");
-            let data_source_exec = new_data_source_exec(
-                &delta_table,
-                &partition_filters,
-                limit,
-                &maybe_physical_parquet_filters,
-                self.query_compressed_schema.clone(),
-                vec![lex_ordering],
-            )
-            .await?;
+            let data_source_exec = self
+                .new_data_source_exec(
+                    &delta_table,
+                    &partition_filters,
+                    limit,
+                    &maybe_physical_parquet_filters,
+                )
+                .await?;
 
             let grid_exec = GridExec::new(
                 self.grid_schema.clone(),
@@ -672,14 +917,25 @@ impl TableProvider for TimeSeriesTable {
         }
     }
 
-    /// Specify that time series tables perform inexact predicate push-down.
+    /// Specify that time series tables perform exact predicate push-down for filters that can be
+    /// converted to Delta Lake partition filters and inexact predicate push-down for other filters.
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
     ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        // Iterate over the individual predicates so we can check if each individual filter is
+        // Exact, Inxact, or Unsupported. For example, Delta Lake partition filters are exact.
         Ok(filters
             .iter()
-            .map(|_filter| TableProviderFilterPushDown::Inexact)
+            .map(|filter| {
+                // rewrite_tag_filter() is used directly to check if the filter is tag filter that
+                // can be push to Delta Lake as the only extra step it does is return a new filter.
+                if rewrite_tag_filter(&self.tag_column_names, filter).is_some() {
+                    TableProviderFilterPushDown::Exact
+                } else {
+                    TableProviderFilterPushDown::Inexact
+                }
+            })
             .collect())
     }
 
@@ -704,7 +960,7 @@ impl TableProvider for TimeSeriesTable {
 mod tests {
     use super::*;
 
-    use datafusion::logical_expr::lit;
+    use datafusion::logical_expr::{col, lit};
     use datafusion::prelude::Expr;
     use modelardb_test::table;
     use modelardb_types::types::Timestamp;
@@ -838,7 +1094,7 @@ mod tests {
 
     fn new_timestamp_filters(operator: Operator) -> Vec<Expr> {
         vec![new_binary_expr(
-            logical_expr::col("timestamp"),
+            col("timestamp"),
             operator,
             lit(TIMESTAMP_PREDICATE_VALUE),
         )]
@@ -846,11 +1102,145 @@ mod tests {
 
     fn assert_binary_expr(expr: Expr, column: &str, operator: Operator, value: Expr) {
         if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = expr {
-            assert_eq!(*left, logical_expr::col(column));
+            assert_eq!(*left, col(column));
             assert_eq!(op, operator);
             assert_eq!(*right, value);
         } else {
             panic!("Expr is not a BinaryExpr.");
         }
+    }
+
+    // Tests for rewrite_tag_filter().
+    #[test]
+    fn test_rewrite_tag_filter_equal() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag").eq(lit("tag_value"))
+            ),
+            Some(("tag", FilterOp::Eq, FilterValue::Scalar("tag_value")))
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_equal_reversed() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &lit("tag_value").eq(col("tag"))
+            ),
+            Some(("tag", FilterOp::Eq, FilterValue::Scalar("tag_value")))
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_not_equal() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag").not_eq(lit("tag_value"))
+            ),
+            Some(("tag", FilterOp::Ne, FilterValue::Scalar("tag_value")))
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_not_equal_reversed() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &lit("tag_value").not_eq(col("tag"))
+            ),
+            Some(("tag", FilterOp::Ne, FilterValue::Scalar("tag_value")))
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_rewrite_tag_in_list() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag").in_list(vec![lit("tag_value_one"), lit("tag_value_two")], false)
+            ),
+            Some((
+                "tag",
+                FilterOp::In,
+                FilterValue::Set(vec!["tag_value_one", "tag_value_two"])
+            )),
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_return_none_for_non_tags() {
+        assert!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("field").eq(lit(37.0))
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_return_none_for_tag_and_non_tags() {
+        assert!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag")
+                    .eq(lit("tag_value"))
+                    .or(col("field").eq(lit(37.0)))
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_rewrite_multiple_tag_filters_on_one_column() {
+        assert_eq!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag")
+                    .eq(lit("tag_value_one"))
+                    .or(col("tag").eq(lit("tag_value_two")))
+                    .or(col("tag")
+                        .in_list(vec![lit("tag_value_three"), lit("tag_value_four")], false))
+            ),
+            Some((
+                "tag",
+                FilterOp::In,
+                FilterValue::Set(vec![
+                    "tag_value_one",
+                    "tag_value_two",
+                    "tag_value_three",
+                    "tag_value_four"
+                ])
+            )),
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_rewrite_return_none_multiple_tag_filters_on_different_columns() {
+        assert!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag_one".to_owned(), "tag_two".to_owned()]),
+                &col("tag_one")
+                    .eq(lit("tag_one_value"))
+                    .or(col("tag_two").eq(lit("tag_two_value")))
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_rewrite_tag_filter_rewrite_return_none_multiple_not_equal_tag_filters_on_one_column() {
+        assert!(
+            rewrite_tag_filter(
+                &HashSet::from(["tag".to_owned()]),
+                &col("tag")
+                    .not_eq(lit("tag_value_one"))
+                    .or(col("tag").not_eq(lit("tag_value_two")))
+            )
+            .is_none()
+        );
     }
 }
