@@ -350,14 +350,29 @@ impl TimeSeriesTable {
                 .and_then(|min_values| min_values.get(column_name))
                 .and_then(|value| self.json_value_to_datafusion_value(value, field.data_type()))
             {
-                column_statistics.min_value = Precision::Exact(min_value);
+                column_statistics.min_value = match min_value {
+                    // Delta Lake truncates timestamps to milliseconds, so the minimum is a lower
+                    // bound that may be smaller than the actual minimum.
+                    ScalarValue::TimestampMicrosecond(_, _) => Precision::Inexact(min_value),
+                    min_value => Precision::Exact(min_value),
+                };
             }
 
             if let Some(max_value) = max_values
                 .and_then(|max_values| max_values.get(column_name))
                 .and_then(|value| self.json_value_to_datafusion_value(value, field.data_type()))
             {
-                column_statistics.max_value = Precision::Exact(max_value);
+                column_statistics.max_value = match max_value {
+                    // Delta Lake truncates timestamps to milliseconds, so the largest microsecond
+                    // in the millisecond is used as the maximum to make it an upper bound.
+                    ScalarValue::TimestampMicrosecond(Some(max_value), timezone) => {
+                        Precision::Inexact(ScalarValue::TimestampMicrosecond(
+                            Some(max_value.saturating_add(999)),
+                            timezone,
+                        ))
+                    }
+                    max_value => Precision::Exact(max_value),
+                };
             }
         }
 
