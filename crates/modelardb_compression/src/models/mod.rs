@@ -94,7 +94,7 @@ pub fn total_min(v1: Value, v2: Value) -> Value {
     if v1.total_cmp(&v2).is_le() { v1 } else { v2 }
 }
 
-/// Return the minimum of `v1` and `v2` using the total order to match Apache DataFusion's MAX.
+/// Return the maximum of `v1` and `v2` using the total order to match Apache DataFusion's MAX.
 pub fn total_max(v1: Value, v2: Value) -> Value {
     if v1.total_cmp(&v2).is_ge() { v1 } else { v2 }
 }

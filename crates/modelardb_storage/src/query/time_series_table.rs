@@ -472,10 +472,10 @@ fn rewrite_and_combine_filters(schema: &Schema, filters: &[Expr]) -> (Option<Exp
     )
 }
 
-/// Rewrite a `filter` that prunes timestamps that is written in terms of the time series table's
-/// query schema, to a filter that is written in terms of the schema used for compressed segments by
-/// the storage engine and a filter that is written in terms of the schema used for univariate time
-/// series by [`GridExec`]. If the filter cannot be rewritten, [`None`] is returned.
+/// Rewrite a `filter` that prunes timestamps and that is written in terms of the time series
+/// table's query schema, to a filter that is written in terms of the schema used for compressed
+/// segments by the storage engine and a filter that is written in terms of the schema used for
+/// univariate time series by [`GridExec`]. If the filter cannot be rewritten, [`None`] is returned.
 fn rewrite_timestamp_filter(query_schema: &Schema, filter: &Expr) -> Option<(Expr, Expr)> {
     match filter {
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
@@ -574,7 +574,7 @@ fn rewrite_tag_filter<'a>(
             op: Operator::Or,
             right,
         }) => {
-            // Handle BinaryExpr that combine multiple filters on the same tag column with OR.
+            // Handle BinaryExpr that combines multiple filters on the same tag column with OR.
             let left_rewritten_filter = rewrite_tag_filter(tag_column_names, left)?;
             let right_rewritten_filter = rewrite_tag_filter(tag_column_names, right)?;
 
@@ -595,7 +595,7 @@ fn rewrite_tag_filter<'a>(
             ))
         }
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
-            // Handle BinaryExpr that check if a tag columns is equal or not equal to a value.
+            // Handle BinaryExpr that checks if a tag columns is equal or not equal to a value.
             let filter_op = match op {
                 Operator::Eq => FilterOp::Eq,
                 Operator::NotEq => FilterOp::Ne,
@@ -647,7 +647,7 @@ fn rewrite_tag_filter<'a>(
 }
 
 /// Return the name of the tag column and the associated values in `filter_literal`, i.e., if
-/// `filter_literal` is equality one value is return while multiple values may be returned for IN.
+/// `filter_literal` is equality one value is returned while multiple values may be returned for IN.
 /// For any other predicate [`None`] is returned so a combined IN [`FilterLiteral`] can be created.
 fn extract_tag_column_name_and_values(
     filter_literal: FilterLiteral<'_>,
@@ -731,7 +731,7 @@ fn sort_partitioned_files_by_start_time(partitioned_files: &mut [PartitionedFile
     });
 }
 
-/// The implementation is not derived as many instance variables does not implement [`fmt::Debug`].
+/// The implementation is not derived as many instance variables do not implement [`fmt::Debug`].
 impl fmt::Debug for TimeSeriesTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
