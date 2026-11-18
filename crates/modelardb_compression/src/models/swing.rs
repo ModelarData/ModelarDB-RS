@@ -343,12 +343,9 @@ fn compute_slope_and_intercept(
 mod tests {
     use super::*;
 
-    use std::sync::Arc;
-
     use arrow::array::{BinaryViewArray, Float32Array, Int8Array};
-    use arrow::datatypes::{DataType, Field, Schema};
+    use modelardb_test::table;
     use modelardb_test::{ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX};
-    use modelardb_types::schemas::COMPRESSED_SCHEMA;
     use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
     use proptest::num::f32 as ProptestValue;
     use proptest::{num, prop_assert, prop_assert_eq, prop_assume, property_test};
@@ -755,9 +752,7 @@ mod tests {
         );
         let values = ValueArray::from_iter_values(values);
 
-        let mut compressed_schema_fields = COMPRESSED_SCHEMA.0.fields.clone().to_vec();
-        compressed_schema_fields.push(Arc::new(Field::new("tag", DataType::Utf8View, false)));
-        let compressed_schema = Arc::new(Schema::new(compressed_schema_fields));
+        let compressed_schema = table::time_series_table_metadata().compressed_schema;
 
         let segments = crate::try_compress_univariate_time_series(
             &timestamps,

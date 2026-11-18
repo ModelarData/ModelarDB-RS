@@ -322,16 +322,16 @@ mod tests {
         }
     }
 
-    /// Return the number of physical Apache Parquet files in the time series table in
-    /// `local_data_folder`.
+    /// Return the number of physical Apache Parquet files in the partition for the first field
+    /// column and the time series in the time series table in `local_data_folder`.
     fn table_file_count(local_data_folder: &DataFolder) -> u8 {
-        let column_path = format!(
-            "{}/tables/{}/field_column=0",
+        let partition_path = format!(
+            "{}/tables/{}/field_column=0/tag=tag",
             local_data_folder.location(),
             TIME_SERIES_TABLE_NAME
         );
 
-        std::fs::read_dir(column_path).unwrap().count() as u8
+        std::fs::read_dir(partition_path).unwrap().count() as u8
     }
 
     /// Create a [`DataStorageCompactor`] that compacts the tables in `local_data_folder`.

@@ -788,12 +788,12 @@ async fn test_can_vacuum_time_series_table() {
         .unwrap();
 
     // The files should still exist on disk even though they are no longer active.
-    let column_path = format!(
-        "{}/tables/{}/field_column=1",
+    let partition_path = format!(
+        "{}/tables/{}/field_column=1/tag=location",
         test_context.temp_dir.path().to_str().unwrap(),
         TIME_SERIES_TABLE_NAME
     );
-    let files = std::fs::read_dir(&column_path).unwrap();
+    let files = std::fs::read_dir(&partition_path).unwrap();
     assert_eq!(files.count(), 1);
 
     test_context
@@ -801,8 +801,8 @@ async fn test_can_vacuum_time_series_table() {
         .await
         .unwrap();
 
-    // No files should remain in the column folder.
-    let files = std::fs::read_dir(&column_path).unwrap();
+    // No files should remain in the partition folder.
+    let files = std::fs::read_dir(&partition_path).unwrap();
     assert_eq!(files.count(), 0);
 }
 
@@ -886,8 +886,8 @@ async fn test_can_optimize_time_series_table() {
     )
     .await;
 
-    // ingest_time_series_and_flush_data() writes one file per field column partition. ingest and
-    // flush three more times so each partition has four small files to merge.
+    // ingest_time_series_and_flush_data() writes one file per partition. Ingest and flush three
+    // more times so each partition has four small files to merge.
     for _ in 0..3 {
         let flight_data = TestContext::create_flight_data_from_time_series(
             TIME_SERIES_TABLE_NAME.to_owned(),
@@ -902,13 +902,13 @@ async fn test_can_optimize_time_series_table() {
         test_context.flush_data_to_disk().await;
     }
 
-    let column_path = format!(
-        "{}/tables/{}/field_column=1",
+    let partition_path = format!(
+        "{}/tables/{}/field_column=1/tag=location",
         test_context.temp_dir.path().to_str().unwrap(),
         TIME_SERIES_TABLE_NAME
     );
 
-    let files = std::fs::read_dir(&column_path).unwrap();
+    let files = std::fs::read_dir(&partition_path).unwrap();
     assert_eq!(files.count(), 4);
 
     test_context
@@ -923,7 +923,7 @@ async fn test_can_optimize_time_series_table() {
         .unwrap();
 
     // The four files in the partition should be merged into a single active file.
-    let files = std::fs::read_dir(&column_path).unwrap();
+    let files = std::fs::read_dir(&partition_path).unwrap();
     assert_eq!(files.count(), 1);
 }
 

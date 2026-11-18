@@ -47,7 +47,7 @@ use datafusion::physical_plan::{
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
-use modelardb_types::schemas::QUERY_COMPRESSED_SCHEMA;
+use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use modelardb_types::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
@@ -285,8 +285,8 @@ impl GridStream {
         );
 
         let mut tag_arrays =
-            Vec::with_capacity(batch.num_columns() - QUERY_COMPRESSED_SCHEMA.0.fields().len());
-        for tag_index in QUERY_COMPRESSED_SCHEMA.0.fields().len()..batch.num_columns() {
+            Vec::with_capacity(batch.num_columns() - COMPRESSED_SCHEMA.0.fields().len());
+        for tag_index in COMPRESSED_SCHEMA.0.fields().len()..batch.num_columns() {
             tag_arrays.push(modelardb_types::array!(batch, tag_index, StringViewArray));
         }
 

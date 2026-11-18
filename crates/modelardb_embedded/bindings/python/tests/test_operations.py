@@ -26,16 +26,17 @@ import unittest
 from tempfile import TemporaryDirectory
 
 import pyarrow
+from pyarrow import RecordBatch, Schema
+
 from modelardb import (
+    AbsoluteErrorBound,
     Aggregate,
     ModelarDBType,
-    AbsoluteErrorBound,
-    TimeSeriesTable,
     NormalTable,
     Operations,
     RelativeErrorBound,
+    TimeSeriesTable,
 )
-from pyarrow import RecordBatch, Schema
 
 NORMAL_TABLE_NAME = "normal_table"
 TIME_SERIES_TABLE_NAME = "time_series_table"
@@ -171,7 +172,8 @@ class TestOperations(unittest.TestCase):
 
             actual_result = data_folder.read(f"SELECT * FROM {TIME_SERIES_TABLE_NAME}")
             self.assertEqual(
-                actual_result, sorted_time_series_table_data_with_generated_column()
+                sort_by_tag_and_timestamp(actual_result),
+                sorted_time_series_table_data_with_generated_column(),
             )
 
     def test_data_folder_read_error(self):
@@ -188,8 +190,7 @@ class TestOperations(unittest.TestCase):
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_copy(self):
-        with TemporaryDirectory() as source_temp_dir:
-            with TemporaryDirectory() as target_temp_dir:
+        with TemporaryDirectory() as source_temp_dir, TemporaryDirectory() as target_temp_dir:
                 source_data_folder = Operations.open_local(source_temp_dir)
                 create_tables_in_data_folder(source_data_folder)
 
@@ -209,8 +210,7 @@ class TestOperations(unittest.TestCase):
                 self.assertEqual(target_data_folder.read(sql), expected_result)
 
     def test_data_folder_copy_error(self):
-        with TemporaryDirectory() as source_temp_dir:
-            with TemporaryDirectory() as target_temp_dir:
+        with TemporaryDirectory() as source_temp_dir, TemporaryDirectory() as target_temp_dir:
                 source_data_folder = Operations.open_local(source_temp_dir)
                 target_data_folder = Operations.open_local(target_temp_dir)
 
@@ -233,7 +233,8 @@ class TestOperations(unittest.TestCase):
 
             actual_result = data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME)
             self.assertEqual(
-                actual_result, sorted_time_series_table_data_with_generated_column()
+                sort_by_tag_and_timestamp(actual_result),
+                sorted_time_series_table_data_with_generated_column(),
             )
 
     def test_data_folder_read_time_series_table_with_columns_tags_timestamps(self):
@@ -244,7 +245,7 @@ class TestOperations(unittest.TestCase):
             data_folder.write(TIME_SERIES_TABLE_NAME,
                               unsorted_time_series_table_data_without_generated_column())
 
-            end_time = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
+            end_time = datetime.datetime.fromtimestamp(0, tz=datetime.UTC)
             actual_result = data_folder.read_time_series_table(
                 TIME_SERIES_TABLE_NAME,
                 columns=["tag", "field_one"],
@@ -295,8 +296,7 @@ class TestOperations(unittest.TestCase):
             self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_copy_time_series_table(self):
-        with TemporaryDirectory() as source_temp_dir:
-            with TemporaryDirectory() as target_temp_dir:
+        with TemporaryDirectory() as source_temp_dir, TemporaryDirectory() as target_temp_dir:
                 source_data_folder = Operations.open_local(source_temp_dir)
                 create_tables_in_data_folder(source_data_folder)
 
@@ -314,15 +314,20 @@ class TestOperations(unittest.TestCase):
                 expected_result = sorted_time_series_table_data_with_generated_column()
 
                 self.assertEqual(
-                    source_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
+                    sort_by_tag_and_timestamp(
+                        source_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME)
+                    ),
+                    expected_result,
                 )
                 self.assertEqual(
-                    target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
+                    sort_by_tag_and_timestamp(
+                        target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME)
+                    ),
+                    expected_result,
                 )
 
     def test_data_folder_copy_time_series_table_with_timestamps(self):
-        with TemporaryDirectory() as source_temp_dir:
-            with TemporaryDirectory() as target_temp_dir:
+        with TemporaryDirectory() as source_temp_dir, TemporaryDirectory() as target_temp_dir:
                 source_data_folder = Operations.open_local(source_temp_dir)
                 create_tables_in_data_folder(source_data_folder)
 
@@ -336,7 +341,7 @@ class TestOperations(unittest.TestCase):
                 target_data_folder = Operations.open_local(target_temp_dir)
                 create_tables_in_data_folder(target_data_folder)
 
-                end_time = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
+                end_time = datetime.datetime.fromtimestamp(0, tz=datetime.UTC)
                 source_data_folder.copy_time_series_table(
                     TIME_SERIES_TABLE_NAME,
                     target_data_folder,
@@ -348,20 +353,23 @@ class TestOperations(unittest.TestCase):
                 # After copying the data it should also be in target_table.
                 source_expected_result = sorted_time_series_table_data_with_generated_column()
                 self.assertEqual(
-                    source_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
+                    sort_by_tag_and_timestamp(
+                        source_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME)
+                    ),
                     source_expected_result,
                 )
 
                 source_expected_result = unsorted_time_series_table_data_with_generated_column()
                 target_expected_result = source_expected_result.slice(2, 2)
                 self.assertEqual(
-                    target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME),
+                    sort_by_tag_and_timestamp(
+                        target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME)
+                    ),
                     target_expected_result,
                 )
 
     def test_data_folder_copy_time_series_table_error(self):
-        with TemporaryDirectory() as source_temp_dir:
-            with TemporaryDirectory() as target_temp_dir:
+        with TemporaryDirectory() as source_temp_dir, TemporaryDirectory() as target_temp_dir:
                 source_data_folder = Operations.open_local(source_temp_dir)
                 target_data_folder = Operations.open_local(target_temp_dir)
 
@@ -374,8 +382,7 @@ class TestOperations(unittest.TestCase):
                 self.assertEqual(error_message, str(context.exception))
 
     def test_data_folder_move(self):
-        with TemporaryDirectory() as source_temp_dir:
-            with TemporaryDirectory() as target_temp_dir:
+        with TemporaryDirectory() as source_temp_dir, TemporaryDirectory() as target_temp_dir:
                 source_data_folder = Operations.open_local(source_temp_dir)
                 create_tables_in_data_folder(source_data_folder)
 
@@ -395,12 +402,14 @@ class TestOperations(unittest.TestCase):
 
                 expected_result = sorted_time_series_table_data_with_generated_column()
                 self.assertEqual(
-                    target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME), expected_result
+                    sort_by_tag_and_timestamp(
+                        target_data_folder.read_time_series_table(TIME_SERIES_TABLE_NAME)
+                    ),
+                    expected_result,
                 )
 
     def test_data_folder_move_error(self):
-        with TemporaryDirectory() as source_temp_dir:
-            with TemporaryDirectory() as target_temp_dir:
+        with TemporaryDirectory() as source_temp_dir, TemporaryDirectory() as target_temp_dir:
                 source_data_folder = Operations.open_local(source_temp_dir)
                 target_data_folder = Operations.open_local(target_temp_dir)
 
@@ -474,13 +483,15 @@ class TestOperations(unittest.TestCase):
             data_folder.truncate(TIME_SERIES_TABLE_NAME)
 
             # The files should still exist on disk even though they are no longer active.
-            folder_path = os.path.join(temp_dir, "tables", TIME_SERIES_TABLE_NAME, "field_column=2")
+            folder_path = os.path.join(
+                temp_dir, "tables", TIME_SERIES_TABLE_NAME, "field_column=2", "tag=tag_one"
+            )
             file_count = len(os.listdir(folder_path))
             self.assertEqual(file_count, 1)
 
             data_folder.vacuum(TIME_SERIES_TABLE_NAME, retention_period_in_seconds=0)
 
-            # No files should remain in the column folder.
+            # No files should remain in the tag folder.
             file_count = len(os.listdir(folder_path))
             self.assertEqual(file_count, 0)
 
@@ -506,7 +517,9 @@ class TestOperations(unittest.TestCase):
                     unsorted_time_series_table_data_without_generated_column(),
                 )
 
-            folder_path = os.path.join(temp_dir, "tables", TIME_SERIES_TABLE_NAME, "field_column=2")
+            folder_path = os.path.join(
+                temp_dir, "tables", TIME_SERIES_TABLE_NAME, "field_column=2", "tag=tag_one"
+            )
             file_count = len(os.listdir(folder_path))
             self.assertEqual(file_count, 4)
 
@@ -649,3 +662,7 @@ def time_series_table_data() -> RecordBatch:
                 "field_three": 146.0,
                 },
             ]
+
+def sort_by_tag_and_timestamp(record_batch: RecordBatch) -> RecordBatch:
+    sorted_rows = sorted(record_batch.to_pylist(), key=lambda row: (row["tag"], row["timestamp"]))
+    return pyarrow.RecordBatch.from_pylist(sorted_rows, record_batch.schema)
