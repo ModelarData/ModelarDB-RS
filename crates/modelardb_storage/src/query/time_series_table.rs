@@ -322,7 +322,7 @@ impl TimeSeriesTable {
             datafusion_statistics.num_rows = Precision::Exact(num_records);
         }
 
-        // Extract statistics for the each field.
+        // Extract statistics for each field.
         let min_values = parsed_statistics
             .get("minValues")
             .and_then(serde_json::Value::as_object);
@@ -943,8 +943,8 @@ impl TableProvider for TimeSeriesTable {
         Ok(filters
             .iter()
             .map(|filter| {
-                // rewrite_tag_filter() is used directly to check if the filter is tag filter that
-                // can be push to Delta Lake as the only extra step it does is return a new filter.
+                // rewrite_tag_filter() is used directly to check if the filter is a tag filter that
+                // can be pushed to Delta Lake as the only extra step it does is return a new filter.
                 if rewrite_tag_filter(&self.tag_column_names, filter).is_some() {
                     TableProviderFilterPushDown::Exact
                 } else {
