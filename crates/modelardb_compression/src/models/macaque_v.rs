@@ -184,8 +184,10 @@ impl MacaqueV {
         // are 0. Thus, we rewrite bits using 23 - ⌊log2 factorized_epsilon⌋ and
         // perform an extra check to ensure the error bound is not exceeded.
         // If the error bound is exceeded, we rewrite 23 - ⌈log2 factorized_epsilon⌉
-        // least significant mantissa bits.
-        let mut rewrite_position = 23 - factorized_epsilon.log2().abs().floor() as i32;
+        // least significant mantissa bits. Error bounds far below or far above the value give
+        // positions outside the mantissa.
+        let mut rewrite_position =
+            (23 - factorized_epsilon.log2().abs().floor() as i32).clamp(0, 23);
         let mut rewritten_value = f32::from_bits(rewrite_bits_by_n(value_as_u32, rewrite_position));
 
         // If the error bound is exceeded, value is rewritten with one less bit i.e.,
