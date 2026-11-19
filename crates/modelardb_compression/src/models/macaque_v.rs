@@ -164,9 +164,12 @@ impl MacaqueV {
     }
 
     /// Rewrite the highest number of mantissa bits possible for `value` within the `error_bound`
-    /// starting from the least significant bits.
+    /// starting from the least significant bits. Zero, subnormal, infinite, and NaN values are
+    /// returned unchanged.
     fn rewrite_least_mantissa_bits(&self, value: Value) -> Value {
-        if value.abs() == 0.0 || value.is_nan() || value.is_infinite() {
+        // Subnormal values have no implicit leading mantissa bit, so the computation below does
+        // not bound their error.
+        if !value.is_normal() {
             return value;
         }
 
@@ -175,14 +178,16 @@ impl MacaqueV {
             models::maximum_allowed_deviation(self.error_bound, value as f64) as f32;
         let exponent = get_exponent(value);
         let factorized_epsilon = abs_error_bound / 2f32.powi(exponent);
-        // Rewriting the last 23 - ⌈log2 factorized_epsilon⌉ mantissa bits
+        // Rewriting the last 23 - ⌈|log2 factorized_epsilon|⌉ mantissa bits
         // never exceeds the error bound. However, in that case, one more bit
         // can be rewritten if the majority of the least significant mantissa bits
-        // are 0. Thus, we rewrite bits using 23 - ⌊log2 factorized_epsilon⌋ and
+        // are 0. Thus, we rewrite bits using 23 - ⌊|log2 factorized_epsilon|⌋ and
         // perform an extra check to ensure the error bound is not exceeded.
-        // If the error bound is exceeded, we rewrite 23 - ⌈log2 factorized_epsilon⌉
-        // least significant mantissa bits.
-        let mut rewrite_position = 23 - factorized_epsilon.log2().abs().floor() as i32;
+        // If the error bound is exceeded, we rewrite 23 - ⌈|log2 factorized_epsilon|⌉
+        // least significant mantissa bits. Error bounds far below or far above the value give
+        // positions outside the mantissa, so the position is clamped to it.
+        let mut rewrite_position =
+            (23 - factorized_epsilon.log2().abs().floor() as i32).clamp(0, 23);
         let mut rewritten_value = f32::from_bits(rewrite_bits_by_n(value_as_u32, rewrite_position));
 
         // If the error bound is exceeded, value is rewritten with one less bit i.e.,
@@ -439,6 +444,66 @@ mod tests {
             before_last_trailing_zero_bits,
             model_type.last_trailing_zero_bits
         );
+    }
+
+    // Tests for rewrite_least_mantissa_bits().
+    #[test]
+    fn test_rewrite_least_mantissa_bits_with_absolute_error_bound_below_value_precision() {
+        // The error bound is smaller than the distance to the neighboring values of 2500000.0.
+        let model_type = MacaqueV::new(ErrorBound::try_new_absolute(0.1).unwrap());
+        assert_eq!(model_type.rewrite_least_mantissa_bits(2500000.0), 2500000.0);
+    }
+
+    #[test]
+    fn test_rewrite_least_mantissa_bits_with_absolute_error_bound_above_value() {
+        // The error bound is larger than the value itself.
+        let model_type = MacaqueV::new(ErrorBound::try_new_absolute(1.0).unwrap());
+        assert_eq!(model_type.rewrite_least_mantissa_bits(1e-8), 1e-8);
+    }
+
+    #[test]
+    fn test_rewrite_least_mantissa_bits_with_subnormal_value() {
+        let value: Value = -9.948535e-39;
+        assert!(value.is_subnormal());
+
+        let model_type = MacaqueV::new(ErrorBound::try_new_relative(40.0).unwrap());
+        assert_eq!(model_type.rewrite_least_mantissa_bits(value), value);
+    }
+
+    #[property_test]
+    fn test_rewrite_least_mantissa_bits_within_absolute_error_bound(
+        value: Value,
+        #[strategy = f32::MIN_POSITIVE..=f32::MAX] error_bound: f32,
+    ) {
+        assert_rewrite_least_mantissa_bits_within_error_bound(
+            ErrorBound::try_new_absolute(error_bound).unwrap(),
+            value,
+        );
+    }
+
+    #[property_test]
+    fn test_rewrite_least_mantissa_bits_within_relative_error_bound(
+        value: Value,
+        #[strategy = f32::MIN_POSITIVE..=100.0] error_bound: f32,
+    ) {
+        assert_rewrite_least_mantissa_bits_within_error_bound(
+            ErrorBound::try_new_relative(error_bound).unwrap(),
+            value,
+        );
+    }
+
+    fn assert_rewrite_least_mantissa_bits_within_error_bound(
+        error_bound: ErrorBound,
+        value: Value,
+    ) {
+        let model_type = MacaqueV::new(error_bound);
+        let rewritten_value = model_type.rewrite_least_mantissa_bits(value);
+
+        assert!(models::is_value_within_error_bound(
+            error_bound,
+            value,
+            rewritten_value
+        ));
     }
 
     // Tests for sum().
