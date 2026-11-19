@@ -164,9 +164,12 @@ impl MacaqueV {
     }
 
     /// Rewrite the highest number of mantissa bits possible for `value` within the `error_bound`
-    /// starting from the least significant bits.
+    /// starting from the least significant bits. Zero, subnormal, infinite, and NaN values are
+    /// returned unchanged.
     fn rewrite_least_mantissa_bits(&self, value: Value) -> Value {
-        if value.abs() == 0.0 || value.is_nan() || value.is_infinite() {
+        // Subnormal values have no implicit leading mantissa bit, so the computation below does
+        // not bound their error.
+        if !value.is_normal() {
             return value;
         }
 
