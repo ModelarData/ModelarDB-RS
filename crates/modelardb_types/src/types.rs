@@ -65,92 +65,74 @@ pub struct TableMetadata {
     pub stored_schema: Arc<Schema>,
     /// Projection that changes `query_schema` to `stored_schema`.
     pub query_schema_to_stored_schema: Vec<usize>,
-    /// Error bounds of the columns in `stored_schema`. Only Float32 columns can have a lossy error
-    /// bound.
-    pub error_bounds: Vec<ErrorBound>,
-    /// Expressions that generate the columns in `query_schema` that are not stored. [`None`] is
-    /// stored for the columns that are in `stored_schema`.
-    pub generated_columns: Vec<Option<GeneratedColumn>>,
+    /// Metadata of each column in `query_schema`.
+    pub column_metadata: Vec<ColumnMetadata>,
 }
 
 impl TableMetadata {
-    /// Create metadata for a table. `error_bounds` and `generated_columns` must have an element for
-    /// each column in `query_schema`. If any of the following conditions are true,
-    /// [`ModelarDbTypesError`] is returned:
-    /// * The number of error bounds does not match the number of columns.
-    /// * The number of potentially generated columns does not match the number of columns.
-    /// * A generated column has a lossy error bound.
+    /// Create metadata for a table. `column_metadata` must have an element for each column in
+    /// `query_schema`. If any of the following conditions are true, [`ModelarDbTypesError`] is
+    /// returned:
+    /// * `column_metadata` does not have an element for each column.
     /// * A column that is not of type Float32 has a lossy error bound.
     /// * A generated column includes another generated column in its expression.
     /// * The `query_schema` does not include at least one stored column.
     pub fn try_new(
         name: String,
         query_schema: Arc<Schema>,
-        error_bounds: Vec<ErrorBound>,
-        generated_columns: Vec<Option<GeneratedColumn>>,
+        column_metadata: Vec<ColumnMetadata>,
     ) -> Result<Self> {
         let number_of_columns = query_schema.fields().len();
 
-        // If an error bound is not defined for each column, return an error.
-        if error_bounds.len() != number_of_columns {
+        // If column metadata is not defined for each column, return an error.
+        if column_metadata.len() != number_of_columns {
             return Err(ModelarDbTypesError::InvalidArgument(
-                "An error bound must be defined for each column.".to_owned(),
+                "Column metadata must be defined for each column.".to_owned(),
             ));
         }
 
-        // If a generated column or None is not defined for each column, return an error.
-        if generated_columns.len() != number_of_columns {
-            return Err(ModelarDbTypesError::InvalidArgument(
-                "A generated column or None must be defined for each column.".to_owned(),
-            ));
-        }
+        let mut query_schema_to_stored_schema = Vec::with_capacity(number_of_columns);
 
-        // If a lossy error bound is defined for a generated column or a column that is not of type
-        // Float32, return an error. Values are only rewritten in stored Float32 columns.
-        for ((field, error_bound), generated_column) in query_schema
+        for (index, (field, metadata)) in query_schema
             .fields()
             .iter()
-            .zip(&error_bounds)
-            .zip(&generated_columns)
+            .zip(&column_metadata)
+            .enumerate()
         {
-            if *error_bound == ErrorBound::Lossless {
-                continue;
-            }
+            match metadata {
+                ColumnMetadata::Stored(error_bound) => {
+                    // If a lossy error bound is defined for a column not of type Float32, return
+                    // an error. Values are only rewritten in Float32 columns.
+                    if *error_bound != ErrorBound::Lossless
+                        && field.data_type() != &ArrowValue::DATA_TYPE
+                    {
+                        return Err(ModelarDbTypesError::InvalidArgument(format!(
+                            "The column '{}' cannot have an error bound since its type '{}' is not Float32.",
+                            field.name(),
+                            field.data_type()
+                        )));
+                    }
 
-            if generated_column.is_some() {
-                return Err(ModelarDbTypesError::InvalidArgument(format!(
-                    "The generated column '{}' cannot have an error bound.",
-                    field.name()
-                )));
-            }
+                    query_schema_to_stored_schema.push(index);
+                }
+                ColumnMetadata::Generated(generated_column) => {
+                    // If a generated column depends on other generated columns, return an error.
+                    let depends_on_generated_column =
+                        generated_column.source_columns.iter().any(|source_column| {
+                            matches!(
+                                column_metadata[*source_column],
+                                ColumnMetadata::Generated(_)
+                            )
+                        });
 
-            if field.data_type() != &ArrowValue::DATA_TYPE {
-                return Err(ModelarDbTypesError::InvalidArgument(format!(
-                    "The column '{}' cannot have an error bound since its type '{}' is not Float32.",
-                    field.name(),
-                    field.data_type()
-                )));
-            }
-        }
-
-        // If a generated column depends on other generated columns, return an error.
-        for generated_column in generated_columns.iter().flatten() {
-            for source_column in &generated_column.source_columns {
-                if generated_columns[*source_column].is_some() {
-                    return Err(ModelarDbTypesError::InvalidArgument(
-                        "A generated column cannot depend on generated columns.".to_owned(),
-                    ));
+                    if depends_on_generated_column {
+                        return Err(ModelarDbTypesError::InvalidArgument(
+                            "A generated column cannot depend on generated columns.".to_owned(),
+                        ));
+                    }
                 }
             }
         }
-
-        // Remove the generated columns from the query schema and the error bounds since these
-        // columns are never provided when writing data to the table.
-        let query_schema_to_stored_schema: Vec<usize> = generated_columns
-            .iter()
-            .enumerate()
-            .filter_map(|(index, generated_column)| generated_column.is_none().then_some(index))
-            .collect();
 
         if query_schema_to_stored_schema.is_empty() {
             return Err(ModelarDbTypesError::InvalidArgument(
@@ -158,26 +140,31 @@ impl TableMetadata {
             ));
         }
 
+        // Remove the generated columns from the stored schema since these columns are never
+        // provided when writing data to the table.
         let stored_schema = if query_schema_to_stored_schema.len() == number_of_columns {
             query_schema.clone()
         } else {
             Arc::new(query_schema.project(&query_schema_to_stored_schema)?)
         };
 
-        let error_bounds = query_schema_to_stored_schema
-            .iter()
-            .map(|index| error_bounds[*index])
-            .collect();
-
         Ok(Self {
             name,
             query_schema,
             stored_schema,
             query_schema_to_stored_schema,
-            error_bounds,
-            generated_columns,
+            column_metadata,
         })
     }
+}
+
+/// Metadata of a single column in a table.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColumnMetadata {
+    /// A column that is stored with an error bound.
+    Stored(ErrorBound),
+    /// A column that is computed from stored columns when it is queried.
+    Generated(GeneratedColumn),
 }
 
 /// Absolute, relative, or lossless per-value error bound.
@@ -332,13 +319,11 @@ mod tests {
     #[test]
     fn test_can_create_table_metadata() {
         let query_schema = query_schema();
-        let error_bounds = error_bounds();
 
         let table_metadata = TableMetadata::try_new(
             TABLE_NAME.to_owned(),
             query_schema.clone(),
-            error_bounds.clone(),
-            generated_columns(&query_schema),
+            column_metadata(&query_schema),
         )
         .unwrap();
 
@@ -349,12 +334,8 @@ mod tests {
         );
         assert_eq!(table_metadata.query_schema_to_stored_schema, vec![0, 1, 3]);
         assert_eq!(
-            table_metadata.error_bounds,
-            vec![error_bounds[0], error_bounds[1], error_bounds[3]]
-        );
-        assert_eq!(
-            table_metadata.generated_columns,
-            generated_columns(&query_schema)
+            table_metadata.column_metadata,
+            column_metadata(&query_schema)
         );
     }
 
@@ -366,8 +347,7 @@ mod tests {
         let table_metadata = TableMetadata::try_new(
             TABLE_NAME.to_owned(),
             query_schema.clone(),
-            vec![ErrorBound::Lossless; number_of_columns],
-            vec![None; number_of_columns],
+            vec![ColumnMetadata::Stored(ErrorBound::Lossless); number_of_columns],
         )
         .unwrap();
 
@@ -379,24 +359,11 @@ mod tests {
     }
 
     #[test]
-    fn test_cannot_create_table_metadata_with_missing_or_too_many_error_bounds() {
-        let query_schema = query_schema();
-
-        assert_table_metadata_error(
-            query_schema.clone(),
-            vec![],
-            generated_columns(&query_schema),
-            "An error bound must be defined for each column.",
-        );
-    }
-
-    #[test]
-    fn test_cannot_create_table_metadata_with_missing_or_too_many_generated_columns() {
+    fn test_cannot_create_table_metadata_with_missing_or_too_many_column_metadata() {
         assert_table_metadata_error(
             query_schema(),
-            error_bounds(),
             vec![],
-            "A generated column or None must be defined for each column.",
+            "Column metadata must be defined for each column.",
         );
     }
 
@@ -410,39 +377,24 @@ mod tests {
 
         assert_table_metadata_error(
             query_schema,
-            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap()],
-            vec![None],
+            vec![ColumnMetadata::Stored(
+                ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap(),
+            )],
             "The column 'value' cannot have an error bound since its type 'Float64' is not Float32.",
-        );
-    }
-
-    #[test]
-    fn test_cannot_create_table_metadata_with_error_bound_on_generated_column() {
-        let query_schema = query_schema();
-        let mut error_bounds = error_bounds();
-        error_bounds[2] = ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap();
-
-        assert_table_metadata_error(
-            query_schema.clone(),
-            error_bounds,
-            generated_columns(&query_schema),
-            "The generated column 'generated_value' cannot have an error bound.",
         );
     }
 
     #[test]
     fn test_cannot_create_table_metadata_with_generated_columns_using_generated_columns() {
         let query_schema = query_schema();
-        let mut error_bounds = error_bounds();
-        let mut generated_columns = generated_columns(&query_schema);
+        let mut column_metadata = column_metadata(&query_schema);
 
-        error_bounds[3] = ErrorBound::Lossless;
-        generated_columns[3] = Some(generated_column(col("generated_value"), &query_schema));
+        column_metadata[3] =
+            ColumnMetadata::Generated(generated_column(col("generated_value"), &query_schema));
 
         assert_table_metadata_error(
             query_schema,
-            error_bounds,
-            generated_columns,
+            column_metadata,
             "A generated column cannot depend on generated columns.",
         );
     }
@@ -454,28 +406,24 @@ mod tests {
             ArrowValue::DATA_TYPE,
             false,
         )]));
-        let generated_columns = vec![Some(generated_column(lit(1.0_f32), &query_schema))];
+        let column_metadata = vec![ColumnMetadata::Generated(generated_column(
+            lit(1.0_f32),
+            &query_schema,
+        ))];
 
         assert_table_metadata_error(
             query_schema,
-            vec![ErrorBound::Lossless],
-            generated_columns,
+            column_metadata,
             "There needs to be at least one stored column.",
         );
     }
 
     fn assert_table_metadata_error(
         query_schema: Arc<Schema>,
-        error_bounds: Vec<ErrorBound>,
-        generated_columns: Vec<Option<GeneratedColumn>>,
+        column_metadata: Vec<ColumnMetadata>,
         expected_message: &str,
     ) {
-        let result = TableMetadata::try_new(
-            TABLE_NAME.to_owned(),
-            query_schema,
-            error_bounds,
-            generated_columns,
-        );
+        let result = TableMetadata::try_new(TABLE_NAME.to_owned(), query_schema, column_metadata);
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -492,24 +440,15 @@ mod tests {
         ]))
     }
 
-    fn error_bounds() -> Vec<ErrorBound> {
+    fn column_metadata(query_schema: &Arc<Schema>) -> Vec<ColumnMetadata> {
         vec![
-            ErrorBound::Lossless,
-            ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap(),
-            ErrorBound::Lossless,
-            ErrorBound::try_new_relative(ERROR_BOUND_ONE).unwrap(),
-        ]
-    }
-
-    fn generated_columns(query_schema: &Arc<Schema>) -> Vec<Option<GeneratedColumn>> {
-        vec![
-            None,
-            None,
-            Some(generated_column(
+            ColumnMetadata::Stored(ErrorBound::Lossless),
+            ColumnMetadata::Stored(ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap()),
+            ColumnMetadata::Generated(generated_column(
                 col("absolute_value") + col("relative_value"),
                 query_schema,
             )),
-            None,
+            ColumnMetadata::Stored(ErrorBound::try_new_relative(ERROR_BOUND_ONE).unwrap()),
         ]
     }
 
