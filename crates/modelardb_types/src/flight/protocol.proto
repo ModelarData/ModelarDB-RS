@@ -19,26 +19,27 @@ package modelardb.flight.protocol;
 
 // Metadata for a table, including its name, schema, error bounds, and generated columns.
 message TableMetadata {
-  // Error bound or generated column expression of a single column. Columns that are stored losslessly have no entry.
+  // Error bound or generated column expression of a single column. If neither is set, the column is stored losslessly.
   message ColumnMetadata {
-    // Index of the column in the schema.
-    uint32 column_index = 1;
+    oneof metadata {
+      // Absolute error bound of a stored Float32 column.
+      float absolute_error_bound = 1;
 
-    // Error bound of the column. If not set, the column is stored losslessly.
-    optional float error_bound_value = 2;
+      // Relative error bound, in percent, of a stored Float32 column.
+      float relative_error_bound = 2;
 
-    // Whether the error bound is relative instead of absolute.
-    bool error_bound_is_relative = 3;
-
-    // Serialized Apache DataFusion expression that generates the column. If not set, the column is stored.
-    optional bytes generated_column_expr = 4;
+      // Serialized Apache DataFusion expression that generates the column.
+      bytes generated_column_expr = 3;
+    }
   }
 
+  // Name of the table.
   string name = 1;
 
   // Schema of the data that can be read from the table, including the generated columns.
   bytes schema = 2;
 
+  // Metadata of each column in the schema, in the same order as the schema.
   repeated ColumnMetadata column_metadata = 3;
 }
 
