@@ -64,7 +64,7 @@ pub fn encode_and_serialize_table_metadata(table_metadata: &TableMetadata) -> Re
 
     Ok(protocol::TableMetadata {
         name: table_metadata.name.clone(),
-        schema: try_convert_schema_to_bytes(&table_metadata.query_schema)?,
+        query_schema: try_convert_schema_to_bytes(&table_metadata.query_schema)?,
         column_metadata,
     }
     .encode_to_vec())
@@ -76,7 +76,7 @@ pub fn encode_and_serialize_table_metadata(table_metadata: &TableMetadata) -> Re
 pub fn deserialize_and_extract_table_metadata(bytes: &[u8]) -> Result<TableMetadata> {
     let table_metadata = protocol::TableMetadata::decode(bytes)?;
 
-    let query_schema = Arc::new(try_convert_bytes_to_schema(table_metadata.schema)?);
+    let query_schema = Arc::new(try_convert_bytes_to_schema(table_metadata.query_schema)?);
     let df_schema = query_schema.clone().to_dfschema()?;
 
     let mut error_bounds = Vec::with_capacity(table_metadata.column_metadata.len());
@@ -193,7 +193,7 @@ mod test {
 
         let bytes = protocol::TableMetadata {
             name: TABLE_NAME.to_owned(),
-            schema: try_convert_schema_to_bytes(&schema).unwrap(),
+            query_schema: try_convert_schema_to_bytes(&schema).unwrap(),
             column_metadata: vec![ColumnMetadata {
                 metadata: Some(Metadata::AbsoluteErrorBound(-ERROR_BOUND_ONE)),
             }],

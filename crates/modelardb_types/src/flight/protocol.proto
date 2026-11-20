@@ -37,9 +37,9 @@ message TableMetadata {
   string name = 1;
 
   // Schema of the data that can be read from the table, including the generated columns.
-  bytes schema = 2;
+  bytes query_schema = 2;
 
-  // Metadata of each column in the schema, in the same order as the schema.
+  // Metadata of each column in the query schema, in the same order as the query schema.
   repeated ColumnMetadata column_metadata = 3;
 }
 

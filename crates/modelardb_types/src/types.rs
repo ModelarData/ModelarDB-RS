@@ -62,13 +62,14 @@ pub struct TableMetadata {
     pub query_schema: Arc<Schema>,
     /// Schema of the data that is written to and stored in the table. It is `query_schema` without
     /// the generated columns.
-    pub schema: Arc<Schema>,
-    /// Projection that changes `query_schema` to `schema`.
-    pub query_schema_to_schema: Vec<usize>,
-    /// Error bounds of the columns in `schema`. Only Float32 columns can have a lossy error bound.
+    pub stored_schema: Arc<Schema>,
+    /// Projection that changes `query_schema` to `stored_schema`.
+    pub query_schema_to_stored_schema: Vec<usize>,
+    /// Error bounds of the columns in `stored_schema`. Only Float32 columns can have a lossy error
+    /// bound.
     pub error_bounds: Vec<ErrorBound>,
     /// Expressions that generate the columns in `query_schema` that are not stored. [`None`] is
-    /// stored for the columns that are in `schema`.
+    /// stored for the columns that are in `stored_schema`.
     pub generated_columns: Vec<Option<GeneratedColumn>>,
 }
 
@@ -145,25 +146,25 @@ impl TableMetadata {
 
         // Remove the generated columns from the query schema and the error bounds since these
         // columns are never provided when writing data to the table.
-        let query_schema_to_schema: Vec<usize> = generated_columns
+        let query_schema_to_stored_schema: Vec<usize> = generated_columns
             .iter()
             .enumerate()
             .filter_map(|(index, generated_column)| generated_column.is_none().then_some(index))
             .collect();
 
-        if query_schema_to_schema.is_empty() {
+        if query_schema_to_stored_schema.is_empty() {
             return Err(ModelarDbTypesError::InvalidArgument(
                 "There needs to be at least one stored column.".to_owned(),
             ));
         }
 
-        let schema = if query_schema_to_schema.len() == number_of_columns {
+        let stored_schema = if query_schema_to_stored_schema.len() == number_of_columns {
             query_schema.clone()
         } else {
-            Arc::new(query_schema.project(&query_schema_to_schema)?)
+            Arc::new(query_schema.project(&query_schema_to_stored_schema)?)
         };
 
-        let error_bounds = query_schema_to_schema
+        let error_bounds = query_schema_to_stored_schema
             .iter()
             .map(|index| error_bounds[*index])
             .collect();
@@ -171,8 +172,8 @@ impl TableMetadata {
         Ok(Self {
             name,
             query_schema,
-            schema,
-            query_schema_to_schema,
+            stored_schema,
+            query_schema_to_stored_schema,
             error_bounds,
             generated_columns,
         })
@@ -343,10 +344,10 @@ mod tests {
 
         assert_eq!(table_metadata.query_schema, query_schema);
         assert_eq!(
-            *table_metadata.schema,
+            *table_metadata.stored_schema,
             query_schema.project(&[0, 1, 3]).unwrap()
         );
-        assert_eq!(table_metadata.query_schema_to_schema, vec![0, 1, 3]);
+        assert_eq!(table_metadata.query_schema_to_stored_schema, vec![0, 1, 3]);
         assert_eq!(
             table_metadata.error_bounds,
             vec![error_bounds[0], error_bounds[1], error_bounds[3]]
@@ -370,8 +371,11 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(table_metadata.schema, query_schema);
-        assert_eq!(table_metadata.query_schema_to_schema, vec![0, 1, 2, 3]);
+        assert_eq!(table_metadata.stored_schema, query_schema);
+        assert_eq!(
+            table_metadata.query_schema_to_stored_schema,
+            vec![0, 1, 2, 3]
+        );
     }
 
     #[test]
