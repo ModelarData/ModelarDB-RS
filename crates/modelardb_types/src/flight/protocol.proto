@@ -17,37 +17,29 @@ syntax = "proto3";
 
 package modelardb.flight.protocol;
 
-// Metadata for a normal table or a time series table.
+// Metadata for a table, including its name, schema, error bounds, and generated columns.
 message TableMetadata {
-  // Metadata for a normal table, including its name and schema.
-  message NormalTableMetadata {
-    string name = 1;
-    bytes schema = 2;
+  // Error bound or generated column expression of a single column. Columns that are stored losslessly have no entry.
+  message ColumnMetadata {
+    // Index of the column in the schema.
+    uint32 column_index = 1;
+
+    // Error bound of the column. If not set, the column is stored losslessly.
+    optional float error_bound_value = 2;
+
+    // Whether the error bound is relative instead of absolute.
+    bool error_bound_is_relative = 3;
+
+    // Serialized Apache DataFusion expression that generates the column. If not set, the column is stored.
+    optional bytes generated_column_expr = 4;
   }
 
-  // Metadata for a time series table, including its name, schema, error bounds, and generated column expressions.
-  message TimeSeriesTableMetadata {
-    message ErrorBound {
-      enum Type {
-        ABSOLUTE = 0;
-        RELATIVE = 1;
-        LOSSLESS = 2;
-      }
-      Type type = 1;
-      float value = 2;
-    }
+  string name = 1;
 
-    string name = 1;
-    bytes schema = 2;
-    repeated ErrorBound error_bounds = 3;
-    repeated bytes generated_column_expressions = 4;
-  }
+  // Schema of the data that can be read from the table, including the generated columns.
+  bytes schema = 2;
 
-  // Either a normal table or a time series table.
-  oneof table_metadata {
-    NormalTableMetadata normal_table = 1;
-    TimeSeriesTableMetadata time_series_table = 2;
-  }
+  repeated ColumnMetadata column_metadata = 3;
 }
 
 // Configuration of a ModelarDB node.
