@@ -331,11 +331,12 @@ mod tests {
     #[test]
     fn test_can_create_table_metadata() {
         let query_schema = query_schema();
+        let error_bounds = error_bounds();
 
         let table_metadata = TableMetadata::try_new(
             TABLE_NAME.to_owned(),
             query_schema.clone(),
-            error_bounds(),
+            error_bounds.clone(),
             generated_columns(&query_schema),
         )
         .unwrap();
@@ -343,10 +344,13 @@ mod tests {
         assert_eq!(table_metadata.query_schema, query_schema);
         assert_eq!(
             *table_metadata.schema,
-            query_schema.project(&[0, 1, 2, 3]).unwrap()
+            query_schema.project(&[0, 1, 3]).unwrap()
         );
-        assert_eq!(table_metadata.query_schema_to_schema, vec![0, 1, 2, 3]);
-        assert_eq!(table_metadata.error_bounds, error_bounds()[..4].to_vec());
+        assert_eq!(table_metadata.query_schema_to_schema, vec![0, 1, 3]);
+        assert_eq!(
+            table_metadata.error_bounds,
+            vec![error_bounds[0], error_bounds[1], error_bounds[3]]
+        );
         assert_eq!(
             table_metadata.generated_columns,
             generated_columns(&query_schema)
@@ -367,7 +371,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(table_metadata.schema, query_schema);
-        assert_eq!(table_metadata.query_schema_to_schema, vec![0, 1, 2, 3, 4]);
+        assert_eq!(table_metadata.query_schema_to_schema, vec![0, 1, 2, 3]);
     }
 
     #[test]
@@ -412,13 +416,13 @@ mod tests {
     fn test_cannot_create_table_metadata_with_error_bound_on_generated_column() {
         let query_schema = query_schema();
         let mut error_bounds = error_bounds();
-        error_bounds[4] = ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap();
+        error_bounds[2] = ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap();
 
         assert_table_metadata_error(
             query_schema.clone(),
             error_bounds,
             generated_columns(&query_schema),
-            "The generated column 'speed_squared' cannot have an error bound.",
+            "The generated column 'generated_value' cannot have an error bound.",
         );
     }
 
@@ -429,7 +433,7 @@ mod tests {
         let mut generated_columns = generated_columns(&query_schema);
 
         error_bounds[3] = ErrorBound::Lossless;
-        generated_columns[3] = Some(generated_column(col("speed_squared"), &query_schema));
+        generated_columns[3] = Some(generated_column(col("generated_value"), &query_schema));
 
         assert_table_metadata_error(
             query_schema,
@@ -478,20 +482,18 @@ mod tests {
     fn query_schema() -> Arc<Schema> {
         Arc::new(Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("turbine", DataType::Utf8View, false),
-            Field::new("speed", ArrowValue::DATA_TYPE, false),
-            Field::new("direction", ArrowValue::DATA_TYPE, false),
-            Field::new("speed_squared", ArrowValue::DATA_TYPE, false),
+            Field::new("absolute_value", ArrowValue::DATA_TYPE, false),
+            Field::new("generated_value", ArrowValue::DATA_TYPE, false),
+            Field::new("relative_value", ArrowValue::DATA_TYPE, false),
         ]))
     }
 
     fn error_bounds() -> Vec<ErrorBound> {
         vec![
             ErrorBound::Lossless,
-            ErrorBound::Lossless,
             ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap(),
-            ErrorBound::try_new_relative(ERROR_BOUND_ONE).unwrap(),
             ErrorBound::Lossless,
+            ErrorBound::try_new_relative(ERROR_BOUND_ONE).unwrap(),
         ]
     }
 
@@ -499,9 +501,11 @@ mod tests {
         vec![
             None,
             None,
+            Some(generated_column(
+                col("absolute_value") + col("relative_value"),
+                query_schema,
+            )),
             None,
-            None,
-            Some(generated_column(col("speed") * col("speed"), query_schema)),
         ]
     }
 
