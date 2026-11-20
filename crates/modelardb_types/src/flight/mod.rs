@@ -25,7 +25,7 @@ use datafusion::logical_expr::Expr;
 use datafusion_proto::bytes::Serializeable;
 use prost::Message;
 
-use crate::error::{ModelarDbTypesError, Result};
+use crate::error::Result;
 use crate::flight::protocol::table_metadata::ColumnMetadata;
 use crate::flight::protocol::table_metadata::column_metadata::Metadata;
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
@@ -37,7 +37,7 @@ pub mod protocol {
 
 /// Encode `table_metadata` into a [`TableMetadata`](protocol::TableMetadata) protobuf message and
 /// serialize it. If the schema or a generated column's expression cannot be converted to bytes,
-/// return [`ModelarDbTypesError`].
+/// return [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn encode_and_serialize_table_metadata(table_metadata: &TableMetadata) -> Result<Vec<u8>> {
     // Error bounds are only defined for stored columns, so the next error bound belongs to the next
     // column that is not generated.
@@ -72,7 +72,7 @@ pub fn encode_and_serialize_table_metadata(table_metadata: &TableMetadata) -> Re
 
 /// Deserialize `bytes` into a [`TableMetadata`](protocol::TableMetadata) protobuf message and
 /// extract a [`TableMetadata`]. If `bytes` cannot be deserialized or the metadata is invalid,
-/// return [`ModelarDbTypesError`].
+/// return [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn deserialize_and_extract_table_metadata(bytes: &[u8]) -> Result<TableMetadata> {
     let table_metadata = protocol::TableMetadata::decode(bytes)?;
 
@@ -127,7 +127,7 @@ pub fn encode_and_serialize_cluster_nodes(nodes: Vec<Node>) -> Vec<u8> {
 
 /// Deserialize `bytes` into a [`ClusterNodes`](protocol::ClusterNodes) protobuf message and extract
 /// a vector of [`Node`]. If `bytes` cannot be deserialized or a node has an invalid mode, return
-/// [`ModelarDbTypesError`].
+/// [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn deserialize_and_extract_cluster_nodes(bytes: &[u8]) -> Result<Vec<Node>> {
     let cluster_nodes = protocol::ClusterNodes::decode(bytes)?;
 
