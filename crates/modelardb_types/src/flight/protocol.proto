@@ -17,7 +17,7 @@ syntax = "proto3";
 
 package modelardb.flight.protocol;
 
-// Metadata for a table, including its name, schema, error bounds, and generated columns.
+// Metadata for a table, including its name, query schema, error bounds, and generated columns.
 message TableMetadata {
   // Error bound or generated column expression of a single column. If neither is set, the column is stored losslessly.
   message ColumnMetadata {
