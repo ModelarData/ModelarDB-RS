@@ -26,10 +26,9 @@ use datafusion_proto::bytes::Serializeable;
 use prost::Message;
 
 use crate::error::Result;
-use crate::flight::protocol::table_metadata::ColumnMetadata;
 use crate::flight::protocol::table_metadata::column_metadata::Metadata;
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, TableMetadata};
+use crate::types::{ColumnMetadata, ErrorBound, GeneratedColumn, Node, ServerMode, TableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
@@ -39,28 +38,26 @@ pub mod protocol {
 /// serialize it. If the schema or a generated column's expression cannot be converted to bytes,
 /// return [`ModelarDbTypesError`](crate::error::ModelarDbTypesError).
 pub fn encode_and_serialize_table_metadata(table_metadata: &TableMetadata) -> Result<Vec<u8>> {
-    // Error bounds are only defined for stored columns, so the next error bound belongs to the next
-    // column that is not generated.
-    let mut error_bounds = table_metadata.error_bounds.iter();
-    let mut column_metadata = Vec::with_capacity(table_metadata.generated_columns.len());
-
-    for maybe_generated_column in &table_metadata.generated_columns {
-        let metadata = if let Some(generated_column) = maybe_generated_column {
-            Some(Metadata::GeneratedColumnExpr(
-                generated_column.expr.to_bytes()?.to_vec(),
-            ))
-        } else {
-            match error_bounds.next() {
-                Some(ErrorBound::Absolute(value)) => Some(Metadata::AbsoluteErrorBound(*value)),
-                Some(ErrorBound::Relative(percentage)) => {
+    let column_metadata = table_metadata
+        .column_metadata
+        .iter()
+        .map(|column_metadata| {
+            let metadata = match column_metadata {
+                ColumnMetadata::Stored(ErrorBound::Absolute(value)) => {
+                    Some(Metadata::AbsoluteErrorBound(*value))
+                }
+                ColumnMetadata::Stored(ErrorBound::Relative(percentage)) => {
                     Some(Metadata::RelativeErrorBound(*percentage))
                 }
-                Some(ErrorBound::Lossless) | None => None,
-            }
-        };
+                ColumnMetadata::Stored(ErrorBound::Lossless) => None,
+                ColumnMetadata::Generated(generated_column) => Some(Metadata::GeneratedColumnExpr(
+                    generated_column.expr.to_bytes()?.to_vec(),
+                )),
+            };
 
-        column_metadata.push(ColumnMetadata { metadata });
-    }
+            Ok(protocol::table_metadata::ColumnMetadata { metadata })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(protocol::TableMetadata {
         name: table_metadata.name.clone(),
@@ -79,35 +76,26 @@ pub fn deserialize_and_extract_table_metadata(bytes: &[u8]) -> Result<TableMetad
     let query_schema = Arc::new(try_convert_bytes_to_schema(table_metadata.query_schema)?);
     let df_schema = query_schema.clone().to_dfschema()?;
 
-    let mut error_bounds = Vec::with_capacity(table_metadata.column_metadata.len());
-    let mut generated_columns = Vec::with_capacity(table_metadata.column_metadata.len());
-
-    for column_metadata in table_metadata.column_metadata {
-        let (error_bound, maybe_generated_column) = match column_metadata.metadata {
+    let column_metadata = table_metadata
+        .column_metadata
+        .into_iter()
+        .map(|column_metadata| match column_metadata.metadata {
             Some(Metadata::AbsoluteErrorBound(value)) => {
-                (ErrorBound::try_new_absolute(value)?, None)
+                Ok(ColumnMetadata::Stored(ErrorBound::try_new_absolute(value)?))
             }
-            Some(Metadata::RelativeErrorBound(percentage)) => {
-                (ErrorBound::try_new_relative(percentage)?, None)
-            }
+            Some(Metadata::RelativeErrorBound(percentage)) => Ok(ColumnMetadata::Stored(
+                ErrorBound::try_new_relative(percentage)?,
+            )),
             Some(Metadata::GeneratedColumnExpr(expr_bytes)) => {
                 let expr = Expr::from_bytes(&expr_bytes)?;
                 let generated_column = GeneratedColumn::try_from_expr(expr, &df_schema)?;
-                (ErrorBound::Lossless, Some(generated_column))
+                Ok(ColumnMetadata::Generated(generated_column))
             }
-            None => (ErrorBound::Lossless, None),
-        };
+            None => Ok(ColumnMetadata::Stored(ErrorBound::Lossless)),
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-        error_bounds.push(error_bound);
-        generated_columns.push(maybe_generated_column);
-    }
-
-    TableMetadata::try_new(
-        table_metadata.name,
-        query_schema,
-        error_bounds,
-        generated_columns,
-    )
+    TableMetadata::try_new(table_metadata.name, query_schema, column_metadata)
 }
 
 /// Encode `nodes` into a [`ClusterNodes`](protocol::ClusterNodes) protobuf message and serialize it.
@@ -172,12 +160,11 @@ mod test {
             TABLE_NAME.to_owned(),
             query_schema,
             vec![
-                ErrorBound::Lossless,
-                ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap(),
-                ErrorBound::Lossless,
-                ErrorBound::try_new_relative(ERROR_BOUND_ONE).unwrap(),
+                ColumnMetadata::Stored(ErrorBound::Lossless),
+                ColumnMetadata::Stored(ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap()),
+                ColumnMetadata::Generated(generated_value),
+                ColumnMetadata::Stored(ErrorBound::try_new_relative(ERROR_BOUND_ONE).unwrap()),
             ],
-            vec![None, None, Some(generated_value), None],
         )
         .unwrap();
 
@@ -194,7 +181,7 @@ mod test {
         let bytes = protocol::TableMetadata {
             name: TABLE_NAME.to_owned(),
             query_schema: try_convert_schema_to_bytes(&schema).unwrap(),
-            column_metadata: vec![ColumnMetadata {
+            column_metadata: vec![protocol::table_metadata::ColumnMetadata {
                 metadata: Some(Metadata::AbsoluteErrorBound(-ERROR_BOUND_ONE)),
             }],
         }

@@ -140,7 +140,7 @@ impl TableMetadata {
             ));
         }
 
-        // Remove the generated columns from the stored schema since these columns are never
+        // Remove the generated columns to create the stored schema since these columns are never
         // provided when writing data to the table.
         let stored_schema = if query_schema_to_stored_schema.len() == number_of_columns {
             query_schema.clone()
