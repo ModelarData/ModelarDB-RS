@@ -26,6 +26,8 @@ use datafusion_proto::bytes::Serializeable;
 use prost::Message;
 
 use crate::error::{ModelarDbTypesError, Result};
+use crate::flight::protocol::table_metadata::ColumnMetadata;
+use crate::flight::protocol::table_metadata::column_metadata::Metadata;
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
 use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, TableMetadata};
 
@@ -34,40 +36,30 @@ pub mod protocol {
 }
 
 /// Encode `table_metadata` into a [`TableMetadata`](protocol::TableMetadata) protobuf message and
-/// serialize it. If the schema or an expression cannot be converted to bytes, return
-/// [`ModelarDbTypesError`].
+/// serialize it. If the schema or a generated column's expression cannot be converted to bytes,
+/// return [`ModelarDbTypesError`].
 pub fn encode_and_serialize_table_metadata(table_metadata: &TableMetadata) -> Result<Vec<u8>> {
-    // Only columns with an error bound or a generated column expression are encoded.
-    let mut column_metadata = Vec::new();
+    // Error bounds are only defined for stored columns, so the next error bound belongs to the next
+    // column that is not generated.
+    let mut error_bounds = table_metadata.error_bounds.iter();
+    let mut column_metadata = Vec::with_capacity(table_metadata.generated_columns.len());
 
-    for (index, error_bound) in table_metadata
-        .query_schema_to_schema
-        .iter()
-        .zip(&table_metadata.error_bounds)
-    {
-        let (error_bound_value, error_bound_is_relative) = match error_bound {
-            ErrorBound::Absolute(value) => (*value, false),
-            ErrorBound::Relative(percentage) => (*percentage, true),
-            ErrorBound::Lossless => continue,
+    for maybe_generated_column in &table_metadata.generated_columns {
+        let metadata = if let Some(generated_column) = maybe_generated_column {
+            Some(Metadata::GeneratedColumnExpr(
+                generated_column.expr.to_bytes()?.to_vec(),
+            ))
+        } else {
+            match error_bounds.next() {
+                Some(ErrorBound::Absolute(value)) => Some(Metadata::AbsoluteErrorBound(*value)),
+                Some(ErrorBound::Relative(percentage)) => {
+                    Some(Metadata::RelativeErrorBound(*percentage))
+                }
+                Some(ErrorBound::Lossless) | None => None,
+            }
         };
 
-        column_metadata.push(protocol::table_metadata::ColumnMetadata {
-            column_index: *index as u32,
-            error_bound_value: Some(error_bound_value),
-            error_bound_is_relative,
-            generated_column_expr: None,
-        });
-    }
-
-    for (index, maybe_generated_column) in table_metadata.generated_columns.iter().enumerate() {
-        if let Some(generated_column) = maybe_generated_column {
-            column_metadata.push(protocol::table_metadata::ColumnMetadata {
-                column_index: index as u32,
-                error_bound_value: None,
-                error_bound_is_relative: false,
-                generated_column_expr: Some(generated_column.expr.to_bytes()?.to_vec()),
-            });
-        }
+        column_metadata.push(ColumnMetadata { metadata });
     }
 
     Ok(protocol::TableMetadata {
@@ -87,32 +79,27 @@ pub fn deserialize_and_extract_table_metadata(bytes: &[u8]) -> Result<TableMetad
     let query_schema = Arc::new(try_convert_bytes_to_schema(table_metadata.schema)?);
     let df_schema = query_schema.clone().to_dfschema()?;
 
-    // Columns without column metadata are stored losslessly.
-    let number_of_columns = query_schema.fields().len();
-    let mut error_bounds = vec![ErrorBound::Lossless; number_of_columns];
-    let mut generated_columns = vec![None; number_of_columns];
+    let mut error_bounds = Vec::with_capacity(table_metadata.column_metadata.len());
+    let mut generated_columns = Vec::with_capacity(table_metadata.column_metadata.len());
 
     for column_metadata in table_metadata.column_metadata {
-        let index = column_metadata.column_index as usize;
+        let (error_bound, maybe_generated_column) = match column_metadata.metadata {
+            Some(Metadata::AbsoluteErrorBound(value)) => {
+                (ErrorBound::try_new_absolute(value)?, None)
+            }
+            Some(Metadata::RelativeErrorBound(percentage)) => {
+                (ErrorBound::try_new_relative(percentage)?, None)
+            }
+            Some(Metadata::GeneratedColumnExpr(expr_bytes)) => {
+                let expr = Expr::from_bytes(&expr_bytes)?;
+                let generated_column = GeneratedColumn::try_from_expr(expr, &df_schema)?;
+                (ErrorBound::Lossless, Some(generated_column))
+            }
+            None => (ErrorBound::Lossless, None),
+        };
 
-        if index >= number_of_columns {
-            return Err(ModelarDbTypesError::InvalidArgument(format!(
-                "The column index {index} is not in the schema."
-            )));
-        }
-
-        if let Some(value) = column_metadata.error_bound_value {
-            error_bounds[index] = if column_metadata.error_bound_is_relative {
-                ErrorBound::try_new_relative(value)?
-            } else {
-                ErrorBound::try_new_absolute(value)?
-            };
-        }
-
-        if let Some(expr_bytes) = column_metadata.generated_column_expr {
-            let expr = Expr::from_bytes(&expr_bytes)?;
-            generated_columns[index] = Some(GeneratedColumn::try_from_expr(expr, &df_schema)?);
-        }
+        error_bounds.push(error_bound);
+        generated_columns.push(maybe_generated_column);
     }
 
     TableMetadata::try_new(
