@@ -149,30 +149,35 @@ mod test {
 
     use crate::types::{ArrowTimestamp, ArrowValue};
 
+    const TABLE_NAME: &str = "test_table";
+
     // Tests for serializing and deserializing table metadata.
     #[test]
     fn test_serialize_and_deserialize_table_metadata() {
         let query_schema = Arc::new(Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("speed", ArrowValue::DATA_TYPE, false),
-            Field::new("direction", ArrowValue::DATA_TYPE, false),
-            Field::new("speed_squared", ArrowValue::DATA_TYPE, false),
+            Field::new("absolute_value", ArrowValue::DATA_TYPE, false),
+            Field::new("generated_value", ArrowValue::DATA_TYPE, false),
+            Field::new("relative_value", ArrowValue::DATA_TYPE, false),
         ]));
 
         let df_schema = query_schema.clone().to_dfschema().unwrap();
-        let speed_squared =
-            GeneratedColumn::try_from_expr(col("speed") * col("speed"), &df_schema).unwrap();
+        let generated_value = GeneratedColumn::try_from_expr(
+            col("absolute_value") + col("relative_value"),
+            &df_schema,
+        )
+        .unwrap();
 
         let expected_table_metadata = TableMetadata::try_new(
-            "test_table".to_owned(),
+            TABLE_NAME.to_owned(),
             query_schema,
             vec![
                 ErrorBound::Lossless,
                 ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap(),
-                ErrorBound::try_new_relative(ERROR_BOUND_ONE).unwrap(),
                 ErrorBound::Lossless,
+                ErrorBound::try_new_relative(ERROR_BOUND_ONE).unwrap(),
             ],
-            vec![None, None, None, Some(speed_squared)],
+            vec![None, None, Some(generated_value), None],
         )
         .unwrap();
 
@@ -183,17 +188,14 @@ mod test {
     }
 
     #[test]
-    fn test_cannot_deserialize_table_metadata_with_column_index_outside_schema() {
-        let schema = Schema::new(vec![Field::new("speed", ArrowValue::DATA_TYPE, false)]);
+    fn test_cannot_deserialize_table_metadata_with_invalid_error_bound() {
+        let schema = Schema::new(vec![Field::new("value", ArrowValue::DATA_TYPE, false)]);
 
         let bytes = protocol::TableMetadata {
-            name: "test_table".to_owned(),
+            name: TABLE_NAME.to_owned(),
             schema: try_convert_schema_to_bytes(&schema).unwrap(),
-            column_metadata: vec![protocol::table_metadata::ColumnMetadata {
-                column_index: 1,
-                error_bound_value: Some(ERROR_BOUND_ONE),
-                error_bound_is_relative: false,
-                generated_column_expr: None,
+            column_metadata: vec![ColumnMetadata {
+                metadata: Some(Metadata::AbsoluteErrorBound(-ERROR_BOUND_ONE)),
             }],
         }
         .encode_to_vec();
@@ -202,7 +204,7 @@ mod test {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid Argument Error: The column index 1 is not in the schema."
+            "Invalid Argument Error: An absolute error bound must be a positive finite value."
         );
     }
 
