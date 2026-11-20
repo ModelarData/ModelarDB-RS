@@ -155,45 +155,68 @@ pub fn deserialize_and_extract_cluster_nodes(bytes: &[u8]) -> Result<Vec<Node>> 
 mod test {
     use super::*;
 
-    use modelardb_test::table::{
-        self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME, normal_table_schema,
-        time_series_table_metadata,
-    };
+    use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
+    use datafusion::prelude::col;
+
+    use modelardb_test::ERROR_BOUND_ONE;
+
+    use crate::types::{ArrowTimestamp, ArrowValue};
 
     // Tests for serializing and deserializing table metadata.
     #[test]
-    fn test_serialize_and_deserialize_normal_table_metadata() {
-        let expected_schema = normal_table_schema();
-        let protobuf_bytes = table::normal_table_metadata_protobuf_bytes();
+    fn test_serialize_and_deserialize_table_metadata() {
+        let query_schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("speed", ArrowValue::DATA_TYPE, false),
+            Field::new("direction", ArrowValue::DATA_TYPE, false),
+            Field::new("speed_squared", ArrowValue::DATA_TYPE, false),
+        ]));
 
-        let table = deserialize_and_extract_table_metadata(&protobuf_bytes).unwrap();
+        let df_schema = query_schema.clone().to_dfschema().unwrap();
+        let speed_squared =
+            GeneratedColumn::try_from_expr(col("speed") * col("speed"), &df_schema).unwrap();
 
-        match table {
-            Table::NormalTable(actual_name, actual_schema) => {
-                assert_eq!(actual_name, NORMAL_TABLE_NAME);
-                assert_eq!(&actual_schema, &expected_schema);
-            }
-            _ => panic!("Expected normal table."),
-        }
+        let expected_table_metadata = TableMetadata::try_new(
+            "test_table".to_owned(),
+            query_schema,
+            vec![
+                ErrorBound::Lossless,
+                ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap(),
+                ErrorBound::try_new_relative(ERROR_BOUND_ONE).unwrap(),
+                ErrorBound::Lossless,
+            ],
+            vec![None, None, None, Some(speed_squared)],
+        )
+        .unwrap();
+
+        let bytes = encode_and_serialize_table_metadata(&expected_table_metadata).unwrap();
+        let table_metadata = deserialize_and_extract_table_metadata(&bytes).unwrap();
+
+        assert_eq!(table_metadata, expected_table_metadata);
     }
 
     #[test]
-    fn test_serialize_and_deserialize_time_series_table_metadata() {
-        let expected_metadata = time_series_table_metadata();
-        let protobuf_bytes = table::time_series_table_metadata_protobuf_bytes();
+    fn test_cannot_deserialize_table_metadata_with_column_index_outside_schema() {
+        let schema = Schema::new(vec![Field::new("speed", ArrowValue::DATA_TYPE, false)]);
 
-        let table = deserialize_and_extract_table_metadata(&protobuf_bytes).unwrap();
-
-        match table {
-            Table::TimeSeriesTable(actual_metadata) => {
-                assert_eq!(actual_metadata.name, TIME_SERIES_TABLE_NAME);
-                assert_eq!(
-                    &actual_metadata.query_schema,
-                    &expected_metadata.query_schema
-                );
-            }
-            _ => panic!("Expected time series table."),
+        let bytes = protocol::TableMetadata {
+            name: "test_table".to_owned(),
+            schema: try_convert_schema_to_bytes(&schema).unwrap(),
+            column_metadata: vec![protocol::table_metadata::ColumnMetadata {
+                column_index: 1,
+                error_bound_value: Some(ERROR_BOUND_ONE),
+                error_bound_is_relative: false,
+                generated_column_expr: None,
+            }],
         }
+        .encode_to_vec();
+
+        let result = deserialize_and_extract_table_metadata(&bytes);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid Argument Error: The column index 1 is not in the schema."
+        );
     }
 
     // Test for serializing and deserializing cluster nodes.
