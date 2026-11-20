@@ -20,200 +20,107 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow::datatypes::Schema;
-use datafusion::common::{DFSchema, ToDFSchema};
+use datafusion::common::ToDFSchema;
 use datafusion::logical_expr::Expr;
 use datafusion_proto::bytes::Serializeable;
 use prost::Message;
-use prost::bytes::Bytes;
 
 use crate::error::{ModelarDbTypesError, Result};
 use crate::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, Table, TimeSeriesTableMetadata};
+use crate::types::{ErrorBound, GeneratedColumn, Node, ServerMode, TableMetadata};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/modelardb.flight.protocol.rs"));
 }
 
-/// Encode the metadata for a normal table into a [`TableMetadata`](protocol::TableMetadata)
-/// protobuf message and serialize it. If the schema cannot be converted to bytes, return
+/// Encode `table_metadata` into a [`TableMetadata`](protocol::TableMetadata) protobuf message and
+/// serialize it. If the schema or an expression cannot be converted to bytes, return
 /// [`ModelarDbTypesError`].
-pub fn encode_and_serialize_normal_table_metadata(
-    table_name: &str,
-    schema: &Schema,
-) -> Result<Vec<u8>> {
-    let table_metadata = protocol::TableMetadata {
-        table_metadata: Some(protocol::table_metadata::TableMetadata::NormalTable(
-            protocol::table_metadata::NormalTableMetadata {
-                name: table_name.to_owned(),
-                schema: try_convert_schema_to_bytes(schema)?,
-            },
-        )),
-    };
+pub fn encode_and_serialize_table_metadata(table_metadata: &TableMetadata) -> Result<Vec<u8>> {
+    // Only columns with an error bound or a generated column expression are encoded.
+    let mut column_metadata = Vec::new();
 
-    Ok(table_metadata.encode_to_vec())
-}
+    for (index, error_bound) in table_metadata
+        .query_schema_to_schema
+        .iter()
+        .zip(&table_metadata.error_bounds)
+    {
+        let (error_bound_value, error_bound_is_relative) = match error_bound {
+            ErrorBound::Absolute(value) => (*value, false),
+            ErrorBound::Relative(percentage) => (*percentage, true),
+            ErrorBound::Lossless => continue,
+        };
 
-/// Encode the metadata for a time series table into a [`TableMetadata`](protocol::TableMetadata)
-/// protobuf message and serialize it. If the schema cannot be converted to bytes, return
-/// [ModelarDbTypesError].
-pub fn encode_and_serialize_time_series_table_metadata(
-    time_series_table_metadata: &TimeSeriesTableMetadata,
-) -> Result<Vec<u8>> {
-    let mut generated_column_expressions =
-        Vec::with_capacity(time_series_table_metadata.query_schema.fields.len());
+        column_metadata.push(protocol::table_metadata::ColumnMetadata {
+            column_index: *index as u32,
+            error_bound_value: Some(error_bound_value),
+            error_bound_is_relative,
+            generated_column_expr: None,
+        });
+    }
 
-    for generated_column in &time_series_table_metadata.generated_columns {
-        if let Some(generated_column) = generated_column {
-            let expr_bytes = generated_column.expr.to_bytes()?;
-            generated_column_expressions.push(expr_bytes.to_vec());
-        } else {
-            // Empty bytes are used to represent columns that are not generated.
-            generated_column_expressions.push(Bytes::new().to_vec());
+    for (index, maybe_generated_column) in table_metadata.generated_columns.iter().enumerate() {
+        if let Some(generated_column) = maybe_generated_column {
+            column_metadata.push(protocol::table_metadata::ColumnMetadata {
+                column_index: index as u32,
+                error_bound_value: None,
+                error_bound_is_relative: false,
+                generated_column_expr: Some(generated_column.expr.to_bytes()?.to_vec()),
+            });
         }
     }
 
-    let table_metadata = protocol::TableMetadata {
-        table_metadata: Some(protocol::table_metadata::TableMetadata::TimeSeriesTable(
-            protocol::table_metadata::TimeSeriesTableMetadata {
-                name: time_series_table_metadata.name.clone(),
-                schema: try_convert_schema_to_bytes(&time_series_table_metadata.query_schema)?,
-                error_bounds: encode_error_bounds(time_series_table_metadata),
-                generated_column_expressions,
-            },
-        )),
-    };
-
-    Ok(table_metadata.encode_to_vec())
-}
-
-/// Return a vector of serializable protobuf messages for the error bounds of
-/// `time_series_table_metadata`.
-fn encode_error_bounds(
-    time_series_table_metadata: &TimeSeriesTableMetadata,
-) -> Vec<protocol::table_metadata::time_series_table_metadata::ErrorBound> {
-    // Since the time series table metadata does not include error bounds for the generated columns,
-    // lossless error bounds are added for each generated column.
-    let mut error_bounds_all =
-        Vec::with_capacity(time_series_table_metadata.query_schema.fields().len());
-
-    let absolute_error_bound_type =
-        protocol::table_metadata::time_series_table_metadata::error_bound::Type::Absolute as i32;
-    let relative_error_bound_type =
-        protocol::table_metadata::time_series_table_metadata::error_bound::Type::Relative as i32;
-    let lossless_error_bound_type =
-        protocol::table_metadata::time_series_table_metadata::error_bound::Type::Lossless as i32;
-
-    let lossless = protocol::table_metadata::time_series_table_metadata::ErrorBound {
-        r#type: lossless_error_bound_type,
-        value: 0.0,
-    };
-
-    for field in time_series_table_metadata.query_schema.fields() {
-        if let Ok(field_index) = time_series_table_metadata.schema.index_of(field.name()) {
-            let (error_bound_type, value) =
-                match time_series_table_metadata.error_bounds[field_index] {
-                    ErrorBound::Absolute(value) => (absolute_error_bound_type, value),
-                    ErrorBound::Relative(value) => (relative_error_bound_type, value),
-                    ErrorBound::Lossless => (lossless_error_bound_type, 0.0),
-                };
-
-            error_bounds_all.push(
-                protocol::table_metadata::time_series_table_metadata::ErrorBound {
-                    r#type: error_bound_type,
-                    value,
-                },
-            );
-        } else {
-            error_bounds_all.push(lossless);
-        }
+    Ok(protocol::TableMetadata {
+        name: table_metadata.name.clone(),
+        schema: try_convert_schema_to_bytes(&table_metadata.query_schema)?,
+        column_metadata,
     }
-
-    error_bounds_all
+    .encode_to_vec())
 }
 
-/// Deserialize and extract the table metadata from `bytes` and return the table metadata as
-/// a [`Table`]. If `bytes` cannot be deserialized, return [`ModelarDbTypesError`].
-pub fn deserialize_and_extract_table_metadata(bytes: &[u8]) -> Result<Table> {
+/// Deserialize `bytes` into a [`TableMetadata`](protocol::TableMetadata) protobuf message and
+/// extract a [`TableMetadata`]. If `bytes` cannot be deserialized or the metadata is invalid,
+/// return [`ModelarDbTypesError`].
+pub fn deserialize_and_extract_table_metadata(bytes: &[u8]) -> Result<TableMetadata> {
     let table_metadata = protocol::TableMetadata::decode(bytes)?;
 
-    match table_metadata.table_metadata {
-        Some(protocol::table_metadata::TableMetadata::NormalTable(normal_table)) => {
-            let schema = try_convert_bytes_to_schema(normal_table.schema)?;
+    let query_schema = Arc::new(try_convert_bytes_to_schema(table_metadata.schema)?);
+    let df_schema = query_schema.clone().to_dfschema()?;
 
-            Ok(Table::NormalTable(normal_table.name, schema))
+    // Columns without column metadata are stored losslessly.
+    let number_of_columns = query_schema.fields().len();
+    let mut error_bounds = vec![ErrorBound::Lossless; number_of_columns];
+    let mut generated_columns = vec![None; number_of_columns];
+
+    for column_metadata in table_metadata.column_metadata {
+        let index = column_metadata.column_index as usize;
+
+        if index >= number_of_columns {
+            return Err(ModelarDbTypesError::InvalidArgument(format!(
+                "The column index {index} is not in the schema."
+            )));
         }
-        Some(protocol::table_metadata::TableMetadata::TimeSeriesTable(time_series_table)) => {
-            let schema = Arc::new(try_convert_bytes_to_schema(time_series_table.schema)?);
-            let metadata = TimeSeriesTableMetadata::try_new(
-                time_series_table.name,
-                schema.clone(),
-                decode_error_bounds(&time_series_table.error_bounds)?,
-                decode_generated_column_expressions(
-                    &time_series_table.generated_column_expressions,
-                    &schema.to_dfschema()?,
-                )?,
-            )?;
 
-            Ok(Table::TimeSeriesTable(metadata))
+        if let Some(value) = column_metadata.error_bound_value {
+            error_bounds[index] = if column_metadata.error_bound_is_relative {
+                ErrorBound::try_new_relative(value)?
+            } else {
+                ErrorBound::try_new_absolute(value)?
+            };
         }
-        None => Err(ModelarDbTypesError::InvalidArgument(
-            "Table metadata is missing.".to_owned(),
-        )),
-    }
-}
 
-/// Decode the protobuf encoded error bounds into a vector of [`ErrorBound`]. Return
-/// [`ModelarDbTypesError`] if the error bound type is unknown or the value is invalid.
-fn decode_error_bounds(
-    encoded_error_bounds: &[protocol::table_metadata::time_series_table_metadata::ErrorBound],
-) -> Result<Vec<ErrorBound>> {
-    let mut error_bounds = Vec::with_capacity(encoded_error_bounds.len());
-
-    for error_bound in encoded_error_bounds {
-        match protocol::table_metadata::time_series_table_metadata::error_bound::Type::try_from(
-            error_bound.r#type,
-        ) {
-            Ok(
-                protocol::table_metadata::time_series_table_metadata::error_bound::Type::Absolute,
-            ) => error_bounds.push(ErrorBound::Absolute(error_bound.value)),
-            Ok(
-                protocol::table_metadata::time_series_table_metadata::error_bound::Type::Relative,
-            ) => error_bounds.push(ErrorBound::Relative(error_bound.value)),
-            Ok(
-                protocol::table_metadata::time_series_table_metadata::error_bound::Type::Lossless,
-            ) => error_bounds.push(ErrorBound::Lossless),
-            _ => {
-                return Err(ModelarDbTypesError::InvalidArgument(format!(
-                    "Unknown error bound type: {}.",
-                    error_bound.r#type
-                )));
-            }
-        };
-    }
-
-    Ok(error_bounds)
-}
-
-/// Decode the generated column expressions from a vector of byte expressions into a vector of
-/// optional [`GeneratedColumn`]. Return [`ModelarDbTypesError`] if the expression is invalid.
-fn decode_generated_column_expressions(
-    generated_column_expressions: &[Vec<u8>],
-    df_schema: &DFSchema,
-) -> Result<Vec<Option<GeneratedColumn>>> {
-    let mut expressions = Vec::with_capacity(generated_column_expressions.len());
-
-    for maybe_expr_bytes in generated_column_expressions {
-        // If the column is not generated, the bytes will be empty.
-        if maybe_expr_bytes.is_empty() {
-            expressions.push(None);
-        } else {
-            let expr = Expr::from_bytes(maybe_expr_bytes)?;
-            expressions.push(Some(GeneratedColumn::try_from_expr(expr, df_schema)?));
+        if let Some(expr_bytes) = column_metadata.generated_column_expr {
+            let expr = Expr::from_bytes(&expr_bytes)?;
+            generated_columns[index] = Some(GeneratedColumn::try_from_expr(expr, &df_schema)?);
         }
     }
 
-    Ok(expressions)
+    TableMetadata::try_new(
+        table_metadata.name,
+        query_schema,
+        error_bounds,
+        generated_columns,
+    )
 }
 
 /// Encode `nodes` into a [`ClusterNodes`](protocol::ClusterNodes) protobuf message and serialize it.
