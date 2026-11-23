@@ -195,7 +195,7 @@ mod tests {
     const ERROR_BOUND_RELATIVE_MAX: f32 = 100.0;
 
     // The values have non-zero least significant mantissa bits, so the error bounds rewrite them.
-    const VALUES: [Value; 3] = [100.123456, -37.654321, 2500.98765];
+    const VALUES: [Value; 3] = [100.12346, -37.65432, 2500.9875];
 
     // Tests for apply_error_bounds().
     #[test]
