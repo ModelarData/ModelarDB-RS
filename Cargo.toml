@@ -43,12 +43,8 @@ http-body-util = "0.1.5"
 itertools = "0.15.0"
 log = "0.4.34"
 modelardb_auth = { path = "crates/modelardb_auth"}
-modelardb_bulkloader = { path = "crates/modelardb_bulkloader"}
-modelardb_client = { path = "crates/modelardb_client"}
 modelardb_compression = { path = "crates/modelardb_compression"}
 modelardb_embedded = { path = "crates/modelardb_embedded"}
-modelardb_macros = { path = "crates/modelardb_macros"}
-modelardb_server = { path = "crates/modelardb_server"}
 modelardb_storage = { path = "crates/modelardb_storage"}
 modelardb_test = { path = "crates/modelardb_test"}
 modelardb_types = { path = "crates/modelardb_types"}

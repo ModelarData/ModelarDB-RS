@@ -23,6 +23,7 @@ on:
 env:
   # General.
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_WARNINGS: deny
   RUSTFLAGS: -C strip=symbols -D warnings
   RUSTDOCFLAGS: -D warnings
   LLVM_PROFILE_FILE: modelardb-%p-%m.profraw
