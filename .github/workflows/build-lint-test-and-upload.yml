@@ -39,12 +39,16 @@ jobs:
   build_lint_and_test:
     name: Build, Lint, and Test
     env:
-      RUSTFLAGS: -C instrument-coverage -C strip=symbols -D warnings
+      RUSTFLAGS: -C instrument-coverage -C strip=symbols -D warnings ${{ matrix.rustflags-extra }}
 
     runs-on: ${{ matrix.operating-system }}
     strategy:
       matrix:
         operating-system: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          # On macOS, we allow the linker to emit warnings as the __eh_frame sections exceed the 16MB.
+          - operating-system: macos-latest
+            rustflags-extra: -A linker-messages
 
     steps:
     # Retrieve Code.
