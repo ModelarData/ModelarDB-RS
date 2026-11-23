@@ -3767,7 +3767,6 @@ dependencies = [
  "clap",
  "datafusion",
  "datafusion-proto",
- "modelardb_test",
  "proptest",
  "prost",
  "prost-build",

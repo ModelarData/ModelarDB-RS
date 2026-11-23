@@ -32,7 +32,6 @@ prost-build.workspace = true
 protox.workspace = true
 
 [dev-dependencies]
-modelardb_test.workspace = true
 proptest.workspace = true
 
 [package.metadata.cargo-machete]

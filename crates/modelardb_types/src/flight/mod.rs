@@ -133,11 +133,10 @@ mod test {
     use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use datafusion::prelude::col;
 
-    use modelardb_test::ERROR_BOUND_ONE;
-
     use crate::types::{ArrowTimestamp, ArrowValue};
 
     const TABLE_NAME: &str = "test_table";
+    const ERROR_BOUND_ONE: f32 = 1.0;
 
     // Tests for serializing and deserializing table metadata.
     #[test]

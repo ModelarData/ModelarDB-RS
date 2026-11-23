@@ -311,9 +311,9 @@ mod tests {
     use datafusion::prelude::{col, lit};
     use proptest::property_test;
 
-    use modelardb_test::{ERROR_BOUND_ONE, ERROR_BOUND_ZERO};
-
     const TABLE_NAME: &str = "test_table";
+    const ERROR_BOUND_ZERO: f32 = 0.0;
+    const ERROR_BOUND_ONE: f32 = 1.0;
 
     // Tests for TableMetadata.
     #[test]
