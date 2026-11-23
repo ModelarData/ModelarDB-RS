@@ -409,13 +409,18 @@ mod tests {
     use modelardb_test::ERROR_BOUND_FIVE;
     use modelardb_test::data_generation::{self, ValuesStructure};
     use modelardb_test::table;
-    use modelardb_types::types::{TimestampBuilder, ValueBuilder};
+    use modelardb_types::types::{Timestamp, TimestampBuilder, ValueBuilder};
 
     use crate::{MODEL_TYPE_NAMES, models};
 
     const TAG_VALUE: &str = "tag";
     const ADD_NOISE_RANGE: Option<Range<f32>> = Some(1.0..1.05);
     const TRY_COMPRESS_TEST_LENGTH: usize = 50;
+
+    /// Start times used for generating time stamps for the time series in the tests. Multiple
+    /// different start times are used to ensures that models are always created correctly. For
+    /// example, the second is the microseconds since the Unix epoch and was added due to #441.
+    const START_TIMES: [Timestamp; 2] = [0, 1767233520004960];
 
     // Tests for try_compress_univariate_time_series().
     #[test]
@@ -582,23 +587,27 @@ mod tests {
         let uncompressed_values =
             data_generation::generate_values(uncompressed_timestamps.values(), values_structure);
 
-        let compressed_record_batch = try_compress_univariate_time_series(
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            compressed_schema(),
-            vec![TAG_VALUE.to_owned()],
-            0,
-        )
-        .unwrap();
+        for start_time in START_TIMES {
+            let uncompressed_timestamps = add_start_time(&uncompressed_timestamps, start_time);
 
-        assert_compressed_record_batch_with_known_segments_from_time_series(
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            &compressed_record_batch,
-            expected_model_type_ids,
-        )
+            let compressed_record_batch = try_compress_univariate_time_series(
+                &uncompressed_timestamps,
+                &uncompressed_values,
+                error_bound,
+                compressed_schema(),
+                vec![TAG_VALUE.to_owned()],
+                0,
+            )
+            .unwrap();
+
+            assert_compressed_record_batch_with_known_segments_from_time_series(
+                error_bound,
+                &uncompressed_timestamps,
+                &uncompressed_values,
+                &compressed_record_batch,
+                expected_model_type_ids,
+            )
+        }
     }
 
     #[test]
@@ -686,23 +695,27 @@ mod tests {
         let uncompressed_values = uncompressed_values.finish();
         assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
 
-        let compressed_record_batch = try_compress_univariate_time_series(
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            compressed_schema(),
-            vec![TAG_VALUE.to_owned()],
-            0,
-        )
-        .unwrap();
+        for start_time in START_TIMES {
+            let uncompressed_timestamps = add_start_time(&uncompressed_timestamps, start_time);
 
-        assert_compressed_record_batch_with_known_segments_from_time_series(
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            &compressed_record_batch,
-            expected_model_type_ids,
-        )
+            let compressed_record_batch = try_compress_univariate_time_series(
+                &uncompressed_timestamps,
+                &uncompressed_values,
+                error_bound,
+                compressed_schema(),
+                vec![TAG_VALUE.to_owned()],
+                0,
+            )
+            .unwrap();
+
+            assert_compressed_record_batch_with_known_segments_from_time_series(
+                error_bound,
+                &uncompressed_timestamps,
+                &uncompressed_values,
+                &compressed_record_batch,
+                expected_model_type_ids,
+            )
+        }
     }
 
     fn assert_compressed_record_batch_with_known_segments_from_time_series(
@@ -843,22 +856,31 @@ mod tests {
                 100.0..200.0,
             );
 
-        let compressed_record_batch = try_compress_univariate_time_series(
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            compressed_schema(),
-            vec![TAG_VALUE.to_owned()],
-            0,
-        )
-        .unwrap();
+        for start_time in START_TIMES {
+            let uncompressed_timestamps = add_start_time(&uncompressed_timestamps, start_time);
 
-        assert_compressed_record_batch_with_unknown_segments_from_time_series(
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            &compressed_record_batch,
-        );
+            let compressed_record_batch = try_compress_univariate_time_series(
+                &uncompressed_timestamps,
+                &uncompressed_values,
+                error_bound,
+                compressed_schema(),
+                vec![TAG_VALUE.to_owned()],
+                0,
+            )
+            .unwrap();
+
+            assert_compressed_record_batch_with_unknown_segments_from_time_series(
+                error_bound,
+                &uncompressed_timestamps,
+                &uncompressed_values,
+                &compressed_record_batch,
+            );
+        }
+    }
+
+    /// Return a copy of `timestamps` with `start_time` added to each timestamp.
+    fn add_start_time(timestamps: &TimestampArray, start_time: Timestamp) -> TimestampArray {
+        timestamps.unary(|timestamp| timestamp + start_time)
     }
 
     fn assert_compressed_record_batch_with_unknown_segments_from_time_series(
@@ -920,10 +942,19 @@ mod tests {
                 .1;
             let model_type_name = MODEL_TYPE_NAMES[model_type_id as usize];
 
-            assert!(
-                models::is_value_within_error_bound(error_bound, real_value, approximate_value),
-                "{approximate_value} from {model_type_name} is outside {error_bound:?} of {real_value}.",
-            );
+            // A lossless error bound requires the exact bits to be reconstructed at all indices.
+            if error_bound == ErrorBound::Lossless {
+                assert_eq!(
+                    real_value.to_bits(),
+                    approximate_value.to_bits(),
+                    "{approximate_value} from {model_type_name} at index {index} is not bitwise equal to {real_value}.",
+                );
+            } else {
+                assert!(
+                    models::is_value_within_error_bound(error_bound, real_value, approximate_value),
+                    "{approximate_value} from {model_type_name} at index {index} is outside {error_bound:?} of {real_value}.",
+                );
+            }
         }
     }
 
