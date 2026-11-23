@@ -53,6 +53,7 @@ modelardb_storage = { path = "crates/modelardb_storage"}
 modelardb_test = { path = "crates/modelardb_test"}
 modelardb_types = { path = "crates/modelardb_types"}
 object_store = "0.13.2"
+parquet = { version = "59.0.0", default-features = false }
 proptest = { version = "1.11.0", features = ["attr-macro"]}
 prost = "0.14.4"
 prost-build = "0.14.4"

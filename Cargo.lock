@@ -3643,8 +3643,9 @@ name = "modelardb_compression"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "modelardb_test",
+ "datafusion",
  "modelardb_types",
+ "parquet",
  "proptest",
 ]
 

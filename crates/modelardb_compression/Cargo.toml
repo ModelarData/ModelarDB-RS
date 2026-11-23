@@ -22,7 +22,8 @@ authors.workspace = true
 [dependencies]
 arrow.workspace = true
 modelardb_types.workspace = true
+parquet.workspace = true
 
 [dev-dependencies]
-modelardb_test.workspace = true
+datafusion.workspace = true
 proptest.workspace = true
