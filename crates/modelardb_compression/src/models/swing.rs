@@ -100,6 +100,11 @@ impl Swing {
             self.first_value = value;
             self.length += 1;
             true
+        } else if self.error_bound == ErrorBound::Lossless
+            && (is_negative_zero(self.first_value) || is_negative_zero(value))
+        {
+            // A linear function reconstructs -0.0 as 0.0.
+            false
         } else if !self.first_value.is_finite() || !value.is_finite() {
             // Extend Swing to handle both types of infinity and NAN.
             if models::equal_or_nan(self.first_value, value) {
@@ -303,6 +308,11 @@ pub fn grid(
     }
 }
 
+/// Return [`true`] if `value` is -0.0, otherwise [`false`].
+fn is_negative_zero(value: f64) -> bool {
+    value == 0.0 && value.is_sign_negative()
+}
+
 /// Compute the slope of a linear function that intersects with the data points (`start_time`,
 /// `first_value`) and (`end_time`, `last_value`). The function only returns slope as calculations
 /// with the linear function is implemented as slope * (timestamp - start_time) + first_value
@@ -347,7 +357,16 @@ mod tests {
     // Tests for Swing.
     #[property_test]
     fn test_can_fit_sequence_of_finite_value_with_lossless_error_bound(value: Value) {
+        // -0.0 is rejected as a linear function reconstructs it as 0.0.
+        prop_assume!(!is_negative_zero(value as f64));
         can_fit_sequence_of_value_with_error_bound(ErrorBound::Lossless, value)
+    }
+
+    #[test]
+    fn test_cannot_fit_sequence_of_negative_zero_with_lossless_error_bound() {
+        let mut model_type = Swing::new(ErrorBound::Lossless);
+        assert!(model_type.fit_data_point(START_TIME, -0.0));
+        assert!(!model_type.fit_data_point(END_TIME, -0.0));
     }
 
     #[test]

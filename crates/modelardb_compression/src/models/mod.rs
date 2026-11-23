@@ -74,7 +74,8 @@ pub fn is_value_within_error_bound(
                 (result * 100.0) <= error_bound
             }
         }
-        ErrorBound::Lossless => equal_or_nan(real_value as f64, approximate_value as f64),
+        // Bits are compared so -0.0 and 0.0 and NaNs with different payloads are not equal.
+        ErrorBound::Lossless => real_value.to_bits() == approximate_value.to_bits(),
     }
 }
 

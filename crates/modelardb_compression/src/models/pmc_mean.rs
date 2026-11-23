@@ -47,7 +47,7 @@ impl PMCMean {
             error_bound,
             min_value: Value::NAN,
             max_value: Value::NAN,
-            sum_of_values: 0.0,
+            sum_of_values: -0.0, // -0.0 + -0.0 is -0.0 while 0.0 + -0.0 is 0.0.
             length: 0,
         }
     }
@@ -56,13 +56,24 @@ impl PMCMean {
     /// `value`. Returns [`true`] if the model can also represent `value`,
     /// otherwise [`false`].
     pub fn fit_value(&mut self, value: Value) -> bool {
-        let next_min_value = Value::min(self.min_value, value);
-        let next_max_value = Value::max(self.max_value, value);
+        let (next_min_value, next_max_value) = if self.length == 0 {
+            (value, value)
+        } else {
+            // The total order is used so -0.0 and 0.0 and NaNs with different bits are not equal.
+            (
+                models::total_min(self.min_value, value),
+                models::total_max(self.max_value, value),
+            )
+        };
         let next_sum_of_values = self.sum_of_values + value as f64;
         let next_length = self.length + 1;
         let average = (next_sum_of_values / next_length as f64) as Value;
+
+        // value is also checked as -NaN and NaN are the min and max in the total order, so if both
+        // are in the segment, the min and max are within any error bound of the NaN average.
         if models::is_value_within_error_bound(self.error_bound, next_min_value, average)
             && models::is_value_within_error_bound(self.error_bound, next_max_value, average)
+            && models::is_value_within_error_bound(self.error_bound, value, average)
         {
             self.min_value = next_min_value;
             self.max_value = next_max_value;
@@ -273,6 +284,18 @@ mod tests {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new_relative(ERROR_BOUND_RELATIVE_MAX).unwrap();
         let mut model_type = PMCMean::new(error_bound_max);
+        prop_assert!(model_type.fit_value(Value::NAN));
+        prop_assert!(!model_type.fit_value(value));
+    }
+
+    #[property_test]
+    fn test_cannot_fit_negative_nan_and_nan_and_other_value_with_absolute_error_bound_max(
+        value: Value,
+    ) {
+        prop_assume!(!value.is_nan());
+        let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
+        let mut model_type = PMCMean::new(error_bound_max);
+        prop_assert!(model_type.fit_value(-Value::NAN));
         prop_assert!(model_type.fit_value(Value::NAN));
         prop_assert!(!model_type.fit_value(value));
     }

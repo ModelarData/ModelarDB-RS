@@ -458,6 +458,44 @@ mod tests {
     }
 
     #[test]
+    fn test_try_compress_time_series_with_mixed_zeros_within_lossless_error_bound() {
+        compress_and_assert_values_within_lossless_error_bound(vec![
+            0.0, 0.0, -0.0, 0.0, 0.0, -0.0, -0.0, 0.0,
+        ]);
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_negative_zeros_within_lossless_error_bound() {
+        compress_and_assert_values_within_lossless_error_bound(vec![-0.0; 8]);
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_negative_zero_before_zeros_within_lossless_error_bound() {
+        let mut values = vec![-0.0];
+        values.extend([0.0; 49]);
+        compress_and_assert_values_within_lossless_error_bound(values);
+    }
+
+    #[test]
+    fn test_try_compress_linear_time_series_through_negative_zero_within_lossless_error_bound() {
+        compress_and_assert_values_within_lossless_error_bound(vec![
+            1.0, 0.5, -0.0, -0.5, -1.0, -1.5, -2.0, -2.5,
+        ]);
+    }
+
+    fn compress_and_assert_values_within_lossless_error_bound(values: Vec<f32>) {
+        let uncompressed_timestamps = data_generation::generate_timestamps(values.len(), false);
+        let uncompressed_values = ValueArray::from(values);
+
+        compress_and_assert_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ErrorBound::Lossless,
+            None,
+        );
+    }
+
+    #[test]
     fn test_try_compress_regular_almost_constant_time_series_within_absolute_error_bound_five() {
         generate_compress_and_assert_known_segment(
             false,
@@ -587,12 +625,30 @@ mod tests {
         let uncompressed_values =
             data_generation::generate_values(uncompressed_timestamps.values(), values_structure);
 
+        compress_and_assert_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            Some(expected_model_type_ids),
+        );
+    }
+
+    /// Compress `uncompressed_timestamps` shifted by each of the [`START_TIMES`] and
+    /// `uncompressed_values` within `error_bound` and assert that the values can be reconstructed
+    /// within `error_bound`. If `maybe_expected_model_type_ids` is [`Some`], also assert that the
+    /// compressed segments were created by these model types.
+    fn compress_and_assert_time_series(
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
+        error_bound: ErrorBound,
+        maybe_expected_model_type_ids: Option<&[i8]>,
+    ) {
         for start_time in START_TIMES {
-            let uncompressed_timestamps = add_start_time(&uncompressed_timestamps, start_time);
+            let uncompressed_timestamps = add_start_time(uncompressed_timestamps, start_time);
 
             let compressed_record_batch = try_compress_univariate_time_series(
                 &uncompressed_timestamps,
-                &uncompressed_values,
+                uncompressed_values,
                 error_bound,
                 compressed_schema(),
                 vec![TAG_VALUE.to_owned()],
@@ -600,13 +656,17 @@ mod tests {
             )
             .unwrap();
 
-            assert_compressed_record_batch_with_known_segments_from_time_series(
+            assert_compressed_record_batch_with_unknown_segments_from_time_series(
                 error_bound,
                 &uncompressed_timestamps,
-                &uncompressed_values,
+                uncompressed_values,
                 &compressed_record_batch,
-                expected_model_type_ids,
-            )
+            );
+
+            if let Some(expected_model_type_ids) = maybe_expected_model_type_ids {
+                let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, Int8Array);
+                assert_eq!(model_type_ids.values(), expected_model_type_ids);
+            }
         }
     }
 
@@ -669,24 +729,18 @@ mod tests {
             let uncompressed_timestamps_end_index =
                 uncompressed_timestamps_start_index + TRY_COMPRESS_TEST_LENGTH;
 
-            let values = match *model_type_id {
-                models::PMC_MEAN_ID => data_generation::generate_values(
-                    &uncompressed_timestamps.values()
-                        [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
-                    ValuesStructure::Constant(None),
-                ),
-                models::SWING_ID => data_generation::generate_values(
-                    &uncompressed_timestamps.values()
-                        [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
-                    ValuesStructure::Linear(None),
-                ),
-                models::MACAQUE_V_ID => data_generation::generate_values(
-                    &uncompressed_timestamps.values()
-                        [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
-                    ValuesStructure::largest_random_without_overflow(),
-                ),
+            let values_structure = match *model_type_id {
+                models::PMC_MEAN_ID => ValuesStructure::Constant(None),
+                models::SWING_ID => ValuesStructure::Linear(None),
+                models::MACAQUE_V_ID => ValuesStructure::largest_random_without_overflow(),
                 _ => panic!("Unknown model type."),
             };
+
+            let values = data_generation::generate_values(
+                &uncompressed_timestamps.values()
+                    [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
+                values_structure,
+            );
 
             uncompressed_values.append_slice(values.values());
             uncompressed_timestamps_start_index = uncompressed_timestamps_end_index;
@@ -695,50 +749,12 @@ mod tests {
         let uncompressed_values = uncompressed_values.finish();
         assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
 
-        for start_time in START_TIMES {
-            let uncompressed_timestamps = add_start_time(&uncompressed_timestamps, start_time);
-
-            let compressed_record_batch = try_compress_univariate_time_series(
-                &uncompressed_timestamps,
-                &uncompressed_values,
-                error_bound,
-                compressed_schema(),
-                vec![TAG_VALUE.to_owned()],
-                0,
-            )
-            .unwrap();
-
-            assert_compressed_record_batch_with_known_segments_from_time_series(
-                error_bound,
-                &uncompressed_timestamps,
-                &uncompressed_values,
-                &compressed_record_batch,
-                expected_model_type_ids,
-            )
-        }
-    }
-
-    fn assert_compressed_record_batch_with_known_segments_from_time_series(
-        error_bound: ErrorBound,
-        uncompressed_timestamps: &TimestampArray,
-        uncompressed_values: &ValueArray,
-        compressed_record_batch: &RecordBatch,
-        expected_model_type_ids: &[i8],
-    ) {
-        assert_eq!(
-            expected_model_type_ids.len(),
-            compressed_record_batch.num_rows()
-        );
-
-        assert_compressed_record_batch_with_unknown_segments_from_time_series(
+        compress_and_assert_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
             error_bound,
-            uncompressed_timestamps,
-            uncompressed_values,
-            compressed_record_batch,
+            Some(expected_model_type_ids),
         );
-
-        let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, Int8Array);
-        assert_eq!(model_type_ids.values(), expected_model_type_ids);
     }
 
     #[test]
@@ -856,26 +872,12 @@ mod tests {
                 100.0..200.0,
             );
 
-        for start_time in START_TIMES {
-            let uncompressed_timestamps = add_start_time(&uncompressed_timestamps, start_time);
-
-            let compressed_record_batch = try_compress_univariate_time_series(
-                &uncompressed_timestamps,
-                &uncompressed_values,
-                error_bound,
-                compressed_schema(),
-                vec![TAG_VALUE.to_owned()],
-                0,
-            )
-            .unwrap();
-
-            assert_compressed_record_batch_with_unknown_segments_from_time_series(
-                error_bound,
-                &uncompressed_timestamps,
-                &uncompressed_values,
-                &compressed_record_batch,
-            );
-        }
+        compress_and_assert_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            None,
+        );
     }
 
     /// Return a copy of `timestamps` with `start_time` added to each timestamp.
