@@ -107,10 +107,11 @@ fn equal_or_nan(v1: f64, v2: f64) -> bool {
 /// Compute the number of data points in a compressed segment.
 pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usize {
     if timestamps.is_empty() && start_time == end_time {
-        // Timestamps are assumed to be unique so the segment has one timestamp.
+        // start_time equals end_time and no timestamps are stored, so the segment has one data
+        // point. If a segment have two equal timestamps, they are always stored in timestamps.
         1
     } else if timestamps.is_empty() {
-        // Timestamps are assumed to be unique so the segment has two timestamp.
+        // Only start_time and end_time are stored as the segment only has two different timestamps.
         2
     } else if timestamps::are_compressed_timestamps_regular(timestamps) {
         // The flag bit is zero, so only the segment's length is stored as an

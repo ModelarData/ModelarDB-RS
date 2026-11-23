@@ -100,6 +100,9 @@ impl Swing {
             self.first_value = value;
             self.length += 1;
             true
+        } else if timestamp == self.start_time {
+            // Multiple values for the start time result in a divide by zero when computing the slope.
+            false
         } else if self.error_bound == ErrorBound::Lossless
             && (is_negative_zero(self.first_value) || is_negative_zero(value))
         {

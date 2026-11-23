@@ -496,6 +496,55 @@ mod tests {
     }
 
     #[test]
+    fn test_try_compress_time_series_with_duplicate_timestamps_within_lossless_error_bound() {
+        compress_and_assert_values_with_timestamps(
+            vec![0, 0, 100, 100, 200, 200, 300, 300],
+            vec![1.0, 10.0, 2.0, 20.0, 3.0, 30.0, 4.0, 40.0],
+            ErrorBound::Lossless,
+        );
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_two_equal_timestamps_within_lossless_error_bound() {
+        compress_and_assert_values_with_timestamps(
+            vec![0, 0],
+            vec![1.0, 2.0],
+            ErrorBound::Lossless,
+        );
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_many_equal_timestamps_within_lossless_error_bound() {
+        compress_and_assert_values_with_timestamps(
+            vec![0; 20],
+            (0..20).map(|value| value as f32).collect(),
+            ErrorBound::Lossless,
+        );
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_many_equal_timestamps_within_relative_error_bound_five() {
+        compress_and_assert_values_with_timestamps(
+            vec![0; 20],
+            (0..20).map(|value| 100.0 + 4.0 * value as f32).collect(),
+            ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
+        );
+    }
+
+    fn compress_and_assert_values_with_timestamps(
+        timestamps: Vec<Timestamp>,
+        values: Vec<f32>,
+        error_bound: ErrorBound,
+    ) {
+        compress_and_assert_time_series(
+            &TimestampArray::from(timestamps),
+            &ValueArray::from(values),
+            error_bound,
+            None,
+        );
+    }
+
+    #[test]
     fn test_try_compress_regular_almost_constant_time_series_within_absolute_error_bound_five() {
         generate_compress_and_assert_known_segment(
             false,
