@@ -16,7 +16,7 @@
 //! Support for managing all uncompressed data that is ingested into the
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
-use std::hash::{DefaultHasher, Hasher};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::mem;
 use std::sync::Arc;
@@ -619,13 +619,9 @@ impl UncompressedDataManager {
 /// Calculate a hash for a combination of `table_name` and `tag_values`. The hash is used to
 /// identify a specific multivariate time series during ingestion.
 fn calculate_tag_hash(table_name: &str, tag_values: &[String]) -> u64 {
+    // [`Hash`] is used instead of writing the bytes directly as it adds separators.
     let mut hasher = DefaultHasher::new();
-    for tag_value in tag_values {
-        hasher.write(tag_value.as_bytes());
-    }
-
-    hasher.write(table_name.as_bytes());
-
+    (table_name, tag_values).hash(&mut hasher);
     hasher.finish()
 }
 
@@ -634,7 +630,7 @@ mod tests {
     use super::*;
 
     use std::collections::HashSet;
-    use std::sync::Arc;
+    use std::sync::{Arc, LazyLock};
 
     use datafusion::arrow::record_batch::RecordBatch;
     use deltalake::arrow::array::StringViewBuilder;
@@ -651,8 +647,14 @@ mod tests {
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
 
     const TAG_VALUE: &str = "tag";
-    const TAG_HASH: u64 = 14957893031159457585;
     const BATCH_ID: Option<u64> = Some(0);
+
+    /// Tag hash for [`TAG_VALUE`] in the table created by [`create_managers()`]. It is computed
+    /// instead of hardcoded as [`DefaultHasher`] is not guaranteed to produce the same hashes across
+    /// Rust releases.
+    static TAG_HASH: LazyLock<u64> = LazyLock::new(|| {
+        calculate_tag_hash(table::TIME_SERIES_TABLE_NAME, &[TAG_VALUE.to_owned()])
+    });
 
     // Tests for UncompressedDataManager.
     #[tokio::test]
@@ -730,12 +732,12 @@ mod tests {
         assert!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .contains_key(&TAG_HASH)
+                .contains_key(&*TAG_HASH)
         );
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&TAG_HASH)
+                .get(&*TAG_HASH)
                 .unwrap()
                 .len(),
             1
@@ -758,12 +760,12 @@ mod tests {
         assert!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .contains_key(&TAG_HASH)
+                .contains_key(&*TAG_HASH)
         );
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&TAG_HASH)
+                .get(&*TAG_HASH)
                 .unwrap()
                 .len(),
             2
@@ -790,12 +792,12 @@ mod tests {
         assert!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .contains_key(&TAG_HASH)
+                .contains_key(&*TAG_HASH)
         );
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&TAG_HASH)
+                .get(&*TAG_HASH)
                 .unwrap()
                 .len(),
             2
@@ -845,7 +847,7 @@ mod tests {
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&TAG_HASH)
+                .get(&*TAG_HASH)
                 .unwrap()
                 .len(),
             3
@@ -1223,5 +1225,29 @@ mod tests {
             uncompressed_data_manager,
             Arc::new(time_series_table_metadata),
         )
+    }
+
+    // Tests for calculate_tag_hash().
+    #[test]
+    fn test_tag_hash_differs_for_tag_values_that_concatenate_to_the_same_string() {
+        let table_name = table::TIME_SERIES_TABLE_NAME;
+        assert_ne!(
+            calculate_tag_hash(table_name, &["a".to_owned(), "bc".to_owned()]),
+            calculate_tag_hash(table_name, &["ab".to_owned(), "c".to_owned()])
+        );
+    }
+
+    #[test]
+    fn test_tag_hash_differs_for_table_name_and_tag_values_that_concatenate_to_the_same_string() {
+        // Two asserts are included to catch if the hashing order in calculate_tag_hash() change.
+        assert_ne!(
+            calculate_tag_hash("a", &["bc".to_owned()]),
+            calculate_tag_hash("ab", &["c".to_owned()])
+        );
+
+        assert_ne!(
+            calculate_tag_hash("bc", &["a".to_owned()]),
+            calculate_tag_hash("c", &["ab".to_owned()])
+        );
     }
 }
