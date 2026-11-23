@@ -13,22 +13,13 @@
  * limitations under the License.
  */
 
-//! Compress batches of sorted data points to produce compressed segments containing metadata and
-//! models, compute aggregates directly from the segments, and reconstruct the data points for each
-//! compressed segment.
+//! Rewrite values within their error bounds before they are stored and select how data is encoded
+//! in Apache Parquet files.
 
-mod compression;
+mod encoding_policy;
 pub mod error;
-mod models;
-mod types;
+mod lossy_compression;
 
-// Re-export the few functions and types users are meant to use.
-pub use compression::try_compress_multivariate_time_series;
-pub use compression::try_compress_univariate_time_series;
-pub use compression::try_split_and_compress_univariate_time_series;
-pub use models::grid;
-pub use models::is_value_within_error_bound;
-pub use models::len;
-pub use models::sum;
-pub use models::timestamps::are_compressed_timestamps_regular;
-pub use models::{MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
+// Re-export the few functions users are meant to use.
+pub use encoding_policy::writer_properties;
+pub use lossy_compression::{apply_error_bounds, is_value_within_error_bound};
