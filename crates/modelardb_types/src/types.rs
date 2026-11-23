@@ -211,7 +211,8 @@ impl ErrorBound {
 pub struct GeneratedColumn {
     /// Logical expression that computes the values of the column.
     pub expr: Expr,
-    /// Indices of the stored columns used by `expr` to compute the column's values.
+    /// Indices in the query schema of the columns used by `expr` to compute the column's values, in
+    /// increasing order.
     pub source_columns: Vec<usize>,
 }
 
@@ -219,15 +220,18 @@ impl GeneratedColumn {
     /// Return a new [`GeneratedColumn`] with the given expression if it only references columns in
     /// [`DFSchema`], otherwise return [`ModelarDbTypesError`].
     pub fn try_from_expr(expr: Expr, df_schema: &DFSchema) -> Result<Self> {
-        let source_columns: StdResult<Vec<usize>, DataFusionError> = expr
+        let mut source_columns = expr
             .column_refs()
             .iter()
             .map(|column| df_schema.index_of_column(column))
-            .collect();
+            .collect::<StdResult<Vec<usize>, DataFusionError>>()?;
+
+        // column_refs() returns a HashSet, so the indices are sorted to make them deterministic.
+        source_columns.sort_unstable();
 
         Ok(Self {
             expr,
-            source_columns: source_columns?,
+            source_columns,
         })
     }
 }
