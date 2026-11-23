@@ -25,6 +25,41 @@ use modelardb_types::types::{
 };
 
 use crate::error::{ModelarDbCompressionError, Result};
+/// Rewrite the highest number of mantissa bits possible for `value` within `error_bound` starting
+/// from the least significant bits. Zero, subnormal, infinite, and NaN values are returned
+/// unchanged.
+fn rewrite_least_mantissa_bits(error_bound: ErrorBound, value: Value) -> Value {
+    // Subnormal values have no implicit leading mantissa bit, so the computation below does
+    // not bound their error.
+    if !value.is_normal() {
+        return value;
+    }
+
+    let value_as_u32 = value.to_bits();
+    let abs_error_bound = maximum_allowed_deviation(error_bound, value as f64) as f32;
+    let exponent = get_exponent(value);
+    let factorized_epsilon = abs_error_bound / 2f32.powi(exponent);
+
+    // Rewriting the last 23 - ⌈|log2 factorized_epsilon|⌉ mantissa bits never exceeds the error
+    // bound. However, in that case, one more bit can be rewritten if the majority of the least
+    // significant mantissa bits are 0. Thus, we rewrite bits using 23 - ⌊|log2 factorized_epsilon|⌋
+    // and perform an extra check to ensure the error bound is not exceeded. If the error bound is
+    // exceeded, we rewrite 23 - ⌈|log2 factorized_epsilon|⌉ least significant mantissa bits. Error
+    // bounds far below or far above the value give positions outside the mantissa, so the position
+    // is clamped to it.
+    let mut rewrite_position = (23 - factorized_epsilon.log2().abs().floor() as i32).clamp(0, 23);
+    let mut rewritten_value = f32::from_bits(rewrite_bits_by_n(value_as_u32, rewrite_position));
+
+    // If the error bound is exceeded, value is rewritten with one less bit i.e., using
+    // 23 − ⌈log2 factorized_epsilon⌉.
+    if !is_value_within_error_bound(error_bound, value, rewritten_value) {
+        rewrite_position -= 1;
+        rewritten_value = f32::from_bits(rewrite_bits_by_n(value.to_bits(), rewrite_position));
+    }
+
+    rewritten_value
+}
+
 /// Extract the unbiased exponent from `value`.
 fn get_exponent(value: f32) -> i32 {
     let n_bits: u32 = value.to_bits();
