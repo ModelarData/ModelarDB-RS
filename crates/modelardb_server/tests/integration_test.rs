@@ -15,7 +15,6 @@
 
 //! Integration tests for modelardb_server's Apache Arrow Flight endpoints.
 
-use std::collections::HashMap;
 use std::error::Error;
 use std::ops::Range;
 use std::process::Stdio;
@@ -26,18 +25,18 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 use std::{iter, slice};
 
+use arrow_flight::decode::FlightRecordBatchStream;
+use arrow_flight::encode::{FlightDataEncoderBuilder, GRPC_TARGET_MAX_FLIGHT_SIZE_BYTES};
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket, utils};
+use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
 use bytes::Bytes;
 use datafusion::arrow::array::{Array, Float64Array, StringArray, StringViewArray, UInt64Array};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
 use datafusion::arrow::ipc::convert;
-use datafusion::arrow::ipc::writer::{
-    DictionaryTracker, IpcDataGenerator, IpcWriteContext, IpcWriteOptions,
-};
 use datafusion::arrow::record_batch::RecordBatch;
-use futures::{StreamExt, stream};
+use datafusion::prelude::SessionConfig;
+use futures::{StreamExt, TryStreamExt, stream};
 use modelardb_test::table::{self, NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
 use modelardb_test::{data_generation, system};
 use modelardb_types::flight::protocol;
@@ -341,46 +340,20 @@ impl TestContext {
         RecordBatch::try_new(schema, columns).unwrap()
     }
 
-    /// Create and return [`FlightData`] based on the `time_series` to be inserted into `table_name`.
-    fn create_flight_data_from_time_series(
-        table_name: String,
-        time_series: &[RecordBatch],
-    ) -> Vec<FlightData> {
-        let flight_descriptor = FlightDescriptor::new_path(vec![table_name]);
-
-        let mut flight_data = vec![FlightData {
-            flight_descriptor: Some(flight_descriptor),
-            data_header: Bytes::new(),
-            app_metadata: Bytes::new(),
-            data_body: Bytes::new(),
-        }];
-
-        let data_generator = IpcDataGenerator::default();
-        let mut dictionary_tracker = DictionaryTracker::new(false);
-        let writer_options = IpcWriteOptions::default();
-        let mut ipc_write_context = IpcWriteContext::default();
-
-        for data_point in time_series {
-            let (_encoded_dictionaries, encoded_batch) = data_generator
-                .encode(
-                    data_point,
-                    &mut dictionary_tracker,
-                    &writer_options,
-                    &mut ipc_write_context,
-                )
-                .unwrap();
-            flight_data.push(encoded_batch.into());
-        }
-
-        flight_data
-    }
-
-    /// Send data points to the server through the `do_put()` method.
+    /// Send `time_series` to the server through the `do_put()` method to be inserted into
+    /// `table_name`.
     async fn send_time_series_to_server(
         &mut self,
-        flight_data: Vec<FlightData>,
+        table_name: &str,
+        time_series: &[RecordBatch],
     ) -> Result<Response<Streaming<PutResult>>, Status> {
-        let flight_data_stream = stream::iter(flight_data);
+        let flight_descriptor = FlightDescriptor::new_path(vec![table_name.to_owned()]);
+
+        let flight_data_stream = FlightDataEncoderBuilder::new()
+            .with_flight_descriptor(Some(flight_descriptor))
+            .build(stream::iter(time_series.to_vec()).map(Ok))
+            .map(|maybe_flight_data| maybe_flight_data.unwrap());
+
         self.client.do_put(flight_data_stream).await
     }
 
@@ -400,29 +373,20 @@ impl TestContext {
         let ticket = Ticket {
             ticket: query.into(),
         };
-        let mut stream = self.client.do_get(ticket).await?.into_inner();
-
-        // Get schema of result set.
-        let flight_data = stream.message().await?.ok_or("No time series received.")?;
-        let schema = Arc::new(Schema::try_from(&flight_data)?);
+        let flight_data_stream = self.client.do_get(ticket).await?.into_inner();
+        let mut record_batch_stream =
+            FlightRecordBatchStream::new_from_flight_data(flight_data_stream.map_err(Into::into));
 
         // Get data in result set.
-        let mut query_result = vec![];
-        while let Some(flight_data) = stream.message().await? {
-            let dictionaries_by_id = HashMap::new();
-            let record_batch = utils::flight_data_to_arrow_batch(
-                &flight_data,
-                schema.clone(),
-                &dictionaries_by_id,
-            )?;
-            query_result.push(record_batch);
-        }
+        let query_result: Vec<RecordBatch> = record_batch_stream.by_ref().try_collect().await?;
 
-        if query_result.is_empty() {
-            Ok(RecordBatch::new_empty(schema))
-        } else {
-            Ok(compute::concat_batches(&query_result[0].schema(), &query_result).unwrap())
-        }
+        // The schema is only available after the stream has been polled.
+        let schema = record_batch_stream
+            .schema()
+            .ok_or("No schema received.")?
+            .clone();
+
+        Ok(compute::concat_batches(&schema, &query_result)?)
     }
 
     /// Retrieve the table names currently in the server and return them.
@@ -834,13 +798,8 @@ async fn test_can_optimize_normal_table() {
     // ingest_time_series_and_flush_data() writes one file. Ingest and flush three more times so
     // there are four small files to merge.
     for _ in 0..3 {
-        let flight_data = TestContext::create_flight_data_from_time_series(
-            NORMAL_TABLE_NAME.to_owned(),
-            slice::from_ref(&time_series),
-        );
-
         test_context
-            .send_time_series_to_server(flight_data)
+            .send_time_series_to_server(NORMAL_TABLE_NAME, slice::from_ref(&time_series))
             .await
             .unwrap();
 
@@ -889,13 +848,8 @@ async fn test_can_optimize_time_series_table() {
     // ingest_time_series_and_flush_data() writes one file per partition. Ingest and flush three
     // more times so each partition has four small files to merge.
     for _ in 0..3 {
-        let flight_data = TestContext::create_flight_data_from_time_series(
-            TIME_SERIES_TABLE_NAME.to_owned(),
-            slice::from_ref(&time_series),
-        );
-
         test_context
-            .send_time_series_to_server(flight_data)
+            .send_time_series_to_server(TIME_SERIES_TABLE_NAME, slice::from_ref(&time_series))
             .await
             .unwrap();
 
@@ -1199,16 +1153,14 @@ async fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
 async fn test_cannot_ingest_invalid_time_series() {
     let mut test_context = TestContext::new().await;
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
-    let flight_data = TestContext::create_flight_data_from_time_series(
-        TIME_SERIES_TABLE_NAME.to_owned(),
-        &[time_series],
-    );
 
     test_context
         .create_table(TIME_SERIES_TABLE_NAME, TableType::TimeSeriesTable)
         .await;
 
-    let response = test_context.send_time_series_to_server(flight_data).await;
+    let response = test_context
+        .send_time_series_to_server(TIME_SERIES_TABLE_NAME, &[time_series])
+        .await;
 
     assert_eq!(
         response.err().unwrap().message(),
@@ -1222,6 +1174,29 @@ async fn test_cannot_ingest_invalid_time_series() {
         .await
         .unwrap();
     assert_eq!(query_result.num_rows(), 0);
+}
+
+#[tokio::test]
+async fn test_do_get_splits_record_batches_larger_than_max_flight_data_size() {
+    let mut test_context = TestContext::new().await;
+
+    // The query creates a record batch with DataFusion's default batch size that is four times
+    // larger than the default maximum size of FlightData created by FlightDataEncoderBuilder.
+    let row_count = SessionConfig::new().batch_size();
+    let string_length = 4 * GRPC_TARGET_MAX_FLIGHT_SIZE_BYTES / row_count;
+    let query_result = test_context
+        .execute_query(format!(
+            "SELECT repeat('x', {string_length}) AS text FROM generate_series(1, {row_count})"
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(query_result.num_rows(), row_count);
+
+    let expected_string = "x".repeat(string_length);
+    let expected_str = Some(expected_string.as_str());
+    let strs = modelardb_types::array!(query_result, 0, StringArray);
+    assert!(strs.iter().all(|value| value == expected_str));
 }
 
 #[tokio::test]
@@ -1392,13 +1367,10 @@ async fn ingest_time_series_and_flush_data(
     table_name: &str,
     table_type: TableType,
 ) {
-    let flight_data =
-        TestContext::create_flight_data_from_time_series(table_name.to_owned(), time_series);
-
     test_context.create_table(table_name, table_type).await;
 
     test_context
-        .send_time_series_to_server(flight_data)
+        .send_time_series_to_server(table_name, time_series)
         .await
         .unwrap();
 
