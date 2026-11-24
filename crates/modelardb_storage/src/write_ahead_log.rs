@@ -32,7 +32,7 @@ use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use deltalake::DeltaTable;
 use futures::TryStreamExt;
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::types::TableMetadata;
 use tracing::{debug, info, warn};
 
 use crate::WRITE_AHEAD_LOG_FOLDER;
@@ -80,8 +80,8 @@ impl WriteAheadLog {
             segment_size_threshold_in_bytes,
         };
 
-        // For each time series table, create a table log if it does not already exist.
-        for metadata in local_data_folder.time_series_table_metadata().await? {
+        // For each table, create a table log if it does not already exist.
+        for metadata in local_data_folder.table_metadata().await? {
             let delta_table = local_data_folder.delta_table(&metadata.name).await?;
             write_ahead_log.create_table_log(&metadata).await?;
 
@@ -102,21 +102,18 @@ impl WriteAheadLog {
         Ok(write_ahead_log)
     }
 
-    /// Create a new segmented log for the table with the given metadata. If a table log already
+    /// Create a new segmented log for the table with `table_metadata`. If a table log already
     /// exists in the map or the table log could not be created, return [`ModelarDbStorageError`].
     /// Note that if the table log already exists, but it is not present in the map, the existing
     /// table log will be added to the map.
-    pub async fn create_table_log(
-        &mut self,
-        time_series_table_metadata: &TimeSeriesTableMetadata,
-    ) -> Result<()> {
-        let table_name = time_series_table_metadata.name.clone();
+    pub async fn create_table_log(&mut self, table_metadata: &TableMetadata) -> Result<()> {
+        let table_name = table_metadata.name.clone();
 
         if !self.table_logs.contains_key(&table_name) {
             let table_log_path = self.folder_path.join(&table_name);
             let table_log = SegmentedLog::try_new(
                 table_log_path,
-                &time_series_table_metadata.schema,
+                &table_metadata.stored_schema,
                 self.segment_size_threshold_in_bytes,
             )?;
 
