@@ -371,42 +371,6 @@ impl DataFolder {
         Ok(())
     }
 
-    /// Create a Delta Lake table for a normal table with `table_name` and `schema` and save the
-    /// table metadata to the `normal_table_metadata` table. If the table already exists or
-    /// the metadata could not be saved, return [`ModelarDbStorageError`], otherwise return
-    /// the created [`DeltaTable`].
-    pub async fn create_normal_table(
-        &self,
-        table_name: &str,
-        schema: &Schema,
-    ) -> Result<DeltaTable> {
-        let delta_table = self
-            .create_delta_lake_table(
-                table_name,
-                schema,
-                &[],
-                self.location_of_table(table_name),
-                SaveMode::ErrorIfExists,
-            )
-            .await?;
-
-        self.save_normal_table_metadata(table_name).await?;
-
-        Ok(delta_table)
-    }
-
-    /// Save the created normal table to the Delta Lake. This consists of adding a row to the
-    /// `normal_table_metadata` table with the `name` of the table. If the normal table metadata was
-    /// saved, return [`Ok`], otherwise return [`ModelarDbStorageError`].
-    async fn save_normal_table_metadata(&self, name: &str) -> Result<()> {
-        self.write_columns_to_metadata_table(
-            "normal_table_metadata",
-            vec![Arc::new(StringViewArray::from(vec![name]))],
-        )
-        .await?;
-
-        Ok(())
-    }
 
     /// Create a Delta Lake table for a time series table with `time_series_table_metadata` and
     /// save the table metadata to the `time_series_table_metadata` table. If the table already
