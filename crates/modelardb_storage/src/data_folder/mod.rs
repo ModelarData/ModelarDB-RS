@@ -261,27 +261,19 @@ impl DataFolder {
         Ok(data_folder)
     }
 
-    /// If they do not already exist, create the tables in the Delta Lake for normal table and time
-    /// series table metadata and register them with the Apache DataFusion session context.
-    /// * The `normal_table_metadata` table contains the metadata for normal tables.
-    /// * The `time_series_table_metadata` table contains the main metadata for time series tables.
-    /// * The `time_series_table_field_columns` table contains the name, index, error bound value,
-    ///   whether error bound is relative, and generation expression of the field columns in each
-    ///   time series table.
+    /// If they do not already exist, create the tables in the Delta Lake for table metadata and
+    /// register them with the Apache DataFusion session context.
+    /// * The `table_metadata` table contains the name and query schema of each table.
+    /// * The `column_metadata` table contains the name, index, error bound, and generated column
+    ///   expression of each column that has an error bound or is generated. Columns without a row
+    ///   are stored losslessly.
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return
     /// [`ModelarDbStorageError`].
     async fn create_and_register_metadata_tables(&self) -> Result<()> {
-        // Create and register the normal_table_metadata table if it does not exist.
+        // Create and register the table_metadata table if it does not exist.
         self.create_and_register_metadata_table(
-            "normal_table_metadata",
-            &Schema::new(vec![Field::new("table_name", DataType::Utf8View, false)]),
-        )
-        .await?;
-
-        // Create and register the time_series_table_metadata table if it does not exist.
-        self.create_and_register_metadata_table(
-            "time_series_table_metadata",
+            "table_metadata",
             &Schema::new(vec![
                 Field::new("table_name", DataType::Utf8View, false),
                 Field::new("query_schema", DataType::Binary, false),
@@ -289,17 +281,17 @@ impl DataFolder {
         )
         .await?;
 
-        // Create and register the time_series_table_field_columns table if it does not exist. Note
-        // that column_index will only use a maximum of 10 bits. generated_column_expr is NULL if
-        // the fields are stored as segments.
+        // Create and register the column_metadata table if it does not exist. error_bound_value and
+        // error_bound_is_relative are NULL for generated columns, and generated_column_expr is NULL
+        // for stored columns.
         self.create_and_register_metadata_table(
-            "time_series_table_field_columns",
+            "column_metadata",
             &Schema::new(vec![
                 Field::new("table_name", DataType::Utf8View, false),
                 Field::new("column_name", DataType::Utf8View, false),
-                Field::new("column_index", DataType::Int16, false),
-                Field::new("error_bound_value", DataType::Float32, false),
-                Field::new("error_bound_is_relative", DataType::Boolean, false),
+                Field::new("column_index", DataType::Int32, false),
+                Field::new("error_bound_value", DataType::Float32, true),
+                Field::new("error_bound_is_relative", DataType::Boolean, true),
                 Field::new("generated_column_expr", DataType::Binary, true),
             ]),
         )
