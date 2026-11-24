@@ -732,12 +732,6 @@ impl DataFolder {
     fn location_of_table(&self, table_name: &str) -> String {
         format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
-
-/// Return `true` if `delta_table` is a time series table based on its partition columns.
-/// Normal tables and metadata tables do not have partition columns.
-fn is_time_series_delta_table(delta_table: &DeltaTable) -> Result<bool> {
-    let partition_columns = delta_table.snapshot()?.metadata().partition_columns();
-    Ok(partition_columns.contains(&FIELD_COLUMN.to_owned()))
 }
 
 #[cfg(test)]
