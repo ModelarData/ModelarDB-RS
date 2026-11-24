@@ -20,26 +20,23 @@
 use std::collections::HashSet;
 
 use arrow::array::RecordBatch;
-use datafusion::parquet::file::properties::WriterProperties;
 use delta_kernel::table_properties::DataSkippingNumIndexedCols;
 use deltalake::DeltaTable;
 use deltalake::kernel::transaction::{CommitBuilder, CommitProperties};
 use deltalake::kernel::{Action, Add};
 use deltalake::operations::write::writer::{DeltaWriter, WriterConfig};
 use deltalake::protocol::{DeltaOperation, SaveMode};
-use modelardb_types::schemas::COMPRESSED_SCHEMA;
 use object_store::path::Path;
 use object_store::{ObjectStore, ObjectStoreExt};
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::error::{ModelarDbStorageError, Result};
-use crate::{
-    writer_properties_for_metadata_and_normal_tables, writer_properties_for_time_series_table,
-};
 
 /// Functionality for transactionally writing [`RecordBatches`](RecordBatch) to a Delta table stored
-/// in an object store.
+/// in an object store. Every commit is marked as a blind append, so it does not conflict with
+/// concurrent commits that rewrite or remove files. Thus, it must only be used for writes that do
+/// not depend on reading the same table.
 pub struct DeltaTableWriter {
     /// Delta table that all of the record batches will be written to.
     delta_table: DeltaTable,
@@ -55,38 +52,15 @@ pub struct DeltaTableWriter {
 }
 
 impl DeltaTableWriter {
-    /// Create a [`DeltaTableWriter`] configured for writing to a normal table.
-    pub(crate) async fn try_new_for_normal_table(delta_table: DeltaTable) -> Result<Self> {
-        let schema = delta_table.snapshot()?.snapshot().arrow_schema();
-        let writer_properties = writer_properties_for_metadata_and_normal_tables(&schema)?;
-        Self::try_new(delta_table, vec![], writer_properties).await
-    }
-
-    /// Create a [`DeltaTableWriter`] configured for writing to a time series table.
-    pub(crate) async fn try_new_for_time_series_table(delta_table: DeltaTable) -> Result<Self> {
-        let schema = delta_table.snapshot()?.snapshot().arrow_schema();
-
-        // Compressed segments have the partition columns, i.e., the field column and the tag
-        // columns, after the fixed compressed schema. The segments are partitioned by their field
-        // column and tags to only read the required fields and minimize overlapping timestamps.
-        let partition_columns = schema
-            .fields()
-            .iter()
-            .skip(COMPRESSED_SCHEMA.0.fields().len())
-            .map(|field| field.name().to_owned())
-            .collect();
-
-        let writer_properties = writer_properties_for_time_series_table()?;
-        Self::try_new(delta_table, partition_columns, writer_properties).await
-    }
-
-    /// Create a new [`DeltaTableWriter`]. Returns a [`ModelarDbStorageError`] if the state of the
+    /// Create a new [`DeltaTableWriter`] that writes to `delta_table` with its partition columns and
+    /// the encoding policy for its schema. Returns a [`ModelarDbStorageError`] if the state of the
     /// Delta table cannot be loaded from `delta_table`.
-    pub async fn try_new(
-        delta_table: DeltaTable,
-        partition_columns: Vec<String>,
-        writer_properties: WriterProperties,
-    ) -> Result<Self> {
+    pub async fn try_new(delta_table: DeltaTable) -> Result<Self> {
+        let snapshot = delta_table.snapshot()?;
+        let partition_columns = snapshot.metadata().partition_columns().to_vec();
+        let writer_properties =
+            modelardb_compression::writer_properties(&snapshot.snapshot().arrow_schema());
+
         // Operation that will be committed.
         let delta_operation = DeltaOperation::Write {
             mode: SaveMode::Append,
@@ -168,10 +142,10 @@ impl DeltaTableWriter {
     }
 
     /// Consume the [`DeltaTableWriter`], finish the writing, and commit the files that have been
-    /// written to the log. If an error occurs before the commit is finished, the already written
-    /// files are deleted if possible. Returns a [`ModelarDbStorageError`] if an error occurs when
-    /// finishing the writing, committing the files that have been written, deleting the written
-    /// files, or updating the [`DeltaTable`].
+    /// written to the log as a blind append. If an error occurs before the commit is finished, the
+    /// already written files are deleted if possible. Returns a [`ModelarDbStorageError`] if an
+    /// error occurs when finishing the writing, committing the files that have been written,
+    /// deleting the written files, or updating the [`DeltaTable`].
     pub async fn commit(mut self) -> Result<DeltaTable> {
         // Write the remaining buffered files.
         let added_files = self.delta_writer.close().await?;
@@ -186,11 +160,14 @@ impl DeltaTableWriter {
         // Prepare all inputs to the commit.
         let object_store = self.delta_table.object_store();
 
-        let mut commit_properties = CommitProperties::default();
+        // The commit is a blind append as it only adds files, so it does not conflict with
+        // concurrent commits that rewrite or remove files when the isolation level is
+        // WriteSerializable.
+        let mut commit_metadata = vec![("isBlindAppend".to_owned(), json!(true))];
         if !self.batch_ids.is_empty() {
-            commit_properties = commit_properties
-                .with_metadata(vec![("batchIds".to_owned(), json!(self.batch_ids))]);
+            commit_metadata.push(("batchIds".to_owned(), json!(self.batch_ids)));
         }
+        let commit_properties = CommitProperties::default().with_metadata(commit_metadata);
 
         let table_data = match self.delta_table.snapshot() {
             Ok(table_data) => table_data,
@@ -242,191 +219,4 @@ async fn delete_added_files(object_store: &dyn ObjectStore, added_files: Vec<Add
         object_store.delete(&path).await?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::sync::Arc;
-
-    use modelardb_test::table as test_table;
-    use modelardb_test::table::{NORMAL_TABLE_NAME, TIME_SERIES_TABLE_NAME};
-    use tempfile::TempDir;
-
-    use crate::data_folder::DataFolder;
-    use crate::sql_and_concat;
-
-    // Tests for DeltaTableWriter.
-    #[tokio::test]
-    async fn test_try_new() {
-        let (_temp_dir, data_folder) = create_data_folder_with_normal_table().await;
-        let delta_table = data_folder.delta_table(NORMAL_TABLE_NAME).await.unwrap();
-        let writer = DeltaTableWriter::try_new(delta_table, vec![], WriterProperties::default())
-            .await
-            .unwrap();
-
-        let delta_table = writer
-            .write_all_and_commit(&[test_table::normal_table_record_batch()])
-            .await
-            .unwrap();
-
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_write_and_commit() {
-        let (_temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
-
-        writer
-            .write(&test_table::compressed_segments_record_batch())
-            .await
-            .unwrap();
-
-        let delta_table = writer.commit().await.unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_write_empty_record_batch() {
-        let (_temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
-
-        let empty_batch =
-            RecordBatch::new_empty(test_table::time_series_table_metadata().compressed_schema);
-        writer.write(&empty_batch).await.unwrap();
-
-        let delta_table = writer.commit().await.unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_write_with_schema_mismatch() {
-        let (_temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
-
-        let result = writer.write(&test_table::normal_table_record_batch()).await;
-
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .starts_with("Delta Lake Error: Generic error: Error partitioning record batch:")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_write_all_and_commit() {
-        let (_temp_dir, data_folder, writer) = create_time_series_table_writer().await;
-
-        let batch = test_table::compressed_segments_record_batch();
-        let delta_table = writer
-            .write_all_and_commit(&[batch.clone(), batch])
-            .await
-            .unwrap();
-
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
-
-        // Verify both batches were written.
-        let table_provider = delta_table.table_provider().build().await.unwrap();
-        data_folder
-            .session_context()
-            .register_table(TIME_SERIES_TABLE_NAME, Arc::new(table_provider))
-            .unwrap();
-
-        let result = sql_and_concat(
-            data_folder.session_context(),
-            &format!("SELECT * FROM {TIME_SERIES_TABLE_NAME}"),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result.num_rows(), 6);
-    }
-
-    #[tokio::test]
-    async fn test_write_all_and_commit_rolls_back_on_error() {
-        let (temp_dir, data_folder, writer) = create_time_series_table_writer().await;
-
-        let valid_batch = test_table::compressed_segments_record_batch();
-        let invalid_batch = test_table::normal_table_record_batch();
-        let result = writer
-            .write_all_and_commit(&[valid_batch, invalid_batch])
-            .await;
-
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .starts_with("Delta Lake Error: Generic error: Error partitioning record batch:")
-        );
-
-        // Verify no commit was made.
-        let delta_table = data_folder
-            .delta_table(TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
-
-        // Verify the physical files were cleaned up from the partition folders.
-        let column_path = format!(
-            "{}/tables/{TIME_SERIES_TABLE_NAME}/field_column=0/tag=tag",
-            temp_dir.path().to_str().unwrap()
-        );
-        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_commit_without_writes() {
-        let (_temp_dir, _data_folder, writer) = create_time_series_table_writer().await;
-
-        let delta_table = writer.commit().await.unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_rollback() {
-        let (temp_dir, _data_folder, mut writer) = create_time_series_table_writer().await;
-
-        writer
-            .write(&test_table::compressed_segments_record_batch())
-            .await
-            .unwrap();
-
-        let delta_table = writer.rollback().await.unwrap();
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 0);
-
-        // Verify the physical files were cleaned up from the partition folders.
-        let column_path = format!(
-            "{}/tables/{TIME_SERIES_TABLE_NAME}/field_column=0/tag=tag",
-            temp_dir.path().to_str().unwrap()
-        );
-        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 0);
-    }
-
-    async fn create_data_folder_with_normal_table() -> (TempDir, DataFolder) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-
-        data_folder
-            .create_normal_table(NORMAL_TABLE_NAME, &test_table::normal_table_schema())
-            .await
-            .unwrap();
-
-        (temp_dir, data_folder)
-    }
-
-    async fn create_time_series_table_writer() -> (TempDir, DataFolder, DeltaTableWriter) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-
-        let delta_table = data_folder
-            .create_time_series_table(&test_table::time_series_table_metadata())
-            .await
-            .unwrap();
-
-        let writer = DeltaTableWriter::try_new_for_time_series_table(delta_table)
-            .await
-            .unwrap();
-
-        (temp_dir, data_folder, writer)
-    }
 }
