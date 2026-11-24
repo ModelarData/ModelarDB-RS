@@ -528,35 +528,22 @@ impl DataFolder {
         Ok(deleted_paths)
     }
 
-    /// Depending on the type of the table with `table_name`, delete either the normal table metadata
-    /// or the time series table metadata from the Delta Lake. If the table does not exist or the
-    /// metadata could not be deleted, [`ModelarDbStorageError`] is returned.
+    /// Delete the metadata of the table with `table_name` from the `table_metadata` and
+    /// `column_metadata` tables. If the table does not exist or the metadata could not be deleted,
+    /// [`ModelarDbStorageError`] is returned.
     async fn delete_table_metadata(&self, table_name: &str) -> Result<()> {
-        if self.is_normal_table(table_name).await? {
-            let delta_table = self.metadata_delta_table("normal_table_metadata").await?;
-
-            delta_table
-                .delete()
-                .with_predicate(col("table_name").eq(lit(table_name)))
-                .await?;
-        } else if self.is_time_series_table(table_name).await? {
-            // Delete the table metadata from the time_series_table_metadata table.
-            self.metadata_delta_table("time_series_table_metadata")
-                .await?
-                .delete()
-                .with_predicate(col("table_name").eq(lit(table_name)))
-                .await?;
-
-            // Delete the column metadata from the time_series_table_field_columns table.
-            self.metadata_delta_table("time_series_table_field_columns")
-                .await?
-                .delete()
-                .with_predicate(col("table_name").eq(lit(table_name)))
-                .await?;
-        } else {
+        if !self.table_exists(table_name).await? {
             return Err(ModelarDbStorageError::InvalidArgument(format!(
                 "Table with name '{table_name}' does not exist."
             )));
+        }
+
+        for metadata_table_name in ["table_metadata", "column_metadata"] {
+            self.metadata_delta_table(metadata_table_name)
+                .await?
+                .delete()
+                .with_predicate(col("table_name").eq(lit(table_name)))
+                .await?;
         }
 
         Ok(())
