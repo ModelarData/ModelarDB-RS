@@ -711,24 +711,6 @@ impl DataFolder {
         }
     }
 
-    /// Return `true` if the table with `table_name` is a normal table, otherwise return `false`.
-    pub async fn is_normal_table(&self, table_name: &str) -> Result<bool> {
-        match self.delta_table(table_name).await {
-            Ok(delta_table) => Ok(!is_time_series_delta_table(&delta_table)?),
-            Err(ModelarDbStorageError::InvalidArgument(_)) => Ok(false),
-            Err(error) => Err(error),
-        }
-    }
-
-    /// Return `true` if the table with `table_name` is a time series table, otherwise return `false`.
-    pub async fn is_time_series_table(&self, table_name: &str) -> Result<bool> {
-        match self.delta_table(table_name).await {
-            Ok(delta_table) => is_time_series_delta_table(&delta_table),
-            Err(ModelarDbStorageError::InvalidArgument(_)) => Ok(false),
-            Err(error) => Err(error),
-        }
-    }
-
     /// Return the name of each table currently in the Delta Lake. If the table names cannot be
     /// retrieved, [`ModelarDbStorageError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>> {
