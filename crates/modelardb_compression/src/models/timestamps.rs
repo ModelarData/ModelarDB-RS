@@ -54,8 +54,11 @@ use crate::models::bits::{BitReader, BitVecBuilder};
 /// the returned [`Vec`] is a flag that indicates if the time series was regular
 /// (a zero bit is written) or if it was irregular (a one bit is written).
 pub fn compress_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -> Vec<u8> {
-    // Nothing to do as the segments already store the first and last timestamp.
-    if uncompressed_timestamps.len() <= 2 {
+    let length = uncompressed_timestamps.len();
+
+    // Nothing to do as the segments already store the first and last timestamp. However, two equal
+    // timestamps must be stored as start_time equals end_time means the segment has one data point.
+    if length < 2 || (length == 2 && uncompressed_timestamps[0] != uncompressed_timestamps[1]) {
         return vec![];
     }
 
@@ -79,7 +82,13 @@ fn are_uncompressed_timestamps_regular(uncompressed_timestamps: &[Timestamp]) ->
         return true;
     }
 
+    // Timestamps whose first two are equal are irregular as the length cannot be computed from a
+    // sampling interval of zero. The loop does not catch this if all timestamps are equal.
     let expected_sampling_interval = uncompressed_timestamps[1] - uncompressed_timestamps[0];
+    if expected_sampling_interval == 0 {
+        return false;
+    }
+
     let mut uncompressed_timestamps = uncompressed_timestamps.iter();
     let mut previous_timestamp = uncompressed_timestamps
         .next()
@@ -167,10 +176,11 @@ pub fn decompress_all_timestamps(
     timestamp_builder: &mut TimestampBuilder,
 ) {
     if residual_timestamps.is_empty() && start_time == end_time {
-        // Timestamps are assumed to be unique so the segment has one timestamp.
+        // Only start_time is needed as the segment has one timestamp. Two equal timestamps are
+        // stored in timestamps, so this cannot be a segment with two equal timestamps.
         timestamp_builder.append_value(start_time);
     } else if residual_timestamps.is_empty() {
-        // Timestamps are assumed to be unique so the segment has two timestamp.
+        // Only start_time and end_time are needed as the segment has two different timestamps.
         timestamp_builder.append_value(start_time);
         timestamp_builder.append_value(end_time);
     } else if are_compressed_timestamps_regular(residual_timestamps) {
@@ -405,6 +415,11 @@ mod tests {
     }
 
     #[test]
+    fn test_compress_and_decompress_two_equal_timestamps() {
+        compress_and_decompress_timestamps_for_a_time_series(&[100, 100], None);
+    }
+
+    #[test]
     fn test_compress_and_decompress_timestamps_for_a_generated_regular_time_series() {
         let timestamps = data_generation::generate_timestamps(1000, false);
         compress_and_decompress_timestamps_for_a_time_series(timestamps.values(), None);
@@ -435,8 +450,11 @@ mod tests {
         let uncompressed_timestamps = uncompressed_timestamps_builder.finish();
 
         let compressed = compress_residual_timestamps(uncompressed_timestamps.values());
-        assert!(uncompressed_timestamps.len() <= 2 || !compressed.is_empty());
-        assert!(uncompressed_timestamps.len() > 2 || compressed.is_empty());
+        // Two equal timestamps are stored as start_time equals end_time means one data point.
+        let length = uncompressed_timestamps.len();
+        let equal_pair =
+            length == 2 && uncompressed_timestamps.value(0) == uncompressed_timestamps.value(1);
+        assert_eq!(length > 2 || equal_pair, !compressed.is_empty());
 
         if let Some(known_size) = maybe_known_size {
             assert_eq!(compressed.len(), known_size);

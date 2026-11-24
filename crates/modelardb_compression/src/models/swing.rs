@@ -42,18 +42,10 @@ pub struct Swing {
     end_time: Timestamp,
     /// First value in the segment the current model is fitted to.
     first_value: f64, // f64 instead of Value to remove casts in fit_value()
-    /// Slope for the linear function specifying the upper bound for the current
-    /// model.
+    /// Slope for the linear function specifying the upper bound for the current model.
     upper_bound_slope: f64,
-    /// Intercept for the linear function specifying the upper bound for the
-    /// current model.
-    upper_bound_intercept: f64,
-    /// Slope for the linear function specifying the lower bound for the current
-    /// model.
+    /// Slope for the linear function specifying the lower bound for the current model.
     lower_bound_slope: f64,
-    /// Intercept for the linear function specifying the lower bound for the
-    /// current model.
-    lower_bound_intercept: f64,
     /// Numerator of the slope equation for minimum MSE.
     slope_with_minimum_mse_numerator: f64,
     /// Denominator of the slope equation for minimum MSE.
@@ -70,9 +62,7 @@ impl Swing {
             end_time: 0,
             first_value: f64::NAN,
             upper_bound_slope: f64::NAN,
-            upper_bound_intercept: f64::NAN,
             lower_bound_slope: f64::NAN,
-            lower_bound_intercept: f64::NAN,
             slope_with_minimum_mse_numerator: 0.0,
             slope_with_minimum_mse_denominator: 0.0,
             length: 0,
@@ -110,14 +100,25 @@ impl Swing {
             self.first_value = value;
             self.length += 1;
             true
+        } else if timestamp == self.start_time {
+            // Multiple values for the start time result in a division by zero when computing slope.
+            false
+        } else if self.error_bound == ErrorBound::Lossless
+            && (is_negative_zero(self.first_value) || is_negative_zero(value))
+        {
+            // A linear function reconstructs -0.0 as 0.0.
+            false
         } else if !self.first_value.is_finite() || !value.is_finite() {
-            // Extend Swing to handle both types of infinity and NAN.
-            if models::equal_or_nan(self.first_value, value) {
+            // Extend Swing to handle both types of infinity and NaN. For a lossless error bound,
+            // NaNs are only equal if their bits are equal, so different payloads are preserved.
+            if models::is_value_within_error_bound(
+                self.error_bound,
+                self.first_value as Value,
+                value as Value,
+            ) {
                 self.end_time = timestamp;
                 self.upper_bound_slope = value;
-                self.upper_bound_intercept = value;
                 self.lower_bound_slope = value;
-                self.lower_bound_intercept = value;
                 self.length += 1;
                 true
             } else {
@@ -126,14 +127,14 @@ impl Swing {
         } else if self.length == 1 {
             // Line 3 of Algorithm 1 in the Swing and Slide paper.
             self.end_time = timestamp;
-            (self.upper_bound_slope, self.upper_bound_intercept) = compute_slope_and_intercept(
+            self.upper_bound_slope = compute_slope(
                 self.start_time,
                 self.first_value,
                 timestamp,
                 value + maximum_deviation,
             );
 
-            (self.lower_bound_slope, self.lower_bound_intercept) = compute_slope_and_intercept(
+            self.lower_bound_slope = compute_slope(
                 self.start_time,
                 self.first_value,
                 timestamp,
@@ -143,10 +144,11 @@ impl Swing {
             true
         } else {
             // Line 6 of Algorithm 1 in the Swing and Slide paper.
+            let time_since_start = (timestamp - self.start_time) as f64;
             let upper_bound_approximate_value =
-                self.upper_bound_slope * timestamp as f64 + self.upper_bound_intercept;
+                self.upper_bound_slope * time_since_start + self.first_value;
             let lower_bound_approximate_value =
-                self.lower_bound_slope * timestamp as f64 + self.lower_bound_intercept;
+                self.lower_bound_slope * time_since_start + self.first_value;
 
             if upper_bound_approximate_value + maximum_deviation < value
                 || lower_bound_approximate_value - maximum_deviation > value
@@ -157,24 +159,22 @@ impl Swing {
 
                 // Line 17 of Algorithm 1 in the Swing and Slide paper.
                 if upper_bound_approximate_value - maximum_deviation > value {
-                    (self.upper_bound_slope, self.upper_bound_intercept) =
-                        compute_slope_and_intercept(
-                            self.start_time,
-                            self.first_value,
-                            timestamp,
-                            value + maximum_deviation,
-                        );
+                    self.upper_bound_slope = compute_slope(
+                        self.start_time,
+                        self.first_value,
+                        timestamp,
+                        value + maximum_deviation,
+                    );
                 }
 
                 // Line 15 of Algorithm 1 in the Swing and Slide paper.
                 if lower_bound_approximate_value + maximum_deviation < value {
-                    (self.lower_bound_slope, self.lower_bound_intercept) =
-                        compute_slope_and_intercept(
-                            self.start_time,
-                            self.first_value,
-                            timestamp,
-                            value - maximum_deviation,
-                        );
+                    self.lower_bound_slope = compute_slope(
+                        self.start_time,
+                        self.first_value,
+                        timestamp,
+                        value - maximum_deviation,
+                    );
                 }
 
                 // Equation 6 in the Swing and Slide paper.
@@ -240,10 +240,10 @@ impl Swing {
 
     /// Return the current model. For a model of type Swing, the first and last
     /// values of the time series segment the model represents are returned. The
-    /// two values are returned instead of the slope and intercept as the values
-    /// only require `size_of::<Value>` while the slope and intercept generally
-    /// must be [`f64`] to be precise enough.
-    pub fn model(self) -> (Value, Value) {
+    /// two values are returned instead of the slope as the values only require
+    /// `size_of::<Value>` while the slope generally must be [`f64`] to be
+    /// precise enough.
+    pub fn model(&self) -> (Value, Value) {
         // Implementation of the Equations for minimizing MSE as specified in the Swing and Slide paper.
         // Equation 6 in the Swing and Slide paper.
         let projected_slope =
@@ -257,10 +257,34 @@ impl Swing {
             slope_with_minimum_mse * (self.end_time - self.start_time) as f64 + self.first_value;
         (self.first_value as Value, last_value as Value)
     }
+
+    /// Return [`true`] if the current model reconstructs `values` at `timestamps` within the error
+    /// bound, otherwise [`false`]. This is necessary as Swing is fitted using [`f64`] but the model
+    /// is stored as two [`Value`]s, and rounding them can move the linear function outside the
+    /// error bound, e.g., for large values or a lossless error bound.
+    pub fn can_reconstruct(&self, timestamps: &[Timestamp], values: &[Value]) -> bool {
+        let (first_value, last_value) = self.model();
+        let first_value = first_value as f64;
+        let slope = compute_slope(
+            self.start_time,
+            first_value,
+            self.end_time,
+            last_value as f64,
+        );
+
+        timestamps.iter().zip(values).all(|(timestamp, value)| {
+            let approximate_value = value_at(slope, self.start_time, first_value, *timestamp);
+            models::is_value_within_error_bound(
+                self.error_bound,
+                *value,
+                approximate_value as Value,
+            )
+        })
+    }
 }
 
-/// Compute the sum of the values for a time series segment whose values are
-/// represented by a model of type Swing.
+/// Compute the sum of the values for a time series segment whose values are represented by a model
+/// of type Swing.
 pub fn sum(
     start_time: Timestamp,
     end_time: Timestamp,
@@ -269,13 +293,10 @@ pub fn sum(
     last_value: Value,
     residuals_length: usize,
 ) -> Value {
-    let (slope, intercept) =
-        compute_slope_and_intercept(start_time, first_value as f64, end_time, last_value as f64);
+    let first_value = first_value as f64;
 
     if timestamps::are_compressed_timestamps_regular(timestamps) {
-        let first = slope * start_time as f64 + intercept;
-        let last = slope * end_time as f64 + intercept;
-        let average = (first + last) / 2.0;
+        let average = (first_value + last_value as f64) / 2.0;
         let length = models::len(start_time, end_time, timestamps) - residuals_length;
         (average * length as f64) as Value
     } else {
@@ -291,9 +312,14 @@ pub fn sum(
         let timestamps = timestamp_builder.finish();
         let model_timestamps_end_index = timestamps.len() - residuals_length;
 
+        // end_time is the residuals' last timestamp if there are residuals, so the slope is computed
+        // using the model's last timestamp like in grid().
+        let model_end_time = timestamps.value(model_timestamps_end_index - 1);
+        let slope = compute_slope(start_time, first_value, model_end_time, last_value as f64);
+
         let mut sum: f64 = 0.0;
         for timestamp in &timestamps.values()[0..model_timestamps_end_index] {
-            sum += slope * (*timestamp as f64) + intercept;
+            sum += value_at(slope, start_time, first_value, *timestamp);
         }
         sum as Value
     }
@@ -309,33 +335,45 @@ pub fn grid(
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
-    let (slope, intercept) =
-        compute_slope_and_intercept(start_time, first_value as f64, end_time, last_value as f64);
+    let first_value = first_value as f64;
+    let slope = compute_slope(start_time, first_value, end_time, last_value as f64);
 
     for timestamp in timestamps {
-        let value = (slope * (*timestamp as f64) + intercept) as Value;
+        let value = value_at(slope, start_time, first_value, *timestamp) as Value;
         value_builder.append_value(value);
     }
 }
 
-/// Compute the slope and intercept of a linear function that intersects with
-/// the data points (`start_time`, `first_value`) and (`end_time`, `last_value`).
-fn compute_slope_and_intercept(
+/// Compute the value at `timestamp` using the linear function with `slope` that intersects with the
+/// data point (`start_time`, `first_value`).
+fn value_at(slope: f64, start_time: Timestamp, first_value: f64, timestamp: Timestamp) -> f64 {
+    slope * (timestamp - start_time) as f64 + first_value
+}
+
+/// Return [`true`] if `value` is -0.0, otherwise [`false`].
+fn is_negative_zero(value: f64) -> bool {
+    value == 0.0 && value.is_sign_negative()
+}
+
+/// Compute the slope of a linear function that intersects with the data points (`start_time`,
+/// `first_value`) and (`end_time`, `last_value`). The function only returns slope as calculations
+/// with the linear function is implemented as slope * (timestamp - start_time) + first_value
+/// instead of slope * timestamp + intercept as the latter is not precise enough when the timestamps
+/// are large, e.g., microseconds since the Unix epoch.
+fn compute_slope(
     start_time: Timestamp,
     first_value: f64,
     end_time: Timestamp,
     last_value: f64,
-) -> (f64, f64) {
+) -> f64 {
     // An if expression is used as it seems impossible to calculate the slope
-    // and intercept without creating INFINITY, NEG_INFINITY, or NaN values.
+    // without creating INFINITY, NEG_INFINITY, or NaN values.
     if models::equal_or_nan(first_value, last_value) {
-        (0.0, first_value)
+        0.0
     } else {
         debug_assert!(first_value.is_finite(), "First value is not finite.");
         debug_assert!(last_value.is_finite(), "Last value is not finite.");
-        let slope = (last_value - first_value) / (end_time - start_time) as f64;
-        let intercept = first_value - slope * start_time as f64;
-        (slope, intercept)
+        (last_value - first_value) / (end_time - start_time) as f64
     }
 }
 
@@ -361,7 +399,16 @@ mod tests {
     // Tests for Swing.
     #[property_test]
     fn test_can_fit_sequence_of_finite_value_with_lossless_error_bound(value: Value) {
+        // -0.0 is rejected as a linear function reconstructs it as 0.0.
+        prop_assume!(!is_negative_zero(value as f64));
         can_fit_sequence_of_value_with_error_bound(ErrorBound::Lossless, value)
+    }
+
+    #[test]
+    fn test_cannot_fit_sequence_of_negative_zero_with_lossless_error_bound() {
+        let mut model_type = Swing::new(ErrorBound::Lossless);
+        assert!(model_type.fit_data_point(START_TIME, -0.0));
+        assert!(!model_type.fit_data_point(END_TIME, -0.0));
     }
 
     #[test]
@@ -387,20 +434,23 @@ mod tests {
         }
 
         let (first_value, last_value) = model_type.model();
-        let (slope, intercept) = compute_slope_and_intercept(
-            START_TIME,
-            first_value as f64,
-            end_time,
-            last_value as f64,
-        );
+        let first_value = first_value as f64;
+        let slope = compute_slope(START_TIME, first_value, end_time, last_value as f64);
         if value.is_nan() {
-            assert!(slope == 0.0 && intercept.is_nan());
+            assert!(slope == 0.0 && first_value.is_nan());
         } else {
             for timestamp in (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize) {
-                let approximate_value = slope * timestamp as f64 + intercept;
+                let approximate_value = value_at(slope, START_TIME, first_value, timestamp);
                 assert_eq!(approximate_value, value as f64);
             }
         }
+    }
+
+    #[test]
+    fn test_cannot_fit_nans_with_different_payloads_with_lossless_error_bound() {
+        let mut model_type = Swing::new(ErrorBound::Lossless);
+        assert!(model_type.fit_data_point(START_TIME, Value::from_bits(0x7fc00001)));
+        assert!(!model_type.fit_data_point(END_TIME, Value::from_bits(0x7fc00002)));
     }
 
     #[property_test]
@@ -610,24 +660,22 @@ mod tests {
             assert!(model_type.fit_data_point(timestamp, *value));
             timestamp += SAMPLING_INTERVAL;
         }
-        // Compute the slope and intercept according to a default case in the Swing and Slide paper
+        // Compute the slope according to a default case in the Swing and Slide paper
         // which is computing the slope from the first and the last value in a segment.
-        let (default_slope, default_intercept) = compute_slope_and_intercept(
+        let default_first_value = model_type.first_value;
+        let default_slope = compute_slope(
             model_type.start_time,
             model_type.first_value,
             end_time,
             *values.last().unwrap() as f64,
         );
-        // Compute slope and intercept with minimum MSE.
+        // Compute the slope with minimum MSE.
         let (first_value, last_value) = model_type.model();
-        let (slope_with_minimum_mse, intercept_with_minimum_mse) = compute_slope_and_intercept(
-            START_TIME,
-            first_value as f64,
-            end_time,
-            last_value as f64,
-        );
-        // Compute MSE for each approximated value using: (1) default slope and intercept;
-        // (2) slope and intercept with minimum MSE.
+        let first_value = first_value as f64;
+        let slope_with_minimum_mse =
+            compute_slope(START_TIME, first_value, end_time, last_value as f64);
+        // Compute MSE for each approximated value using: (1) default slope; (2) slope with minimum
+        // MSE.
         let mut mse = 0.0;
         let mut optimized_mse = 0.0;
 
@@ -635,10 +683,11 @@ mod tests {
             .step_by(SAMPLING_INTERVAL as usize)
             .enumerate()
         {
-            let approximate_value = default_slope * timestamp as f64 + default_intercept;
+            let time_since_start = (timestamp - START_TIME) as f64;
+            let approximate_value = default_slope * time_since_start + default_first_value;
             mse += (values[i] as f64 - approximate_value).powi(2);
             let approximate_value_with_minimized_mse =
-                slope_with_minimum_mse * timestamp as f64 + intercept_with_minimum_mse;
+                slope_with_minimum_mse * time_since_start + first_value;
             optimized_mse += (values[i] as f64 - approximate_value_with_minimized_mse).powi(2);
         }
         let mse = mse / values.len() as f64;
@@ -660,12 +709,8 @@ mod tests {
         let lower_hyper_plane_slope = model_type.lower_bound_slope;
         let upper_hyper_plane_slope = model_type.upper_bound_slope;
         let (first_value, last_value) = model_type.model();
-        let (slope_with_minimum_mse, _) = compute_slope_and_intercept(
-            START_TIME,
-            first_value as f64,
-            end_time,
-            last_value as f64,
-        );
+        let slope_with_minimum_mse =
+            compute_slope(START_TIME, first_value as f64, end_time, last_value as f64);
         (slope_with_minimum_mse <= upper_hyper_plane_slope)
             & (slope_with_minimum_mse >= lower_hyper_plane_slope)
     }
@@ -726,13 +771,19 @@ mod tests {
     fn test_can_reconstruct_sequence_of_linear_increasing_values_within_lossless_error_bound() {
         assert_can_reconstruct_sequence_of_linear_values_within_error_bound(
             ErrorBound::Lossless,
-            (42..=4200).step_by(42).map(|value| value as f32).collect(),
+            (125..=12500)
+                .step_by(125)
+                .map(|value| value as f32)
+                .collect(),
         )
     }
 
     #[test]
     fn test_can_reconstruct_sequence_of_linear_decreasing_values_within_lossless_error_bound() {
-        let mut values: Vec<Value> = (42..=4200).step_by(42).map(|value| value as f32).collect();
+        let mut values: Vec<Value> = (125..=12500)
+            .step_by(125)
+            .map(|value| value as f32)
+            .collect();
         values.reverse();
 
         assert_can_reconstruct_sequence_of_linear_values_within_error_bound(
@@ -800,6 +851,11 @@ mod tests {
         );
 
         assert_eq!(timestamps, reconstructed_timestamps.finish());
-        assert_eq!(values, reconstructed_values.finish());
+        let reconstructed_values = reconstructed_values.finish();
+        for (value, reconstructed_value) in
+            values.values().iter().zip(reconstructed_values.values())
+        {
+            assert_eq!(value.to_bits(), reconstructed_value.to_bits());
+        }
     }
 }

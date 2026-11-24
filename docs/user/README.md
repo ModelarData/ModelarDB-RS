@@ -247,6 +247,11 @@ It should be noted that the ingested data is only transferred to the remote obje
 in edge mode in a cluster or in cloud mode in a cluster. When `modelardbd` is deployed in edge mode without a cluster,
 the ingested data is only stored in local storage.
 
+When writing rows, `modelardbd` behaves like any other RDBMS writing to a table without a primary key or unique
+constraint. Every row that is written is stored, whether it is written with `INSERT` or Apache Arrow Flight, and this
+applies to both standard relational tables and time series tables. Thus, if multiple rows with the same timestamp and
+tags are written to a time series table, all of them are stored and returned by queries, just like any other RDBMS.
+
 ### Execute Queries
 
 ModelarDB includes a command-line client in the form of `modelardb`. To interactively execute SQL statements against a

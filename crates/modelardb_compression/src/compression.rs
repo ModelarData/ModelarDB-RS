@@ -225,17 +225,19 @@ pub fn try_compress_univariate_time_series(
     let mut previous_model: Option<CompressedSegmentBuilder> = None;
     while current_start_index < end_index {
         // Select a model to represent the values from current_start_index to index within
-        // error_bound where index < end_index.
-        let model = fit_next_model(
+        // error_bound where index < end_index if any of them can represent any values.
+        let maybe_model = fit_next_model(
             current_start_index,
             error_bound,
             uncompressed_timestamps,
             uncompressed_values,
         );
 
-        // The model will only be stored as part of a compressed segment if it uses less storage
-        // space per value than the uncompressed values it represents.
-        if model.bytes_per_value <= models::VALUE_SIZE_IN_BYTES as f32 {
+        // A model will be stored as part of a compressed segment if it could represent some values
+        // and it uses less storage space per value than the uncompressed values it represents.
+        if let Some(model) = maybe_model
+            && model.bytes_per_value <= models::VALUE_SIZE_IN_BYTES as f32
+        {
             // Flush the previous model and any residual value if either exists.
             if current_start_index > 0 {
                 store_compressed_segments_with_model_and_or_residuals(
@@ -256,8 +258,8 @@ pub fn try_compress_univariate_time_series(
             // with previous_model instead of as a separate segment.
             previous_model = Some(model);
         } else {
-            // The potentially lossy models could not efficiently encode the sub-sequence starting
-            // at current_start_index, so residual values will instead be compressed using Gorilla.
+            // The structural models could not efficiently represent the sub-sequence starting at
+            // current_start_index, so residual values will instead be compressed using MacaqueV.
             current_start_index += 1;
         }
     }
@@ -275,14 +277,14 @@ pub fn try_compress_univariate_time_series(
 }
 
 /// Create a model that represents the values in `uncompressed_values` from `start_index` to index
-/// within `error_bound` where index <= `end_index`. This method is defined as `pub(crate)` so it
-/// can be used in the tests in types.rs.
+/// within `error_bound` where index <= `end_index`, or [`None`] if no model can represent the first
+/// value. This method is defined as `pub(crate)` so it can be used in the tests in types.rs.
 pub(crate) fn fit_next_model(
     current_start_index: usize,
     error_bound: ErrorBound,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
-) -> CompressedSegmentBuilder {
+) -> Option<CompressedSegmentBuilder> {
     let mut model_builder = ModelBuilder::new(current_start_index, error_bound);
 
     let mut current_index = current_start_index;
@@ -297,7 +299,8 @@ pub(crate) fn fit_next_model(
         current_index += 1;
     }
 
-    model_builder.finish()
+    // uncompressed_timestamps and uncompressed_values can validate it is within the error bounds.
+    model_builder.finish(uncompressed_timestamps, uncompressed_values)
 }
 
 /// Create segment(s) that store `maybe_model` and residual values as either:
@@ -409,13 +412,32 @@ mod tests {
     use modelardb_test::ERROR_BOUND_FIVE;
     use modelardb_test::data_generation::{self, ValuesStructure};
     use modelardb_test::table;
-    use modelardb_types::types::{TimestampBuilder, ValueBuilder};
+    use modelardb_types::types::{Timestamp, TimestampBuilder, ValueBuilder};
+    use proptest::num::f32 as ProptestValue;
+    use proptest::{collection, property_test};
 
     use crate::{MODEL_TYPE_NAMES, models};
 
     const TAG_VALUE: &str = "tag";
     const ADD_NOISE_RANGE: Option<Range<f32>> = Some(1.0..1.05);
     const TRY_COMPRESS_TEST_LENGTH: usize = 50;
+
+    /// Return a strategy that generates quiet and signaling NaNs with random signs and payloads.
+    /// `QUIET_NAN` and `SIGNALING_NAN` select the classes of floats to generate. Thus, only NaNs
+    /// are generated and both classes generate random payloads. Signaling NaNs are included as
+    /// calculations with a signaling NaN makes it quiet. `POSITIVE` and `NEGATIVE` control the sign
+    /// bit of the NaNs and without them, only NaNs with a positive sign bit are generated.
+    fn nan_strategy() -> ProptestValue::Any {
+        ProptestValue::QUIET_NAN
+            | ProptestValue::SIGNALING_NAN
+            | ProptestValue::POSITIVE
+            | ProptestValue::NEGATIVE
+    }
+
+    /// Start times used for generating timestamps for the time series in the tests. Multiple
+    /// different start times are used to ensures that models are always created correctly. For
+    /// example, the second is the microseconds since the Unix epoch and was added due to #441.
+    const START_TIMES: [Timestamp; 2] = [0, 1767233520004960];
 
     // Tests for try_compress_univariate_time_series().
     #[test]
@@ -449,6 +471,108 @@ mod tests {
             ValuesStructure::Constant(None),
             ErrorBound::Lossless,
             &[models::PMC_MEAN_ID],
+        );
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_mixed_zeros_within_lossless_error_bound() {
+        compress_and_assert_values_within_lossless_error_bound(vec![
+            0.0, 0.0, -0.0, 0.0, 0.0, -0.0, -0.0, 0.0,
+        ]);
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_negative_zeros_within_lossless_error_bound() {
+        compress_and_assert_values_within_lossless_error_bound(vec![-0.0; 8]);
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_negative_zero_before_zeros_within_lossless_error_bound() {
+        let mut values = vec![-0.0];
+        values.extend([0.0; 49]);
+        compress_and_assert_values_within_lossless_error_bound(values);
+    }
+
+    #[test]
+    fn test_try_compress_linear_time_series_through_negative_zero_within_lossless_error_bound() {
+        compress_and_assert_values_within_lossless_error_bound(vec![
+            1.0, 0.5, -0.0, -0.5, -1.0, -1.5, -2.0, -2.5,
+        ]);
+    }
+
+    #[property_test]
+    fn test_try_compress_time_series_with_nans_with_different_payloads_within_lossless_error_bound(
+        #[strategy = collection::vec(nan_strategy(), 1..5)] nans: Vec<f32>,
+        #[strategy = collection::vec(0..5_usize, 1..100)] indices: Vec<usize>,
+    ) {
+        // A few NaNs are selected repeatedly instead of generating each NaN in the sequence, as
+        // randomly generated NaNs practically never have the same bits. Thus, the sequence would
+        // not contain runs of the same NaN and PMC-Mean and Swing would always reject the second.
+        let values = indices
+            .iter()
+            .map(|index| nans[index % nans.len()])
+            .collect();
+        compress_and_assert_values_within_lossless_error_bound(values);
+    }
+
+    fn compress_and_assert_values_within_lossless_error_bound(values: Vec<f32>) {
+        let uncompressed_timestamps = data_generation::generate_timestamps(values.len(), false);
+        let uncompressed_values = ValueArray::from(values);
+
+        compress_and_assert_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ErrorBound::Lossless,
+            None,
+        );
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_duplicate_timestamps_within_lossless_error_bound() {
+        compress_and_assert_values_with_timestamps(
+            vec![0, 0, 100, 100, 200, 200, 300, 300],
+            vec![1.0, 10.0, 2.0, 20.0, 3.0, 30.0, 4.0, 40.0],
+            ErrorBound::Lossless,
+        );
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_two_equal_timestamps_within_lossless_error_bound() {
+        compress_and_assert_values_with_timestamps(
+            vec![0, 0],
+            vec![1.0, 2.0],
+            ErrorBound::Lossless,
+        );
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_many_equal_timestamps_within_lossless_error_bound() {
+        compress_and_assert_values_with_timestamps(
+            vec![0; 20],
+            (0..20).map(|value| value as f32).collect(),
+            ErrorBound::Lossless,
+        );
+    }
+
+    #[test]
+    fn test_try_compress_time_series_with_many_equal_timestamps_within_relative_error_bound_five() {
+        compress_and_assert_values_with_timestamps(
+            vec![0; 20],
+            (0..20).map(|value| 100.0 + 4.0 * value as f32).collect(),
+            ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
+        );
+    }
+
+    fn compress_and_assert_values_with_timestamps(
+        timestamps: Vec<Timestamp>,
+        values: Vec<f32>,
+        error_bound: ErrorBound,
+    ) {
+        compress_and_assert_time_series(
+            &TimestampArray::from(timestamps),
+            &ValueArray::from(values),
+            error_bound,
+            None,
         );
     }
 
@@ -582,23 +706,12 @@ mod tests {
         let uncompressed_values =
             data_generation::generate_values(uncompressed_timestamps.values(), values_structure);
 
-        let compressed_record_batch = try_compress_univariate_time_series(
+        compress_and_assert_time_series(
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            compressed_schema(),
-            vec![TAG_VALUE.to_owned()],
-            0,
-        )
-        .unwrap();
-
-        assert_compressed_record_batch_with_known_segments_from_time_series(
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            &compressed_record_batch,
-            expected_model_type_ids,
-        )
+            Some(expected_model_type_ids),
+        );
     }
 
     #[test]
@@ -660,24 +773,18 @@ mod tests {
             let uncompressed_timestamps_end_index =
                 uncompressed_timestamps_start_index + TRY_COMPRESS_TEST_LENGTH;
 
-            let values = match *model_type_id {
-                models::PMC_MEAN_ID => data_generation::generate_values(
-                    &uncompressed_timestamps.values()
-                        [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
-                    ValuesStructure::Constant(None),
-                ),
-                models::SWING_ID => data_generation::generate_values(
-                    &uncompressed_timestamps.values()
-                        [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
-                    ValuesStructure::Linear(None),
-                ),
-                models::MACAQUE_V_ID => data_generation::generate_values(
-                    &uncompressed_timestamps.values()
-                        [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
-                    ValuesStructure::largest_random_without_overflow(),
-                ),
+            let values_structure = match *model_type_id {
+                models::PMC_MEAN_ID => ValuesStructure::Constant(None),
+                models::SWING_ID => ValuesStructure::Linear(None),
+                models::MACAQUE_V_ID => ValuesStructure::largest_random_without_overflow(),
                 _ => panic!("Unknown model type."),
             };
+
+            let values = data_generation::generate_values(
+                &uncompressed_timestamps.values()
+                    [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
+                values_structure,
+            );
 
             uncompressed_values.append_slice(values.values());
             uncompressed_timestamps_start_index = uncompressed_timestamps_end_index;
@@ -686,46 +793,12 @@ mod tests {
         let uncompressed_values = uncompressed_values.finish();
         assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
 
-        let compressed_record_batch = try_compress_univariate_time_series(
+        compress_and_assert_time_series(
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            compressed_schema(),
-            vec![TAG_VALUE.to_owned()],
-            0,
-        )
-        .unwrap();
-
-        assert_compressed_record_batch_with_known_segments_from_time_series(
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            &compressed_record_batch,
-            expected_model_type_ids,
-        )
-    }
-
-    fn assert_compressed_record_batch_with_known_segments_from_time_series(
-        error_bound: ErrorBound,
-        uncompressed_timestamps: &TimestampArray,
-        uncompressed_values: &ValueArray,
-        compressed_record_batch: &RecordBatch,
-        expected_model_type_ids: &[i8],
-    ) {
-        assert_eq!(
-            expected_model_type_ids.len(),
-            compressed_record_batch.num_rows()
+            Some(expected_model_type_ids),
         );
-
-        assert_compressed_record_batch_with_unknown_segments_from_time_series(
-            error_bound,
-            uncompressed_timestamps,
-            uncompressed_values,
-            compressed_record_batch,
-        );
-
-        let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, Int8Array);
-        assert_eq!(model_type_ids.values(), expected_model_type_ids);
     }
 
     #[test]
@@ -843,22 +916,50 @@ mod tests {
                 100.0..200.0,
             );
 
-        let compressed_record_batch = try_compress_univariate_time_series(
+        compress_and_assert_time_series(
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            compressed_schema(),
-            vec![TAG_VALUE.to_owned()],
-            0,
-        )
-        .unwrap();
-
-        assert_compressed_record_batch_with_unknown_segments_from_time_series(
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            &compressed_record_batch,
+            None,
         );
+    }
+
+    /// Compress `uncompressed_timestamps` shifted by each of the [`START_TIMES`] and
+    /// `uncompressed_values` within `error_bound` and assert that the values can be reconstructed
+    /// within `error_bound`. If `maybe_expected_model_type_ids` is [`Some`], also assert that the
+    /// compressed segments were created by these model types.
+    fn compress_and_assert_time_series(
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
+        error_bound: ErrorBound,
+        maybe_expected_model_type_ids: Option<&[i8]>,
+    ) {
+        for start_time in START_TIMES {
+            let uncompressed_timestamps =
+                uncompressed_timestamps.unary(|timestamp| timestamp + start_time);
+
+            let compressed_record_batch = try_compress_univariate_time_series(
+                &uncompressed_timestamps,
+                uncompressed_values,
+                error_bound,
+                compressed_schema(),
+                vec![TAG_VALUE.to_owned()],
+                0,
+            )
+            .unwrap();
+
+            assert_compressed_record_batch_with_unknown_segments_from_time_series(
+                error_bound,
+                &uncompressed_timestamps,
+                uncompressed_values,
+                &compressed_record_batch,
+            );
+
+            if let Some(expected_model_type_ids) = maybe_expected_model_type_ids {
+                let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, Int8Array);
+                assert_eq!(model_type_ids.values(), expected_model_type_ids);
+            }
+        }
     }
 
     fn assert_compressed_record_batch_with_unknown_segments_from_time_series(
@@ -920,10 +1021,19 @@ mod tests {
                 .1;
             let model_type_name = MODEL_TYPE_NAMES[model_type_id as usize];
 
-            assert!(
-                models::is_value_within_error_bound(error_bound, real_value, approximate_value),
-                "{approximate_value} from {model_type_name} is outside {error_bound:?} of {real_value}.",
-            );
+            // A lossless error bound requires the exact bits to be reconstructed at all indices.
+            if error_bound == ErrorBound::Lossless {
+                assert_eq!(
+                    real_value.to_bits(),
+                    approximate_value.to_bits(),
+                    "{approximate_value} from {model_type_name} at index {index} is not bitwise equal to {real_value}.",
+                );
+            } else {
+                assert!(
+                    models::is_value_within_error_bound(error_bound, real_value, approximate_value),
+                    "{approximate_value} from {model_type_name} at index {index} is outside {error_bound:?} of {real_value}.",
+                );
+            }
         }
     }
 

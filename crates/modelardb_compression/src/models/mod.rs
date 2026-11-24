@@ -25,7 +25,6 @@ pub mod timestamps;
 
 use std::mem;
 
-use arrow::array::ArrayBuilder;
 use modelardb_types::types::{ErrorBound, Timestamp, TimestampBuilder, Value, ValueBuilder};
 
 use crate::types::CompressedSegmentBuilder;
@@ -75,7 +74,8 @@ pub fn is_value_within_error_bound(
                 (result * 100.0) <= error_bound
             }
         }
-        ErrorBound::Lossless => equal_or_nan(real_value as f64, approximate_value as f64),
+        // Bits are compared so -0.0 and 0.0 and NaNs with different payloads are not equal.
+        ErrorBound::Lossless => real_value.to_bits() == approximate_value.to_bits(),
     }
 }
 
@@ -107,10 +107,11 @@ fn equal_or_nan(v1: f64, v2: f64) -> bool {
 /// Compute the number of data points in a compressed segment.
 pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usize {
     if timestamps.is_empty() && start_time == end_time {
-        // Timestamps are assumed to be unique so the segment has one timestamp.
+        // start_time equals end_time and no timestamps are stored, so the segment has one data
+        // point. If a segment has two equal timestamps, they are always stored in timestamps.
         1
     } else if timestamps.is_empty() {
-        // Timestamps are assumed to be unique so the segment has two timestamp.
+        // Only start_time and end_time are stored as the segment only has two different timestamps.
         2
     } else if timestamps::are_compressed_timestamps_regular(timestamps) {
         // The flag bit is zero, so only the segment's length is stored as an
@@ -219,13 +220,16 @@ pub fn grid(
             timestamp_builder,
         );
 
-    // Reconstruct the values from the model.
-    match model_type_id {
-        PMC_MEAN_ID => pmc_mean::grid(
-            CompressedSegmentBuilder::decode_values_for_pmc_mean(min_value, max_value, values),
-            model_timestamps,
-            value_builder,
-        ),
+    // Reconstruct the values from the model. The model's last value is returned from the stored
+    // parameters instead of recomputed so the residuals are decoded relative to the same value as
+    // they were encoded relative to, otherwise a difference in the least significant bit occurs.
+    let model_last_value = match model_type_id {
+        PMC_MEAN_ID => {
+            let value =
+                CompressedSegmentBuilder::decode_values_for_pmc_mean(min_value, max_value, values);
+            pmc_mean::grid(value, model_timestamps, value_builder);
+            value
+        }
         SWING_ID => {
             let (first_value, last_value) =
                 CompressedSegmentBuilder::decode_values_for_swing(min_value, max_value, values);
@@ -241,16 +245,18 @@ pub fn grid(
                 last_value,
                 model_timestamps,
                 value_builder,
-            )
+            );
+            last_value
         }
-        MACAQUE_V_ID => macaque_v::grid(values, model_timestamps, value_builder, None),
+        MACAQUE_V_ID => {
+            macaque_v::grid(values, model_timestamps, value_builder, None);
+            f32::NAN // A segment with values compressed by MacaqueV never has residuals.
+        }
         _ => panic!("Unknown model type."),
-    }
+    };
 
     // Reconstruct the values from the residuals.
     if !residuals.is_empty() {
-        let model_last_value = value_builder.values_slice()[value_builder.len() - 1];
-
         macaque_v::grid(
             &residuals[..residuals.len() - 1],
             residuals_timestamps,
