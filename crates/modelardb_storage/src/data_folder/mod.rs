@@ -642,18 +642,18 @@ impl DataFolder {
     }
 
     /// Return the size in bytes of each Apache Parquet file that makes up the Delta Lake table with
-    /// `table_name`. If the table does not exist or the size of a file could not be read, a
+    /// `table_name`. The sizes are read from the Delta log, so the files themselves are not
+    /// accessed. If the table does not exist or its log could not be read, a
     /// [`ModelarDbStorageError`] is returned.
     pub async fn table_file_sizes(&self, table_name: &str) -> Result<Vec<u64>> {
         let delta_table = self.delta_table(table_name).await?;
-        let object_store = delta_table.object_store();
 
-        let mut file_sizes_in_bytes = Vec::new();
-        for file_path in delta_table.get_files_by_partitions(&[]).await? {
-            file_sizes_in_bytes.push(object_store.head(&file_path).await?.size);
-        }
-
-        Ok(file_sizes_in_bytes)
+        Ok(delta_table
+            .snapshot()?
+            .log_data()
+            .iter()
+            .map(|file| file.size() as u64)
+            .collect())
     }
 
     /// Return a [`DeltaTableWriter`] for writing to the table with `table_name` in the Delta Lake,
