@@ -225,17 +225,19 @@ pub fn try_compress_univariate_time_series(
     let mut previous_model: Option<CompressedSegmentBuilder> = None;
     while current_start_index < end_index {
         // Select a model to represent the values from current_start_index to index within
-        // error_bound where index < end_index.
-        let model = fit_next_model(
+        // error_bound where index < end_index if any of them can represent any values.
+        let maybe_model = fit_next_model(
             current_start_index,
             error_bound,
             uncompressed_timestamps,
             uncompressed_values,
         );
 
-        // The model will only be stored as part of a compressed segment if it uses less storage
-        // space per value than the uncompressed values it represents.
-        if model.bytes_per_value <= models::VALUE_SIZE_IN_BYTES as f32 {
+        // A model will be stored as part of a compressed segment if it could represent some values
+        // and it uses less storage space per value than the uncompressed values it represents.
+        if let Some(model) = maybe_model
+            && model.bytes_per_value <= models::VALUE_SIZE_IN_BYTES as f32
+        {
             // Flush the previous model and any residual value if either exists.
             if current_start_index > 0 {
                 store_compressed_segments_with_model_and_or_residuals(
@@ -256,8 +258,8 @@ pub fn try_compress_univariate_time_series(
             // with previous_model instead of as a separate segment.
             previous_model = Some(model);
         } else {
-            // The potentially lossy models could not efficiently encode the sub-sequence starting
-            // at current_start_index, so residual values will instead be compressed using Gorilla.
+            // The structural models could not efficiently represent the sub-sequence starting at
+            // current_start_index, so residual values will instead be compressed using MacaqueV.
             current_start_index += 1;
         }
     }
@@ -275,14 +277,14 @@ pub fn try_compress_univariate_time_series(
 }
 
 /// Create a model that represents the values in `uncompressed_values` from `start_index` to index
-/// within `error_bound` where index <= `end_index`. This method is defined as `pub(crate)` so it
-/// can be used in the tests in types.rs.
+/// within `error_bound` where index <= `end_index`, or [`None`] if no model can represent the first
+/// value. This method is defined as `pub(crate)` so it can be used in the tests in types.rs.
 pub(crate) fn fit_next_model(
     current_start_index: usize,
     error_bound: ErrorBound,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
-) -> CompressedSegmentBuilder {
+) -> Option<CompressedSegmentBuilder> {
     let mut model_builder = ModelBuilder::new(current_start_index, error_bound);
 
     let mut current_index = current_start_index;
@@ -297,7 +299,8 @@ pub(crate) fn fit_next_model(
         current_index += 1;
     }
 
-    model_builder.finish()
+    // uncompressed_timestamps and uncompressed_values can validate it is within the error bounds.
+    model_builder.finish(uncompressed_timestamps, uncompressed_values)
 }
 
 /// Create segment(s) that store `maybe_model` and residual values as either:
@@ -410,12 +413,26 @@ mod tests {
     use modelardb_test::data_generation::{self, ValuesStructure};
     use modelardb_test::table;
     use modelardb_types::types::{Timestamp, TimestampBuilder, ValueBuilder};
+    use proptest::num::f32 as ProptestValue;
+    use proptest::{collection, property_test};
 
     use crate::{MODEL_TYPE_NAMES, models};
 
     const TAG_VALUE: &str = "tag";
     const ADD_NOISE_RANGE: Option<Range<f32>> = Some(1.0..1.05);
     const TRY_COMPRESS_TEST_LENGTH: usize = 50;
+
+    /// Return a strategy that generates quiet and signaling NaNs with random signs and payloads.
+    /// `QUIET_NAN` and `SIGNALING_NAN` select the classes of floats to generate. Thus, only NaNs
+    /// are generated and both classes generate random payloads. Signaling NaNs are included as
+    /// calculations with a signaling NaN makes it quiet. `POSITIVE` and `NEGATIVE` control the sign
+    /// bit of the NaNs and without them, only NaNs with a positive sign bit are generated.
+    fn nan_strategy() -> ProptestValue::Any {
+        ProptestValue::QUIET_NAN
+            | ProptestValue::SIGNALING_NAN
+            | ProptestValue::POSITIVE
+            | ProptestValue::NEGATIVE
+    }
 
     /// Start times used for generating time stamps for the time series in the tests. Multiple
     /// different start times are used to ensures that models are always created correctly. For
@@ -481,6 +498,21 @@ mod tests {
         compress_and_assert_values_within_lossless_error_bound(vec![
             1.0, 0.5, -0.0, -0.5, -1.0, -1.5, -2.0, -2.5,
         ]);
+    }
+
+    #[property_test]
+    fn test_try_compress_time_series_with_nans_with_different_payloads_within_lossless_error_bound(
+        #[strategy = collection::vec(nan_strategy(), 1..5)] nans: Vec<f32>,
+        #[strategy = collection::vec(0..5_usize, 1..100)] indices: Vec<usize>,
+    ) {
+        // A few NaNs are selected repeatedly instead of generating each NaN in the sequence, as
+        // randomly generated NaNs practically never have the same bits. Thus, the sequence would
+        // not contain runs of the same NaN and PMC-Mean and Swing would always reject the second.
+        let values = indices
+            .iter()
+            .map(|index| nans[index % nans.len()])
+            .collect();
+        compress_and_assert_values_within_lossless_error_bound(values);
     }
 
     fn compress_and_assert_values_within_lossless_error_bound(values: Vec<f32>) {

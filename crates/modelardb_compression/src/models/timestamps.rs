@@ -415,6 +415,11 @@ mod tests {
     }
 
     #[test]
+    fn test_compress_and_decompress_two_equal_timestamps() {
+        compress_and_decompress_timestamps_for_a_time_series(&[100, 100], None);
+    }
+
+    #[test]
     fn test_compress_and_decompress_timestamps_for_a_generated_regular_time_series() {
         let timestamps = data_generation::generate_timestamps(1000, false);
         compress_and_decompress_timestamps_for_a_time_series(timestamps.values(), None);
@@ -445,8 +450,11 @@ mod tests {
         let uncompressed_timestamps = uncompressed_timestamps_builder.finish();
 
         let compressed = compress_residual_timestamps(uncompressed_timestamps.values());
-        assert!(uncompressed_timestamps.len() <= 2 || !compressed.is_empty());
-        assert!(uncompressed_timestamps.len() > 2 || compressed.is_empty());
+        // Two equal timestamps are stored as start_time equals end_time means one data point.
+        let length = uncompressed_timestamps.len();
+        let equal_pair =
+            length == 2 && uncompressed_timestamps.value(0) == uncompressed_timestamps.value(1);
+        assert_eq!(length > 2 || equal_pair, !compressed.is_empty());
 
         if let Some(known_size) = maybe_known_size {
             assert_eq!(compressed.len(), known_size);

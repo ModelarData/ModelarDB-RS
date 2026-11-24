@@ -109,8 +109,13 @@ impl Swing {
             // A linear function reconstructs -0.0 as 0.0.
             false
         } else if !self.first_value.is_finite() || !value.is_finite() {
-            // Extend Swing to handle both types of infinity and NAN.
-            if models::equal_or_nan(self.first_value, value) {
+            // Extend Swing to handle both types of infinity and NAN. For a lossless error bound,
+            // NANs are only equal if their bits are equal, so different payloads are preserved.
+            if models::is_value_within_error_bound(
+                self.error_bound,
+                self.first_value as Value,
+                value as Value,
+            ) {
                 self.end_time = timestamp;
                 self.upper_bound_slope = value;
                 self.lower_bound_slope = value;
@@ -238,7 +243,7 @@ impl Swing {
     /// two values are returned instead of the slope as the values only require
     /// `size_of::<Value>` while the slope generally must be [`f64`] to be
     /// precise enough.
-    pub fn model(self) -> (Value, Value) {
+    pub fn model(&self) -> (Value, Value) {
         // Implementation of the Equations for minimizing MSE as specified in the Swing and Slide paper.
         // Equation 6 in the Swing and Slide paper.
         let projected_slope =
@@ -251,6 +256,30 @@ impl Swing {
         let last_value =
             slope_with_minimum_mse * (self.end_time - self.start_time) as f64 + self.first_value;
         (self.first_value as Value, last_value as Value)
+    }
+
+    /// Return [`true`] if the current model reconstructs `values` at `timestamps` within the error
+    /// bound, otherwise [`false`]. This is necessary as Swing is fitted using [`f64`] but the model
+    /// is stored as two [`Value`]s, and rounding them can move the linear function outside the
+    /// error bound, e.g., for large values or a lossless error bound.
+    pub fn can_reconstruct(&self, timestamps: &[Timestamp], values: &[Value]) -> bool {
+        let (first_value, last_value) = self.model();
+        let first_value = first_value as f64;
+        let slope = compute_slope(
+            self.start_time,
+            first_value,
+            self.end_time,
+            last_value as f64,
+        );
+
+        timestamps.iter().zip(values).all(|(timestamp, value)| {
+            let approximate_value = value_at(slope, self.start_time, first_value, *timestamp);
+            models::is_value_within_error_bound(
+                self.error_bound,
+                *value,
+                approximate_value as Value,
+            )
+        })
     }
 }
 
@@ -265,7 +294,6 @@ pub fn sum(
     residuals_length: usize,
 ) -> Value {
     let first_value = first_value as f64;
-    let slope = compute_slope(start_time, first_value, end_time, last_value as f64);
 
     if timestamps::are_compressed_timestamps_regular(timestamps) {
         let average = (first_value + last_value as f64) / 2.0;
@@ -284,9 +312,14 @@ pub fn sum(
         let timestamps = timestamp_builder.finish();
         let model_timestamps_end_index = timestamps.len() - residuals_length;
 
+        // end_time is the residuals' last timestamp if there are residuals, so the slope is computed
+        // using the model's last timestamp like in grid().
+        let model_end_time = timestamps.value(model_timestamps_end_index - 1);
+        let slope = compute_slope(start_time, first_value, model_end_time, last_value as f64);
+
         let mut sum: f64 = 0.0;
         for timestamp in &timestamps.values()[0..model_timestamps_end_index] {
-            sum += slope * (timestamp - start_time) as f64 + first_value;
+            sum += value_at(slope, start_time, first_value, *timestamp);
         }
         sum as Value
     }
@@ -306,9 +339,15 @@ pub fn grid(
     let slope = compute_slope(start_time, first_value, end_time, last_value as f64);
 
     for timestamp in timestamps {
-        let value = (slope * (timestamp - start_time) as f64 + first_value) as Value;
+        let value = value_at(slope, start_time, first_value, *timestamp) as Value;
         value_builder.append_value(value);
     }
+}
+
+/// Compute the value at `timestamp` using the linear function with `slope` that intersects with the
+/// data point (`start_time`, `first_value`).
+fn value_at(slope: f64, start_time: Timestamp, first_value: f64, timestamp: Timestamp) -> f64 {
+    slope * (timestamp - start_time) as f64 + first_value
 }
 
 /// Return [`true`] if `value` is -0.0, otherwise [`false`].
@@ -401,10 +440,17 @@ mod tests {
             assert!(slope == 0.0 && first_value.is_nan());
         } else {
             for timestamp in (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize) {
-                let approximate_value = slope * (timestamp - START_TIME) as f64 + first_value;
+                let approximate_value = value_at(slope, START_TIME, first_value, timestamp);
                 assert_eq!(approximate_value, value as f64);
             }
         }
+    }
+
+    #[test]
+    fn test_cannot_fit_nans_with_different_payloads_with_lossless_error_bound() {
+        let mut model_type = Swing::new(ErrorBound::Lossless);
+        assert!(model_type.fit_data_point(START_TIME, Value::from_bits(0x7fc00001)));
+        assert!(!model_type.fit_data_point(END_TIME, Value::from_bits(0x7fc00002)));
     }
 
     #[property_test]

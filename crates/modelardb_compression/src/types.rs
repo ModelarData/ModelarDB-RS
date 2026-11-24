@@ -80,23 +80,30 @@ impl ModelBuilder {
         self.pmc_mean_could_fit_all || self.swing_could_fit_all
     }
 
-    /// Return the model that requires the fewest number of bytes per value.
-    pub(crate) fn finish(self) -> CompressedSegmentBuilder {
-        let bytes_per_value = [
-            (PMC_MEAN_ID, self.pmc_mean.bytes_per_value()),
-            (SWING_ID, self.swing.bytes_per_value()),
-        ];
+    /// Return the model that requires the fewest number of bytes per value. Swing is only returned
+    /// if it can reconstruct `uncompressed_timestamps` and `uncompressed_values` within the error
+    /// bound, otherwise PMC-Mean is returned. [`None`] is returned if neither model can represent
+    /// any values, which happens if the first value is a signaling NaN that Swing cannot
+    /// reconstruct, as PMC-Mean computes the average in [`f64`] which makes the NaN quiet.
+    pub(crate) fn finish(
+        self,
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
+    ) -> Option<CompressedSegmentBuilder> {
+        let swing_range = self.start_index..self.start_index + self.swing.len();
 
-        let model_type_id = bytes_per_value
-            .iter()
-            .min_by(|x, y| f32::partial_cmp(&x.1, &y.1).unwrap())
-            .expect("bytes_per_value should not be empty and should not contain NaN values.")
-            .0;
-
-        match model_type_id {
-            PMC_MEAN_ID => Self::select_pmc_mean(self.start_index, self.pmc_mean),
-            SWING_ID => Self::select_swing(self.start_index, self.swing),
-            _ => panic!("Unknown model type."),
+        // PMC-Mean is selected if both models use the same number of bytes per value.
+        if self.swing.bytes_per_value() < self.pmc_mean.bytes_per_value()
+            && self.swing.can_reconstruct(
+                &uncompressed_timestamps.values()[swing_range.clone()],
+                &uncompressed_values.values()[swing_range],
+            )
+        {
+            Some(Self::select_swing(self.start_index, self.swing))
+        } else if self.pmc_mean.len() > 0 {
+            Some(Self::select_pmc_mean(self.start_index, self.pmc_mean))
+        } else {
+            None
         }
     }
 
@@ -810,7 +817,8 @@ mod tests {
             ErrorBound::Lossless,
             &uncompressed_timestamps,
             uncompressed_values,
-        );
+        )
+        .unwrap();
 
         assert_eq!(expected_model_type_id, model.model_type_id);
         assert_eq!(0, model.start_index);
@@ -884,7 +892,8 @@ mod tests {
             ErrorBound::try_new_relative(ERROR_BOUND_TEN).unwrap(),
             &uncompressed_timestamps,
             &uncompressed_values.finish(),
-        );
+        )
+        .unwrap();
 
         assert_eq!(model.model_type_id, PMC_MEAN_ID);
     }
