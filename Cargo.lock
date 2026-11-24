@@ -3722,7 +3722,6 @@ dependencies = [
  "arrow",
  "async-trait",
  "buoyant_kernel",
- "bytes",
  "chrono",
  "dashmap",
  "datafusion",
