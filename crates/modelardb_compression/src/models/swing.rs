@@ -109,8 +109,8 @@ impl Swing {
             // A linear function reconstructs -0.0 as 0.0.
             false
         } else if !self.first_value.is_finite() || !value.is_finite() {
-            // Extend Swing to handle both types of infinity and NAN. For a lossless error bound,
-            // NANs are only equal if their bits are equal, so different payloads are preserved.
+            // Extend Swing to handle both types of infinity and NaN. For a lossless error bound,
+            // NaNs are only equal if their bits are equal, so different payloads are preserved.
             if models::is_value_within_error_bound(
                 self.error_bound,
                 self.first_value as Value,

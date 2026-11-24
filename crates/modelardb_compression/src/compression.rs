@@ -434,7 +434,7 @@ mod tests {
             | ProptestValue::NEGATIVE
     }
 
-    /// Start times used for generating time stamps for the time series in the tests. Multiple
+    /// Start times used for generating timestamps for the time series in the tests. Multiple
     /// different start times are used to ensures that models are always created correctly. For
     /// example, the second is the microseconds since the Unix epoch and was added due to #441.
     const START_TIMES: [Timestamp; 2] = [0, 1767233520004960];
@@ -714,43 +714,6 @@ mod tests {
         );
     }
 
-    /// Compress `uncompressed_timestamps` shifted by each of the [`START_TIMES`] and
-    /// `uncompressed_values` within `error_bound` and assert that the values can be reconstructed
-    /// within `error_bound`. If `maybe_expected_model_type_ids` is [`Some`], also assert that the
-    /// compressed segments were created by these model types.
-    fn compress_and_assert_time_series(
-        uncompressed_timestamps: &TimestampArray,
-        uncompressed_values: &ValueArray,
-        error_bound: ErrorBound,
-        maybe_expected_model_type_ids: Option<&[i8]>,
-    ) {
-        for start_time in START_TIMES {
-            let uncompressed_timestamps = add_start_time(uncompressed_timestamps, start_time);
-
-            let compressed_record_batch = try_compress_univariate_time_series(
-                &uncompressed_timestamps,
-                uncompressed_values,
-                error_bound,
-                compressed_schema(),
-                vec![TAG_VALUE.to_owned()],
-                0,
-            )
-            .unwrap();
-
-            assert_compressed_record_batch_with_unknown_segments_from_time_series(
-                error_bound,
-                &uncompressed_timestamps,
-                uncompressed_values,
-                &compressed_record_batch,
-            );
-
-            if let Some(expected_model_type_ids) = maybe_expected_model_type_ids {
-                let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, Int8Array);
-                assert_eq!(model_type_ids.values(), expected_model_type_ids);
-            }
-        }
-    }
-
     #[test]
     fn test_try_compress_regular_random_linear_constant_time_series_within_lossless_error_bound() {
         generate_compress_and_assert_known_time_series(
@@ -961,9 +924,42 @@ mod tests {
         );
     }
 
-    /// Return a copy of `timestamps` with `start_time` added to each timestamp.
-    fn add_start_time(timestamps: &TimestampArray, start_time: Timestamp) -> TimestampArray {
-        timestamps.unary(|timestamp| timestamp + start_time)
+    /// Compress `uncompressed_timestamps` shifted by each of the [`START_TIMES`] and
+    /// `uncompressed_values` within `error_bound` and assert that the values can be reconstructed
+    /// within `error_bound`. If `maybe_expected_model_type_ids` is [`Some`], also assert that the
+    /// compressed segments were created by these model types.
+    fn compress_and_assert_time_series(
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
+        error_bound: ErrorBound,
+        maybe_expected_model_type_ids: Option<&[i8]>,
+    ) {
+        for start_time in START_TIMES {
+            let uncompressed_timestamps =
+                uncompressed_timestamps.unary(|timestamp| timestamp + start_time);
+
+            let compressed_record_batch = try_compress_univariate_time_series(
+                &uncompressed_timestamps,
+                uncompressed_values,
+                error_bound,
+                compressed_schema(),
+                vec![TAG_VALUE.to_owned()],
+                0,
+            )
+            .unwrap();
+
+            assert_compressed_record_batch_with_unknown_segments_from_time_series(
+                error_bound,
+                &uncompressed_timestamps,
+                uncompressed_values,
+                &compressed_record_batch,
+            );
+
+            if let Some(expected_model_type_ids) = maybe_expected_model_type_ids {
+                let model_type_ids = modelardb_types::array!(compressed_record_batch, 0, Int8Array);
+                assert_eq!(model_type_ids.values(), expected_model_type_ids);
+            }
+        }
     }
 
     fn assert_compressed_record_batch_with_unknown_segments_from_time_series(
