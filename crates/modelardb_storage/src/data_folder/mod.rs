@@ -804,8 +804,15 @@ impl DataFolder {
         Ok(table_names.iter().flatten().map(str::to_owned).collect())
     }
 
+    /// Return `true` if a table with `table_name` exists in the Delta Lake, otherwise return
+    /// `false`. If the metadata cannot be read, [`ModelarDbStorageError`] is returned.
+    pub async fn table_exists(&self, table_name: &str) -> Result<bool> {
+        let sql = format!(
+            "SELECT table_name FROM metadata.table_metadata WHERE table_name = '{table_name}'"
+        );
+        let batch = sql_and_concat(&self.session_context, &sql).await?;
 
-        Ok(table_names)
+        Ok(batch.num_rows() > 0)
     }
 
     /// Return the location of the metadata table with `table_name`.
