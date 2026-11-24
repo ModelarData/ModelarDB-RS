@@ -723,55 +723,6 @@ impl DataFolder {
         Ok(table_names)
     }
 
-    /// Return the name of each normal table currently in the Delta Lake. Note that this does not
-    /// include time series tables. If the normal table names cannot be retrieved,
-    /// [`ModelarDbStorageError`] is returned.
-    pub async fn normal_table_names(&self) -> Result<Vec<String>> {
-        self.table_names_of_type(TableType::NormalTable).await
-    }
-
-    /// Return the name of each time series table currently in the Delta Lake. Note that this does
-    /// not include normal tables. If the time series table names cannot be retrieved,
-    /// [`ModelarDbStorageError`] is returned.
-    pub async fn time_series_table_names(&self) -> Result<Vec<String>> {
-        self.table_names_of_type(TableType::TimeSeriesTable).await
-    }
-
-    /// Return the name of tables of `table_type`. Returns [`ModelarDbStorageError`] if the table
-    /// names cannot be retrieved.
-    async fn table_names_of_type(&self, table_type: TableType) -> Result<Vec<String>> {
-        let table_type = match table_type {
-            TableType::NormalTable => "normal_table",
-            TableType::TimeSeriesTable => "time_series_table",
-        };
-
-        let sql = format!("SELECT table_name FROM metadata.{table_type}_metadata");
-        let batch = sql_and_concat(&self.session_context, &sql).await?;
-
-        let table_names = modelardb_types::array!(batch, 0, StringViewArray);
-        Ok(table_names.iter().flatten().map(str::to_owned).collect())
-    }
-
-    /// Return the schema of the table with the name in `table_name` if it is a normal table. If the
-    /// table does not exist or the table is not a normal table, return [`None`].
-    pub async fn normal_table_schema(&self, table_name: &str) -> Option<Arc<Schema>> {
-        if self
-            .is_normal_table(table_name)
-            .await
-            .is_ok_and(|is_normal_table| is_normal_table)
-        {
-            let schema = self
-                .table_provider(table_name)
-                .await
-                .expect("Delta Lake table should exist if the metadata is in the Delta Lake.")
-                .schema();
-
-            Some(schema)
-        } else {
-            None
-        }
-    }
-
     /// Return the location of the metadata table with `table_name`.
     fn location_of_metadata_table(&self, table_name: &str) -> String {
         format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
