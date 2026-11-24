@@ -797,11 +797,13 @@ impl DataFolder {
     /// Return the name of each table currently in the Delta Lake. If the table names cannot be
     /// retrieved, [`ModelarDbStorageError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>> {
-        let normal_table_names = self.normal_table_names().await?;
-        let time_series_table_names = self.time_series_table_names().await?;
+        let sql = "SELECT table_name FROM metadata.table_metadata";
+        let batch = sql_and_concat(&self.session_context, sql).await?;
 
-        let mut table_names = normal_table_names;
-        table_names.extend(time_series_table_names);
+        let table_names = modelardb_types::array!(batch, 0, StringViewArray);
+        Ok(table_names.iter().flatten().map(str::to_owned).collect())
+    }
+
 
         Ok(table_names)
     }
