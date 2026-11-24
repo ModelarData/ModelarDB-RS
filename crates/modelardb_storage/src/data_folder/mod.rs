@@ -656,6 +656,45 @@ impl DataFolder {
             .collect())
     }
 
+    /// Remove the files with `file_paths` from the Delta Lake table with `table_name` in a single
+    /// commit, e.g., after their rows have been transferred to another data folder. Files added to
+    /// the table later are not affected. The files are only marked as removed and are not deleted
+    /// from disk until the table is vacuumed. If a file is no longer in the table or the commit
+    /// conflicts with another commit that removed files, nothing is removed and a
+    /// [`ModelarDbStorageError`] is returned, since removing the remaining files could duplicate or
+    /// lose rows.
+    pub async fn remove_files(&self, table_name: &str, file_paths: &[String]) -> Result<()> {
+        let delta_table = self.delta_table(table_name).await?;
+        let snapshot = delta_table.snapshot()?;
+
+        let file_paths: HashSet<&str> = file_paths.iter().map(String::as_str).collect();
+        let actions: Vec<Action> = snapshot
+            .log_data()
+            .iter()
+            .filter(|file| file_paths.contains(file.path().as_ref()))
+            .map(|file| Action::Remove(file.remove_action(true)))
+            .collect();
+
+        if actions.len() != file_paths.len() {
+            return Err(ModelarDbStorageError::InvalidState(format!(
+                "Some of the files to remove are no longer in the table '{table_name}'."
+            )));
+        }
+
+        // Concurrent blind appends do not conflict with the remove, so CommitBuilder retries the
+        // commit after them.
+        CommitBuilder::default()
+            .with_actions(actions)
+            .build(
+                Some(snapshot),
+                delta_table.log_store(),
+                DeltaOperation::Delete { predicate: None },
+            )
+            .await?;
+
+        Ok(())
+    }
+
     /// Return a [`DeltaTableWriter`] for writing to the table with `table_name` in the Delta Lake,
     /// or a [`ModelarDbStorageError`] if a connection to the Delta Lake cannot be established or
     /// the table does not exist.
