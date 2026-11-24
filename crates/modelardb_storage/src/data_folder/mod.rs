@@ -824,6 +824,31 @@ impl DataFolder {
     fn location_of_table(&self, table_name: &str) -> String {
         format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
+    /// Return the [`TableMetadata`] for the table with `table_name` in the Delta Lake. If the table
+    /// does not exist or the [`TableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is
+    /// returned.
+    pub async fn table_metadata_for_table(&self, table_name: &str) -> Result<TableMetadata> {
+        let sql = format!(
+            "SELECT table_name, query_schema FROM metadata.table_metadata WHERE table_name = '{table_name}'"
+        );
+        let batch = sql_and_concat(&self.session_context, &sql).await?;
+
+        if batch.num_rows() == 0 {
+            return Err(ModelarDbStorageError::InvalidArgument(format!(
+                "No metadata for table named '{table_name}'."
+            )));
+        }
+
+        let table_name_array = modelardb_types::array!(batch, 0, StringViewArray);
+        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryViewArray);
+
+        self.table_metadata_row_to_table_metadata(
+            table_name_array.value(0),
+            query_schema_bytes_array.value(0),
+        )
+        .await
+    }
+
     /// Convert a row from the `table_metadata` table to an instance of [`TableMetadata`]. Returns
     /// [`ModelarDbStorageError`] if the bytes in `query_schema_bytes` are not a valid schema or the
     /// column metadata cannot be retrieved.
