@@ -824,6 +824,21 @@ impl DataFolder {
     fn location_of_table(&self, table_name: &str) -> String {
         format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
+    /// Convert a row from the `table_metadata` table to an instance of [`TableMetadata`]. Returns
+    /// [`ModelarDbStorageError`] if the bytes in `query_schema_bytes` are not a valid schema or the
+    /// column metadata cannot be retrieved.
+    async fn table_metadata_row_to_table_metadata(
+        &self,
+        table_name: &str,
+        query_schema_bytes: &[u8],
+    ) -> Result<TableMetadata> {
+        let query_schema = Arc::new(try_convert_bytes_to_schema(query_schema_bytes.into())?);
+        let column_metadata = self.column_metadata(table_name, &query_schema).await?;
+
+        TableMetadata::try_new(table_name.to_owned(), query_schema, column_metadata)
+            .map_err(|error| error.into())
+    }
+
     /// Return the [`ColumnMetadata`] of each column in `query_schema` for the table with
     /// `table_name`. Columns without a row in the `column_metadata` table are stored losslessly. If
     /// the column metadata cannot be retrieved, [`ModelarDbStorageError`] is returned.
