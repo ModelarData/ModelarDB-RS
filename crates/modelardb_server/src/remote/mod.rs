@@ -188,11 +188,10 @@ async fn execute_query_at_address(
 /// Encode the schema and [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) in
 /// `query_result_stream` as [`FlightData`]. [`FlightDataEncoderBuilder`] splits record batches that
 /// are larger than its maximum flight data size into multiple [`FlightData`] so each message stays
-/// below the 4 MiB default limit. If no
-/// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) is not returned by
-/// `query_result_stream`, [`Status`] with the code [`tonic::Code::InvalidArgument`] is returned to
-/// the client, and if a record batch cannot be encoded, a [`Status`] with the code
-/// [`tonic::Code::Internal`] is returned to the client.
+/// below the 4 MiB default limit. If no [`RecordBatch`] is not returned by `query_result_stream`,
+/// [`Status`] with the code [`tonic::Code::InvalidArgument`] is returned to the client, and if a
+/// record batch cannot be encoded, a [`Status`] with the code [`tonic::Code::Internal`] is returned
+/// to the client.
 fn encode_query_result(
     query_result_stream: SendableRecordBatchStream,
 ) -> BoxStream<'static, StdResult<FlightData, Status>> {
