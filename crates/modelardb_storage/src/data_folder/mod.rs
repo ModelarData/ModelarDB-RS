@@ -371,6 +371,26 @@ impl DataFolder {
         Ok(())
     }
 
+    /// Create a Delta Lake table for the table with `table_metadata` and save the metadata to the
+    /// `table_metadata` and `column_metadata` tables. If the table already exists or the metadata
+    /// could not be saved, return [`ModelarDbStorageError`], otherwise return the created
+    /// [`DeltaTable`].
+    pub async fn create_table(&self, table_metadata: &TableMetadata) -> Result<DeltaTable> {
+        let delta_table = self
+            .create_delta_lake_table(
+                &table_metadata.name,
+                &table_metadata.stored_schema,
+                &[],
+                self.location_of_table(&table_metadata.name),
+                SaveMode::ErrorIfExists,
+            )
+            .await?;
+
+        self.save_table_metadata(table_metadata).await?;
+
+        Ok(delta_table)
+    }
+
     /// Create a Delta Lake table with `table_name`, `schema`, and `partition_columns` if it does
     /// not already exist. Returns [`DeltaTable`] if the table could be created and
     /// [`ModelarDbStorageError`] if it could not.
@@ -414,6 +434,79 @@ impl DataFolder {
         self.delta_table_cache.insert(location, delta_table.clone());
 
         Ok(delta_table)
+    }
+
+    /// Save the metadata of the created table to the Delta Lake. This includes adding a row to the
+    /// `table_metadata` table and adding a row to the `column_metadata` table for each column that
+    /// has an error bound or is generated. If the metadata was saved, return [`Ok`], otherwise
+    /// return [`ModelarDbStorageError`].
+    async fn save_table_metadata(&self, table_metadata: &TableMetadata) -> Result<()> {
+        // Convert the query schema to bytes, so it can be saved in the Delta Lake.
+        let query_schema_bytes = try_convert_schema_to_bytes(&table_metadata.query_schema)?;
+
+        self.write_columns_to_metadata_table(
+            "table_metadata",
+            vec![
+                Arc::new(StringViewArray::from(vec![table_metadata.name.clone()])),
+                Arc::new(BinaryViewArray::from_iter_values(vec![&query_schema_bytes])),
+            ],
+        )
+        .await?;
+
+        // Only columns with an error bound or a generated column expression are saved, so all of
+        // their rows are collected and written in a single commit.
+        let mut column_names = vec![];
+        let mut column_indices = vec![];
+        let mut error_bound_values = vec![];
+        let mut error_bound_is_relatives = vec![];
+        let mut generated_column_exprs = vec![];
+
+        for (column_index, (field, column_metadata)) in table_metadata
+            .query_schema
+            .fields()
+            .iter()
+            .zip(&table_metadata.column_metadata)
+            .enumerate()
+        {
+            let (error_bound_value, error_bound_is_relative, generated_column_expr) =
+                match column_metadata {
+                    ColumnMetadata::Stored(ErrorBound::Absolute(value)) => {
+                        (Some(*value), Some(false), None)
+                    }
+                    ColumnMetadata::Stored(ErrorBound::Relative(percentage)) => {
+                        (Some(*percentage), Some(true), None)
+                    }
+                    ColumnMetadata::Stored(ErrorBound::Lossless) => continue,
+                    ColumnMetadata::Generated(generated_column) => {
+                        (None, None, Some(generated_column.expr.to_bytes()?.to_vec()))
+                    }
+                };
+
+            column_names.push(field.name().as_str());
+            column_indices.push(column_index as i32);
+            error_bound_values.push(error_bound_value);
+            error_bound_is_relatives.push(error_bound_is_relative);
+            generated_column_exprs.push(generated_column_expr);
+        }
+
+        if !column_names.is_empty() {
+            let table_names = vec![table_metadata.name.as_str(); column_names.len()];
+
+            self.write_columns_to_metadata_table(
+                "column_metadata",
+                vec![
+                    Arc::new(StringViewArray::from(table_names)),
+                    Arc::new(StringViewArray::from(column_names)),
+                    Arc::new(Int32Array::from(column_indices)),
+                    Arc::new(Float32Array::from(error_bound_values)),
+                    Arc::new(BooleanArray::from(error_bound_is_relatives)),
+                    Arc::new(BinaryViewArray::from_iter(generated_column_exprs)),
+                ],
+            )
+            .await?;
+        }
+
+        Ok(())
     }
 
     /// Drop the Delta Lake table with `table_name` from the Delta Lake by deleting the table
