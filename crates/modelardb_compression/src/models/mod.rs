@@ -108,7 +108,7 @@ fn equal_or_nan(v1: f64, v2: f64) -> bool {
 pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usize {
     if timestamps.is_empty() && start_time == end_time {
         // start_time equals end_time and no timestamps are stored, so the segment has one data
-        // point. If a segment have two equal timestamps, they are always stored in timestamps.
+        // point. If a segment has two equal timestamps, they are always stored in timestamps.
         1
     } else if timestamps.is_empty() {
         // Only start_time and end_time are stored as the segment only has two different timestamps.
