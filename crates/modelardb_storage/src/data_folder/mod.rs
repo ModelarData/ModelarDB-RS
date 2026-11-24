@@ -421,12 +421,15 @@ impl DataFolder {
             columns.push(struct_field);
         }
 
+        // WriteSerializable allows blind appends to commit alongside commits that rewrite or remove
+        // files, e.g., when OPTIMIZE or a transfer runs while data is being written to the table.
         let delta_table = CreateBuilder::new()
             .with_storage_options(self.storage_options.clone())
             .with_table_name(table_name)
             .with_location(location.clone())
             .with_columns(columns)
             .with_partition_columns(partition_columns)
+            .with_configuration_property(TableProperty::IsolationLevel, Some("WriteSerializable"))
             .with_save_mode(save_mode)
             .await?;
 
