@@ -824,6 +824,31 @@ impl DataFolder {
     fn location_of_table(&self, table_name: &str) -> String {
         format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
+
+    /// Return the [`TableMetadata`] of each table currently in the Delta Lake. If the
+    /// [`TableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is returned.
+    pub async fn table_metadata(&self) -> Result<Vec<Arc<TableMetadata>>> {
+        let sql = "SELECT table_name, query_schema FROM metadata.table_metadata";
+        let batch = sql_and_concat(&self.session_context, sql).await?;
+
+        let table_name_array = modelardb_types::array!(batch, 0, StringViewArray);
+        let query_schema_bytes_array = modelardb_types::array!(batch, 1, BinaryViewArray);
+
+        let mut table_metadata = Vec::with_capacity(batch.num_rows());
+        for row_index in 0..batch.num_rows() {
+            let metadata = self
+                .table_metadata_row_to_table_metadata(
+                    table_name_array.value(row_index),
+                    query_schema_bytes_array.value(row_index),
+                )
+                .await?;
+
+            table_metadata.push(Arc::new(metadata));
+        }
+
+        Ok(table_metadata)
+    }
+
     /// Return the [`TableMetadata`] for the table with `table_name` in the Delta Lake. If the table
     /// does not exist or the [`TableMetadata`] cannot be retrieved, [`ModelarDbStorageError`] is
     /// returned.
