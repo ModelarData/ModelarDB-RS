@@ -700,12 +700,7 @@ impl DataFolder {
     /// the table does not exist.
     pub async fn table_writer(&self, table_name: &str) -> Result<DeltaTableWriter> {
         let delta_table = self.delta_table(table_name).await?;
-
-        if is_time_series_delta_table(&delta_table)? {
-            DeltaTableWriter::try_new_for_time_series_table(delta_table).await
-        } else {
-            DeltaTableWriter::try_new_for_normal_table(delta_table).await
-        }
+        DeltaTableWriter::try_new(delta_table).await
     }
 
     /// Write `record_batches` to the table with `table_name` in the Delta Lake. The correct
