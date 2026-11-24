@@ -24,29 +24,29 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, ArrowPrimitiveType, BinaryViewArray, BooleanArray, Float32Array, Int16Array,
-    RecordBatch, StringViewArray,
+    Array, ArrayRef, BinaryViewArray, BooleanArray, Float32Array, Int32Array, RecordBatch,
+    StringViewArray,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use chrono::TimeDelta;
 use dashmap::DashMap;
 use datafusion::catalog::TableProvider;
-use datafusion::common::{DFSchema, TableReference, ToDFSchema};
+use datafusion::common::{TableReference, ToDFSchema};
 use datafusion::datasource::sink::DataSink;
 use datafusion::logical_expr::{Expr, lit};
 use datafusion::prelude::{SessionContext, col};
 use datafusion_proto::bytes::Serializeable;
 use delta_kernel::engine::arrow_conversion::TryIntoKernel;
-use deltalake::kernel::StructField;
+use deltalake::kernel::transaction::CommitBuilder;
+use deltalake::kernel::{Action, StructField};
 use deltalake::operations::create::CreateBuilder;
-use deltalake::protocol::SaveMode;
-use deltalake::{DeltaTable, DeltaTableError};
+use deltalake::protocol::{DeltaOperation, SaveMode};
+use deltalake::{DeltaTable, DeltaTableError, TableProperty};
 use futures::{StreamExt, TryStreamExt};
 use modelardb_types::functions::{try_convert_bytes_to_schema, try_convert_schema_to_bytes};
-use modelardb_types::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use modelardb_types::types::{
-    ArrowValue, CloudCredentials, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
-    TimeSeriesTableMetadata,
+    CloudCredentials, ColumnMetadata, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
+    TableMetadata,
 };
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
@@ -57,10 +57,7 @@ use url::Url;
 use crate::data_folder::delta_table_writer::DeltaTableWriter;
 use crate::error::{ModelarDbStorageError, Result};
 use crate::query::normal_table::NormalTable;
-use crate::{
-    METADATA_FOLDER, TABLE_FOLDER, sql_and_concat,
-    writer_properties_for_metadata_and_normal_tables, writer_properties_for_time_series_table,
-};
+use crate::{METADATA_FOLDER, TABLE_FOLDER, sql_and_concat};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store. A single
 /// instance should be shared through an [`Arc`], so the cache and session context are only
@@ -633,11 +630,7 @@ impl DataFolder {
         })?;
 
         let schema = delta_table.snapshot()?.snapshot().arrow_schema();
-        let writer_properties = if is_time_series_delta_table(&delta_table)? {
-            writer_properties_for_time_series_table()?
-        } else {
-            writer_properties_for_metadata_and_normal_tables(&schema)?
-        };
+        let writer_properties = modelardb_compression::writer_properties(&schema);
 
         delta_table
             .optimize()
