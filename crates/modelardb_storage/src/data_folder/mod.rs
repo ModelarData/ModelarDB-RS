@@ -824,6 +824,51 @@ impl DataFolder {
     fn location_of_table(&self, table_name: &str) -> String {
         format!("{}/{TABLE_FOLDER}/{table_name}", self.location)
     }
+    /// Return the [`ColumnMetadata`] of each column in `query_schema` for the table with
+    /// `table_name`. Columns without a row in the `column_metadata` table are stored losslessly. If
+    /// the column metadata cannot be retrieved, [`ModelarDbStorageError`] is returned.
+    async fn column_metadata(
+        &self,
+        table_name: &str,
+        query_schema: &Arc<Schema>,
+    ) -> Result<Vec<ColumnMetadata>> {
+        let sql = format!(
+            "SELECT column_index, error_bound_value, error_bound_is_relative, generated_column_expr
+             FROM metadata.column_metadata
+             WHERE table_name = '{table_name}'"
+        );
+        let batch = sql_and_concat(&self.session_context, &sql).await?;
+
+        let mut column_metadata =
+            vec![ColumnMetadata::Stored(ErrorBound::Lossless); query_schema.fields().len()];
+
+        let column_index_array = modelardb_types::array!(batch, 0, Int32Array);
+        let error_bound_value_array = modelardb_types::array!(batch, 1, Float32Array);
+        let error_bound_is_relative_array = modelardb_types::array!(batch, 2, BooleanArray);
+        let generated_column_expr_array = modelardb_types::array!(batch, 3, BinaryViewArray);
+
+        let df_query_schema = query_schema.clone().to_dfschema()?;
+
+        for row_index in 0..batch.num_rows() {
+            let column_index = column_index_array.value(row_index) as usize;
+
+            column_metadata[column_index] = if generated_column_expr_array.is_valid(row_index) {
+                let expr = Expr::from_bytes(generated_column_expr_array.value(row_index))?;
+                let generated_column = GeneratedColumn::try_from_expr(expr, &df_query_schema)?;
+                ColumnMetadata::Generated(generated_column)
+            } else {
+                let error_bound_value = error_bound_value_array.value(row_index);
+
+                if error_bound_is_relative_array.value(row_index) {
+                    ColumnMetadata::Stored(ErrorBound::try_new_relative(error_bound_value)?)
+                } else {
+                    ColumnMetadata::Stored(ErrorBound::try_new_absolute(error_bound_value)?)
+                }
+            };
+        }
+
+        Ok(column_metadata)
+    }
 }
 
 #[cfg(test)]
