@@ -733,7 +733,7 @@ impl DataFolder {
         let delta_table = self.metadata_delta_table(table_name).await?;
         let schema = delta_table.table_provider().await?.schema();
         let record_batch = RecordBatch::try_new(schema, columns)?;
-        let delta_table_writer = DeltaTableWriter::try_new_for_normal_table(delta_table).await?;
+        let delta_table_writer = DeltaTableWriter::try_new(delta_table).await?;
 
         delta_table_writer
             .write_all_and_commit(&[record_batch])
