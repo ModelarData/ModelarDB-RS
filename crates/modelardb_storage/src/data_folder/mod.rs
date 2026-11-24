@@ -62,12 +62,6 @@ use crate::{
     writer_properties_for_metadata_and_normal_tables, writer_properties_for_time_series_table,
 };
 
-/// Types of tables supported by ModelarDB.
-enum TableType {
-    NormalTable,
-    TimeSeriesTable,
-}
-
 /// Functionality for managing Delta Lake tables in a local folder or an object store. A single
 /// instance should be shared through an [`Arc`], so the cache and session context are only
 /// created once.
