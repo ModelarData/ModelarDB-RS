@@ -133,3 +133,109 @@ impl ModelarDbTable {
         })
     }
 }
+
+#[async_trait]
+impl TableProvider for ModelarDbTable {
+    /// Return the query schema of the table registered with Apache DataFusion.
+    fn schema(&self) -> Arc<Schema> {
+        self.schema.clone()
+    }
+
+    /// Specify that tables are base tables and not views or temporary tables.
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
+    /// Create an [`ExecutionPlan`] that will scan the table and compute the generated columns in
+    /// `projection`. Returns a [`DataFusionError::Plan`] if the necessary metadata cannot be
+    /// retrieved or a generated column cannot be planned.
+    async fn scan(
+        &self,
+        state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // Clone the Delta Lake table and update it to the latest version. self.data_folder.load(
+        // &mut self) is not an option due to TypeProvider::scan(&self, ...). Storing the DeltaTable
+        // in a Mutex and RwLock is also not an option since most of the methods in TypeProvider
+        // return a reference and the locks will be dropped at the end of the method.
+        let mut delta_table = self.delta_table.clone();
+
+        delta_table
+            .load()
+            .await
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+
+        let table_provider = delta_table.table_provider().await?;
+
+        // The query schema of a table without generated columns is the stored schema.
+        if !self.has_generated_columns() {
+            return table_provider.scan(state, projection, filters, limit).await;
+        }
+
+        let projection = projection
+            .cloned()
+            .unwrap_or_else(|| (0..self.schema.fields().len()).collect());
+
+        // Scan the stored columns in the projection followed by the stored columns that are only
+        // required to compute the generated columns, since GeneratedAsExec assumes they are last.
+        let mut stored_projection = Vec::with_capacity(projection.len());
+        let mut generated_columns = vec![];
+        let mut source_columns = vec![];
+
+        for (result_index, query_schema_index) in projection.iter().enumerate() {
+            match &self.table_metadata.column_metadata[*query_schema_index] {
+                ColumnMetadata::Stored(_) => {
+                    stored_projection.push(self.stored_schema_index(*query_schema_index));
+                }
+                ColumnMetadata::Generated(generated_column) => {
+                    generated_columns.push((result_index, *query_schema_index, generated_column));
+                    source_columns.extend(&generated_column.source_columns);
+                }
+            }
+        }
+
+        for source_column in source_columns {
+            let stored_schema_index = self.stored_schema_index(source_column);
+            if !stored_projection.contains(&stored_schema_index) {
+                stored_projection.push(stored_schema_index);
+            }
+        }
+
+        let input = table_provider
+            .scan(state, Some(&stored_projection), filters, limit)
+            .await?;
+
+        // Cast each generated column to its type in the query schema, as the expression may
+        // compute values of another type, e.g., Float64 for a Float32 column.
+        let df_input_schema = input.schema().to_dfschema()?;
+        let execution_props = ExecutionProps::new();
+        let planning_context = PhysicalPlanningContext::default();
+
+        let columns_to_generate = generated_columns
+            .into_iter()
+            .map(|(result_index, query_schema_index, generated_column)| {
+                let data_type = self.schema.field(query_schema_index).data_type();
+                let expr = generated_column
+                    .expr
+                    .clone()
+                    .cast_to(data_type, &df_input_schema)?;
+                let physical_expr = planner::create_physical_expr(
+                    &expr,
+                    &df_input_schema,
+                    &execution_props,
+                    &planning_context,
+                )?;
+
+                Ok(ColumnToGenerate::new(result_index, physical_expr))
+            })
+            .collect::<DataFusionResult<Vec<_>>>()?;
+
+        Ok(GeneratedAsExec::new(
+            Arc::new(self.schema.project(&projection)?),
+            columns_to_generate,
+            input,
+        ))
+    }
+}
