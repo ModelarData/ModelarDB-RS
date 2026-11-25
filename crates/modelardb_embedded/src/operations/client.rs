@@ -36,6 +36,7 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::{StreamExt, TryStreamExt, stream};
 use modelardb_auth::BearerInterceptor;
 use modelardb_types::flight::protocol;
+use modelardb_types::functions;
 use modelardb_types::types::Node;
 use prost::Message;
 use prost::bytes::Bytes;
@@ -278,16 +279,19 @@ impl Operations for Client {
         Ok(convert::try_schema_from_ipc_buffer(&schema_result.schema)?)
     }
 
-    /// Writes the data in `uncompressed_data` to the table with the table name in `table_name`. If
-    /// the schema of `uncompressed_data` does not match the schema of the table, or the data could
-    /// not be written to the table, [`ModelarDbEmbeddedError`] is returned.
+    /// Writes the data in `uncompressed_data` to the table with the table name in `table_name`.
+    /// View arrays in `uncompressed_data` are garbage collected before they are sent, so data that
+    /// is not referenced is not sent to the server. If the schema of `uncompressed_data` does not
+    /// match the schema of the table, or the data could not be written to the table,
+    /// [`ModelarDbEmbeddedError`] is returned.
     async fn write(&mut self, table_name: &str, uncompressed_data: RecordBatch) -> Result<()> {
         // Include the table name in the flight descriptor.
         let flight_descriptor = FlightDescriptor::new_path(vec![table_name.to_owned()]);
+        let garbage_collected_data = functions::garbage_collect_view_arrays(uncompressed_data);
 
         let flight_data_encoder = FlightDataEncoderBuilder::new()
             .with_flight_descriptor(Some(flight_descriptor))
-            .build(stream::iter(vec![Ok(uncompressed_data)]));
+            .build(stream::iter(vec![Ok(garbage_collected_data)]));
 
         let flight_data_stream = flight_data_encoder.map(|maybe_flight_data| {
             maybe_flight_data.expect("Flight data should be validated by FlightDataEncoderBuilder.")

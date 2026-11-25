@@ -27,6 +27,8 @@ use std::result::Result as StdResult;
 use std::str;
 use std::sync::Arc;
 
+use arrow_flight::encode::FlightDataEncoderBuilder;
+use arrow_flight::error::FlightError;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
@@ -34,39 +36,40 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket, utils,
 };
-use datafusion::arrow::array::{ArrayRef, RecordBatch};
-use datafusion::arrow::ipc::writer::{
-    DictionaryTracker, IpcDataGenerator, IpcWriteContext, IpcWriteOptions,
-};
+use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::ipc::writer::IpcWriteOptions;
 use datafusion::error::DataFusionError;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{EmptyRecordBatchStream, SendableRecordBatchStream};
 use deltalake::arrow::datatypes::Schema;
-use futures::StreamExt;
 use futures::stream::{self, BoxStream, SelectAll};
+use futures::{StreamExt, TryStreamExt};
 use modelardb_auth::authenticator::Authenticator;
 use modelardb_storage::parser::{self, ModelarDbStatement};
 use modelardb_types::flight::protocol;
 use modelardb_types::functions;
 use modelardb_types::types::{ServerMode, Table, TimeSeriesTableMetadata};
 use prost::Message;
-use tokio::sync::mpsc::{self, Sender};
-use tokio::task;
-use tokio_stream::wrappers::ReceiverStream;
 use tonic::metadata::{AsciiMetadataValue, MetadataMap};
 use tonic::transport::{Endpoint, Server};
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::cluster::ClusterMode;
 use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 use crate::remote::auth_layer::AuthLayer;
 
-/// Maximum size of a decoded gRPC message. It is increased from the default of 4 MiB to 16 MiB to
-/// allow bulk-loading larger batches.
-const MAX_DECODING_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+/// The default maximum size of a decoded gRPC message in tonic, it is used for tests and as a
+/// reference point for calculating the larger size that modelardbd uses which is stored in
+/// `MAX_DECODING_MESSAGE_SIZE`. The value is copied from the private constant
+/// `DEFAULT_MAX_RECV_MESSAGE_SIZE` in tonic 0.14.6 at `src/codec/mod.rs:101`.
+const DEFAULT_MAX_DECODING_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
+
+/// The maximum size of a decoded gRPC message in modelardbd. It is increased from the default of 4
+/// MiB to 16 MiB to allow bulk-loading larger batches.
+const MAX_DECODING_MESSAGE_SIZE: usize = 4 * DEFAULT_MAX_DECODING_MESSAGE_SIZE;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
 /// process the requests through [`FlightServiceHandler`]. All requests are passed through the
@@ -175,21 +178,11 @@ async fn execute_query_at_address(
     // Create a copy of the Arc so the schema can be used after the closure.
     let schema_for_stream = schema.clone();
 
-    // Create single dictionaries_by_id that can be reused for conversion,
-    // FlightServiceHandler.dictionaries_by_id is not used to simplify lifetimes.
-    let dictionaries_by_id = HashMap::new();
-
-    // Create SendableRecordBatchStream.
+    // Create a SendableRecordBatchStream.
     let record_batch_stream = stream.map(move |maybe_flight_data| {
-        let flight_data = match maybe_flight_data {
-            Ok(flight_data) => flight_data,
-            Err(error) => return Err(DataFusionError::External(Box::new(error))),
-        };
-
-        let maybe_record_batch =
-            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id);
-
-        maybe_record_batch.map_err(|error| error.into())
+        maybe_flight_data
+            .and_then(|flight_data| flight_data_to_record_batch(&flight_data, &schema))
+            .map_err(|error| DataFusionError::External(Box::new(error)))
     });
 
     Ok(Box::pin(RecordBatchStreamAdapter::new(
@@ -198,63 +191,30 @@ async fn execute_query_at_address(
     )))
 }
 
-/// Read [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) from `query_result_stream`
-/// and send them one at a time to [`FlightService`] using `sender`. Returns [`Status`] with the
-/// code [`tonic::Code::Internal`] if the result cannot be sent through `sender`.
-async fn send_query_result(
-    mut query_result_stream: SendableRecordBatchStream,
-    sender: Sender<StdResult<FlightData, Status>>,
-) -> StdResult<(), Status> {
-    // Serialize and send the schema.
+/// Encode the schema and [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) in
+/// `query_result_stream` as [`FlightData`]. View arrays are garbage collected before they are
+/// encoded. [`FlightDataEncoderBuilder`] splits record batches that are larger than its maximum
+/// flight data size into multiple [`FlightData`] so each message stays below the default limit in
+/// `DEFAULT_MAX_DECODING_MESSAGE_SIZE`. If a [`RecordBatch`] cannot be retrieved from
+/// `query_result_stream`, a [`Status`] with the code [`tonic::Code::InvalidArgument`] is returned
+/// to the client, and if a record batch cannot be encoded, a [`Status`] with the code
+/// [`tonic::Code::Internal`] is returned to the client.
+fn encode_query_result(
+    query_result_stream: SendableRecordBatchStream,
+) -> BoxStream<'static, StdResult<FlightData, Status>> {
     let schema = query_result_stream.schema();
-    let options = IpcWriteOptions::default();
-    let schema_as_flight_data = SchemaAsIpc::new(&schema, &options).into();
-    send_flight_data(&sender, Ok(schema_as_flight_data)).await?;
 
-    // Serialize and send the query result.
-    let data_generator = IpcDataGenerator::default();
-    let mut dictionary_tracker = DictionaryTracker::new(false);
-    let writer_options = IpcWriteOptions::default();
-    let mut ipc_write_context = IpcWriteContext::default();
+    // Errors from executing the query are converted to Status, so they can be forwarded as is
+    // instead of being converted to Status with the code Internal by From<FlightError> for Status.
+    let record_batch_stream = query_result_stream
+        .map_ok(functions::garbage_collect_view_arrays)
+        .map_err(|error| FlightError::Tonic(Box::new(Status::invalid_argument(error.to_string()))));
 
-    while let Some(maybe_record_batch) = query_result_stream.next().await {
-        // If a record batch is not returned the client is informed about the error.
-        let record_batch = match maybe_record_batch {
-            Ok(record_batch) => record_batch,
-            Err(error) => {
-                let status = Status::invalid_argument(error.to_string());
-                return send_flight_data(&sender, Err(status)).await;
-            }
-        };
-
-        let (encoded_dictionaries, encoded_batch) = data_generator
-            .encode(
-                &record_batch,
-                &mut dictionary_tracker,
-                &writer_options,
-                &mut ipc_write_context,
-            )
-            .map_err(error_to_status_internal)?;
-
-        for encoded_dictionary in encoded_dictionaries {
-            send_flight_data(&sender, Ok(encoded_dictionary.into())).await?;
-        }
-        send_flight_data(&sender, Ok(encoded_batch.into())).await?;
-    }
-
-    Ok(())
-}
-
-/// Send `flight_data_or_error` to [`FlightService`] using `sender`. Returns [`Status`] with the
-/// code [`tonic::Code::Internal`] if the result cannot be send through `sender`.
-async fn send_flight_data(
-    sender: &Sender<StdResult<FlightData, Status>>,
-    flight_data_or_error: StdResult<FlightData, Status>,
-) -> StdResult<(), Status> {
-    sender
-        .send(flight_data_or_error)
-        .await
-        .map_err(error_to_status_internal)
+    FlightDataEncoderBuilder::new()
+        .with_schema(schema)
+        .build(record_batch_stream)
+        .map_err(Status::from)
+        .boxed()
 }
 
 /// Convert `flight_data` to a [`RecordBatch`]. If `schema` does not match the data or `flight_data`
@@ -262,14 +222,13 @@ async fn send_flight_data(
 /// happen rarely and it is immediately returned as [`Status`] by the methods in the
 /// [`FlightService`] trait.
 #[allow(clippy::result_large_err)]
-pub fn flight_data_to_record_batch(
+fn flight_data_to_record_batch(
     flight_data: &FlightData,
     schema: &Arc<Schema>,
-    dictionaries_by_id: &HashMap<i64, ArrayRef>,
 ) -> StdResult<RecordBatch, Status> {
     debug_assert_eq!(flight_data.flight_descriptor, None);
 
-    utils::flight_data_to_arrow_batch(flight_data, schema.clone(), dictionaries_by_id)
+    utils::flight_data_to_arrow_batch(flight_data, schema.clone(), &HashMap::new())
         .map_err(|error| Status::invalid_argument(error.to_string()))
 }
 
@@ -314,21 +273,11 @@ pub fn error_to_status_internal(error: impl Error) -> Status {
 struct FlightServiceHandler {
     /// Singleton that provides access to the system's components.
     context: Arc<Context>,
-    /// Pre-allocated static argument for
-    /// [`flight_data_to_arrow_batch`](arrow_flight::utils::flight_data_to_arrow_batch).
-    /// For more information about the use of dictionaries in Apache Arrow see
-    /// the [Arrow Columnar Format].
-    ///
-    /// [Arrow Columnar Format]: https://arrow.apache.org/docs/format/Columnar.html
-    dictionaries_by_id: HashMap<i64, ArrayRef>,
 }
 
 impl FlightServiceHandler {
     pub fn new(context: Arc<Context>) -> FlightServiceHandler {
-        Self {
-            context,
-            dictionaries_by_id: HashMap::new(),
-        }
+        Self { context }
     }
 
     /// Create a normal table with the given `table_name` and `schema`. If the node is running in a
@@ -537,8 +486,7 @@ impl FlightServiceHandler {
     ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let record_batch =
-                flight_data_to_record_batch(&flight_data?, schema, &self.dictionaries_by_id)?;
+            let record_batch = flight_data_to_record_batch(&flight_data?, schema)?;
             let storage_engine = self.context.storage_engine.write().await;
 
             // Write record_batch to the normal table with table_name as a compressed Apache Parquet file.
@@ -563,11 +511,8 @@ impl FlightServiceHandler {
     ) -> StdResult<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let data_points = flight_data_to_record_batch(
-                &flight_data?,
-                &time_series_table_metadata.schema,
-                &self.dictionaries_by_id,
-            )?;
+            let data_points =
+                flight_data_to_record_batch(&flight_data?, &time_series_table_metadata.schema)?;
             let mut storage_engine = self.context.storage_engine.write().await;
 
             // Note that the storage engine returns when the data is stored in memory, which means
@@ -803,21 +748,9 @@ impl FlightService for FlightServiceHandler {
         }
         .map_err(error_to_status_internal)?;
 
-        // Send the result using a channel, a channel is needed as sync is not implemented for
-        // SendableRecordBatchStream. A buffer size of two is used based on Apache DataFusion.
-        let (sender, receiver) = mpsc::channel(2);
-
-        task::spawn(async move {
-            // Errors cannot be sent to the client if there is an error with the channel, if such an
-            // error occurs it is logged using error!(). Simply calling await! on the JoinHandle
-            // returned by task::spawn is also not an option as it waits until send_query_result()
-            // returns and thus creates a deadlock since the results are never read from receiver.
-            if let Err(error) = send_query_result(sendable_record_batch_stream, sender).await {
-                error!("Failed to send the result for '{}' due to: {}.", sql, error);
-            }
-        });
-
-        Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
+        Ok(Response::new(encode_query_result(
+            sendable_record_batch_stream,
+        )))
     }
 
     /// Insert data points into a table. The name of the table must be provided as the first element
@@ -1181,5 +1114,55 @@ impl FlightService for FlightServiceHandler {
         ]);
 
         Ok(Response::new(Box::pin(output)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use arrow_flight::decode::FlightRecordBatchStream;
+    use datafusion::arrow::array::StringViewArray;
+    use datafusion::arrow::datatypes::{DataType, Field};
+
+    // Tests for encode_query_result().
+    #[tokio::test]
+    async fn test_encode_query_result_only_encodes_data_referenced_by_sliced_view_arrays() {
+        // Create a record batch with enough strings that its size is larger then what can be sent.
+        let strings = StringViewArray::from_iter_values((0..4096).map(|i| format!("{i:x>2048}")));
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "tag",
+            DataType::Utf8View,
+            false,
+        )]));
+        let record_batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(strings)])
+            .unwrap()
+            .slice(0, 5); // Make the view array sparse.
+
+        assert!(record_batch.get_array_memory_size() > DEFAULT_MAX_DECODING_MESSAGE_SIZE);
+
+        // Check that the encoded record batch is now smaller than what can be sent.
+        let query_result_stream = Box::pin(RecordBatchStreamAdapter::new(
+            schema,
+            stream::iter(vec![Ok(record_batch.clone())]),
+        ));
+        let flight_data: Vec<FlightData> = encode_query_result(query_result_stream)
+            .try_collect()
+            .await
+            .unwrap();
+        assert!(
+            flight_data
+                .iter()
+                .all(|flight_data| flight_data.encoded_len() < DEFAULT_MAX_DECODING_MESSAGE_SIZE)
+        );
+
+        // Check that the encoded and then decoded record batch is the same.
+        let decoded_record_batches: Vec<RecordBatch> =
+            FlightRecordBatchStream::new_from_flight_data(stream::iter(flight_data).map(Ok))
+                .try_collect()
+                .await
+                .unwrap();
+
+        assert_eq!(decoded_record_batches, vec![record_batch]);
     }
 }
