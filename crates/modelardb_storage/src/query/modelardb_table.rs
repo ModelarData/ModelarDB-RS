@@ -265,4 +265,22 @@ impl TableProvider for ModelarDbTable {
             })
             .collect()
     }
+
+    /// Create an [`ExecutionPlan`] that will insert the result of `input` into the table. `input`
+    /// must include the generated columns to match the query schema returned by
+    /// [`TableProvider::schema()`]. Generally, `FlightService::do_put()` should be used instead of
+    /// this method as it is more efficient. Returns a [`DataFusionError::Plan`] if no [`DataSink`]
+    /// was provided, i.e., the table is a metadata table.
+    async fn insert_into(
+        &self,
+        _state: &dyn Session,
+        input: Arc<dyn ExecutionPlan>,
+        _insert_op: InsertOp,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        let data_sink = self.maybe_data_sink.clone().ok_or_else(|| {
+            DataFusionError::Plan("INSERT is not supported for metadata tables.".to_owned())
+        })?;
+
+        Ok(Arc::new(DataSinkExec::new(input, data_sink, None)))
+    }
 }
