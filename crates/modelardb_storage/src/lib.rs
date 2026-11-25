@@ -13,12 +13,11 @@
  * limitations under the License.
  */
 
-//! Utility functions to register metadata tables, normal tables, and time series tables with Apache
-//! DataFusion and to execute SQL statements and queries.
+//! Utility functions to register tables with Apache DataFusion and to execute SQL statements and
+//! queries.
 
 pub mod data_folder;
 pub mod error;
-mod optimizer;
 pub mod parser;
 mod query;
 pub mod write_ahead_log;
@@ -35,12 +34,11 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::Statement as DFStatement;
 use deltalake::DeltaTable;
-use modelardb_types::types::TimeSeriesTableMetadata;
+use modelardb_types::types::TableMetadata;
 use sqlparser::ast::Statement;
 
 use crate::error::Result;
-use crate::query::normal_table::NormalTable;
-use crate::query::time_series_table::TimeSeriesTable;
+use crate::query::modelardb_table::ModelarDbTable;
 
 /// The folder storing compressed table data in the data folders.
 const TABLE_FOLDER: &str = "tables";
@@ -52,24 +50,15 @@ const METADATA_FOLDER: &str = "metadata";
 pub const WRITE_AHEAD_LOG_FOLDER: &str = "wal";
 
 /// Create a new [`SessionContext`] for interacting with Apache DataFusion. The [`SessionContext`]
-/// is constructed with the default configuration, default resource managers, and additional
-/// optimizer rules that rewrite simple aggregate queries to be executed directly on the segments
-/// containing metadata and models instead of on reconstructed data points created from the segments
-/// for time series tables.
+/// is constructed with the default configuration, the default resource managers, and a `metadata`
+/// schema for the metadata tables.
 pub fn create_session_context() -> SessionContext {
-    let mut session_state_builder = SessionStateBuilder::new().with_default_features();
-
-    // Uses the rule method instead of the rules method as the rules method replaces the built-ins.
-    for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
-        session_state_builder =
-            session_state_builder.with_physical_optimizer_rule(physical_optimizer_rule);
-    }
-
     // Use the default configuration: https://datafusion.apache.org/user-guide/configs.html.
-    let session_config = SessionConfig::new();
-    session_state_builder = session_state_builder.with_config(session_config);
+    let session_state = SessionStateBuilder::new()
+        .with_default_features()
+        .with_config(SessionConfig::new())
+        .build();
 
-    let session_state = session_state_builder.build();
     let session_context = SessionContext::new_with_state(session_state);
     let default_catalog = session_context
         .catalog("datafusion")
@@ -81,46 +70,31 @@ pub fn create_session_context() -> SessionContext {
     session_context
 }
 
-/// Register the normal table stored in `delta_table` with `table_name` and `data_sink` in
-/// `session_context`. If the normal table could not be registered with Apache DataFusion, return
+/// Register the table with `table_metadata` stored in `delta_table` with `data_sink` in
+/// `session_context`. If the table could not be registered with Apache DataFusion, return
 /// [`ModelarDbStorageError`](error::ModelarDbStorageError).
-pub async fn register_normal_table(
+pub async fn register_table(
     session_context: &SessionContext,
-    table_name: &str,
     delta_table: DeltaTable,
+    table_metadata: Arc<TableMetadata>,
     data_sink: Arc<dyn DataSink>,
 ) -> Result<()> {
-    let normal_table = Arc::new(NormalTable::try_new(delta_table, Some(data_sink)).await?);
-    session_context.register_table(table_name, normal_table)?;
+    let table =
+        ModelarDbTable::try_new(delta_table, table_metadata.clone(), Some(data_sink)).await?;
+
+    session_context.register_table(&table_metadata.name, Arc::new(table))?;
 
     Ok(())
 }
 
-/// Register the time series table stored in `delta_table` with `time_series_table_metadata` and
-/// `data_sink` in `session_context`. If the time series table could not be registered with Apache
-/// DataFusion, return [`ModelarDbStorageError`](error::ModelarDbStorageError).
-pub fn register_time_series_table(
-    session_context: &SessionContext,
-    delta_table: DeltaTable,
-    time_series_table_metadata: Arc<TimeSeriesTableMetadata>,
-    data_sink: Arc<dyn DataSink>,
-) -> Result<()> {
-    let time_series_table =
-        TimeSeriesTable::new(delta_table, time_series_table_metadata.clone(), data_sink);
-
-    session_context.register_table(&time_series_table_metadata.name, time_series_table)?;
-
-    Ok(())
-}
-
-/// Return the [`Arc<TimeSeriesTableMetadata>`] of the table `maybe_time_series_table` if it is a
-/// time series table, otherwise [`None`] is returned.
-pub fn maybe_table_provider_to_time_series_table_metadata(
-    maybe_time_series_table: Arc<dyn TableProvider>,
-) -> Option<Arc<TimeSeriesTableMetadata>> {
-    (maybe_time_series_table.as_ref() as &dyn Any)
-        .downcast_ref::<TimeSeriesTable>()
-        .map(|time_series_table| time_series_table.time_series_table_metadata())
+/// Return the [`TableMetadata`] of `table_provider` if it is a table registered by ModelarDB,
+/// otherwise [`None`] is returned.
+pub fn maybe_table_provider_to_table_metadata(
+    table_provider: Arc<dyn TableProvider>,
+) -> Option<Arc<TableMetadata>> {
+    (table_provider.as_ref() as &dyn Any)
+        .downcast_ref::<ModelarDbTable>()
+        .map(|table| table.table_metadata())
 }
 
 /// Execute `statement` in `session_context` and return the result as a
