@@ -61,9 +61,13 @@ use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 use crate::remote::auth_layer::AuthLayer;
 
+/// Default maximum size of a decoded gRPC message. The value is copied from the private constant
+/// `DEFAULT_MAX_RECV_MESSAGE_SIZE` in tonic 0.14.6 at `src/codec/mod.rs:101`.
+const DEFAULT_MAX_DECODING_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
+
 /// Maximum size of a decoded gRPC message. It is increased from the default of 4 MiB to 16 MiB to
 /// allow bulk-loading larger batches.
-const MAX_DECODING_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+const MAX_DECODING_MESSAGE_SIZE: usize = 4 * DEFAULT_MAX_DECODING_MESSAGE_SIZE;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
 /// process the requests through [`FlightServiceHandler`]. All requests are passed through the
@@ -186,12 +190,13 @@ async fn execute_query_at_address(
 }
 
 /// Encode the schema and [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) in
-/// `query_result_stream` as [`FlightData`]. [`FlightDataEncoderBuilder`] splits record batches that
-/// are larger than its maximum flight data size into multiple [`FlightData`] so each message stays
-/// below the 4 MiB default limit. If no [`RecordBatch`] is not returned by `query_result_stream`,
-/// [`Status`] with the code [`tonic::Code::InvalidArgument`] is returned to the client, and if a
-/// record batch cannot be encoded, a [`Status`] with the code [`tonic::Code::Internal`] is returned
-/// to the client.
+/// `query_result_stream` as [`FlightData`]. View arrays are garbage collected by before they are
+/// encoded. [`FlightDataEncoderBuilder`] splits record batches that are larger than its maximum
+/// flight data size into multiple [`FlightData`] so each message stays below the 4 MiB default
+/// limit. If a [`RecordBatch`] cannot be retrieved from `query_result_stream`, a [`Status`] with
+/// the code [`tonic::Code::InvalidArgument`] is returned to the client, and if a record batch
+/// cannot be encoded, a [`Status`] with the code [`tonic::Code::Internal`] is returned to the
+/// client.
 fn encode_query_result(
     query_result_stream: SendableRecordBatchStream,
 ) -> BoxStream<'static, StdResult<FlightData, Status>> {
@@ -200,6 +205,7 @@ fn encode_query_result(
     // Errors from executing the query are converted to Status, so they can be forwarded as is
     // instead of being converted to Status with the code Internal by From<FlightError> for Status.
     let record_batch_stream = query_result_stream
+        .map_ok(functions::garbage_collect_view_arrays)
         .map_err(|error| FlightError::Tonic(Box::new(Status::invalid_argument(error.to_string()))));
 
     FlightDataEncoderBuilder::new()
@@ -1106,5 +1112,55 @@ impl FlightService for FlightServiceHandler {
         ]);
 
         Ok(Response::new(Box::pin(output)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use arrow_flight::decode::FlightRecordBatchStream;
+    use datafusion::arrow::array::StringViewArray;
+    use datafusion::arrow::datatypes::{DataType, Field};
+
+    // Tests for encode_query_result().
+    #[tokio::test]
+    async fn test_encode_query_result_only_encodes_data_referenced_by_sliced_view_arrays() {
+        // Create a record batch with enough strings that its size is larger then what can be sent.
+        let strings = StringViewArray::from_iter_values((0..4096).map(|i| format!("{i:x>2048}")));
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "tag",
+            DataType::Utf8View,
+            false,
+        )]));
+        let record_batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(strings)])
+            .unwrap()
+            .slice(0, 5); // Make the view array sparse.
+
+        assert!(record_batch.get_array_memory_size() > DEFAULT_MAX_DECODING_MESSAGE_SIZE);
+
+        // Check that the encoded record batch is now smaller than what can be sent.
+        let query_result_stream = Box::pin(RecordBatchStreamAdapter::new(
+            schema,
+            stream::iter(vec![Ok(record_batch.clone())]),
+        ));
+        let flight_data: Vec<FlightData> = encode_query_result(query_result_stream)
+            .try_collect()
+            .await
+            .unwrap();
+        assert!(
+            flight_data
+                .iter()
+                .all(|flight_data| flight_data.encoded_len() < DEFAULT_MAX_DECODING_MESSAGE_SIZE)
+        );
+
+        // Check that the encoded and then decoded record batch is the same.
+        let decoded_record_batches: Vec<RecordBatch> =
+            FlightRecordBatchStream::new_from_flight_data(stream::iter(flight_data).map(Ok))
+                .try_collect()
+                .await
+                .unwrap();
+
+        assert_eq!(decoded_record_batches, vec![record_batch]);
     }
 }
