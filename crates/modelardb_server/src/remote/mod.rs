@@ -62,7 +62,7 @@ use crate::error::{ModelarDbServerError, Result};
 use crate::remote::auth_layer::AuthLayer;
 
 /// The default maximum size of a decoded gRPC message in tonic, it is used for tests and as a
-/// reference point for calculating the larger size that modelardbd use which is stored in
+/// reference point for calculating the larger size that modelardbd uses which is stored in
 /// `MAX_DECODING_MESSAGE_SIZE`. The value is copied from the private constant
 /// `DEFAULT_MAX_RECV_MESSAGE_SIZE` in tonic 0.14.6 at `src/codec/mod.rs:101`.
 const DEFAULT_MAX_DECODING_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
