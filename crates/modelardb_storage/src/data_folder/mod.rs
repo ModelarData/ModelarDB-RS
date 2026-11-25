@@ -345,33 +345,20 @@ impl DataFolder {
         self.object_store.clone()
     }
 
-    /// Register all normal tables and time series tables in `self` with its [`SessionContext`].
-    /// `data_sink` is set as the [`DataSink`] for all of the tables. If the tables could not be
-    /// registered, [`ModelarDbStorageError`] is returned.
+    /// Register all tables in `self` with its [`SessionContext`]. `data_sink` is set as the
+    /// [`DataSink`] for all the tables. If the tables could not be registered,
+    /// [`ModelarDbStorageError`] is returned.
     pub async fn register_tables(&self, data_sink: Arc<dyn DataSink>) -> Result<()> {
-        // Register normal tables.
-        for normal_table_name in self.normal_table_names().await? {
-            let delta_table = self.delta_table(&normal_table_name).await?;
+        for table_metadata in self.table_metadata().await? {
+            let delta_table = self.delta_table(&table_metadata.name).await?;
 
-            crate::register_normal_table(
+            crate::register_table(
                 &self.session_context,
-                &normal_table_name,
                 delta_table,
+                table_metadata,
                 data_sink.clone(),
             )
             .await?;
-        }
-
-        // Register time series tables.
-        for metadata in self.time_series_table_metadata().await? {
-            let delta_table = self.delta_table(&metadata.name).await?;
-
-            crate::register_time_series_table(
-                &self.session_context,
-                delta_table,
-                metadata,
-                data_sink.clone(),
-            )?;
         }
 
         Ok(())
