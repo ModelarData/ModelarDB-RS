@@ -56,7 +56,7 @@ use url::Url;
 
 use crate::data_folder::delta_table_writer::DeltaTableWriter;
 use crate::error::{ModelarDbStorageError, Result};
-use crate::query::normal_table::NormalTable;
+use crate::query::modelardb_table::ModelarDbTable;
 use crate::{METADATA_FOLDER, TABLE_FOLDER, sql_and_concat};
 
 /// Functionality for managing Delta Lake tables in a local folder or an object store. A single
@@ -310,8 +310,17 @@ impl DataFolder {
             )
             .await?;
 
+        // Metadata tables are stored losslessly and have no generated columns.
+        let table_metadata = TableMetadata::try_new(
+            table_name.to_owned(),
+            Arc::new(schema.clone()),
+            vec![ColumnMetadata::Stored(ErrorBound::Lossless); schema.fields().len()],
+        )?;
+
         let table_reference = TableReference::partial("metadata", table_name);
-        let metadata_table = Arc::new(NormalTable::try_new(delta_table, None).await?);
+        let metadata_table =
+            Arc::new(ModelarDbTable::try_new(delta_table, Arc::new(table_metadata), None).await?);
+
         self.session_context
             .register_table(table_reference, metadata_table)?;
 
