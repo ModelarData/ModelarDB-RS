@@ -940,6 +940,17 @@ impl DataFolder {
 
         Ok(column_metadata)
     }
+
+    /// Return the [`TableMetadata`] of the table with `table_name` if it is registered with the
+    /// [`SessionContext`] of `self`, otherwise return [`None`]. Unlike
+    /// [`Self::table_metadata_for_table`], the metadata tables are not read.
+    pub async fn table_metadata_for_registered_table(
+        &self,
+        table_name: &str,
+    ) -> Option<Arc<TableMetadata>> {
+        let table_provider = self.session_context.table_provider(table_name).await.ok()?;
+        crate::maybe_table_provider_to_table_metadata(table_provider)
+    }
 }
 
 #[cfg(test)]
