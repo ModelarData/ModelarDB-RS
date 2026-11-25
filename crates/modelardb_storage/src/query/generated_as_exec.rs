@@ -23,9 +23,8 @@ use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
 use arrow::datatypes::Schema;
-use datafusion::arrow::array::StringArray;
+use arrow::util::display::array_value_to_string;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::arrow::temporal_conversions;
 use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::TaskContext;
@@ -38,7 +37,6 @@ use datafusion::physical_plan::{
 };
 use futures::StreamExt;
 use futures::stream::Stream;
-use modelardb_types::types::{TimestampArray, ValueArray};
 
 /// A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using
 /// [`GeneratedAsStream`] with the location it must be at and the [`PhysicalExpr`] that compute it.
@@ -66,7 +64,7 @@ pub(super) struct GeneratedAsExec {
     schema: Arc<Schema>,
     /// Columns to generate and the index they should be at.
     columns_to_generate: Vec<ColumnToGenerate>,
-    /// Execution plan to read batches of segments from.
+    /// Execution plan to read batches of rows from.
     input: Arc<dyn ExecutionPlan>,
     /// Properties about the plan used in query optimization.
     plan_properties: Arc<PlanProperties>,
@@ -81,7 +79,7 @@ impl GeneratedAsExec {
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
         // Specify that the record batches produced by the execution plan will have an unknown order
-        // as the output from its input (SortedJoinExec) does not guarantee a specific output order.
+        // as the output from its input does not guarantee a specific output order.
         let equivalence_properties = EquivalenceProperties::new(schema.clone());
 
         let plan_properties = Arc::new(PlanProperties::new(
@@ -212,43 +210,24 @@ impl GeneratedAsStream {
     }
 
     /// Format and return the first row in `batch` that causes `physical_expr` to fail when
-    /// generating values. If `physical_expr` never fails the string Unknown Row is returned, and a
-    /// [`DataFusionError`] is returned if `batch` is from a normal table.
+    /// generating values. If `physical_expr` never fails, the string `Unknown Row` is returned. If
+    /// a value in the row cannot be formatted, [`DataFusionError`] is returned.
     fn failing_row(
         batch: &RecordBatch,
         physical_expr: &Arc<dyn PhysicalExpr>,
     ) -> DataFusionResult<String> {
         for row_index in 0..batch.num_rows() {
             if physical_expr.evaluate(&batch.slice(row_index, 1)).is_err() {
-                let schema = batch.schema();
-                let mut formatted_values = Vec::with_capacity(batch.num_columns());
-
-                for column_index in 0..batch.num_columns() {
-                    let name = schema.field(column_index).name();
-                    let column = batch.column(column_index);
-
-                    if let Some(timestamps) = column.as_any().downcast_ref::<TimestampArray>() {
-                        // Store a readable version of timestamp if it is in the time interval that
-                        // can be represented by a NaiveDateTime, otherwise the integer is stored.
-                        let timestamp = timestamps.value(row_index);
-                        let formated_value = if let Some(naive_date_time) =
-                            temporal_conversions::timestamp_ms_to_datetime(timestamp)
-                        {
-                            format!("{name}: {naive_date_time}")
-                        } else {
-                            format!("{name}: {timestamp}")
-                        };
-                        formatted_values.push(formated_value);
-                    } else if let Some(fields) = column.as_any().downcast_ref::<ValueArray>() {
-                        formatted_values.push(format!("{name}: {}", fields.value(row_index)));
-                    } else if let Some(tags) = column.as_any().downcast_ref::<StringArray>() {
-                        formatted_values.push(format!("{name}: {}", tags.value(row_index)));
-                    } else {
-                        return Err(DataFusionError::Execution(format!(
-                            "Type of column with name '{name}' is not supported.",
-                        )));
-                    }
-                }
+                let formatted_values = batch
+                    .schema()
+                    .fields()
+                    .iter()
+                    .zip(batch.columns())
+                    .map(|(field, column)| {
+                        let value = array_value_to_string(column, row_index)?;
+                        Ok(format!("{}: {value}", field.name()))
+                    })
+                    .collect::<DataFusionResult<Vec<String>>>()?;
 
                 return Ok(formatted_values.join(", "));
             }
