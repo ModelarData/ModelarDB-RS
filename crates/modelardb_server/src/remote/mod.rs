@@ -61,12 +61,14 @@ use crate::context::Context;
 use crate::error::{ModelarDbServerError, Result};
 use crate::remote::auth_layer::AuthLayer;
 
-/// Default maximum size of a decoded gRPC message. The value is copied from the private constant
+/// The default maximum size of a decoded gRPC message in tonic, it is used for tests and as a
+/// reference point for calculating the larger size that modelardbd use which is stored in
+/// `MAX_DECODING_MESSAGE_SIZE`. The value is copied from the private constant
 /// `DEFAULT_MAX_RECV_MESSAGE_SIZE` in tonic 0.14.6 at `src/codec/mod.rs:101`.
 const DEFAULT_MAX_DECODING_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
 
-/// Maximum size of a decoded gRPC message. It is increased from the default of 4 MiB to 16 MiB to
-/// allow bulk-loading larger batches.
+/// The maximum size of a decoded gRPC message in modelardbd. It is increased from the default of 4
+/// MiB to 16 MiB to allow bulk-loading larger batches.
 const MAX_DECODING_MESSAGE_SIZE: usize = 4 * DEFAULT_MAX_DECODING_MESSAGE_SIZE;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that passes `context` to the methods that
@@ -190,13 +192,13 @@ async fn execute_query_at_address(
 }
 
 /// Encode the schema and [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) in
-/// `query_result_stream` as [`FlightData`]. View arrays are garbage collected by before they are
+/// `query_result_stream` as [`FlightData`]. View arrays are garbage collected before they are
 /// encoded. [`FlightDataEncoderBuilder`] splits record batches that are larger than its maximum
-/// flight data size into multiple [`FlightData`] so each message stays below the 4 MiB default
-/// limit. If a [`RecordBatch`] cannot be retrieved from `query_result_stream`, a [`Status`] with
-/// the code [`tonic::Code::InvalidArgument`] is returned to the client, and if a record batch
-/// cannot be encoded, a [`Status`] with the code [`tonic::Code::Internal`] is returned to the
-/// client.
+/// flight data size into multiple [`FlightData`] so each message stays below the default limit in
+/// `DEFAULT_MAX_DECODING_MESSAGE_SIZE`. If a [`RecordBatch`] cannot be retrieved from
+/// `query_result_stream`, a [`Status`] with the code [`tonic::Code::InvalidArgument`] is returned
+/// to the client, and if a record batch cannot be encoded, a [`Status`] with the code
+/// [`tonic::Code::Internal`] is returned to the client.
 fn encode_query_result(
     query_result_stream: SendableRecordBatchStream,
 ) -> BoxStream<'static, StdResult<FlightData, Status>> {
