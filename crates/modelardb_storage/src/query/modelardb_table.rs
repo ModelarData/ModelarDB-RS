@@ -238,4 +238,31 @@ impl TableProvider for ModelarDbTable {
             input,
         ))
     }
+
+    /// Specify that filters on stored columns are pushed to the Delta Lake table as it reports,
+    /// while filters on generated columns are unsupported since the columns are not stored.
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        if !self.has_generated_columns() {
+            return self.table_provider.supports_filters_pushdown(filters);
+        }
+
+        // Delta Lake decides the pushdown of each filter independently, so the filters on stored
+        // columns are passed to it one at a time.
+        filters
+            .iter()
+            .map(|filter| {
+                if self.is_stored_filter(filter) {
+                    Ok(self
+                        .table_provider
+                        .supports_filters_pushdown(&[filter])?
+                        .remove(0))
+                } else {
+                    Ok(TableProviderFilterPushDown::Unsupported)
+                }
+            })
+            .collect()
+    }
 }
