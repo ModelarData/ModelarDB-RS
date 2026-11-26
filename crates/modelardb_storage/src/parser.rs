@@ -932,6 +932,31 @@ fn check_unsupported_feature_is_disabled(
     }
 }
 
+/// Return the query schema of the columns in `column_defs`. A [`ParserError`] is returned if a
+/// column type is not supported by Apache DataFusion.
+fn column_defs_to_query_schema(column_defs: Vec<ColumnDef>) -> StdResult<Schema, ParserError> {
+    let context_provider = ParserContextProvider::new();
+    let sql_to_rel = SqlToRel::new(&context_provider);
+    let schema = sql_to_rel
+        .build_schema(column_defs)
+        .map_err(|error| ParserError::ParserError(error.to_string()))?;
+
+    // SqlToRel.build() is hard coded to create Timestamp(TimeUnit::Nanosecond, TimeZone)
+    // but Delta Lake currently only supports Timestamp(TimeUnit::Microsecond, TimeZone).
+    let supported_fields = schema
+        .fields()
+        .iter()
+        .map(|field| match field.data_type() {
+            DataType::Timestamp(_time_unit, timezone) => {
+                let data_type = DataType::Timestamp(TimeUnit::Microsecond, timezone.clone());
+                Field::new(field.name(), data_type, field.is_nullable())
+            }
+            _data_type => field.as_ref().clone(),
+        })
+        .collect::<Vec<Field>>();
+
+    Ok(Schema::new(supported_fields))
+}
     }
 
     } else {
