@@ -247,6 +247,17 @@ impl ModelarDbDialect {
         }
     }
 
+    /// Return [`true`] if the token stream starts with ERROR BOUND, otherwise [`false`] is
+    /// returned. The method does not consume tokens.
+    fn next_tokens_are_error_bound(&self, parser: &Parser) -> bool {
+        if let Token::Word(error) = parser.peek_nth_token(0).token
+            && error.value.to_uppercase() == "ERROR"
+            && let Token::Word(bound) = parser.peek_nth_token(1).token
+            && bound.value.to_uppercase() == "BOUND"
+        {
+            true
+        } else {
+            false
         }
     }
 
