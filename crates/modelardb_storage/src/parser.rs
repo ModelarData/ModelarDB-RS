@@ -957,8 +957,89 @@ fn column_defs_to_query_schema(column_defs: Vec<ColumnDef>) -> StdResult<Schema,
 
     Ok(Schema::new(supported_fields))
 }
+
+/// Return the [`ColumnMetadata`] of each column in `column_defs` with the fields in `query_schema`.
+/// Columns with an ERROR BOUND are stored with the error bound, columns with a generation
+/// expression are generated, and all other columns are stored losslessly. A [`ParserError`] is
+/// returned if a column has more than one ERROR BOUND or generation expression, or if an error
+/// bound or a generation expression is invalid.
+fn column_defs_to_column_metadata(
+    column_defs: &[ColumnDef],
+    query_schema: &Arc<Schema>,
+) -> StdResult<Vec<ColumnMetadata>, ParserError> {
+    let to_parser_error = |error: DataFusionError| ParserError::ParserError(error.to_string());
+
+    let context_provider = ParserContextProvider::new();
+    let sql_to_rel = SqlToRel::new(&context_provider);
+    let df_query_schema = query_schema
+        .clone()
+        .to_dfschema()
+        .map_err(to_parser_error)?;
+    let mut planner_context = PlannerContext::new();
+    let execution_props = ExecutionProps::new();
+
+    let mut column_metadata = Vec::with_capacity(column_defs.len());
+
+    for (column_def, field) in column_defs.iter().zip(query_schema.fields()) {
+        let mut maybe_column_metadata = None;
+
+        for column_option_def in &column_def.options {
+            let metadata = match &column_option_def.option {
+                ColumnOption::DialectSpecific(dialect_specific_tokens) => {
+                    ColumnMetadata::Stored(tokens_to_error_bound(dialect_specific_tokens)?)
+                }
+                ColumnOption::Generated {
+                    generated_as: GeneratedAs::Always,
+                    generation_expr: Some(sql_expr),
+                    generation_expr_mode: None | Some(GeneratedExpressionMode::Virtual),
+                    ..
+                } => {
+                    // Ensure that the parsed sqlparser expression can be converted to a logical
+                    // Apache DataFusion expression within the context of schema to check it for
+                    // errors.
+                    let expr = sql_to_rel
+                        .sql_to_expr(sql_expr.clone(), &df_query_schema, &mut planner_context)
+                        .map_err(to_parser_error)?;
+
+                    // Ensure the logical Apache DataFusion expression can be converted to a
+                    // physical Apache DataFusion expression within the context of schema. This is
+                    // to improve error messages if the user-defined expression has semantic errors.
+                    planner::create_physical_expr(
+                        &expr,
+                        &df_query_schema,
+                        &execution_props,
+                        &PhysicalPlanningContext::default(),
+                    )
+                    .map_err(to_parser_error)?;
+
+                    let generated_column = GeneratedColumn::try_from_expr(expr, &df_query_schema)
+                        .expect("Columns in expr should be validated by sql_to_expr().");
+
+                    ColumnMetadata::Generated(generated_column)
+                }
+                ColumnOption::Generated { .. } => {
+                    return Err(ParserError::ParserError(
+                        "Only GENERATED ALWAYS AS (expression) and AS (expression) are supported."
+                            .to_owned(),
+                    ));
+                }
+                _ => continue,
+            };
+
+            if maybe_column_metadata.replace(metadata).is_some() {
+                return Err(ParserError::ParserError(format!(
+                    "The column '{}' can only have one ERROR BOUND or generation expression.",
+                    field.name()
+                )));
+            }
+        }
+
+        column_metadata
+            .push(maybe_column_metadata.unwrap_or(ColumnMetadata::Stored(ErrorBound::Lossless)));
     }
 
+    Ok(column_metadata)
+}
     } else {
     }
 }
