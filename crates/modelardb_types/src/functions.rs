@@ -1,21 +1,24 @@
 /* Copyright 2024 The ModelarDB Contributors
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-*     http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 //! Implementation of helper functions to operate on the types used through ModelarDB.
 
-use arrow::datatypes::Schema;
+use std::sync::Arc;
+
+use arrow::array::{ArrayRef, AsArray, GenericByteViewArray, RecordBatch};
+use arrow::datatypes::{ByteViewType, DataType, Schema};
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 
@@ -42,6 +45,42 @@ pub fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>> {
 pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
     let ipc_message = IpcMessage(schema_bytes.into());
     Schema::try_from(ipc_message).map_err(|error| error.into())
+}
+
+/// Return `record_batch` with its [`DataType::Utf8View`] and [`DataType::BinaryView`] arrays
+/// garbage collected if they are sparse. This is done because Apache Arrow IPC truncates the views
+/// of sliced view arrays but encodes their data buffers in full. Thus, significantly more data than
+/// necessary may be sent to the client, which may exceed the client maximum decoding size.
+pub fn garbage_collect_view_arrays(record_batch: RecordBatch) -> RecordBatch {
+    let columns = record_batch
+        .columns()
+        .iter()
+        .map(|array| match array.data_type() {
+            DataType::Utf8View if is_view_array_sparse(array.as_string_view()) => {
+                Arc::new(array.as_string_view().gc()) as ArrayRef
+            }
+            DataType::BinaryView if is_view_array_sparse(array.as_binary_view()) => {
+                Arc::new(array.as_binary_view().gc())
+            }
+            _ => array.clone(),
+        })
+        .collect();
+
+    RecordBatch::try_new(record_batch.schema(), columns)
+        .expect("The length of the columns should not change after garbage collections.")
+}
+
+/// Return [`true`] if the data buffers of `byte_view_array` are more than twice the size of the
+/// data referenced by its views, otherwise [`false`]. The threshold is the same as the one used by
+/// `BatchCoalescer` in arrow-select 59.3.0 at `src/coalesce/byte_view.rs:378`.
+fn is_view_array_sparse<T: ByteViewType>(view_array: &GenericByteViewArray<T>) -> bool {
+    let data_buffers_size: usize = view_array
+        .data_buffers()
+        .iter()
+        .map(|buffer| buffer.len())
+        .sum();
+
+    data_buffers_size > 2 * view_array.total_buffer_bytes_used()
 }
 
 /// Parse a value followed by a percentage or a unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB,
@@ -123,8 +162,6 @@ fn split_at_unit(input: &str) -> Result<(u64, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::sync::Arc;
 
     use arrow::array::ArrowPrimitiveType;
     use arrow::datatypes::Field;
