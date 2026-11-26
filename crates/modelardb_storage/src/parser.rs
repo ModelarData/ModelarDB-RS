@@ -799,36 +799,6 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     }
 }
 
-/// Perform additional semantic checks to ensure that the CREATE TIME SERIES TABLE statement from which
-/// `name` and `column_defs` was extracted was correct. A [`ParserError`] is returned if any of the
-/// additional semantic checks fails.
-fn semantic_checks_for_create_time_series_table(
-    name: String,
-    column_defs: Vec<ColumnDef>,
-) -> StdResult<TimeSeriesTableMetadata, ParserError> {
-    // Extract the error bounds for all columns. It is here to keep the parser types in the parser.
-    let error_bounds = extract_error_bounds_for_all_columns(&column_defs)?;
-
-    // Extract the expressions for all columns. It is here to keep the parser types in the parser.
-    let generated_columns = extract_generation_exprs_for_all_columns(&column_defs)
-        .map_err(|error| ParserError::ParserError(error.to_string()))?;
-
-    // Convert column definitions to a schema.
-    let query_schema = column_defs_to_time_series_table_query_schema(column_defs)
-        .map_err(|error| ParserError::ParserError(error.to_string()))?;
-
-    // Return the metadata required to create a time series table.
-    let time_series_table_metadata = TimeSeriesTableMetadata::try_new(
-        name,
-        Arc::new(query_schema),
-        error_bounds,
-        generated_columns,
-    )
-    .map_err(|error| ParserError::ParserError(error.to_string()))?;
-
-    Ok(time_series_table_metadata)
-}
-
 /// Return [`ParserError`] if [`Statement`] is not a [`CreateTable`] or if an unsupported
 /// feature is set.
 fn check_unsupported_features_are_disabled(
@@ -1000,106 +970,6 @@ fn check_unsupported_feature_is_disabled(
     }
 }
 
-/// Return [`Schema`] if the types of the `column_defs` are supported by time series tables,
-/// otherwise a [`DataFusionError`] is returned.
-fn column_defs_to_time_series_table_query_schema(
-    column_defs: Vec<ColumnDef>,
-) -> StdResult<Schema, DataFusionError> {
-    let mut fields = Vec::with_capacity(column_defs.len());
-
-    // Manually convert TIMESTAMP, FIELD, and TAG columns to Apache DataFusion types.
-    for column_def in column_defs {
-        let normalized_name = normalize_name(&column_def.name.value);
-
-        let field = match column_def.data_type {
-            SQLDataType::Timestamp(None, TimezoneInfo::None) => {
-                Field::new(normalized_name, ArrowTimestamp::DATA_TYPE, false)
-            }
-            SQLDataType::Real => {
-                let mut metadata: HashMap<String, String> = HashMap::with_capacity(2);
-                for column_option_def in column_def.options {
-                    match column_option_def.option {
-                        ColumnOption::DialectSpecific(dialect_specific_tokens) => {
-                            let (error_bound, is_relative) =
-                                tokens_to_error_bound(&dialect_specific_tokens)?;
-                            let suffix = if is_relative { "%" } else { "" };
-                            metadata
-                                .insert("Error Bound".to_owned(), error_bound.to_string() + suffix);
-                        }
-                        ColumnOption::Generated {
-                            generated_as: _,
-                            sequence_options: _,
-                            generation_expr,
-                            generation_expr_mode: _,
-                            generated_keyword: _,
-                        } => {
-                            metadata.insert(
-                                "Generated As".to_owned(),
-                                generation_expr.unwrap().to_string(),
-                            );
-                        }
-                        option => {
-                            return Err(DataFusionError::SQL(
-                                Box::new(ParserError::ParserError(format!(
-                                    "{option} is not supported in time series tables."
-                                ))),
-                                None,
-                            ));
-                        }
-                    }
-                }
-
-                Field::new(normalized_name, ArrowValue::DATA_TYPE, false).with_metadata(metadata)
-            }
-            SQLDataType::Text => Field::new(normalized_name, DataType::Utf8View, false),
-            data_type => {
-                return Err(DataFusionError::SQL(
-                    Box::new(ParserError::ParserError(format!(
-                        "{data_type} is not supported in time series tables."
-                    ))),
-                    None,
-                ));
-            }
-        };
-
-        fields.push(field);
-    }
-
-    Ok(Schema::new(fields))
-}
-
-/// Extract the error bounds from the columns in `column_defs`. The error bound for the timestamp
-/// and tag columns will be lossless so the error bound of each column can be accessed using its index.
-fn extract_error_bounds_for_all_columns(
-    column_defs: &[ColumnDef],
-) -> StdResult<Vec<ErrorBound>, ParserError> {
-    let mut error_bounds = Vec::with_capacity(column_defs.len());
-
-    for column_def in column_defs {
-        let mut error_bound = ErrorBound::Lossless;
-
-        for column_def_option in &column_def.options {
-            if let ColumnOption::DialectSpecific(dialect_specific_tokens) =
-                &column_def_option.option
-            {
-                let (error_bound_value, is_relative) =
-                    tokens_to_error_bound(dialect_specific_tokens)?;
-
-                error_bound = if !is_relative {
-                    ErrorBound::try_new_absolute(error_bound_value)
-                } else {
-                    ErrorBound::try_new_relative(error_bound_value)
-                }
-                .map_err(|error| ParserError::ParserError(error.to_string()))?;
-            }
-        }
-
-        error_bounds.push(error_bound);
-    }
-
-    Ok(error_bounds)
-}
-
 /// Return the value of an error bound and a [`bool`] indicating if it is relative if it is the only
 /// token in `dialect_specific_tokens`, otherwise [`ParserError`] is returned. Assumes the tokens
 /// have been extracted from a [`ColumnOption::DialectSpecific`].
@@ -1120,63 +990,6 @@ fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> StdResult<(f32, b
             "Dialect specific tokens must be an error bound.".to_owned(),
         ))
     }
-}
-
-/// Extract the [`GeneratedColumn`] from the field columns in `column_defs`. The [`GeneratedColumn`]
-/// for the timestamp columns, stored field columns, tag columns will be [`None`] so the
-/// [`GeneratedColumn`] of each generated field column can be accessed using its column index.
-fn extract_generation_exprs_for_all_columns(
-    column_defs: &[ColumnDef],
-) -> StdResult<Vec<Option<GeneratedColumn>>, DataFusionError> {
-    let context_provider = ParserContextProvider::new();
-    let sql_to_rel = SqlToRel::new(&context_provider);
-    let schema = sql_to_rel.build_schema(column_defs.to_vec())?;
-    let df_schema = schema.clone().to_dfschema()?;
-    let mut planner_context = PlannerContext::new();
-    let execution_props = ExecutionProps::new();
-
-    let mut generated_columns = Vec::with_capacity(column_defs.len());
-
-    for column_def in column_defs {
-        let mut generated_column = None;
-
-        for column_def_option in &column_def.options {
-            if let ColumnOption::Generated {
-                generated_as: _,
-                sequence_options: _,
-                generation_expr,
-                generation_expr_mode: _,
-                generated_keyword: _,
-            } = &column_def_option.option
-            {
-                let sql_expr = generation_expr.as_ref().unwrap();
-
-                // Ensure that the parsed sqlparser expression can be converted to a logical Apache
-                // Arrow DataFusion expression within the context of schema to check it for errors.
-                let expr =
-                    sql_to_rel.sql_to_expr(sql_expr.clone(), &df_schema, &mut planner_context)?;
-
-                // Ensure the logical Apache DataFusion expression can be converted to a physical
-                // Apache DataFusion expression within the context of schema. This is to improve
-                // error messages if the user-defined expression has semantic errors.
-                let _physical_expr = planner::create_physical_expr(
-                    &expr,
-                    &df_schema,
-                    &execution_props,
-                    &PhysicalPlanningContext::default(),
-                )?;
-
-                generated_column = Some(
-                    GeneratedColumn::try_from_expr(expr, &df_schema)
-                        .expect("Columns in expr should be validated by sql_to_expr()."),
-                );
-            }
-        }
-
-        generated_columns.push(generated_column);
-    }
-
-    Ok(generated_columns)
 }
 
 /// Extract the addresses specified in an INCLUDE clause if at least one is specified in `query`,
