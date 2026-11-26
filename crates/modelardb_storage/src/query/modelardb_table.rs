@@ -218,8 +218,10 @@ impl TableProvider for ModelarDbTable {
             .scan(state, Some(&stored_projection), filters, limit)
             .await?;
 
-        // Cast each generated column to its type in the query schema, as the expression may
-        // compute values of another type, e.g., Float64 for a Float32 column.
+        // Apache DataFusion coerces types when planning queries, but the expressions of generated
+        // columns are planned directly, so they are coerced here, e.g., a Float32 column plus a
+        // Float64 literal is computed as Float64. The result is then cast to the column's type in
+        // the query schema.
         let df_input_schema = input.schema().to_dfschema()?;
         let execution_props = ExecutionProps::new();
         let planning_context = PhysicalPlanningContext::default();
@@ -231,7 +233,10 @@ impl TableProvider for ModelarDbTable {
                 let expr = generated_column
                     .expr
                     .clone()
+                    .rewrite(&mut TypeCoercionRewriter::new(&df_input_schema))?
+                    .data
                     .cast_to(data_type, &df_input_schema)?;
+
                 let physical_expr = planner::create_physical_expr(
                     &expr,
                     &df_input_schema,
