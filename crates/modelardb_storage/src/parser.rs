@@ -975,8 +975,9 @@ fn column_defs_to_query_schema(column_defs: Vec<ColumnDef>) -> StdResult<Schema,
 /// Return the [`ColumnMetadata`] of each column in `column_defs` with the fields in `query_schema`.
 /// Columns with an ERROR BOUND are stored with the error bound, columns with a generation
 /// expression are generated, and all other columns are stored losslessly. A [`ParserError`] is
-/// returned if a column has more than one ERROR BOUND or generation expression, or if an error
-/// bound or a generation expression is invalid.
+/// returned if a column has more than one ERROR BOUND or generation expression, if a column option
+/// other than ERROR BOUND, a generation expression, NULL, or NOT NULL is used, or if an error bound
+/// or a generation expression is invalid.
 fn column_defs_to_column_metadata(
     column_defs: &[ColumnDef],
     query_schema: &Arc<Schema>,
@@ -1037,7 +1038,13 @@ fn column_defs_to_column_metadata(
                             .to_owned(),
                     ));
                 }
-                _ => continue,
+                // NULL and NOT NULL are used by build_schema() to set the nullability of the column.
+                ColumnOption::Null | ColumnOption::NotNull => continue,
+                option => {
+                    return Err(ParserError::ParserError(format!(
+                        "{option} is not supported."
+                    )));
+                }
             };
 
             if maybe_column_metadata.replace(metadata).is_some() {
