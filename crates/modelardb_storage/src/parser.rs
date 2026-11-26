@@ -192,14 +192,16 @@ pub fn tokenize_and_parse_sql_expression(
         .map_err(|error| error.into())
 }
 
-/// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing the column
-/// options ERROR BOUND value\[%\] and AS (expression) in CREATE TABLE,
-/// INCLUDE 'address'\[, 'address'\]+ DQL statements,
-/// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements,
-/// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] statements,
-/// and TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements. `unit` is an optional,
-/// case-insensitive byte unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB) that
-/// `num_bytes` is multiplied by.
+/// SQL dialect that extends `sqlparser's` [`GenericDialect`] with support for parsing the following
+/// column options and statements:
+/// * ERROR BOUND value\[%\] and AS (expression) column options in CREATE TABLE
+/// * INCLUDE 'address'\[, 'address'\]+ SELECT
+/// * VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\]
+/// * OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\]
+/// * TRUNCATE \[CLUSTER\] table_name\[, table_name\]+
+///
+/// `unit` is an optional, case-insensitive byte unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB,
+/// or TiB) that `num_bytes` is multiplied by.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
