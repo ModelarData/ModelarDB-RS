@@ -712,20 +712,15 @@ impl ContextProvider for ParserContextProvider {
     }
 }
 
-/// Perform semantic checks to ensure that the CREATE TABLE and CREATE TIME SERIES TABLE statement in
-/// `create_table` was correct. A [`ModelarDbStorageError`] is returned if a semantic check fails.
-/// If all semantic checks are successful a [`ModelarDbStatement`] is returned.
+/// Perform semantic checks to ensure that the CREATE TABLE statement in `create_table` was correct.
+/// A [`ModelarDbStorageError`] is returned if a semantic check fails. If all semantic checks are
+///  successful, a [`ModelarDbStatement`] is returned.
 fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<ModelarDbStatement> {
-    // Ensure it is a create table and only supported features are enabled.
+    // Ensure only supported features are enabled.
     check_unsupported_features_are_disabled(&create_table)?;
 
-    // let is used so a compile error is raised if CreateTable is changed.
-    let CreateTable {
-        name,
-        columns,
-        iceberg,
-        ..
-    } = create_table;
+    // let is used so a compiler error is raised if CreateTable is changed.
+    let CreateTable { name, columns, .. } = create_table;
 
     // Extract the table name from the Statement::CreateTable.
     if name.0.len() > 1 {
@@ -759,44 +754,10 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     // Check if the table name is a valid object_store path and database table name.
     object_store::path::Path::parse(&normalized_name)?;
 
-    // Create a ModelarDbStatement with the information for creating the table of the specified
-    // type. As sqlparser's CreateTable does not support time series tables, Iceberg is set to true
-    // if the SQL command was CREATE TIME SERIES TABLE and false if it was CREATE TABLE.
-    if iceberg {
-        // Create a time series table for time series that only supports TIMESTAMP, FIELD, and TAG.
-        let time_series_table_metadata =
-            semantic_checks_for_create_time_series_table(normalized_name, columns)?;
+    // Create the metadata of the table from the column definitions.
+    let table_metadata = column_defs_to_table_metadata(normalized_name, columns)?;
 
-        Ok(ModelarDbStatement::CreateTimeSeriesTable(Arc::new(
-            time_series_table_metadata,
-        )))
-    } else {
-        // Create a table that supports all columns types supported by Apache DataFusion.
-        let context_provider = ParserContextProvider::new();
-        let sql_to_rel = SqlToRel::new(&context_provider);
-        let schema = sql_to_rel
-            .build_schema(columns)
-            .map_err(|error| ParserError::ParserError(error.to_string()))?;
-
-        // SqlToRel.build() is hard coded to create Timestamp(TimeUnit::Nanosecond, TimeZone)
-        // but Delta Lake currently only supports Timestamp(TimeUnit::Microsecond, TimeZone).
-        let supported_fields = schema
-            .flattened_fields()
-            .iter()
-            .map(|field| match field.data_type() {
-                DataType::Timestamp(_time_unit, timezone) => {
-                    let data_type = DataType::Timestamp(TimeUnit::Microsecond, timezone.clone());
-                    Field::new(field.name(), data_type, field.is_nullable())
-                }
-                _data_type => (*field).clone(),
-            })
-            .collect::<Vec<Field>>();
-
-        Ok(ModelarDbStatement::CreateNormalTable {
-            name: normalized_name,
-            schema: Schema::new(supported_fields),
-        })
-    }
+    Ok(ModelarDbStatement::CreateTable(Arc::new(table_metadata)))
 }
 
 /// Return [`ParserError`] if [`Statement`] is not a [`CreateTable`] or if an unsupported
@@ -814,7 +775,7 @@ fn check_unsupported_features_are_disabled(
         if_not_exists,
         transient,
         volatile,
-        iceberg: _iceberg, // true if CREATE TIME SERIES TABLE and false if CREATE TABLE.
+        iceberg,
         name: _name,
         columns: _columns,
         constraints,
@@ -875,6 +836,7 @@ fn check_unsupported_features_are_disabled(
     check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
     check_unsupported_feature_is_disabled(*transient, "TRANSIENT")?;
     check_unsupported_feature_is_disabled(*volatile, "VOLATILE")?;
+    check_unsupported_feature_is_disabled(*iceberg, "ICEBERG")?;
     check_unsupported_feature_is_disabled(*snapshot, "SNAPSHOT")?;
     check_unsupported_feature_is_disabled(
         with_storage_lifecycle_policy.is_some(),
