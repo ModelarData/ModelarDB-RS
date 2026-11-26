@@ -279,10 +279,16 @@ impl ModelarDbDialect {
         self.expect_word_value(parser, "BOUND")?;
 
         // value[%].
-        let error_bound = self.parse_positive_literal_f32(parser)?;
+        let error_bound_value = self.parse_positive_literal_f32(parser)?;
         let is_relative = parser.consume_token(&Token::Mod);
 
-        Ok(new_error_bound_column_option(error_bound, is_relative))
+        // ColumnOption::DialectSpecific is used as a substitute since sqlparser does not have a
+        // column option for error bounds. The bool in Token::Number is true if the error bound is
+        // relative, and tokens_to_error_bound() extracts the error bound again.
+        Ok(ColumnOption::DialectSpecific(vec![Token::Number(
+            error_bound_value.to_string(),
+            is_relative,
+        )]))
     }
 
     /// Return [`true`] if the token stream starts with AS (, otherwise [`false`] is returned. The
@@ -586,13 +592,6 @@ fn new_address_setting(address: String) -> Setting {
     });
 
     Setting { key, value }
-}
-
-/// Create a [`ColumnOption::DialectSpecific`] that is repurposed for storing an error bound as
-/// sqlparser does not have a column option for error bounds. The [`Token::Number`] contains
-/// `error_bound`, and its [`bool`] is `is_relative`.
-fn new_error_bound_column_option(error_bound: f32, is_relative: bool) -> ColumnOption {
-    ColumnOption::DialectSpecific(vec![Token::Number(error_bound.to_string(), is_relative)])
 }
 
 impl Dialect for ModelarDbDialect {
