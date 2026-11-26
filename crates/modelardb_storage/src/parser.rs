@@ -587,7 +587,8 @@ impl Dialect for ModelarDbDialect {
     /// * OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\]
     /// * TRUNCATE \[CLUSTER\] table_name\[, table_name\]+
     ///
-    /// Otherwise, [`None`] is returned so [`sqlparser`] parses the statement.
+    /// Otherwise, [`None`] is returned without consuming any tokens, so [`sqlparser`] parses the
+    /// statement.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
         if parser.peek_keyword(Keyword::INCLUDE) {
             Some(self.parse_include_query(parser))
@@ -602,12 +603,14 @@ impl Dialect for ModelarDbDialect {
         }
     }
 
-    /// Check if the next tokens are ERROR BOUND, if so, attempt to parse the token stream as an
-    /// ERROR BOUND value\[%\] column option. If not, check if the next tokens are AS (, if so,
-    /// attempt to parse the token stream as an AS (expression) column option. If both checks fail,
-    /// [`None`] is returned without consuming any tokens so [`sqlparser`] parses the column option.
-    /// If parsing succeeds, a [`ColumnOption`] is returned, and if not, a [`ParserError`] is
-    /// returned.
+    /// Parse the column options ModelarDB adds to CREATE TABLE. If the token stream starts with one
+    /// of the following column options, it is parsed and returned as a [`ColumnOption`], or a
+    /// [`ParserError`] is returned if it cannot be parsed:
+    /// * ERROR BOUND value\[%\]
+    /// * AS (expression)
+    ///
+    /// Otherwise, [`None`] is returned without consuming any tokens, so [`sqlparser`] parses the
+    /// column option.
     fn parse_column_option(
         &self,
         parser: &mut Parser,
