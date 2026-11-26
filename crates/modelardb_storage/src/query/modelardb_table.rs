@@ -25,6 +25,7 @@ use arrow::datatypes::Schema;
 use async_trait::async_trait;
 use datafusion::catalog::Session;
 use datafusion::common::ToDFSchema;
+use datafusion::common::tree_node::TreeNode;
 use datafusion::datasource::sink::{DataSink, DataSinkExec};
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -32,6 +33,7 @@ use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::physical_planning_context::PhysicalPlanningContext;
 use datafusion::logical_expr::{Expr, ExprSchemable, TableProviderFilterPushDown};
+use datafusion::optimizer::analyzer::type_coercion::TypeCoercionRewriter;
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::ExecutionPlan;
 use deltalake::DeltaTable;
@@ -194,6 +196,15 @@ impl TableProvider for ModelarDbTable {
                     source_columns.extend(&generated_column.source_columns);
                 }
             }
+        }
+
+        // Only include GeneratedAsExec in the query plan if there are columns to generate. This
+        // also covers projections without columns, e.g., for COUNT(*), since GeneratedAsExec cannot
+        // create record batches without columns.
+        if generated_columns.is_empty() {
+            return table_provider
+                .scan(state, Some(&stored_projection), filters, limit)
+                .await;
         }
 
         for source_column in source_columns {
