@@ -714,12 +714,12 @@ impl ContextProvider for ParserContextProvider {
 
 /// Perform semantic checks to ensure that the CREATE TABLE statement in `create_table` was correct.
 /// A [`ModelarDbStorageError`] is returned if a semantic check fails. If all semantic checks are
-///  successful, a [`ModelarDbStatement`] is returned.
+/// successful, a [`ModelarDbStatement`] is returned.
 fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<ModelarDbStatement> {
     // Ensure only supported features are enabled.
     check_unsupported_features_are_disabled(&create_table)?;
 
-    // let is used so a compiler error is raised if CreateTable is changed.
+    // Only the name and columns are used since no other features are enabled.
     let CreateTable { name, columns, .. } = create_table;
 
     // Extract the table name from the Statement::CreateTable.
@@ -760,8 +760,8 @@ fn semantic_checks_for_create_table(create_table: CreateTable) -> Result<Modelar
     Ok(ModelarDbStatement::CreateTable(Arc::new(table_metadata)))
 }
 
-/// Return [`ParserError`] if [`Statement`] is not a [`CreateTable`] or if an unsupported
-/// feature is set.
+/// Return [`ParserError`] naming the first unsupported feature that is set in `create_table` if
+/// an unsupported feature is set, otherwise return [`Ok`].
 fn check_unsupported_features_are_disabled(
     create_table: &CreateTable,
 ) -> StdResult<(), ParserError> {
