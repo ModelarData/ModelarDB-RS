@@ -260,10 +260,28 @@ impl ModelarDbDialect {
     /// Return [`true`] if the token stream starts with ERROR BOUND, otherwise [`false`] is
     /// returned. The method does not consume tokens.
     fn next_tokens_are_error_bound(&self, parser: &Parser) -> bool {
-        if let Token::Word(error) = parser.peek_nth_token(0).token
-            && error.value.to_uppercase() == "ERROR"
-            && let Token::Word(bound) = parser.peek_nth_token(1).token
-            && bound.value.to_uppercase() == "BOUND"
+        // ERROR BOUND. BOUND is not a keyword in sqlparser, so the value of the word is compared.
+        parser.peek_keyword(Keyword::ERROR)
+            && matches!(
+                parser.peek_nth_token(1).token,
+                Token::Word(word) if word.value.eq_ignore_ascii_case("BOUND")
+            )
+    }
+
+    /// Parse ERROR BOUND value\[%\] to a [`ColumnOption::DialectSpecific`] with the error bound. A
+    /// [`ParserError`] is returned if ERROR BOUND is typed incorrectly or the value is not a
+    /// literal float.
+    fn parse_error_bound(&self, parser: &mut Parser) -> StdResult<ColumnOption, ParserError> {
+        // ERROR BOUND.
+        parser.expect_keyword(Keyword::ERROR)?;
+        self.expect_word_value(parser, "BOUND")?;
+
+        // value[%].
+        let error_bound = self.parse_positive_literal_f32(parser)?;
+        let is_relative = parser.consume_token(&Token::Mod);
+
+        Ok(new_error_bound_column_option(error_bound, is_relative))
+    }
         {
             true
         } else {
