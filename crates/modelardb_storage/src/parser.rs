@@ -312,11 +312,7 @@ impl ModelarDbDialect {
     /// The method does not consume tokens.
     fn next_token_is_include(&self, parser: &Parser) -> bool {
         // INCLUDE.
-        if let Token::Word(word) = parser.peek_nth_token(0).token {
-            word.keyword == Keyword::INCLUDE
-        } else {
-            false
-        }
+        parser.peek_keyword(Keyword::INCLUDE)
     }
 
     /// Parse INCLUDE address to a [`Value`] containing the address. A [`ParserError`] is returned
@@ -350,11 +346,7 @@ impl ModelarDbDialect {
     /// The method does not consume tokens.
     fn next_token_is_vacuum(&self, parser: &Parser) -> bool {
         // VACUUM.
-        if let Token::Word(word) = parser.peek_nth_token(0).token {
-            word.keyword == Keyword::VACUUM
-        } else {
-            false
-        }
+        parser.peek_keyword(Keyword::VACUUM)
     }
 
     /// Parse VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a
@@ -369,14 +361,7 @@ impl ModelarDbDialect {
         parser.expect_keyword(Keyword::VACUUM)?;
 
         // If the next token is CLUSTER, consume it and set the flag to vacuum the entire cluster.
-        let vacuum_cluster = if let Token::Word(word) = parser.peek_nth_token(0).token
-            && word.keyword == Keyword::CLUSTER
-        {
-            parser.expect_keyword(Keyword::CLUSTER)?;
-            true
-        } else {
-            false
-        };
+        let vacuum_cluster = parser.parse_keyword(Keyword::CLUSTER);
 
         // If the next token is a word that is not RETAIN, attempt to parse table names.
         let table_names = if let Token::Word(word) = parser.peek_nth_token(0).token
@@ -388,11 +373,7 @@ impl ModelarDbDialect {
         };
 
         // If the next token is RETAIN, attempt to parse the retention period in seconds.
-        let maybe_retention_period_in_seconds = if let Token::Word(word) =
-            parser.peek_nth_token(0).token
-            && word.keyword == Keyword::RETAIN
-        {
-            parser.expect_keyword(Keyword::RETAIN)?;
+        let maybe_retention_period_in_seconds = if parser.parse_keyword(Keyword::RETAIN) {
             let retention_period_in_seconds = self.parse_unsigned_literal_u64(parser)?;
 
             if retention_period_in_seconds > MAX_RETENTION_PERIOD_IN_SECONDS {
@@ -420,11 +401,7 @@ impl ModelarDbDialect {
     /// The method does not consume tokens.
     fn next_token_is_optimize(&self, parser: &Parser) -> bool {
         // OPTIMIZE.
-        if let Token::Word(word) = parser.peek_nth_token(0).token {
-            word.keyword == Keyword::OPTIMIZE
-        } else {
-            false
-        }
+        parser.peek_keyword(Keyword::OPTIMIZE)
     }
 
     /// Parse OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] to a
@@ -440,14 +417,7 @@ impl ModelarDbDialect {
         parser.expect_keyword(Keyword::OPTIMIZE)?;
 
         // If the next token is CLUSTER, consume it and set the flag to optimize the entire cluster.
-        let optimize_cluster = if let Token::Word(word) = parser.peek_nth_token(0).token
-            && word.keyword == Keyword::CLUSTER
-        {
-            parser.expect_keyword(Keyword::CLUSTER)?;
-            true
-        } else {
-            false
-        };
+        let optimize_cluster = parser.parse_keyword(Keyword::CLUSTER);
 
         // If the next token is a word that is not TARGET, attempt to parse table names.
         let table_names = if let Token::Word(word) = parser.peek_nth_token(0).token
@@ -460,10 +430,7 @@ impl ModelarDbDialect {
 
         // If the next token is TARGET, attempt to parse the target file size in bytes, optionally
         // followed by a unit that the target file size is multiplied by.
-        let maybe_target_size_in_bytes = if let Token::Word(word) = parser.peek_nth_token(0).token
-            && word.keyword == Keyword::TARGET
-        {
-            parser.expect_keyword(Keyword::TARGET)?;
+        let maybe_target_size_in_bytes = if parser.parse_keyword(Keyword::TARGET) {
             let target_size_in_bytes =
                 self.parse_unsigned_literal_u64_with_optional_byte_unit(parser)?;
 
@@ -542,11 +509,7 @@ impl ModelarDbDialect {
     /// The method does not consume tokens.
     fn next_token_is_truncate(&self, parser: &Parser) -> bool {
         // TRUNCATE.
-        if let Token::Word(word) = parser.peek_nth_token(0).token {
-            word.keyword == Keyword::TRUNCATE
-        } else {
-            false
-        }
+        parser.peek_keyword(Keyword::TRUNCATE)
     }
 
     /// Parse TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ to a [`Statement::Truncate`] with the
@@ -558,17 +521,11 @@ impl ModelarDbDialect {
         parser.expect_keyword(Keyword::TRUNCATE)?;
 
         // If the next token is CLUSTER, consume it and set the flag to truncate the entire cluster.
-        let truncate_cluster = if let Token::Word(word) = parser.peek_nth_token(0).token
-            && word.keyword == Keyword::CLUSTER
-        {
-            parser.expect_keyword(Keyword::CLUSTER)?;
-
-            // A boolean is not used since we reuse the `on_cluster` field in Statement::Truncate.
-            // Some() with any value signifies that the flag is set.
-            Some(Ident::new("cluster"))
-        } else {
-            None
-        };
+        // A boolean is not used since we reuse the `on_cluster` field in Statement::Truncate.
+        // Some() with any value signifies that the flag is set.
+        let truncate_cluster = parser
+            .parse_keyword(Keyword::CLUSTER)
+            .then(|| Ident::new("cluster"));
 
         // Parse the table names. At least one table name is required.
         let table_names = self.parse_table_names(parser)?;
