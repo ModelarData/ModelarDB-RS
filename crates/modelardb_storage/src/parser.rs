@@ -282,17 +282,29 @@ impl ModelarDbDialect {
 
         Ok(new_error_bound_column_option(error_bound, is_relative))
     }
-        {
-            true
-        } else {
-            false
-        }
+
+    /// Return [`true`] if the token stream starts with AS (, otherwise [`false`] is returned. The
+    /// method does not consume tokens.
+    fn next_tokens_are_generated_as(&self, parser: &Parser) -> bool {
+        // AS (.
+        parser.peek_keyword(Keyword::AS) && parser.peek_nth_token(1).token == Token::LParen
     }
 
-        // An error bound column option does not exist so ColumnOption::DialectSpecific and
-        }
-    }
+    /// Parse AS (expression) to a [`ColumnOption::Generated`], the same as GENERATED ALWAYS AS
+    /// (expression). A [`ParserError`] is returned if the expression cannot be parsed.
+    fn parse_generated_as(&self, parser: &mut Parser) -> StdResult<ColumnOption, ParserError> {
+        // AS (expression).
+        parser.expect_keyword(Keyword::AS)?;
+        parser.expect_token(&Token::LParen)?;
+        let generation_expr = parser.parse_expr()?;
+        parser.expect_token(&Token::RParen)?;
 
+        Ok(ColumnOption::Generated {
+            generated_as: GeneratedAs::Always,
+            sequence_options: None,
+            generation_expr: Some(generation_expr),
+            generation_expr_mode: None,
+            generated_keyword: false,
         })
     }
 
