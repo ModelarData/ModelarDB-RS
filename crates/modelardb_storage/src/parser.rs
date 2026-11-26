@@ -932,25 +932,9 @@ fn check_unsupported_feature_is_disabled(
     }
 }
 
-/// Return the value of an error bound and a [`bool`] indicating if it is relative if it is the only
-/// token in `dialect_specific_tokens`, otherwise [`ParserError`] is returned. Assumes the tokens
-/// have been extracted from a [`ColumnOption::DialectSpecific`].
-fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> StdResult<(f32, bool), ParserError> {
-    if dialect_specific_tokens.len() != 1 {
-        return Err(ParserError::ParserError(
-            "Error bounds are currently the only supported dialect specific options.".to_owned(),
-        ));
     }
 
-    if let Token::Number(error_bound_string, is_relative) = &dialect_specific_tokens[0] {
-        let error_bound_value = error_bound_string
-            .parse::<f32>()
-            .map_err(|_error| ParserError::ParserError("Error bound is not a float".to_owned()))?;
-        Ok((error_bound_value, *is_relative))
     } else {
-        Err(ParserError::ParserError(
-            "Dialect specific tokens must be an error bound.".to_owned(),
-        ))
     }
 }
 
