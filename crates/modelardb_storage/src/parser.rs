@@ -283,12 +283,19 @@ impl ModelarDbDialect {
         let is_relative = parser.consume_token(&Token::Mod);
 
         // ColumnOption::DialectSpecific is used as a substitute since sqlparser does not have a
-        // column option for error bounds. The bool in Token::Number is true if the error bound is
-        // relative, and tokens_to_error_bound() extracts the error bound again.
-        Ok(ColumnOption::DialectSpecific(vec![Token::Number(
-            error_bound_value.to_string(),
-            is_relative,
-        )]))
+        // column option for error bounds. It contains the parsed tokens, so it is displayed as the
+        // SQL it was parsed from, and tokens_to_error_bound() extracts the error bound again.
+        let mut tokens = vec![
+            Token::make_keyword("ERROR"),
+            Token::make_word("BOUND", None),
+            Token::Number(error_bound_value.to_string(), false),
+        ];
+
+        if is_relative {
+            tokens.push(Token::Mod);
+        }
+
+        Ok(ColumnOption::DialectSpecific(tokens))
     }
 
     /// Return [`true`] if the token stream starts with AS (, otherwise [`false`] is returned. The
