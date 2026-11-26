@@ -649,21 +649,18 @@ impl Dialect for ModelarDbDialect {
         self.dialect.is_identifier_part(c)
     }
 
-    /// Check if the next tokens are CREATE TIME SERIES TABLE, if so, attempt to parse the token stream
-    /// as a CREATE TIME SERIES TABLE DDL statement. If not, check if the next token is INCLUDE, if so,
-    /// attempt to parse the token stream as an INCLUDE 'address'\[, 'address'\]+ DQL statement.
-    /// If not, check if the next token is VACUUM, if so, attempt to parse the token stream as a
-    /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statement. If not,
-    /// check if the next token is OPTIMIZE, if so, attempt to parse the token stream as an
-    /// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] statement. If not,
-    /// check if the next token is TRUNCATE, if so, attempt to parse the token stream as a
-    /// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statement. If all checks fail, [`None`] is
-    /// returned so [`sqlparser`] uses its parsing methods for all other statements. If parsing
-    /// succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is returned.
+    /// Check if the next token is INCLUDE, if so, attempt to parse the token stream as an INCLUDE
+    /// 'address'\[, 'address'\]+ DQL statement. If not, check if the next token is VACUUM, if so,
+    /// attempt to parse the token stream as a VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\]
+    /// \[RETAIN num_seconds\] statement. If not, check if the next token is OPTIMIZE, if so,
+    /// attempt to parse the token stream as an OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\]
+    /// \[TARGET num_bytes\[unit\]\] statement. If not, check if the next token is TRUNCATE, if so,
+    /// attempt to parse the token stream as a TRUNCATE \[CLUSTER\] table_name\[, table_name\]+
+    /// statement. If all checks fail, [`None`] is returned so [`sqlparser`] uses its parsing methods
+    /// for all other statements. If parsing succeeds, a [`Statement`] is returned, and if not, a
+    /// [`ParserError`] is returned.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
-        if self.next_tokens_are_create_time_series_table(parser) {
-            Some(self.parse_create_time_series_table(parser))
-        } else if self.next_token_is_include(parser) {
+        if self.next_token_is_include(parser) {
             Some(self.parse_include_query(parser))
         } else if self.next_token_is_vacuum(parser) {
             Some(self.parse_vacuum(parser))
@@ -673,6 +670,25 @@ impl Dialect for ModelarDbDialect {
             Some(self.parse_truncate(parser))
         } else {
             None
+        }
+    }
+
+    /// Check if the next tokens are ERROR BOUND, if so, attempt to parse the token stream as an
+    /// ERROR BOUND value\[%\] column option. If not, check if the next tokens are AS (, if so,
+    /// attempt to parse the token stream as an AS (expression) column option. If both checks fail,
+    /// [`None`] is returned without consuming any tokens so [`sqlparser`] parses the column option.
+    /// If parsing succeeds, a [`ColumnOption`] is returned, and if not, a [`ParserError`] is
+    /// returned.
+    fn parse_column_option(
+        &self,
+        parser: &mut Parser,
+    ) -> StdResult<Option<StdResult<Option<ColumnOption>, ParserError>>, ParserError> {
+        if self.next_tokens_are_error_bound(parser) {
+            Ok(Some(self.parse_error_bound(parser).map(Some)))
+        } else if self.next_tokens_are_generated_as(parser) {
+            Ok(Some(self.parse_generated_as(parser).map(Some)))
+        } else {
+            Ok(None)
         }
     }
 }
