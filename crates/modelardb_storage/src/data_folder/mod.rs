@@ -51,7 +51,7 @@ use modelardb_types::types::{
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
-use object_store::{ObjectStore, ObjectStoreExt};
+use object_store::ObjectStore;
 use url::Url;
 
 use crate::data_folder::delta_table_writer::DeltaTableWriter;
