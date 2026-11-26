@@ -24,7 +24,7 @@ use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use arrow::datatypes::TimeUnit;
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::common::{DFSchema, DataFusionError, TableReference, ToDFSchema};
 use datafusion::config::ConfigOptions;
 use datafusion::execution::context::ExecutionProps;
@@ -37,14 +37,13 @@ use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use modelardb_types::functions::{byte_unit_multiplier, normalize_name}; // Fully imported to not conflict.
 use modelardb_types::types::{
-    ArrowTimestamp, ArrowValue, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
-    TimeSeriesTableMetadata,
+    ColumnMetadata, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS, TableMetadata,
 };
 use sqlparser::ast::{
-    CascadeOption, ColumnDef, ColumnOption, ColumnOptionDef, CreateTable, CreateTableOptions,
-    DataType as SQLDataType, Expr, GeneratedAs, HiveDistributionStyle, Ident, ObjectName,
-    ObjectNamePart, ObjectType, Query, Setting, Statement, TimezoneInfo, Truncate,
-    TruncateIdentityOption, TruncateTableTarget, Value, ValueWithSpan,
+    CascadeOption, ColumnDef, ColumnOption, CreateTable, CreateTableOptions, Expr, GeneratedAs,
+    GeneratedExpressionMode, HiveDistributionStyle, Ident, ObjectName, ObjectNamePart, ObjectType,
+    Query, Setting, Statement, Truncate, TruncateIdentityOption, TruncateTableTarget, Value,
+    ValueWithSpan,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{ALL_KEYWORDS, Keyword};
@@ -59,9 +58,7 @@ use crate::error::{ModelarDbStorageError, Result};
 #[derive(Debug)]
 pub enum ModelarDbStatement {
     /// CREATE TABLE.
-    CreateNormalTable { name: String, schema: Schema },
-    /// CREATE TIME SERIES TABLE.
-    CreateTimeSeriesTable(Arc<TimeSeriesTableMetadata>),
+    CreateTable(Arc<TableMetadata>),
     /// INSERT, EXPLAIN, SELECT.
     Statement(Statement),
     /// INCLUDE addresses SELECT.
@@ -78,8 +75,8 @@ pub enum ModelarDbStatement {
 
 /// Tokenizes and parses the SQL statement in `sql` and returns its parsed representation in the form
 /// of a [`ModelarDbStatement`]. Returns a [`ModelarDbStorageError`] if `sql` is empty, contains
-/// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, CREATE TIME SERIES
-/// TABLE, INSERT, EXPLAIN, INCLUDE, SELECT, TRUNCATE, DROP TABLE, VACUUM, and OPTIMIZE are supported.
+/// multiple statements, or the statement is unsupported. Currently, CREATE TABLE, INSERT, EXPLAIN,
+/// INCLUDE, SELECT, TRUNCATE, DROP TABLE, VACUUM, and OPTIMIZE are supported.
 pub fn tokenize_and_parse_sql_statement(sql_statement: &str) -> Result<ModelarDbStatement> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql_statement)?;
 
@@ -195,12 +192,14 @@ pub fn tokenize_and_parse_sql_expression(
         .map_err(|error| error.into())
 }
 
-/// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing CREATE TIME
-/// SERIES TABLE table_name DDL statements, INCLUDE 'address'\[, 'address'\]+ DQL statements,
+/// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for parsing the column
+/// options ERROR BOUND value\[%\] and AS (expression) in CREATE TABLE,
+/// INCLUDE 'address'\[, 'address'\]+ DQL statements,
 /// VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] statements,
-/// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] statements, and
-/// TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements. `unit` is an optional, case-insensitive
-/// byte unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB) that `num_bytes` is multiplied by.
+/// OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] statements,
+/// and TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ statements. `unit` is an optional,
+/// case-insensitive byte unit (B, K, KB, KiB, M, MB, MiB, G, GB, GiB, T, TB, or TiB) that
+/// `num_bytes` is multiplied by.
 #[derive(Debug)]
 struct ModelarDbDialect {
     /// Dialect to use for identifying identifiers.
