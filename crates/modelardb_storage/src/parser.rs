@@ -316,13 +316,6 @@ impl ModelarDbDialect {
         })
     }
 
-    /// Return [`true`] if the token stream starts with INCLUDE, otherwise [`false`] is returned.
-    /// The method does not consume tokens.
-    fn next_token_is_include(&self, parser: &Parser) -> bool {
-        // INCLUDE.
-        parser.peek_keyword(Keyword::INCLUDE)
-    }
-
     /// Parse INCLUDE address to a [`Value`] containing the address. A [`ParserError`] is returned
     /// if INCLUDE is typed incorrectly or the address cannot be extracted.
     fn parse_include_query(&self, parser: &mut Parser) -> StdResult<Statement, ParserError> {
@@ -348,13 +341,6 @@ impl ModelarDbDialect {
         let statement = Statement::Query(boxed_query);
 
         Ok(statement)
-    }
-
-    /// Return [`true`] if the token stream starts with VACUUM, otherwise [`false`] is returned.
-    /// The method does not consume tokens.
-    fn next_token_is_vacuum(&self, parser: &Parser) -> bool {
-        // VACUUM.
-        parser.peek_keyword(Keyword::VACUUM)
     }
 
     /// Parse VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\] to a
@@ -403,13 +389,6 @@ impl ModelarDbDialect {
             storage_specifier: maybe_retention_period_in_seconds
                 .map(|period| Ident::new(period.to_string())),
         })
-    }
-
-    /// Return [`true`] if the token stream starts with OPTIMIZE, otherwise [`false`] is returned.
-    /// The method does not consume tokens.
-    fn next_token_is_optimize(&self, parser: &Parser) -> bool {
-        // OPTIMIZE.
-        parser.peek_keyword(Keyword::OPTIMIZE)
     }
 
     /// Parse OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\] to a
@@ -513,13 +492,6 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Return [`true`] if the token stream starts with TRUNCATE, otherwise [`false`] is returned.
-    /// The method does not consume tokens.
-    fn next_token_is_truncate(&self, parser: &Parser) -> bool {
-        // TRUNCATE.
-        parser.peek_keyword(Keyword::TRUNCATE)
-    }
-
     /// Parse TRUNCATE \[CLUSTER\] table_name\[, table_name\]+ to a [`Statement::Truncate`] with the
     /// table names in the `table_names` field and the cluster flag in the `on_cluster` field.
     /// A [`ParserError`] is returned if TRUNCATE is not the first word or the table names cannot be
@@ -607,24 +579,23 @@ impl Dialect for ModelarDbDialect {
         self.dialect.is_identifier_part(c)
     }
 
-    /// Check if the next token is INCLUDE, if so, attempt to parse the token stream as an INCLUDE
-    /// 'address'\[, 'address'\]+ DQL statement. If not, check if the next token is VACUUM, if so,
-    /// attempt to parse the token stream as a VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\]
-    /// \[RETAIN num_seconds\] statement. If not, check if the next token is OPTIMIZE, if so,
-    /// attempt to parse the token stream as an OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\]
-    /// \[TARGET num_bytes\[unit\]\] statement. If not, check if the next token is TRUNCATE, if so,
-    /// attempt to parse the token stream as a TRUNCATE \[CLUSTER\] table_name\[, table_name\]+
-    /// statement. If all checks fail, [`None`] is returned so [`sqlparser`] uses its parsing methods
-    /// for all other statements. If parsing succeeds, a [`Statement`] is returned, and if not, a
-    /// [`ParserError`] is returned.
+    /// Parse the statements ModelarDB adds to [`GenericDialect`]. If the token stream starts with
+    /// one of the following statements, it is parsed and returned as a [`Statement`], or a
+    /// [`ParserError`] is returned if it cannot be parsed:
+    /// * INCLUDE 'address'\[, 'address'\]+ SELECT
+    /// * VACUUM \[CLUSTER\] \[table_name\[, table_name\]+\] \[RETAIN num_seconds\]
+    /// * OPTIMIZE \[CLUSTER\] \[table_name\[, table_name\]+\] \[TARGET num_bytes\[unit\]\]
+    /// * TRUNCATE \[CLUSTER\] table_name\[, table_name\]+
+    ///
+    /// Otherwise, [`None`] is returned so [`sqlparser`] parses the statement.
     fn parse_statement(&self, parser: &mut Parser) -> Option<StdResult<Statement, ParserError>> {
-        if self.next_token_is_include(parser) {
+        if parser.peek_keyword(Keyword::INCLUDE) {
             Some(self.parse_include_query(parser))
-        } else if self.next_token_is_vacuum(parser) {
+        } else if parser.peek_keyword(Keyword::VACUUM) {
             Some(self.parse_vacuum(parser))
-        } else if self.next_token_is_optimize(parser) {
+        } else if parser.peek_keyword(Keyword::OPTIMIZE) {
             Some(self.parse_optimize(parser))
-        } else if self.next_token_is_truncate(parser) {
+        } else if parser.peek_keyword(Keyword::TRUNCATE) {
             Some(self.parse_truncate(parser))
         } else {
             None
