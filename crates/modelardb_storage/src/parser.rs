@@ -233,6 +233,16 @@ impl ModelarDbDialect {
         }
     }
 
+    /// Return [`Ok`] if the next [`Token`] is a [`Token::Word`] with the value `expected`,
+    /// ignoring case, otherwise a [`ParserError`] is returned.
+    fn expect_word_value(&self, parser: &mut Parser, expected: &str) -> StdResult<(), ParserError> {
+        let token_with_location = parser.next_token();
+        match &token_with_location.token {
+            Token::Word(word) if word.value.eq_ignore_ascii_case(expected) => Ok(()),
+            _ => parser.expected(expected, token_with_location),
+        }
+    }
+
     /// Return its value as a [`f32`] if the next [`Token`] is a [`Token::Number`], otherwise a
     /// [`ParserError`] is returned.
     fn parse_positive_literal_f32(&self, parser: &mut Parser) -> StdResult<f32, ParserError> {
