@@ -1040,8 +1040,37 @@ fn column_defs_to_column_metadata(
 
     Ok(column_metadata)
 }
+
+/// Return the [`ErrorBound`] in `dialect_specific_tokens` if they are the tokens of an ERROR BOUND
+/// value\[%\] column option, otherwise [`ParserError`] is returned. Assumes the tokens have been
+/// extracted from a [`ColumnOption::DialectSpecific`] created by [`ModelarDbDialect`].
+fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> StdResult<ErrorBound, ParserError> {
+    let (error_bound_string, is_relative) = match dialect_specific_tokens {
+        [_error, _bound, Token::Number(error_bound_string, _)] => (error_bound_string, false),
+        [
+            _error,
+            _bound,
+            Token::Number(error_bound_string, _),
+            Token::Mod,
+        ] => (error_bound_string, true),
+        _ => {
+            return Err(ParserError::ParserError(
+                "Error bounds are currently the only supported dialect specific options."
+                    .to_owned(),
+            ));
+        }
+    };
+
+    let error_bound_value = error_bound_string
+        .parse::<f32>()
+        .map_err(|_error| ParserError::ParserError("Error bound is not a float.".to_owned()))?;
+
+    if is_relative {
+        ErrorBound::try_new_relative(error_bound_value)
     } else {
+        ErrorBound::try_new_absolute(error_bound_value)
     }
+    .map_err(|error| ParserError::ParserError(error.to_string()))
 }
 
 /// Extract the addresses specified in an INCLUDE clause if at least one is specified in `query`,
