@@ -629,6 +629,13 @@ fn new_address_setting(address: String) -> Setting {
     Setting { key, value }
 }
 
+/// Create a [`ColumnOption::DialectSpecific`] that is repurposed for storing an error bound as
+/// sqlparser does not have a column option for error bounds. The [`Token::Number`] contains
+/// `error_bound`, and its [`bool`] is `is_relative`.
+fn new_error_bound_column_option(error_bound: f32, is_relative: bool) -> ColumnOption {
+    ColumnOption::DialectSpecific(vec![Token::Number(error_bound.to_string(), is_relative)])
+}
+
 impl Dialect for ModelarDbDialect {
     /// Return [`true`] if a character is a valid start character for an unquoted identifier,
     /// otherwise [`false`] is returned.
