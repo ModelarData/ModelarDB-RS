@@ -932,6 +932,20 @@ fn check_unsupported_feature_is_disabled(
     }
 }
 
+/// Return the [`TableMetadata`] for the table with `name` and the columns in `column_defs`. A
+/// [`ParserError`] is returned if a column type is not supported, a column option is invalid, or
+/// the columns cannot form a table.
+fn column_defs_to_table_metadata(
+    name: String,
+    column_defs: Vec<ColumnDef>,
+) -> StdResult<TableMetadata, ParserError> {
+    let query_schema = Arc::new(column_defs_to_query_schema(column_defs.clone())?);
+    let column_metadata = column_defs_to_column_metadata(&column_defs, &query_schema)?;
+
+    TableMetadata::try_new(name, query_schema, column_metadata)
+        .map_err(|error| ParserError::ParserError(error.to_string()))
+}
+
 /// Return the query schema of the columns in `column_defs`. A [`ParserError`] is returned if a
 /// column type is not supported by Apache DataFusion.
 fn column_defs_to_query_schema(column_defs: Vec<ColumnDef>) -> StdResult<Schema, ParserError> {
