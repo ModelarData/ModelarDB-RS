@@ -792,14 +792,8 @@ mod tests {
 
         // Optimize merges the small files into one, and vacuum physically deletes the stale files
         // left behind. Vacuum should only remove Parquet data files, never the _delta_log commits.
-        data_folder
-            .optimize_table(TABLE_NAME, None)
-            .await
-            .unwrap();
-        data_folder
-            .vacuum_table(TABLE_NAME, Some(0))
-            .await
-            .unwrap();
+        data_folder.optimize_table(TABLE_NAME, None).await.unwrap();
+        data_folder.vacuum_table(TABLE_NAME, Some(0)).await.unwrap();
 
         // Only the single merged Apache Parquet file should remain alongside the _delta_log folder.
         assert_eq!(files_in_table_folder(&temp_dir).len(), 2);
@@ -852,9 +846,7 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!(
-                "Invalid State Error: Table log for table '{TABLE_NAME}' already exists.",
-            )
+            format!("Invalid State Error: Table log for table '{TABLE_NAME}' already exists.",)
         );
     }
 
@@ -884,19 +876,13 @@ mod tests {
 
         wal.create_table_log(&metadata).await.unwrap();
 
-        wal.append_to_table_log(TABLE_NAME, &batch)
-            .unwrap();
-        wal.append_to_table_log(TABLE_NAME, &batch)
-            .unwrap();
+        wal.append_to_table_log(TABLE_NAME, &batch).unwrap();
+        wal.append_to_table_log(TABLE_NAME, &batch).unwrap();
 
         wal.remove_table_log(TABLE_NAME).unwrap();
         wal.create_table_log(&metadata).await.unwrap();
 
-        assert_eq!(
-            wal.append_to_table_log(TABLE_NAME, &batch)
-                .unwrap(),
-            0
-        );
+        assert_eq!(wal.append_to_table_log(TABLE_NAME, &batch).unwrap(), 0);
     }
 
     #[tokio::test]
@@ -907,9 +893,7 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!(
-                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
-            )
+            format!("Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",)
         );
     }
 
@@ -922,21 +906,9 @@ mod tests {
 
         let batch = table::table_record_batch(10);
 
-        assert_eq!(
-            wal.append_to_table_log(TABLE_NAME, &batch)
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            wal.append_to_table_log(TABLE_NAME, &batch)
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            wal.append_to_table_log(TABLE_NAME, &batch)
-                .unwrap(),
-            2
-        );
+        assert_eq!(wal.append_to_table_log(TABLE_NAME, &batch).unwrap(), 0);
+        assert_eq!(wal.append_to_table_log(TABLE_NAME, &batch).unwrap(), 1);
+        assert_eq!(wal.append_to_table_log(TABLE_NAME, &batch).unwrap(), 2);
     }
 
     #[tokio::test]
@@ -948,9 +920,7 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!(
-                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
-            )
+            format!("Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",)
         );
     }
 
@@ -962,22 +932,16 @@ mod tests {
             .unwrap();
 
         let batch = table::table_record_batch(10);
-        wal.append_to_table_log(TABLE_NAME, &batch)
-            .unwrap();
-        wal.append_to_table_log(TABLE_NAME, &batch)
-            .unwrap();
+        wal.append_to_table_log(TABLE_NAME, &batch).unwrap();
+        wal.append_to_table_log(TABLE_NAME, &batch).unwrap();
 
-        let unpersisted = wal
-            .unpersisted_batches_in_table_log(TABLE_NAME)
-            .unwrap();
+        let unpersisted = wal.unpersisted_batches_in_table_log(TABLE_NAME).unwrap();
         assert_eq!(unpersisted.len(), 2);
 
         wal.mark_batches_as_persisted_in_table_log(TABLE_NAME, HashSet::from([0, 1]))
             .unwrap();
 
-        let unpersisted = wal
-            .unpersisted_batches_in_table_log(TABLE_NAME)
-            .unwrap();
+        let unpersisted = wal.unpersisted_batches_in_table_log(TABLE_NAME).unwrap();
 
         assert!(unpersisted.is_empty());
     }
@@ -986,14 +950,11 @@ mod tests {
     async fn test_mark_batches_as_persisted_in_table_log_fails_if_table_log_does_not_exist() {
         let (_temp_dir, wal) = new_empty_write_ahead_log().await;
 
-        let result =
-            wal.mark_batches_as_persisted_in_table_log(TABLE_NAME, HashSet::new());
+        let result = wal.mark_batches_as_persisted_in_table_log(TABLE_NAME, HashSet::new());
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!(
-                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
-            )
+            format!("Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",)
         );
     }
 
@@ -1005,14 +966,10 @@ mod tests {
             .unwrap();
 
         let batch = table::table_record_batch(10);
-        wal.append_to_table_log(TABLE_NAME, &batch)
-            .unwrap();
-        wal.append_to_table_log(TABLE_NAME, &batch)
-            .unwrap();
+        wal.append_to_table_log(TABLE_NAME, &batch).unwrap();
+        wal.append_to_table_log(TABLE_NAME, &batch).unwrap();
 
-        let unpersisted = wal
-            .unpersisted_batches_in_table_log(TABLE_NAME)
-            .unwrap();
+        let unpersisted = wal.unpersisted_batches_in_table_log(TABLE_NAME).unwrap();
 
         assert_eq!(unpersisted.len(), 2);
     }
@@ -1025,9 +982,7 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!(
-                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
-            )
+            format!("Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",)
         );
     }
 
@@ -1040,34 +995,18 @@ mod tests {
 
         let batch = table::table_record_batch(10);
 
-        assert_eq!(
-            wal.append_to_table_log(TABLE_NAME, &batch)
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            wal.append_to_table_log(TABLE_NAME, &batch)
-                .unwrap(),
-            1
-        );
+        assert_eq!(wal.append_to_table_log(TABLE_NAME, &batch).unwrap(), 0);
+        assert_eq!(wal.append_to_table_log(TABLE_NAME, &batch).unwrap(), 1);
 
-        let unpersisted = wal
-            .unpersisted_batches_in_table_log(TABLE_NAME)
-            .unwrap();
+        let unpersisted = wal.unpersisted_batches_in_table_log(TABLE_NAME).unwrap();
         assert_eq!(unpersisted.len(), 2);
 
         wal.truncate_table_log(TABLE_NAME).unwrap();
 
-        let unpersisted = wal
-            .unpersisted_batches_in_table_log(TABLE_NAME)
-            .unwrap();
+        let unpersisted = wal.unpersisted_batches_in_table_log(TABLE_NAME).unwrap();
         assert!(unpersisted.is_empty());
 
-        assert_eq!(
-            wal.append_to_table_log(TABLE_NAME, &batch)
-                .unwrap(),
-            2
-        );
+        assert_eq!(wal.append_to_table_log(TABLE_NAME, &batch).unwrap(), 2);
     }
 
     #[tokio::test]
@@ -1078,9 +1017,7 @@ mod tests {
 
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!(
-                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
-            )
+            format!("Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",)
         );
     }
 
@@ -1101,8 +1038,7 @@ mod tests {
         let table_log = wal.table_log(TABLE_NAME).unwrap();
         assert_eq!(table_log.segment_size_threshold_in_bytes, batch_memory_size);
 
-        wal.append_to_table_log(TABLE_NAME, &batch)
-            .unwrap();
+        wal.append_to_table_log(TABLE_NAME, &batch).unwrap();
 
         let closed_segments = table_log.closed_segments.lock().unwrap();
         assert_eq!(closed_segments.len(), 1);
@@ -1392,10 +1328,7 @@ mod tests {
         let (temp_dir, data_folder) = create_data_folder_with_table().await;
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
-        let delta_table = data_folder
-            .delta_table(TABLE_NAME)
-            .await
-            .unwrap();
+        let delta_table = data_folder.delta_table(TABLE_NAME).await.unwrap();
 
         segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
