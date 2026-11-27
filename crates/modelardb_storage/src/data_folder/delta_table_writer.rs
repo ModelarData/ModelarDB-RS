@@ -346,6 +346,17 @@ mod tests {
                 .is_none()
         );
     }
+
+    #[tokio::test]
+    async fn test_commit_is_blind_append() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let delta_table = write_record_batch(&data_folder).await;
+
+        let mut history = delta_table.history(Some(1));
+        let commit = history.try_next().await.unwrap().unwrap();
+        assert_eq!(commit.is_blind_append, Some(true));
+    }
     async fn last_commit_metadata(
         delta_table: &DeltaTable,
         key: &str,
