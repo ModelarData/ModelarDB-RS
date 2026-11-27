@@ -961,9 +961,10 @@ mod tests {
     use arrow::datatypes::ArrowPrimitiveType;
     use modelardb_test::table::{self, NoOpDataSink, TABLE_NAME};
     use modelardb_types::types::ArrowTimestamp;
-    use tempfile::TempDir;
 
-    const ROW_COUNT: usize = 5;
+    use crate::test::{
+        ROW_COUNT, create_data_folder_with_table, file_paths, row_count, write_record_batch,
+    };
 
     // Tests for DataFolder.
     #[tokio::test]
@@ -1579,18 +1580,6 @@ mod tests {
         assert!(table_metadata.is_none());
     }
 
-    async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-
-        data_folder
-            .create_table(&table::table_metadata())
-            .await
-            .unwrap();
-
-        (temp_dir, data_folder)
-    }
-
     fn lossless_table_metadata() -> TableMetadata {
         let query_schema = Arc::new(Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, true),
@@ -1605,39 +1594,8 @@ mod tests {
         .unwrap()
     }
 
-    async fn write_record_batch(data_folder: &DataFolder) -> DeltaTable {
-        data_folder
-            .write_record_batches(
-                TABLE_NAME,
-                &[table::table_record_batch(ROW_COUNT)],
-                HashSet::new(),
-            )
-            .await
-            .unwrap()
-    }
-
     async fn active_file_count(data_folder: &DataFolder) -> usize {
         let delta_table = data_folder.delta_table(TABLE_NAME).await.unwrap();
         delta_table.get_file_uris().unwrap().count()
-    }
-
-    async fn file_paths(data_folder: &DataFolder) -> Vec<String> {
-        let delta_table = data_folder.delta_table(TABLE_NAME).await.unwrap();
-
-        delta_table
-            .snapshot()
-            .unwrap()
-            .log_data()
-            .iter()
-            .map(|file| file.path().to_string())
-            .collect()
-    }
-
-    async fn row_count(data_folder: &DataFolder) -> usize {
-        let delta_table = data_folder.delta_table(TABLE_NAME).await.unwrap();
-        let (_table, stream) = delta_table.scan_table().await.unwrap();
-
-        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
-        batches.iter().map(|batch| batch.num_rows()).sum()
     }
 }
