@@ -300,3 +300,52 @@ impl TableProvider for ModelarDbTable {
         Ok(Arc::new(DataSinkExec::new(input, data_sink, None)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::HashSet;
+
+    use arrow::array::{AsArray, RecordBatch, StringViewArray, TimestampMicrosecondArray};
+    use arrow::datatypes::{
+        ArrowPrimitiveType, DataType, Field, Float32Type, Float64Type, Int64Type,
+    };
+    use datafusion::physical_plan::displayable;
+    use datafusion::prelude::{SessionContext, col, lit};
+    use modelardb_test::table::{self, NoOpDataSink, TABLE_NAME};
+    use modelardb_types::types::{ArrowTimestamp, ErrorBound};
+    use tempfile::TempDir;
+
+    use crate::data_folder::DataFolder;
+    use crate::parser::{self, ModelarDbStatement};
+    use crate::sql_and_concat;
+
+    const ROW_COUNT: usize = 5;
+
+    // Tests for ModelarDbTable.
+    #[tokio::test]
+    async fn test_scan_table_without_generated_columns() {
+        let stored_schema = table::table_metadata().stored_schema;
+        let table_metadata = TableMetadata::try_new(
+            TABLE_NAME.to_owned(),
+            stored_schema.clone(),
+            vec![ColumnMetadata::Stored(ErrorBound::Lossless); stored_schema.fields().len()],
+        )
+        .unwrap();
+
+        let (_temp_dir, data_folder) = create_data_folder_with_table_metadata(
+            &table_metadata,
+            table::table_record_batch(ROW_COUNT),
+        )
+        .await;
+
+        let sql = "SELECT * FROM test_table";
+        let result = sql_and_concat(data_folder.session_context(), sql)
+            .await
+            .unwrap();
+
+        assert_eq!(result, table::table_record_batch(ROW_COUNT));
+        assert!(!plan_has_generated_as_exec(data_folder.session_context(), sql).await);
+    }
+}
