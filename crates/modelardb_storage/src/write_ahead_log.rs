@@ -748,7 +748,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_new_with_existing_table_creates_table_log() {
-        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
         let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
             .await
             .unwrap();
@@ -759,11 +759,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_new_loads_persisted_batch_ids() {
-        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
         // Simulate that data was written to the table in a previous process to ensure that the
         // WAL can load already persisted batch ids from the commit history.
-        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
+        write_record_batch_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
 
         let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
             .await
@@ -779,12 +779,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_wal_recovery_survives_optimize_and_vacuum() {
-        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (temp_dir, data_folder) = create_data_folder_with_table().await;
 
         // Write three separate commits, each carrying its own batch ids.
-        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
-        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([3, 4, 5])).await;
-        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([6, 7, 8])).await;
+        write_record_batch_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
+        write_record_batch_with_batch_ids(&data_folder, HashSet::from([3, 4, 5])).await;
+        write_record_batch_with_batch_ids(&data_folder, HashSet::from([6, 7, 8])).await;
 
         let column_path = format!(
             "{}/tables/{}/field_column=0/tag=tag",
@@ -863,7 +863,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_table_log_removes_log_and_directory() {
-        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
         let mut wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
             .await
             .unwrap();
@@ -918,7 +918,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_append_to_table_log_returns_incrementing_batch_ids() {
-        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
         let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
             .await
             .unwrap();
@@ -959,7 +959,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mark_batches_as_persisted_in_table_log_removes_from_unpersisted() {
-        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
         let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
             .await
             .unwrap();
@@ -1002,7 +1002,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unpersisted_batches_in_table_log_returns_all_when_none_persisted() {
-        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
         let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
             .await
             .unwrap();
@@ -1036,7 +1036,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_truncate_table_log_clears_unpersisted_batches_and_preserves_batch_ids() {
-        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
         let wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
             .await
             .unwrap();
@@ -1089,7 +1089,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_segment_size_threshold_in_bytes_updates_existing_table_logs() {
-        let (_temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
         let mut wal = WriteAheadLog::try_new(&data_folder, SEGMENT_SIZE_THRESHOLD_IN_BYTES)
             .await
             .unwrap();
@@ -1392,7 +1392,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_batch_ids_in_history_leaves_persisted_set_empty() {
-        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (temp_dir, data_folder) = create_data_folder_with_table().await;
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let delta_table = data_folder
@@ -1410,11 +1410,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_persisted_batches_loads_single_commit() {
-        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (temp_dir, data_folder) = create_data_folder_with_table().await;
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let delta_table =
-            write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
+            write_record_batch_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
 
         segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
@@ -1427,12 +1427,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_persisted_batches_loads_multiple_commits() {
-        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (temp_dir, data_folder) = create_data_folder_with_table().await;
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
-        write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
+        write_record_batch_with_batch_ids(&data_folder, HashSet::from([0, 1, 2])).await;
         let delta_table =
-            write_compressed_segments_with_batch_ids(&data_folder, HashSet::from([3, 4, 5])).await;
+            write_record_batch_with_batch_ids(&data_folder, HashSet::from([3, 4, 5])).await;
 
         segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
@@ -1445,7 +1445,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_persisted_batches_deletes_fully_persisted_closed_segment() {
-        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (temp_dir, data_folder) = create_data_folder_with_table().await;
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::table_record_batch(10);
@@ -1457,7 +1457,7 @@ mod tests {
         assert!(segment_path.exists());
 
         let all_ids: HashSet<u64> = (0..segment_batch_count).collect();
-        let delta_table = write_compressed_segments_with_batch_ids(&data_folder, all_ids).await;
+        let delta_table = write_record_batch_with_batch_ids(&data_folder, all_ids).await;
 
         segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
@@ -1471,7 +1471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_persisted_batches_retains_partially_persisted_closed_segment() {
-        let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
+        let (temp_dir, data_folder) = create_data_folder_with_table().await;
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let batch = table::table_record_batch(10);
@@ -1482,7 +1482,7 @@ mod tests {
             .clone();
 
         let partial_ids: HashSet<u64> = (0..segment_batch_count - 1).collect();
-        let delta_table = write_compressed_segments_with_batch_ids(&data_folder, partial_ids).await;
+        let delta_table = write_record_batch_with_batch_ids(&data_folder, partial_ids).await;
 
         segmented_log
             .load_persisted_batches_from_delta_table(delta_table)
@@ -1497,7 +1497,7 @@ mod tests {
         );
     }
 
-    async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
+    async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
         let metadata = table::table_metadata();
@@ -1510,7 +1510,7 @@ mod tests {
         (temp_dir, data_folder)
     }
 
-    async fn write_compressed_segments_with_batch_ids(
+    async fn write_record_batch_with_batch_ids(
         data_folder: &DataFolder,
         batch_ids: HashSet<u64>,
     ) -> DeltaTable {
