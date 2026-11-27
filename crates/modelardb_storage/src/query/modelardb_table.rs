@@ -348,6 +348,49 @@ mod tests {
         assert_eq!(result, table::table_record_batch(ROW_COUNT));
         assert!(!plan_has_generated_as_exec(data_folder.session_context(), sql).await);
     }
+
+    #[tokio::test]
+    async fn test_scan_table_with_generated_column() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let result = sql_and_concat(data_folder.session_context(), "SELECT * FROM test_table")
+            .await
+            .unwrap();
+
+        assert_eq!(result.num_columns(), 4);
+        assert_eq!(float32_values(&result, 2), vec![0.0, 2.0, 4.0, 6.0, 8.0]);
+    }
+
+    #[tokio::test]
+    async fn test_scan_generated_column_without_its_source_columns() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            "SELECT generated_value FROM test_table",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.num_columns(), 1);
+        assert_eq!(float32_values(&result, 0), vec![0.0, 2.0, 4.0, 6.0, 8.0]);
+    }
+
+    #[tokio::test]
+    async fn test_scan_generated_column_before_its_source_column() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            "SELECT generated_value, relative_value FROM test_table",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.num_columns(), 2);
+        assert_eq!(float32_values(&result, 0), vec![0.0, 2.0, 4.0, 6.0, 8.0]);
+        assert_eq!(float32_values(&result, 1), vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+    }
     async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
         create_data_folder_with_table_metadata(
             &table::table_metadata(),
