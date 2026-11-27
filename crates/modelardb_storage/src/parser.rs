@@ -1185,6 +1185,9 @@ fn semantic_checks_for_truncate(
 mod tests {
     use super::*;
 
+    use arrow::datatypes::ArrowPrimitiveType;
+    use modelardb_test::table;
+    use modelardb_types::types::{ArrowTimestamp, ArrowValue};
     use sqlparser::dialect::ClickHouseDialect;
 
     // Tests for tokenize_and_parse_sql_statement().
@@ -1199,59 +1202,72 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_parse_semantic_check_create_time_series_table() {
-        let sql = "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP,
-                   field_one FIELD, field_two FIELD(10.5), field_three FIELD(1%),
-                   field_four FIELD AS (CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)),
-                   tag TAG)";
+    fn test_tokenize_and_parse_create_table() {
+        let table_metadata = parse_create_table_and_extract_table_metadata(table::TABLE_SQL);
 
-        let modelardb_statement = tokenize_and_parse_sql_statement(sql).unwrap();
-        if let ModelarDbStatement::CreateTimeSeriesTable(time_series_table_metadata) =
-            &modelardb_statement
-        {
-            assert_eq!(time_series_table_metadata.name, "table_name");
-            let expected_schema = Arc::new(Schema::new(vec![
-                Field::new(
-                    "timestamp",
-                    DataType::Timestamp(TimeUnit::Microsecond, None),
-                    false,
-                ),
-                Field::new("field_one", DataType::Float32, false),
-                Field::new("field_two", DataType::Float32, false).with_metadata({
-                    let mut metadata = HashMap::new();
-                    metadata.insert("Error Bound".to_owned(), "10.5".to_owned());
-                    metadata
-                }),
-                Field::new("field_three", DataType::Float32, false).with_metadata({
-                    let mut metadata = HashMap::new();
-                    metadata.insert("Error Bound".to_owned(), "1%".to_owned());
-                    metadata
-                }),
-                Field::new("field_four", DataType::Float32, false).with_metadata({
-                    let mut metadata = HashMap::new();
-                    metadata.insert(
-                        "Generated As".to_owned(),
-                        "CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)".to_owned(),
-                    );
-                    metadata
-                }),
-                Field::new("tag", DataType::Utf8View, false),
-            ]));
-            assert_eq!(time_series_table_metadata.query_schema, expected_schema);
+        assert_eq!(*table_metadata, table::table_metadata());
+    }
 
-            assert_eq!(
-                time_series_table_metadata.error_bounds[2],
-                ErrorBound::try_new_absolute(10.5).unwrap()
-            );
-            assert_eq!(
-                time_series_table_metadata.error_bounds[3],
-                ErrorBound::try_new_relative(1.0).unwrap()
-            );
-            assert!(time_series_table_metadata.generated_columns[4].is_some())
-        } else {
-            panic!(
-                "CREATE TABLE DDL did not parse to a ModelarDbStatement::CreateTimeSeriesTable."
-            );
+    #[test]
+    fn test_tokenize_and_parse_create_table_with_lowercase_error_bound() {
+        let table_metadata = parse_create_table_and_extract_table_metadata(
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL error bound 1)",
+        );
+
+        assert_eq!(
+            table_metadata.column_metadata[1],
+            ColumnMetadata::Stored(ErrorBound::try_new_absolute(1.0).unwrap())
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_table_with_error_bounds_and_nullability() {
+        let table_metadata = parse_create_table_and_extract_table_metadata(
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL NOT NULL ERROR BOUND 1, other REAL ERROR BOUND 1% NULL)",
+        );
+
+        assert!(!table_metadata.query_schema.field(1).is_nullable());
+        assert!(table_metadata.query_schema.field(2).is_nullable());
+        assert_eq!(
+            table_metadata.column_metadata[1],
+            ColumnMetadata::Stored(ErrorBound::try_new_absolute(1.0).unwrap())
+        );
+        assert_eq!(
+            table_metadata.column_metadata[2],
+            ColumnMetadata::Stored(ErrorBound::try_new_relative(1.0).unwrap())
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_table_with_generated_always_as() {
+        let generated_always_as_table_metadata = parse_create_table_and_extract_table_metadata(
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL, generated REAL GENERATED ALWAYS AS (value + 1))",
+        );
+        let as_table_metadata = parse_create_table_and_extract_table_metadata(
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL, generated REAL AS (value + 1))",
+        );
+
+        assert_eq!(generated_always_as_table_metadata, as_table_metadata);
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_table_with_generated_column_using_function() {
+        let table_metadata = parse_create_table_and_extract_table_metadata(
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL, generated REAL AS (COS(value * PI() / 180)))",
+        );
+
+        assert!(matches!(
+            table_metadata.column_metadata[2],
+            ColumnMetadata::Generated(_)
+        ));
+    }
+
+    fn parse_create_table_and_extract_table_metadata(sql_statement: &str) -> Arc<TableMetadata> {
+        let modelardb_statement = tokenize_and_parse_sql_statement(sql_statement).unwrap();
+
+        match modelardb_statement {
+            ModelarDbStatement::CreateTable(table_metadata) => table_metadata,
+            _ => panic!("Expected ModelarDbStatement::CreateTable."),
         }
     }
 
