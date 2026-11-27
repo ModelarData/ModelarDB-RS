@@ -373,6 +373,44 @@ mod tests {
         assert_eq!(files_in_table_folder(&temp_dir), vec!["_delta_log"]);
         assert_eq!(delta_table.version(), Some(0));
     }
+
+    #[tokio::test]
+    async fn test_write_all_and_commit_with_invalid_record_batch() {
+        let (temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let invalid_record_batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new(
+                "timestamp",
+                ArrowTimestamp::DATA_TYPE,
+                true,
+            )])),
+            vec![Arc::new(TimestampMicrosecondArray::from(vec![0]))],
+        )
+        .unwrap();
+
+        let result = data_folder
+            .table_writer(TABLE_NAME)
+            .await
+            .unwrap()
+            .write_all_and_commit(&[table::table_record_batch(ROW_COUNT), invalid_record_batch])
+            .await;
+
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .starts_with("Delta Lake Error: Data does not match the schema or partitions")
+        );
+
+        // The valid record batch should be rolled back, so no files are left and nothing is
+        // committed.
+        assert_eq!(files_in_table_folder(&temp_dir), vec!["_delta_log"]);
+        assert_eq!(
+            data_folder.delta_table(TABLE_NAME).await.unwrap().version(),
+            Some(0)
+        );
+        assert_eq!(row_count(&data_folder).await, 0);
+    }
     async fn last_commit_metadata(
         delta_table: &DeltaTable,
         key: &str,
