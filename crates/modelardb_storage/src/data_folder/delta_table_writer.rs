@@ -227,10 +227,23 @@ async fn delete_added_files(object_store: &dyn ObjectStore, added_files: Vec<Add
 mod tests {
     use super::*;
 
+    use std::fs::File;
+    use std::sync::Arc;
+
+    use arrow::array::{Float32Array, StringViewArray, TimestampMicrosecondArray};
+    use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+    use futures::TryStreamExt;
     use modelardb_test::table::{self, TABLE_NAME};
+    use modelardb_types::types::{
+        ArrowTimestamp, ArrowValue, ColumnMetadata, ErrorBound, TableMetadata,
+    };
+    use parquet::basic::{Compression, Encoding, ZstdLevel};
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+    use tempfile::TempDir;
 
     use crate::test::{
-        ROW_COUNT, create_data_folder_with_table, file_paths, row_count, write_record_batch,
+        ROW_COUNT, create_data_folder_with_table, create_data_folder_with_table_metadata,
+        file_paths, row_count, write_record_batch,
     };
 
     // Tests for DeltaTableWriter.
@@ -297,6 +310,41 @@ mod tests {
 
         // The optimized rows and the rows written by the writer should all remain.
         assert_eq!(row_count(&data_folder).await, 3 * ROW_COUNT);
+    }
+
+    #[tokio::test]
+    async fn test_commit_with_batch_ids() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let delta_table = data_folder
+            .table_writer(TABLE_NAME)
+            .await
+            .unwrap()
+            .with_batch_ids(HashSet::from([1, 2]))
+            .write_all_and_commit(&[table::table_record_batch(ROW_COUNT)])
+            .await
+            .unwrap();
+
+        let commit_batch_ids = last_commit_metadata(&delta_table, "batchIds")
+            .await
+            .unwrap();
+        let mut batch_ids: Vec<u64> = serde_json::from_value(commit_batch_ids).unwrap();
+        batch_ids.sort();
+
+        assert_eq!(batch_ids, vec![1, 2]);
+    }
+
+    #[tokio::test]
+    async fn test_commit_without_batch_ids() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let delta_table = write_record_batch(&data_folder).await;
+
+        assert!(
+            last_commit_metadata(&delta_table, "batchIds")
+                .await
+                .is_none()
+        );
     }
     async fn last_commit_metadata(
         delta_table: &DeltaTable,
