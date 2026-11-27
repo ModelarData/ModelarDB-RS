@@ -787,12 +787,8 @@ mod tests {
         write_record_batch_with_batch_ids(&data_folder, HashSet::from([3, 4, 5])).await;
         write_record_batch_with_batch_ids(&data_folder, HashSet::from([6, 7, 8])).await;
 
-        let column_path = format!(
-            "{}/tables/{}/field_column=0/tag=tag",
-            temp_dir.path().to_str().unwrap(),
-            TABLE_NAME
-        );
-        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 3);
+        // The three Apache Parquet files are stored alongside the _delta_log folder.
+        assert_eq!(files_in_table_folder(&temp_dir).len(), 4);
 
         // Optimize merges the small files into one, and vacuum physically deletes the stale files
         // left behind. Vacuum should only remove Parquet data files, never the _delta_log commits.
@@ -805,8 +801,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Only the single merged Parquet file should remain on disk.
-        assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 1);
+        // Only the single merged Apache Parquet file should remain alongside the _delta_log folder.
+        assert_eq!(files_in_table_folder(&temp_dir).len(), 2);
 
         // Rebuilding the WAL from the same folder must still recover every persisted batch id from
         // the Delta commit history. This proves optimize and vacuum did not discard the commits
