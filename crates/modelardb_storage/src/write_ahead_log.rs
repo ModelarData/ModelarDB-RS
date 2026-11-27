@@ -883,7 +883,7 @@ mod tests {
         let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
 
         let metadata = table::time_series_table_metadata();
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
 
         wal.create_table_log(&metadata).await.unwrap();
 
@@ -923,7 +923,7 @@ mod tests {
             .await
             .unwrap();
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
 
         assert_eq!(
             wal.append_to_table_log(TABLE_NAME, &batch)
@@ -946,7 +946,7 @@ mod tests {
     async fn test_append_to_table_log_fails_if_table_log_does_not_exist() {
         let (_temp_dir, wal) = new_empty_write_ahead_log().await;
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let result = wal.append_to_table_log(TABLE_NAME, &batch);
 
         assert_eq!(
@@ -964,7 +964,7 @@ mod tests {
             .await
             .unwrap();
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         wal.append_to_table_log(TABLE_NAME, &batch)
             .unwrap();
         wal.append_to_table_log(TABLE_NAME, &batch)
@@ -1007,7 +1007,7 @@ mod tests {
             .await
             .unwrap();
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         wal.append_to_table_log(TABLE_NAME, &batch)
             .unwrap();
         wal.append_to_table_log(TABLE_NAME, &batch)
@@ -1041,7 +1041,7 @@ mod tests {
             .await
             .unwrap();
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
 
         assert_eq!(
             wal.append_to_table_log(TABLE_NAME, &batch)
@@ -1094,7 +1094,7 @@ mod tests {
             .await
             .unwrap();
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let batch_memory_size = batch.get_array_memory_size() as u64;
 
         // Set the threshold to exactly one batch so the next append closes the segment.
@@ -1151,7 +1151,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         segmented_log.append_and_sync(&batch).unwrap();
 
         let batches = segmented_log.all_batches().unwrap();
@@ -1167,9 +1167,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch_1 = table::uncompressed_time_series_table_record_batch(10);
-        let batch_2 = table::uncompressed_time_series_table_record_batch(20);
-        let batch_3 = table::uncompressed_time_series_table_record_batch(30);
+        let batch_1 = table::table_record_batch(10);
+        let batch_2 = table::table_record_batch(20);
+        let batch_3 = table::table_record_batch(30);
 
         segmented_log.append_and_sync(&batch_1).unwrap();
         segmented_log.append_and_sync(&batch_2).unwrap();
@@ -1190,7 +1190,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
 
         let closed = segmented_log.closed_segments.lock().unwrap();
@@ -1208,7 +1208,7 @@ mod tests {
         let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         // Write enough batches to close the active segment, then drop.
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
         drop(segmented_log);
 
@@ -1226,7 +1226,7 @@ mod tests {
         let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         // Write enough batches to close the active segment, then drop.
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
         drop(segmented_log);
 
@@ -1245,7 +1245,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
 
         // Write enough batches to close the active segment and append to a new active segment,
         // then drop.
@@ -1296,7 +1296,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
 
         // Write enough batches to close two segments, persist all, then drop.
         fill_segment_to_threshold(&segmented_log, &batch);
@@ -1322,7 +1322,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
 
         let segment_path = segmented_log.closed_segments.lock().unwrap()[0]
@@ -1342,7 +1342,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
 
         let segment_path = segmented_log.closed_segments.lock().unwrap()[0]
@@ -1373,7 +1373,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
 
         // Close five full segments.
         let mut segment_batch_count = 0;
@@ -1448,7 +1448,7 @@ mod tests {
         let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
 
         let segment_path = segmented_log.closed_segments.lock().unwrap()[0]
@@ -1474,7 +1474,7 @@ mod tests {
         let (temp_dir, data_folder) = create_data_folder_with_time_series_table().await;
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
 
         let segment_path = segmented_log.closed_segments.lock().unwrap()[0]
@@ -1540,8 +1540,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch_1 = table::uncompressed_time_series_table_record_batch(10);
-        let batch_2 = table::uncompressed_time_series_table_record_batch(20);
+        let batch_1 = table::table_record_batch(10);
+        let batch_2 = table::table_record_batch(20);
         segmented_log.append_and_sync(&batch_1).unwrap();
         segmented_log.append_and_sync(&batch_2).unwrap();
 
@@ -1556,7 +1556,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         segmented_log.append_and_sync(&batch).unwrap();
         segmented_log.append_and_sync(&batch).unwrap();
 
@@ -1576,9 +1576,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
-        let batch_1 = table::uncompressed_time_series_table_record_batch(10);
-        let batch_2 = table::uncompressed_time_series_table_record_batch(20);
-        let batch_3 = table::uncompressed_time_series_table_record_batch(30);
+        let batch_1 = table::table_record_batch(10);
+        let batch_2 = table::table_record_batch(20);
+        let batch_3 = table::table_record_batch(30);
         segmented_log.append_and_sync(&batch_1).unwrap();
         segmented_log.append_and_sync(&batch_2).unwrap();
         segmented_log.append_and_sync(&batch_3).unwrap();
@@ -1603,7 +1603,7 @@ mod tests {
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         // Fill one full segment and write two more into the active segment.
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
         segmented_log.append_and_sync(&batch).unwrap();
         segmented_log.append_and_sync(&batch).unwrap();
@@ -1627,7 +1627,7 @@ mod tests {
         let (folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         // Fill five full segments and write two more into the active segment.
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         for _ in 0..5 {
             fill_segment_to_threshold(&segmented_log, &batch);
         }
@@ -1663,7 +1663,7 @@ mod tests {
         let (_folder_path, segmented_log) = new_segmented_log(&temp_dir);
 
         // Fill one full segment and write two more into the active segment.
-        let batch = table::uncompressed_time_series_table_record_batch(10);
+        let batch = table::table_record_batch(10);
         let segment_batch_count = fill_segment_to_threshold(&segmented_log, &batch);
         segmented_log.append_and_sync(&batch).unwrap();
         segmented_log.append_and_sync(&batch).unwrap();
