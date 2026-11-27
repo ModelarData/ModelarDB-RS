@@ -357,6 +357,22 @@ mod tests {
         let commit = history.try_next().await.unwrap().unwrap();
         assert_eq!(commit.is_blind_append, Some(true));
     }
+
+    #[tokio::test]
+    async fn test_rollback() {
+        let (temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let mut delta_table_writer = data_folder.table_writer(TABLE_NAME).await.unwrap();
+        delta_table_writer
+            .write(&table::table_record_batch(ROW_COUNT))
+            .await
+            .unwrap();
+        let delta_table = delta_table_writer.rollback().await.unwrap();
+
+        // The written file should be deleted and nothing should be committed.
+        assert_eq!(files_in_table_folder(&temp_dir), vec!["_delta_log"]);
+        assert_eq!(delta_table.version(), Some(0));
+    }
     async fn last_commit_metadata(
         delta_table: &DeltaTable,
         key: &str,
