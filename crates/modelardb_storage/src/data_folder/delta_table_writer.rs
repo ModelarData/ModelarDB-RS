@@ -411,6 +411,70 @@ mod tests {
         );
         assert_eq!(row_count(&data_folder).await, 0);
     }
+
+    #[tokio::test]
+    async fn test_written_file_uses_encoding_policy() {
+        let query_schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, true),
+            Field::new("value", ArrowValue::DATA_TYPE, true),
+            Field::new("text", DataType::Utf8View, true),
+        ]));
+        let table_metadata = TableMetadata::try_new(
+            TABLE_NAME.to_owned(),
+            query_schema.clone(),
+            vec![ColumnMetadata::Stored(ErrorBound::Lossless); 3],
+        )
+        .unwrap();
+        let (temp_dir, data_folder) = create_data_folder_with_table_metadata(&table_metadata).await;
+
+        let record_batch = RecordBatch::try_new(
+            query_schema,
+            vec![
+                Arc::new(TimestampMicrosecondArray::from(vec![0, 1, 2])),
+                Arc::new(Float32Array::from(vec![0.0, 1.0, 2.0])),
+                Arc::new(StringViewArray::from(vec!["text", "text", "other_text"])),
+            ],
+        )
+        .unwrap();
+
+        data_folder
+            .write_record_batches(TABLE_NAME, &[record_batch], HashSet::new())
+            .await
+            .unwrap();
+
+        let file_path = temp_dir
+            .path()
+            .join("tables")
+            .join(TABLE_NAME)
+            .join(&file_paths(&data_folder).await[0]);
+        let file_reader = SerializedFileReader::new(File::open(file_path).unwrap()).unwrap();
+        let row_group = file_reader.metadata().row_group(0);
+
+        // Every column is compressed with ZSTD and only has statistics for the column chunk.
+        for column in row_group.columns() {
+            assert_eq!(
+                column.compression(),
+                Compression::ZSTD(ZstdLevel::default())
+            );
+            assert!(column.statistics().is_some());
+            assert!(column.column_index_offset().is_none());
+        }
+
+        // Only the string column is dictionary encoded.
+        let encodings: Vec<Vec<Encoding>> = row_group
+            .columns()
+            .iter()
+            .map(|column| column.encodings().collect())
+            .collect();
+
+        assert!(encodings[0].contains(&Encoding::DELTA_BINARY_PACKED));
+        assert!(row_group.column(0).dictionary_page_offset().is_none());
+        assert!(encodings[1].contains(&Encoding::BYTE_STREAM_SPLIT));
+        assert!(row_group.column(1).dictionary_page_offset().is_none());
+        assert!(encodings[2].contains(&Encoding::RLE_DICTIONARY));
+        assert!(row_group.column(2).dictionary_page_offset().is_some());
+    }
+
     async fn last_commit_metadata(
         delta_table: &DeltaTable,
         key: &str,
