@@ -836,7 +836,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_table_log_adds_log_for_table() {
         let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
-        let metadata = table::time_series_table_metadata();
+        let metadata = table::table_metadata();
 
         assert!(wal.table_logs.is_empty());
 
@@ -848,7 +848,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_table_log_fails_if_table_log_already_exists() {
         let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
-        let metadata = table::time_series_table_metadata();
+        let metadata = table::table_metadata();
 
         wal.create_table_log(&metadata).await.unwrap();
         let result = wal.create_table_log(&metadata).await;
@@ -882,7 +882,7 @@ mod tests {
     async fn test_remove_and_recreate_table_log_resets_batch_ids() {
         let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
 
-        let metadata = table::time_series_table_metadata();
+        let metadata = table::table_metadata();
         let batch = table::table_record_batch(10);
 
         wal.create_table_log(&metadata).await.unwrap();
@@ -1500,7 +1500,7 @@ mod tests {
     async fn create_data_folder_with_time_series_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-        let metadata = table::time_series_table_metadata();
+        let metadata = table::table_metadata();
 
         data_folder
             .create_time_series_table(&metadata)
@@ -1716,7 +1716,7 @@ mod tests {
     }
 
     fn open_segmented_log(folder_path: &Path) -> SegmentedLog {
-        let metadata = table::time_series_table_metadata();
+        let metadata = table::table_metadata();
         SegmentedLog::try_new(
             folder_path.to_path_buf(),
             &metadata.schema,
