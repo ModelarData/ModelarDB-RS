@@ -1698,10 +1698,10 @@ mod tests {
     }
 
     fn open_segmented_log(folder_path: &Path) -> SegmentedLog {
-        let metadata = table::table_metadata();
+        let table_metadata = table::table_metadata();
         SegmentedLog::try_new(
             folder_path.to_path_buf(),
-            &metadata.schema,
+            &table_metadata.stored_schema,
             SEGMENT_SIZE_THRESHOLD_IN_BYTES,
         )
         .unwrap()
