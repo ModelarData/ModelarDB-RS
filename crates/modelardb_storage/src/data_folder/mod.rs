@@ -1430,34 +1430,29 @@ mod tests {
         assert_eq!(active_file_count(&data_folder).await, 1);
     }
 
-        let read_batch = sql_and_concat(
-            &data_folder.session_context,
-            &format!(
-                "SELECT {} FROM {}",
-                column_names.join(", "),
-                TIME_SERIES_TABLE_NAME
-            ),
-        )
-        .await
-        .unwrap();
+    #[tokio::test]
+    async fn test_write_record_batches() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        // Delta Lake represents string partition columns as dictionary arrays. Convert the tag
-        // column back to its schema type before comparing it to the written batch.
-        let mut read_columns = read_batch.columns().to_vec();
-        let tag_column_index = read_batch.schema().index_of("tag").unwrap();
-        read_columns[tag_column_index] =
-            compute::cast(read_batch.column(tag_column_index), &DataType::Utf8View).unwrap();
-        let read_batch = RecordBatch::try_new(batch_to_write.schema(), read_columns).unwrap();
+        let delta_table = write_record_batch(&data_folder).await;
 
-        assert_eq!(read_batch, batch_to_write);
+        // Verify the write produced an Apache Parquet file.
+        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+
+        // Read the data back and verify the content.
+        let (_table, stream) = delta_table.scan_table().await.unwrap();
+        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+        let read_batch = compute::concat_batches(&batches[0].schema(), &batches).unwrap();
+
+        assert_eq!(read_batch, table::table_record_batch(ROW_COUNT));
     }
 
     #[tokio::test]
-    async fn test_write_empty_vec_to_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+    async fn test_write_empty_slice_to_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
         let delta_table = data_folder
-            .write_record_batches("normal_table_1", vec![])
+            .write_record_batches(TABLE_NAME, &[], HashSet::new())
             .await
             .unwrap();
 
@@ -1466,11 +1461,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_empty_record_batch_to_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let empty_batch = RecordBatch::new_empty(Arc::new(test_table::normal_table_schema()));
+        let empty_batch = RecordBatch::new_empty(table::table_metadata().stored_schema);
         let delta_table = data_folder
-            .write_record_batches("normal_table_1", vec![empty_batch])
+            .write_record_batches(TABLE_NAME, &[empty_batch], HashSet::new())
             .await
             .unwrap();
 
@@ -1485,7 +1480,8 @@ mod tests {
         let result = data_folder
             .write_record_batches(
                 "missing_table",
-                vec![test_table::normal_table_record_batch()],
+                &[table::table_record_batch(ROW_COUNT)],
+                HashSet::new(),
             )
             .await;
 
