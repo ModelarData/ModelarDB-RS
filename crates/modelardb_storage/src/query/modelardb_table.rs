@@ -572,6 +572,23 @@ mod tests {
 
         assert_eq!(table.schema().field(1).data_type(), &DataType::Utf8View);
     }
+
+    #[tokio::test]
+    async fn test_insert_into_metadata_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            "INSERT INTO metadata.table_metadata SELECT * FROM metadata.table_metadata",
+        )
+        .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "DataFusion Error: Error during planning: INSERT is not supported for metadata tables."
+        );
+    }
     async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
         create_data_folder_with_table_metadata(
             &table::table_metadata(),
