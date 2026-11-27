@@ -391,6 +391,90 @@ mod tests {
         assert_eq!(float32_values(&result, 0), vec![0.0, 2.0, 4.0, 6.0, 8.0]);
         assert_eq!(float32_values(&result, 1), vec![0.0, 1.0, 2.0, 3.0, 4.0]);
     }
+
+    #[tokio::test]
+    async fn test_scan_constant_generated_column() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table_from_sql(
+            "CREATE TABLE test_table(timestamp TIMESTAMP, absolute_value REAL, relative_value REAL, \
+             constant_value REAL AS (1.5))",
+        )
+            .await;
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            "SELECT constant_value FROM test_table",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(float32_values(&result, 0), vec![1.5; ROW_COUNT]);
+    }
+
+    #[tokio::test]
+    async fn test_scan_generated_column_with_expression_of_another_type() {
+        // absolute_value + 1.0 is computed as Float64 since 1.0 is a Float64 literal.
+        let (_temp_dir, data_folder) = create_data_folder_with_table_from_sql(
+            "CREATE TABLE test_table(timestamp TIMESTAMP, absolute_value REAL, relative_value REAL, \
+             generated_value REAL AS (absolute_value + 1.0))",
+        )
+            .await;
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            "SELECT generated_value FROM test_table",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(float32_values(&result, 0), vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+    }
+
+    #[tokio::test]
+    async fn test_scan_only_stored_columns_in_table_with_generated_column() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let sql = "SELECT absolute_value FROM test_table";
+        let result = sql_and_concat(data_folder.session_context(), sql)
+            .await
+            .unwrap();
+
+        assert_eq!(float32_values(&result, 0), vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        assert!(!plan_has_generated_as_exec(data_folder.session_context(), sql).await);
+    }
+
+    #[tokio::test]
+    async fn test_count_rows_in_table_with_generated_column() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let sql = "SELECT COUNT(*) FROM test_table";
+        let result = sql_and_concat(data_folder.session_context(), sql)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.column(0).as_primitive::<Int64Type>().value(0),
+            ROW_COUNT as i64
+        );
+        assert!(!plan_has_generated_as_exec(data_folder.session_context(), sql).await);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_columns_in_table_with_generated_column() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            "SELECT SUM(absolute_value), MAX(generated_value) FROM test_table",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result.column(0).as_primitive::<Float64Type>().value(0),
+            10.0
+        );
+        assert_eq!(float32_values(&result, 1), vec![8.0]);
+    }
     async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
         create_data_folder_with_table_metadata(
             &table::table_metadata(),
