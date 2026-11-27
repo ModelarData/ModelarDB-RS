@@ -732,9 +732,10 @@ fn read_batches_from_path(path: &Path) -> Result<Vec<RecordBatch>> {
 mod tests {
     use super::*;
 
-    use modelardb_test::table;
-    use modelardb_test::table::TABLE_NAME;
+    use modelardb_test::table::{self, TABLE_NAME};
     use tempfile::TempDir;
+
+    use crate::test::{ROW_COUNT, create_data_folder_with_table, files_in_table_folder};
 
     const SEGMENT_SIZE_THRESHOLD_IN_BYTES: u64 = 64 * 1024; // 64 KiB.
 
@@ -1495,19 +1496,6 @@ mod tests {
             segmented_log.persisted_batch_ids.lock().unwrap().len() as u64,
             segment_batch_count - 1
         );
-    }
-
-    async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-        let metadata = table::table_metadata();
-
-        data_folder
-            .create_time_series_table(&metadata)
-            .await
-            .unwrap();
-
-        (temp_dir, data_folder)
     }
 
     async fn write_record_batch_with_batch_ids(
