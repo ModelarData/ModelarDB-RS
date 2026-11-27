@@ -222,3 +222,80 @@ async fn delete_added_files(object_store: &dyn ObjectStore, added_files: Vec<Add
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use modelardb_test::table::{self, TABLE_NAME};
+
+    use crate::test::{
+        ROW_COUNT, create_data_folder_with_table, file_paths, row_count, write_record_batch,
+    };
+
+    // Tests for DeltaTableWriter.
+    #[tokio::test]
+    async fn test_commit_alongside_remove_files() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+        write_record_batch(&data_folder).await;
+        let file_paths_to_remove = file_paths(&data_folder).await;
+
+        // The files are removed after the writer loaded its snapshot, as if it happened while the
+        // writer was writing.
+        let delta_table_writer = data_folder.table_writer(TABLE_NAME).await.unwrap();
+        data_folder
+            .remove_files(TABLE_NAME, &file_paths_to_remove)
+            .await
+            .unwrap();
+
+        delta_table_writer
+            .write_all_and_commit(&[table::table_record_batch(ROW_COUNT)])
+            .await
+            .unwrap();
+
+        // Only the file written by the writer should remain.
+        let remaining_file_paths = file_paths(&data_folder).await;
+        assert_eq!(remaining_file_paths.len(), 1);
+        assert!(!file_paths_to_remove.contains(&remaining_file_paths[0]));
+        assert_eq!(row_count(&data_folder).await, ROW_COUNT);
+    }
+
+    #[tokio::test]
+    async fn test_commit_alongside_truncate() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+        write_record_batch(&data_folder).await;
+
+        // The table is truncated after the writer loaded its snapshot, as if it happened while the
+        // writer was writing.
+        let delta_table_writer = data_folder.table_writer(TABLE_NAME).await.unwrap();
+        data_folder.truncate_table(TABLE_NAME).await.unwrap();
+
+        delta_table_writer
+            .write_all_and_commit(&[table::table_record_batch(ROW_COUNT)])
+            .await
+            .unwrap();
+
+        // Only the rows written by the writer should remain.
+        assert_eq!(row_count(&data_folder).await, ROW_COUNT);
+    }
+
+    #[tokio::test]
+    async fn test_commit_alongside_optimize() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+        write_record_batch(&data_folder).await;
+        write_record_batch(&data_folder).await;
+
+        // The table is optimized after the writer loaded its snapshot, as if it happened while the
+        // writer was writing.
+        let delta_table_writer = data_folder.table_writer(TABLE_NAME).await.unwrap();
+        data_folder.optimize_table(TABLE_NAME, None).await.unwrap();
+
+        delta_table_writer
+            .write_all_and_commit(&[table::table_record_batch(ROW_COUNT)])
+            .await
+            .unwrap();
+
+        // The optimized rows and the rows written by the writer should all remain.
+        assert_eq!(row_count(&data_folder).await, 3 * ROW_COUNT);
+    }
+}
