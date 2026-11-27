@@ -1106,34 +1106,30 @@ mod tests {
         assert!(generated_column_exprs.is_null(2));
     }
 
-        // Check that a row has been added to the time_series_table_field_columns table for each field column.
-        let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                   generated_column_expr FROM metadata.time_series_table_field_columns ORDER BY column_name";
+    #[tokio::test]
+    async fn test_create_table_without_error_bounds_and_generated_columns() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        data_folder
+            .create_table(&lossless_table_metadata())
+            .await
+            .unwrap();
+
+        // Columns that are stored losslessly do not have a row in the column_metadata table.
+        let sql = "SELECT table_name FROM metadata.column_metadata";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();
 
-        assert_eq!(
-            **batch.column(0),
-            StringViewArray::from(vec![TIME_SERIES_TABLE_NAME, TIME_SERIES_TABLE_NAME])
-        );
-        assert_eq!(
-            **batch.column(1),
-            StringViewArray::from(vec!["field_1", "field_2"])
-        );
-        assert_eq!(**batch.column(2), Int16Array::from(vec![1, 2]));
-        assert_eq!(**batch.column(3), Float32Array::from(vec![1.0, 5.0]));
-        assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
-        assert_eq!(**batch.column(5), BinaryViewArray::from(vec![None, None]));
+        assert_eq!(batch.num_rows(), 0);
     }
 
     #[tokio::test]
-    async fn test_create_existing_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+    async fn test_create_existing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let result = data_folder
-            .create_time_series_table(&test_table::time_series_table_metadata())
-            .await;
+        let result = data_folder.create_table(&table::table_metadata()).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -1146,12 +1142,18 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
-        let schema = Schema::new(vec![
+        let query_schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::UInt32, false),
             Field::new("name", DataType::Utf8View, false),
-        ]);
+        ]));
+        let table_metadata = TableMetadata::try_new(
+            "uint_table".to_owned(),
+            query_schema,
+            vec![ColumnMetadata::Stored(ErrorBound::Lossless); 2],
+        )
+        .unwrap();
 
-        let result = data_folder.create_normal_table("uint_table", &schema).await;
+        let result = data_folder.create_table(&table_metadata).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
