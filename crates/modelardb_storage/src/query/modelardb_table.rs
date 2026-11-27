@@ -589,6 +589,35 @@ mod tests {
             "DataFusion Error: Error during planning: INSERT is not supported for metadata tables."
         );
     }
+
+    #[tokio::test]
+    async fn test_scan_generated_column_that_fails_reports_failing_row() {
+        let table_metadata = parse_create_table_and_extract_table_metadata(
+            "CREATE TABLE test_table(timestamp TIMESTAMP, text TEXT, \
+             generated_value REAL AS (CAST(text AS REAL)))",
+        );
+        let record_batch = RecordBatch::try_new(
+            table_metadata.stored_schema.clone(),
+            vec![
+                Arc::new(TimestampMicrosecondArray::from(vec![1])),
+                Arc::new(StringViewArray::from(vec!["text"])),
+            ],
+        )
+        .unwrap();
+        let (_temp_dir, data_folder) =
+            create_data_folder_with_table_metadata(&table_metadata, record_batch).await;
+
+        let result =
+            sql_and_concat(data_folder.session_context(), "SELECT * FROM test_table").await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "DataFusion Error: Execution error: Failed to compute 'generated_value' for \
+             {timestamp: 1970-01-01T00:00:00.000001, text: text} due to: Arrow error: Cast error: \
+             Cannot cast string 'text' to value of Float32 type"
+        );
+    }
+
     async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
         create_data_folder_with_table_metadata(
             &table::table_metadata(),
