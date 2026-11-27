@@ -733,7 +733,7 @@ mod tests {
     use super::*;
 
     use modelardb_test::table;
-    use modelardb_test::table::TIME_SERIES_TABLE_NAME;
+    use modelardb_test::table::TABLE_NAME;
     use tempfile::TempDir;
 
     const SEGMENT_SIZE_THRESHOLD_IN_BYTES: u64 = 64 * 1024; // 64 KiB.
@@ -754,7 +754,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(wal.table_logs.len(), 1);
-        assert!(wal.table_logs.contains_key(TIME_SERIES_TABLE_NAME));
+        assert!(wal.table_logs.contains_key(TABLE_NAME));
     }
 
     #[tokio::test]
@@ -769,7 +769,7 @@ mod tests {
             .await
             .unwrap();
 
-        let persisted = wal.table_logs[TIME_SERIES_TABLE_NAME]
+        let persisted = wal.table_logs[TABLE_NAME]
             .persisted_batch_ids
             .lock()
             .unwrap();
@@ -789,18 +789,18 @@ mod tests {
         let column_path = format!(
             "{}/tables/{}/field_column=0/tag=tag",
             temp_dir.path().to_str().unwrap(),
-            TIME_SERIES_TABLE_NAME
+            TABLE_NAME
         );
         assert_eq!(std::fs::read_dir(&column_path).unwrap().count(), 3);
 
         // Optimize merges the small files into one, and vacuum physically deletes the stale files
         // left behind. Vacuum should only remove Parquet data files, never the _delta_log commits.
         data_folder
-            .optimize_table(TIME_SERIES_TABLE_NAME, None)
+            .optimize_table(TABLE_NAME, None)
             .await
             .unwrap();
         data_folder
-            .vacuum_table(TIME_SERIES_TABLE_NAME, Some(0))
+            .vacuum_table(TABLE_NAME, Some(0))
             .await
             .unwrap();
 
@@ -814,7 +814,7 @@ mod tests {
             .await
             .unwrap();
 
-        let persisted = wal.table_logs[TIME_SERIES_TABLE_NAME]
+        let persisted = wal.table_logs[TABLE_NAME]
             .persisted_batch_ids
             .lock()
             .unwrap();
@@ -842,7 +842,7 @@ mod tests {
 
         wal.create_table_log(&metadata).await.unwrap();
 
-        assert!(wal.table_logs.contains_key(TIME_SERIES_TABLE_NAME));
+        assert!(wal.table_logs.contains_key(TABLE_NAME));
     }
 
     #[tokio::test]
@@ -856,7 +856,7 @@ mod tests {
         assert_eq!(
             result.err().unwrap().to_string(),
             format!(
-                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' already exists.",
+                "Invalid State Error: Table log for table '{TABLE_NAME}' already exists.",
             )
         );
     }
@@ -868,13 +868,13 @@ mod tests {
             .await
             .unwrap();
 
-        let log_path = wal.table_logs[TIME_SERIES_TABLE_NAME].folder_path.clone();
+        let log_path = wal.table_logs[TABLE_NAME].folder_path.clone();
         assert!(log_path.exists());
-        assert!(wal.table_logs.contains_key(TIME_SERIES_TABLE_NAME));
+        assert!(wal.table_logs.contains_key(TABLE_NAME));
 
-        wal.remove_table_log(TIME_SERIES_TABLE_NAME).unwrap();
+        wal.remove_table_log(TABLE_NAME).unwrap();
 
-        assert!(!wal.table_logs.contains_key(TIME_SERIES_TABLE_NAME));
+        assert!(!wal.table_logs.contains_key(TABLE_NAME));
         assert!(!log_path.exists());
     }
 
@@ -887,16 +887,16 @@ mod tests {
 
         wal.create_table_log(&metadata).await.unwrap();
 
-        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+        wal.append_to_table_log(TABLE_NAME, &batch)
             .unwrap();
-        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+        wal.append_to_table_log(TABLE_NAME, &batch)
             .unwrap();
 
-        wal.remove_table_log(TIME_SERIES_TABLE_NAME).unwrap();
+        wal.remove_table_log(TABLE_NAME).unwrap();
         wal.create_table_log(&metadata).await.unwrap();
 
         assert_eq!(
-            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            wal.append_to_table_log(TABLE_NAME, &batch)
                 .unwrap(),
             0
         );
@@ -906,12 +906,12 @@ mod tests {
     async fn test_remove_table_log_fails_if_table_log_does_not_exist() {
         let (_temp_dir, mut wal) = new_empty_write_ahead_log().await;
 
-        let result = wal.remove_table_log(TIME_SERIES_TABLE_NAME);
+        let result = wal.remove_table_log(TABLE_NAME);
 
         assert_eq!(
             result.err().unwrap().to_string(),
             format!(
-                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
             )
         );
     }
@@ -926,17 +926,17 @@ mod tests {
         let batch = table::uncompressed_time_series_table_record_batch(10);
 
         assert_eq!(
-            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            wal.append_to_table_log(TABLE_NAME, &batch)
                 .unwrap(),
             0
         );
         assert_eq!(
-            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            wal.append_to_table_log(TABLE_NAME, &batch)
                 .unwrap(),
             1
         );
         assert_eq!(
-            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            wal.append_to_table_log(TABLE_NAME, &batch)
                 .unwrap(),
             2
         );
@@ -947,12 +947,12 @@ mod tests {
         let (_temp_dir, wal) = new_empty_write_ahead_log().await;
 
         let batch = table::uncompressed_time_series_table_record_batch(10);
-        let result = wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch);
+        let result = wal.append_to_table_log(TABLE_NAME, &batch);
 
         assert_eq!(
             result.err().unwrap().to_string(),
             format!(
-                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
             )
         );
     }
@@ -965,21 +965,21 @@ mod tests {
             .unwrap();
 
         let batch = table::uncompressed_time_series_table_record_batch(10);
-        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+        wal.append_to_table_log(TABLE_NAME, &batch)
             .unwrap();
-        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+        wal.append_to_table_log(TABLE_NAME, &batch)
             .unwrap();
 
         let unpersisted = wal
-            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unpersisted_batches_in_table_log(TABLE_NAME)
             .unwrap();
         assert_eq!(unpersisted.len(), 2);
 
-        wal.mark_batches_as_persisted_in_table_log(TIME_SERIES_TABLE_NAME, HashSet::from([0, 1]))
+        wal.mark_batches_as_persisted_in_table_log(TABLE_NAME, HashSet::from([0, 1]))
             .unwrap();
 
         let unpersisted = wal
-            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unpersisted_batches_in_table_log(TABLE_NAME)
             .unwrap();
 
         assert!(unpersisted.is_empty());
@@ -990,12 +990,12 @@ mod tests {
         let (_temp_dir, wal) = new_empty_write_ahead_log().await;
 
         let result =
-            wal.mark_batches_as_persisted_in_table_log(TIME_SERIES_TABLE_NAME, HashSet::new());
+            wal.mark_batches_as_persisted_in_table_log(TABLE_NAME, HashSet::new());
 
         assert_eq!(
             result.err().unwrap().to_string(),
             format!(
-                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
             )
         );
     }
@@ -1008,13 +1008,13 @@ mod tests {
             .unwrap();
 
         let batch = table::uncompressed_time_series_table_record_batch(10);
-        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+        wal.append_to_table_log(TABLE_NAME, &batch)
             .unwrap();
-        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+        wal.append_to_table_log(TABLE_NAME, &batch)
             .unwrap();
 
         let unpersisted = wal
-            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unpersisted_batches_in_table_log(TABLE_NAME)
             .unwrap();
 
         assert_eq!(unpersisted.len(), 2);
@@ -1024,12 +1024,12 @@ mod tests {
     async fn test_unpersisted_batches_in_table_log_fails_if_table_log_does_not_exist() {
         let (_temp_dir, wal) = new_empty_write_ahead_log().await;
 
-        let result = wal.unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME);
+        let result = wal.unpersisted_batches_in_table_log(TABLE_NAME);
 
         assert_eq!(
             result.err().unwrap().to_string(),
             format!(
-                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
             )
         );
     }
@@ -1044,30 +1044,30 @@ mod tests {
         let batch = table::uncompressed_time_series_table_record_batch(10);
 
         assert_eq!(
-            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            wal.append_to_table_log(TABLE_NAME, &batch)
                 .unwrap(),
             0
         );
         assert_eq!(
-            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            wal.append_to_table_log(TABLE_NAME, &batch)
                 .unwrap(),
             1
         );
 
         let unpersisted = wal
-            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unpersisted_batches_in_table_log(TABLE_NAME)
             .unwrap();
         assert_eq!(unpersisted.len(), 2);
 
-        wal.truncate_table_log(TIME_SERIES_TABLE_NAME).unwrap();
+        wal.truncate_table_log(TABLE_NAME).unwrap();
 
         let unpersisted = wal
-            .unpersisted_batches_in_table_log(TIME_SERIES_TABLE_NAME)
+            .unpersisted_batches_in_table_log(TABLE_NAME)
             .unwrap();
         assert!(unpersisted.is_empty());
 
         assert_eq!(
-            wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+            wal.append_to_table_log(TABLE_NAME, &batch)
                 .unwrap(),
             2
         );
@@ -1077,12 +1077,12 @@ mod tests {
     async fn test_truncate_table_log_fails_if_table_log_does_not_exist() {
         let (_temp_dir, wal) = new_empty_write_ahead_log().await;
 
-        let result = wal.truncate_table_log(TIME_SERIES_TABLE_NAME);
+        let result = wal.truncate_table_log(TABLE_NAME);
 
         assert_eq!(
             result.err().unwrap().to_string(),
             format!(
-                "Invalid State Error: Table log for table '{TIME_SERIES_TABLE_NAME}' does not exist.",
+                "Invalid State Error: Table log for table '{TABLE_NAME}' does not exist.",
             )
         );
     }
@@ -1101,10 +1101,10 @@ mod tests {
         wal.set_segment_size_threshold_in_bytes(batch_memory_size);
         assert_eq!(wal.segment_size_threshold_in_bytes, batch_memory_size);
 
-        let table_log = wal.table_log(TIME_SERIES_TABLE_NAME).unwrap();
+        let table_log = wal.table_log(TABLE_NAME).unwrap();
         assert_eq!(table_log.segment_size_threshold_in_bytes, batch_memory_size);
 
-        wal.append_to_table_log(TIME_SERIES_TABLE_NAME, &batch)
+        wal.append_to_table_log(TABLE_NAME, &batch)
             .unwrap();
 
         let closed_segments = table_log.closed_segments.lock().unwrap();
@@ -1396,7 +1396,7 @@ mod tests {
         let (_wal_dir, segmented_log) = new_segmented_log(&temp_dir);
 
         let delta_table = data_folder
-            .delta_table(TIME_SERIES_TABLE_NAME)
+            .delta_table(TABLE_NAME)
             .await
             .unwrap();
 
@@ -1518,7 +1518,7 @@ mod tests {
 
         data_folder
             .write_record_batches_with_batch_ids(
-                TIME_SERIES_TABLE_NAME,
+                TABLE_NAME,
                 vec![compressed_segments],
                 batch_ids,
             )
@@ -1726,7 +1726,7 @@ mod tests {
     }
 
     fn new_segmented_log(temp_dir: &TempDir) -> (PathBuf, SegmentedLog) {
-        let folder_path = temp_dir.path().join(TIME_SERIES_TABLE_NAME);
+        let folder_path = temp_dir.path().join(TABLE_NAME);
         let segmented_log = open_segmented_log(&folder_path);
         (folder_path, segmented_log)
     }
