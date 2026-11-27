@@ -1272,293 +1272,284 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_create() {
+    fn test_tokenize_and_parse_create_table_with_generated_column_using_missing_column() {
         let result = tokenize_and_parse_sql_statement(
-            "TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL, generated REAL AS (COS(missing * PI() / 180)))",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: an SQL statement, found: TIME at Line: 1, Column: 1"
+            "Parser Error: sql parser error: Schema error: No field named missing.\nValid fields are timestamp, value, generated."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_create_time_space() {
+    fn test_tokenize_and_parse_create_table_with_generated_column_using_generated_column() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATETIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL, generated REAL AS (value), other REAL AS (generated))",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: an SQL statement, found: CREATETIME at Line: 1, Column: 1"
+            "Parser Error: sql parser error: Invalid Argument Error: A generated column cannot depend on generated columns."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_time() {
+    fn test_tokenize_and_parse_create_table_with_only_generated_columns() {
+        let result =
+            tokenize_and_parse_sql_statement("CREATE TABLE table_name(generated REAL AS (37))");
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Parser Error: sql parser error: Invalid Argument Error: There needs to be at least one stored column."
+        );
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_table_with_generated_column_stored() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL, generated REAL GENERATED ALWAYS AS (value + 1) STORED)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: an object type after CREATE, found: SERIES at Line: 1, Column: 8"
+            "Parser Error: sql parser error: Only GENERATED ALWAYS AS (expression) and AS (expression) are supported."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_time_series_space() {
+    fn test_tokenize_and_parse_create_table_with_generated_column_without_parentheses() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIMESERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL AS 37)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: an object type after CREATE, found: TIMESERIES at Line: 1, Column: 8"
+            "Parser Error: sql parser error: Expected: ',' or ')' after column definition, found: 37 at Line: 1, Column: 60"
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_series() {
+    fn test_tokenize_and_parse_create_table_with_generated_column_without_end_parentheses() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL AS (37)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: an object type after CREATE, found: TIME at Line: 1, Column: 8"
+            "Parser Error: sql parser error: Expected: ',' or ')' after column definition, found: EOF"
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_series_table_space() {
+    fn test_tokenize_and_parse_create_table_with_error_bound_on_double() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIESTABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value DOUBLE ERROR BOUND 1)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: an object type after CREATE, found: TIME at Line: 1, Column: 8"
+            "Parser Error: sql parser error: Invalid Argument Error: The column 'value' cannot have an error bound since its type 'Float64' is not Float32."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_time_and_series() {
-        // Tracks if sqlparser at some point can parse fields/tags in a TABLE.
+    fn test_tokenize_and_parse_create_table_with_zero_error_bound() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD,
-             field_one FIELD(10.5), field_two FIELD(1%), tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL ERROR BOUND 0)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: type modifiers, found: % at Line: 2, Column: 54"
+            "Parser Error: sql parser error: Invalid Argument Error: An absolute error bound must be a positive finite value."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_table_name() {
+    fn test_tokenize_and_parse_create_table_with_relative_error_bound_above_one_hundred() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL ERROR BOUND 101%)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: word, found: ( at Line: 1, Column: 25"
+            "Parser Error: sql parser error: Invalid Argument Error: A relative error bound must be a positive value that is at most 100.0%."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_table_name_space() {
+    fn test_tokenize_and_parse_create_table_with_negative_error_bound() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL ERROR BOUND -1)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: an object type after CREATE, found: TIME at Line: 1, Column: 8"
+            "Parser Error: sql parser error: Expected: literal float, found: - at Line: 1, Column: 69"
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_start_parentheses() {
+    fn test_tokenize_and_parse_create_table_with_non_numeric_error_bound() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL ERROR BOUND one)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: (, found: timestamp at Line: 1, Column: 37"
+            "Parser Error: sql parser error: Expected: literal float, found: one at Line: 1, Column: 69"
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_option() {
+    fn test_tokenize_and_parse_create_table_with_error_bound_without_value() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP PRIMARY KEY, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL ERROR BOUND)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: ,, found: PRIMARY at Line: 1, Column: 57"
+            "Parser Error: sql parser error: Expected: literal float, found: ) at Line: 1, Column: 68"
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_sql_types() {
+    fn test_tokenize_and_parse_create_table_with_error_bound_without_bound() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field REAL, tag VARCHAR)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL ERROR 1)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected TIMESTAMP, FIELD, or TAG, found: REAL."
+            "Parser Error: sql parser error: Expected: ',' or ')' after column definition, found: ERROR at Line: 1, Column: 57"
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_column_name() {
+    fn test_tokenize_and_parse_create_table_with_error_bound_and_generated_column() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL ERROR BOUND 1 AS (37))",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: word, found: , at Line: 1, Column: 46"
+            "Parser Error: sql parser error: The column 'value' can only have one ERROR BOUND or generation expression."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_generated_timestamps() {
+    fn test_tokenize_and_parse_create_table_with_two_error_bounds() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP AS (37), field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL ERROR BOUND 1 ERROR BOUND 2)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: ,, found: AS at Line: 1, Column: 57"
+            "Parser Error: sql parser error: The column 'value' can only have one ERROR BOUND or generation expression."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_generated_tags() {
+    fn test_tokenize_and_parse_create_table_with_unsupported_column_option() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG AS (37))",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL DEFAULT 1)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: ,, found: AS at Line: 1, Column: 79"
+            "Parser Error: sql parser error: DEFAULT 1 is not supported."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_without_parentheses()
-    {
+    fn test_tokenize_and_parse_create_table_with_primary_key_column_option() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP PRIMARY KEY, value REAL)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: (, found: 37 at Line: 1, Column: 73"
+            "Parser Error: sql parser error: PRIMARY KEY is not supported."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_without_start_parentheses()
-     {
+    fn test_tokenize_and_parse_create_table_with_unsupported_type() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37), tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value FIELD)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: (, found: 37 at Line: 1, Column: 73"
+            "Parser Error: sql parser error: This feature is not implemented: Unsupported SQL type FIELD"
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_without_end_parentheses()
-     {
+    fn test_tokenize_and_parse_create_table_if_not_exists() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD AS (37, tag TAG)",
+            "CREATE TABLE IF NOT EXISTS table_name(timestamp TIMESTAMP, value REAL)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: ), found: , at Line: 1, Column: 76"
+            "Parser Error: sql parser error: IF NOT EXISTS is not supported."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_with_absolute_error_bound()
-     {
+    fn test_tokenize_and_parse_create_or_replace_table() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0) AS (37), tag TAG)",
+            "CREATE OR REPLACE TABLE table_name(timestamp TIMESTAMP, value REAL)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: ,, found: AS at Line: 1, Column: 75"
+            "Parser Error: sql parser error: OR REPLACE is not supported."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_generated_fields_with_relative_error_bound()
-     {
+    fn test_tokenize_and_parse_create_table_with_table_constraint() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0%) AS (37), tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL, PRIMARY KEY (timestamp))",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: ,, found: AS at Line: 1, Column: 76"
+            "Parser Error: sql parser error: CONSTRAINTS is not supported."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_column_type() {
+    fn test_tokenize_and_parse_create_table_with_multi_part_table_name() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp, field FIELD, tag TAG)",
+            "CREATE TABLE schema_name.table_name(timestamp TIMESTAMP, value REAL)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: word, found: , at Line: 1, Column: 46"
+            "Invalid Argument Error: Multi-part table names are not supported."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_comma() {
+    fn test_tokenize_and_parse_create_table_with_whitespace_in_table_name() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP field FIELD, tag TAG)",
+            "CREATE TABLE \"table name\"(timestamp TIMESTAMP, value REAL)",
         );
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: ,, found: field at Line: 1, Column: 57"
+            "Invalid Argument Error: Table name cannot contain whitespace."
         );
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_time_series_table_without_end_parentheses() {
+    fn test_tokenize_and_parse_two_create_table_statements() {
         let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG",
-        );
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Expected: ,, found: EOF"
-        );
-    }
-
-    #[test]
-    fn test_tokenize_and_parse_two_create_time_series_table_statements() {
-        let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG);
-             CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, value REAL); CREATE TABLE table_name(timestamp TIMESTAMP, value REAL)",
         );
 
         assert_eq!(
@@ -1580,22 +1571,6 @@ mod tests {
         parse_and_assert_that_keywords_are_restricted_in_table_name(
             str::to_uppercase,
             "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
-        )
-    }
-
-    #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_lowercase_keyword_as_table_name() {
-        parse_and_assert_that_keywords_are_restricted_in_table_name(
-            str::to_lowercase,
-            "CREATE TIME SERIES TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
-        )
-    }
-
-    #[test]
-    fn test_tokenize_and_parse_create_time_series_table_with_uppercase_keyword_as_table_name() {
-        parse_and_assert_that_keywords_are_restricted_in_table_name(
-            str::to_uppercase,
-            "CREATE TIME SERIES TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
     }
 
@@ -1628,18 +1603,17 @@ mod tests {
     fn test_tokenize_and_parse_can_reconstruct_sql_from_parsed_sql_expressions() {
         let generation_exprs_sql = vec![
             "37",
-            "field_1 + 73",
-            "field_1 + field_2",
-            "COS(field_1 * PI() / 180)",
-            "SIN(field_1 * PI() / 180)",
-            "TAN(field_1 * PI() / 180)",
+            "absolute_value + 73",
+            "absolute_value + relative_value",
+            "COS(absolute_value * PI() / 180)",
+            "SIN(absolute_value * PI() / 180)",
+            "TAN(absolute_value * PI() / 180)",
         ];
 
         let df_schema = Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("tag_1", DataType::Utf8View, false),
+            Field::new("absolute_value", ArrowValue::DATA_TYPE, false),
+            Field::new("relative_value", ArrowValue::DATA_TYPE, false),
         ])
         .to_dfschema()
         .unwrap();
@@ -1653,37 +1627,6 @@ mod tests {
             // Assert that the expression can be parsed to an Apache DataFusion expression.
             tokenize_and_parse_sql_expression(generation_expr, &df_schema).unwrap();
         }
-    }
-
-    #[test]
-    fn test_semantic_checks_for_create_time_series_table_check_correct_generated_expression() {
-        let modelardb_statement = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_1 * PI() / 180)), tag TAG)",
-        ).unwrap();
-
-        assert!(is_statement_create_table(modelardb_statement));
-    }
-
-    #[test]
-    fn test_semantic_checks_for_create_time_series_table_check_wrong_generated_expression() {
-        let result = tokenize_and_parse_sql_statement(
-            "CREATE TIME SERIES TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_3 * PI() / 180)), tag TAG)",
-        );
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Parser Error: sql parser error: Schema error: No field named field_3. Did you mean 'field_1'?\nValid fields are timestamp, field_1, field_2, tag."
-        );
-    }
-
-    /// Return [`true`] if `modelardb_statement` is [`ModelarDbStatement::CreateNormalTable`] or
-    /// [`ModelarDbStatement::CreateTimeSeriesTable`] and [`false`] otherwise.
-    fn is_statement_create_table(modelardb_statement: ModelarDbStatement) -> bool {
-        matches!(
-            modelardb_statement,
-            ModelarDbStatement::CreateNormalTable { .. }
-                | ModelarDbStatement::CreateTimeSeriesTable(..)
-        )
     }
 
     #[test]
