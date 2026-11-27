@@ -1498,12 +1498,10 @@ mod tests {
         data_folder: &DataFolder,
         batch_ids: HashSet<u64>,
     ) -> DeltaTable {
-        let compressed_segments = table::compressed_segments_record_batch();
-
         data_folder
-            .write_record_batches_with_batch_ids(
+            .write_record_batches(
                 TABLE_NAME,
-                vec![compressed_segments],
+                &[table::table_record_batch(ROW_COUNT)],
                 batch_ids,
             )
             .await
