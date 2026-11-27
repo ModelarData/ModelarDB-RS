@@ -348,4 +348,46 @@ mod tests {
         assert_eq!(result, table::table_record_batch(ROW_COUNT));
         assert!(!plan_has_generated_as_exec(data_folder.session_context(), sql).await);
     }
+    async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
+        create_data_folder_with_table_metadata(
+            &table::table_metadata(),
+            table::table_record_batch(ROW_COUNT),
+        )
+        .await
+    }
+
+    async fn create_data_folder_with_table_from_sql(sql: &str) -> (TempDir, DataFolder) {
+        create_data_folder_with_table_metadata(
+            &parse_create_table_and_extract_table_metadata(sql),
+            table::table_record_batch(ROW_COUNT),
+        )
+        .await
+    }
+
+    fn parse_create_table_and_extract_table_metadata(sql: &str) -> Arc<TableMetadata> {
+        match parser::tokenize_and_parse_sql_statement(sql).unwrap() {
+            ModelarDbStatement::CreateTable(table_metadata) => table_metadata,
+            _ => panic!("Expected ModelarDbStatement::CreateTable."),
+        }
+    }
+
+    async fn create_data_folder_with_table_metadata(
+        table_metadata: &TableMetadata,
+        record_batch: RecordBatch,
+    ) -> (TempDir, DataFolder) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+
+        data_folder.create_table(table_metadata).await.unwrap();
+        data_folder
+            .write_record_batches(&table_metadata.name, &[record_batch], HashSet::new())
+            .await
+            .unwrap();
+        data_folder
+            .register_tables(Arc::new(NoOpDataSink {}))
+            .await
+            .unwrap();
+
+        (temp_dir, data_folder)
+    }
 }
