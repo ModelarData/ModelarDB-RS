@@ -17,7 +17,6 @@
 //! modelardb_test since it depends on the non-test build of this crate.
 
 use std::collections::HashSet;
-use std::fs;
 
 use arrow::array::RecordBatch;
 use deltalake::DeltaTable;
@@ -86,7 +85,7 @@ pub(crate) async fn row_count(data_folder: &DataFolder) -> usize {
 /// Return the names of the files and folders in the folder of the table created by
 /// [`table::TABLE_SQL`] in the data folder in `temp_dir`.
 pub(crate) fn files_in_table_folder(temp_dir: &TempDir) -> Vec<String> {
-    fs::read_dir(temp_dir.path().join("tables").join(TABLE_NAME))
+    std::fs::read_dir(temp_dir.path().join("tables").join(TABLE_NAME))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect()

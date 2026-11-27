@@ -963,7 +963,8 @@ mod tests {
     use modelardb_types::types::ArrowTimestamp;
 
     use crate::test::{
-        ROW_COUNT, create_data_folder_with_table, file_paths, row_count, write_record_batch,
+        ROW_COUNT, create_data_folder_with_table, file_paths, files_in_table_folder, row_count,
+        write_record_batch,
     };
 
     // Tests for DataFolder.
@@ -1236,13 +1237,12 @@ mod tests {
         data_folder.truncate_table(TABLE_NAME).await.unwrap();
 
         // The stale Apache Parquet file should still exist on disk alongside the _delta_log folder.
-        let table_path = format!("{}/tables/{TABLE_NAME}", temp_dir.path().to_str().unwrap());
-        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 2);
+        assert_eq!(files_in_table_folder(&temp_dir).len(), 2);
 
         data_folder.vacuum_table(TABLE_NAME, Some(0)).await.unwrap();
 
         // Only the _delta_log folder should remain.
-        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 1);
+        assert_eq!(files_in_table_folder(&temp_dir), vec!["_delta_log"]);
     }
 
     #[tokio::test]
@@ -1256,8 +1256,7 @@ mod tests {
         // is not yet stale and should still exist on disk.
         data_folder.vacuum_table(TABLE_NAME, None).await.unwrap();
 
-        let table_path = format!("{}/tables/{TABLE_NAME}", temp_dir.path().to_str().unwrap());
-        assert_eq!(std::fs::read_dir(&table_path).unwrap().count(), 2);
+        assert_eq!(files_in_table_folder(&temp_dir).len(), 2);
     }
 
     #[tokio::test]
