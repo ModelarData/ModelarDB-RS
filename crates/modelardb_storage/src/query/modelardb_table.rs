@@ -475,6 +475,65 @@ mod tests {
         );
         assert_eq!(float32_values(&result, 1), vec![8.0]);
     }
+
+    #[tokio::test]
+    async fn test_filter_on_generated_column() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            "SELECT generated_value FROM test_table WHERE generated_value > 3",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(float32_values(&result, 0), vec![4.0, 6.0, 8.0]);
+    }
+
+    #[tokio::test]
+    async fn test_filter_on_stored_column_not_in_projection() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+
+        let result = sql_and_concat(
+            data_folder.session_context(),
+            "SELECT generated_value FROM test_table WHERE absolute_value > 2",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(float32_values(&result, 0), vec![6.0, 8.0]);
+    }
+
+    #[tokio::test]
+    async fn test_supports_filters_pushdown() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
+        let table = data_folder
+            .session_context()
+            .table_provider(TABLE_NAME)
+            .await
+            .unwrap();
+        let delta_table = data_folder.table_provider(TABLE_NAME).await.unwrap();
+
+        let stored_filter = col("absolute_value").gt(lit(2.0_f32));
+        let generated_filter = col("generated_value").gt(lit(2.0_f32));
+        let mut delta_table_pushdown = delta_table
+            .supports_filters_pushdown(&[&stored_filter])
+            .unwrap();
+
+        // Filters on stored columns must get the same answer as from Delta Lake, so it can still
+        // skip files using their statistics. Queries return correct results even if the pushdown
+        // is lost, so only this test catches it. Filters on generated columns are unsupported
+        // since the columns are not stored.
+        assert_eq!(
+            table
+                .supports_filters_pushdown(&[&stored_filter, &generated_filter])
+                .unwrap(),
+            vec![
+                delta_table_pushdown.remove(0),
+                TableProviderFilterPushDown::Unsupported
+            ]
+        );
+    }
     async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
         create_data_folder_with_table_metadata(
             &table::table_metadata(),
