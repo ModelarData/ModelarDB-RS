@@ -1321,7 +1321,8 @@ mod tests {
         }
 
         // The append is committed after the snapshot that OPTIMIZE plans from is loaded, as if it
-        // happened while OPTIMIZE was running.
+        // happened while OPTIMIZE was running. OPTIMIZE can still commit since the table uses
+        // WriteSerializable and the append is a blind append.
         let delta_table = data_folder.delta_table(TABLE_NAME).await.unwrap();
         write_record_batch(&data_folder).await;
         delta_table.optimize().await.unwrap();
