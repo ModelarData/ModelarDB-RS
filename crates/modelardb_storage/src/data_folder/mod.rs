@@ -1163,51 +1163,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drop_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+    async fn test_drop_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        data_folder.drop_table("normal_table_2").await.unwrap();
+        data_folder.drop_table(TABLE_NAME).await.unwrap();
 
-        assert!(data_folder.delta_table("normal_table_2").await.is_err());
+        assert!(data_folder.delta_table(TABLE_NAME).await.is_err());
 
-        // Verify that normal_table_2 was deleted from the normal_table_metadata table.
-        let sql = "SELECT table_name FROM metadata.normal_table_metadata";
-        let batch = sql_and_concat(&data_folder.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            **batch.column(0),
-            StringViewArray::from(vec!["normal_table_1"])
-        );
-    }
-
-    #[tokio::test]
-    async fn test_drop_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
-
-        data_folder
-            .drop_table(TIME_SERIES_TABLE_NAME)
-            .await
-            .unwrap();
-
-        assert!(
-            data_folder
-                .delta_table(TIME_SERIES_TABLE_NAME)
-                .await
-                .is_err()
-        );
-
-        // Verify that the time series table was deleted from the time_series_table_metadata table.
-        let sql = "SELECT table_name FROM metadata.time_series_table_metadata";
+        // Verify that the table was deleted from the table_metadata table.
+        let sql = "SELECT table_name FROM metadata.table_metadata";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();
 
         assert_eq!(batch.num_rows(), 0);
 
-        // Verify that the field columns were deleted from the time_series_table_field_columns table.
-        let sql = "SELECT table_name FROM metadata.time_series_table_field_columns";
+        // Verify that the columns were deleted from the column_metadata table.
+        let sql = "SELECT table_name FROM metadata.column_metadata";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();
@@ -1217,7 +1189,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_missing_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
         let result = data_folder.drop_table("missing_table").await;
 
