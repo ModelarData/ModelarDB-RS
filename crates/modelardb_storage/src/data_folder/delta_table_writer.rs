@@ -61,7 +61,9 @@ impl DeltaTableWriter {
         let writer_properties =
             modelardb_compression::writer_properties(&snapshot.snapshot().arrow_schema());
 
-        // Operation that will be committed.
+        // Operation that will be committed. deltalake checks a commit without a predicate as if it
+        // read every file in its snapshot, so it would conflict with concurrent commits that remove
+        // files, e.g., TRUNCATE. The predicate false states that the blind append read no files.
         let delta_operation = DeltaOperation::Write {
             mode: SaveMode::Append,
             partition_by: if partition_columns.is_empty() {
@@ -69,7 +71,7 @@ impl DeltaTableWriter {
             } else {
                 Some(partition_columns.clone())
             },
-            predicate: None,
+            predicate: Some("false".to_owned()),
         };
 
         // A UUID version 4 is used as the operation id to match the existing Operation trait in the
