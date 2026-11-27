@@ -1519,79 +1519,66 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_time_series_table_metadata() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+    async fn test_table_metadata() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let time_series_table_metadata = data_folder.time_series_table_metadata().await.unwrap();
+        let table_metadata = data_folder.table_metadata().await.unwrap();
 
-        assert_eq!(
-            time_series_table_metadata.first().unwrap().name,
-            test_table::time_series_table_metadata().name,
-        );
+        assert_eq!(table_metadata.len(), 1);
+        assert_eq!(*table_metadata[0], table::table_metadata());
     }
 
     #[tokio::test]
-    async fn test_time_series_table_metadata_for_existing_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+    async fn test_table_metadata_for_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let time_series_table_metadata = data_folder
-            .time_series_table_metadata_for_time_series_table(TIME_SERIES_TABLE_NAME)
+        let table_metadata = data_folder
+            .table_metadata_for_table(TABLE_NAME)
             .await
             .unwrap();
 
-        assert_eq!(
-            time_series_table_metadata.name,
-            test_table::time_series_table_metadata().name,
-        );
+        assert_eq!(table_metadata, table::table_metadata());
     }
 
     #[tokio::test]
-    async fn test_time_series_table_metadata_for_missing_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+    async fn test_table_metadata_for_missing_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let result = data_folder
-            .time_series_table_metadata_for_time_series_table("missing_table")
-            .await;
+        let result = data_folder.table_metadata_for_table("missing_table").await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid Argument Error: No metadata for time series table named 'missing_table'."
+            "Invalid Argument Error: No metadata for table named 'missing_table'."
         );
     }
 
     #[tokio::test]
-    async fn test_time_series_table_metadata_for_registered_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+    async fn test_table_metadata_for_registered_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
         data_folder
             .register_tables(Arc::new(NoOpDataSink {}))
             .await
             .unwrap();
 
-        let metadata = data_folder
-            .time_series_table_metadata_for_registered_time_series_table(TIME_SERIES_TABLE_NAME)
+        let table_metadata = data_folder
+            .table_metadata_for_registered_table(TABLE_NAME)
             .await;
 
-        assert_eq!(
-            metadata.unwrap().as_ref(),
-            &test_table::time_series_table_metadata(),
-        );
+        assert_eq!(*table_metadata.unwrap(), table::table_metadata());
     }
 
     #[tokio::test]
-    async fn test_time_series_table_metadata_for_unregistered_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+    async fn test_table_metadata_for_unregistered_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let metadata = data_folder
-            .time_series_table_metadata_for_registered_time_series_table(TIME_SERIES_TABLE_NAME)
+        let table_metadata = data_folder
+            .table_metadata_for_registered_table(TABLE_NAME)
             .await;
 
-        assert!(metadata.is_none());
+        assert!(table_metadata.is_none());
     }
 
-    #[tokio::test]
-    async fn test_error_bound() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
     async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
