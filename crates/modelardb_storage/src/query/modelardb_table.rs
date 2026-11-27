@@ -534,6 +534,44 @@ mod tests {
             ]
         );
     }
+
+    #[tokio::test]
+    async fn test_schema_has_view_types_for_stored_columns() {
+        let query_schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, true),
+            Field::new("text", DataType::Utf8, true),
+        ]));
+        let table_metadata = TableMetadata::try_new(
+            TABLE_NAME.to_owned(),
+            query_schema,
+            vec![ColumnMetadata::Stored(ErrorBound::Lossless); 2],
+        )
+        .unwrap();
+
+        // Delta Lake requires view types when writing, so the record batch uses Utf8View.
+        let record_batch_schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, true),
+            Field::new("text", DataType::Utf8View, true),
+        ]));
+        let record_batch = RecordBatch::try_new(
+            record_batch_schema,
+            vec![
+                Arc::new(TimestampMicrosecondArray::from(vec![0])),
+                Arc::new(StringViewArray::from(vec!["text"])),
+            ],
+        )
+        .unwrap();
+        let (_temp_dir, data_folder) =
+            create_data_folder_with_table_metadata(&table_metadata, record_batch).await;
+
+        let table = data_folder
+            .session_context()
+            .table_provider(TABLE_NAME)
+            .await
+            .unwrap();
+
+        assert_eq!(table.schema().field(1).data_type(), &DataType::Utf8View);
+    }
     async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
         create_data_folder_with_table_metadata(
             &table::table_metadata(),
