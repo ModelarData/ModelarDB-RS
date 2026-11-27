@@ -1496,56 +1496,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let time_series_table_metadata = test_table::time_series_table_metadata();
         data_folder
-            .create_time_series_table(&time_series_table_metadata)
+            .create_table(&lossless_table_metadata())
             .await
             .unwrap();
 
-        let table_names = data_folder.table_names().await.unwrap();
-        assert_eq!(
-            table_names,
-            vec!["normal_table_2", "normal_table_1", TIME_SERIES_TABLE_NAME]
-        );
+        // The order of the table names depends on the order of the files in the metadata table.
+        let mut table_names = data_folder.table_names().await.unwrap();
+        table_names.sort();
+
+        assert_eq!(table_names, vec!["lossless_table", TABLE_NAME]);
     }
 
     #[tokio::test]
-    async fn test_normal_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+    async fn test_table_exists() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let normal_table_names = data_folder.normal_table_names().await.unwrap();
-        assert_eq!(normal_table_names, vec!["normal_table_2", "normal_table_1"]);
-    }
-
-    #[tokio::test]
-    async fn test_time_series_table_names() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
-
-        let time_series_table_names = data_folder.time_series_table_names().await.unwrap();
-        assert_eq!(time_series_table_names, vec![TIME_SERIES_TABLE_NAME]);
-    }
-
-    #[tokio::test]
-    async fn test_normal_table_schema_for_existing_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
-
-        let schema = data_folder
-            .normal_table_schema("normal_table_1")
-            .await
-            .unwrap();
-
-        assert_eq!(schema.as_ref(), &test_table::normal_table_schema());
-    }
-
-    #[tokio::test]
-    async fn test_normal_table_schema_for_missing_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
-
-        let maybe_schema = data_folder.normal_table_schema("missing_table").await;
-
-        assert!(maybe_schema.is_none());
+        assert!(data_folder.table_exists(TABLE_NAME).await.unwrap());
+        assert!(!data_folder.table_exists("missing_table").await.unwrap());
     }
 
     #[tokio::test]
