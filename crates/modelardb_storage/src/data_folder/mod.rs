@@ -1860,118 +1860,65 @@ mod tests {
     #[tokio::test]
     async fn test_error_bound() {
         let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
-
-        let error_bounds = data_folder
-            .error_bounds(TIME_SERIES_TABLE_NAME, 4)
-            .await
-            .unwrap();
-
-        let values: Vec<f32> = error_bounds
-            .iter()
-            .map(|error_bound| match error_bound {
-                ErrorBound::Absolute(value) => *value,
-                ErrorBound::Relative(value) => *value,
-                ErrorBound::Lossless => 0.0,
-            })
-            .collect();
-
-        assert_eq!(values, &[0.0, 1.0, 5.0, 0.0]);
-    }
-
-    #[tokio::test]
-    async fn test_generated_columns() {
+    async fn create_data_folder_with_table() -> (TempDir, DataFolder) {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
+        data_folder
+            .create_table(&table::table_metadata())
+            .await
+            .unwrap();
+
+        (temp_dir, data_folder)
+    }
+
+    fn lossless_table_metadata() -> TableMetadata {
         let query_schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("tag", DataType::Utf8View, false),
-            Field::new("generated_column_1", ArrowValue::DATA_TYPE, false),
-            Field::new("generated_column_2", ArrowValue::DATA_TYPE, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, true),
+            Field::new("value", DataType::Float32, true),
         ]));
 
-        let error_bounds = vec![ErrorBound::Lossless; query_schema.fields.len()];
-
-        let plus_one_column = Some(GeneratedColumn {
-            expr: col("field_1") + Literal(Int64(Some(1)), None),
-            source_columns: vec![1],
-        });
-
-        let addition_column = Some(GeneratedColumn {
-            expr: col("field_1") + col("field_2"),
-            source_columns: vec![1, 2],
-        });
-
-        let expected_generated_columns =
-            vec![None, None, None, None, plus_one_column, addition_column];
-
-        let time_series_table_metadata = TimeSeriesTableMetadata::try_new(
-            "generated_columns_table".to_owned(),
+        TableMetadata::try_new(
+            "lossless_table".to_owned(),
             query_schema,
-            error_bounds,
-            expected_generated_columns.clone(),
+            vec![ColumnMetadata::Stored(ErrorBound::Lossless); 2],
         )
-        .unwrap();
-
-        data_folder
-            .create_time_series_table(&time_series_table_metadata)
-            .await
-            .unwrap();
-
-        let df_schema = time_series_table_metadata
-            .query_schema
-            .to_dfschema()
-            .unwrap();
-        let generated_columns = data_folder
-            .generated_columns("generated_columns_table", &df_schema)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            generated_columns[0..generated_columns.len() - 1],
-            expected_generated_columns[0..expected_generated_columns.len() - 1]
-        );
-
-        // Sort the source columns to ensure the order is consistent.
-        let mut last_generated_column = generated_columns.last().unwrap().clone().unwrap();
-        last_generated_column.source_columns.sort();
-
-        assert_eq!(
-            &Some(last_generated_column),
-            expected_generated_columns.last().unwrap()
-        );
+        .unwrap()
     }
 
-    async fn create_data_folder_and_create_normal_tables() -> (TempDir, DataFolder) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
-
-        let normal_table_schema = test_table::normal_table_schema();
+    async fn write_record_batch(data_folder: &DataFolder) -> DeltaTable {
         data_folder
-            .create_normal_table("normal_table_1", &normal_table_schema)
+            .write_record_batches(
+                TABLE_NAME,
+                &[table::table_record_batch(ROW_COUNT)],
+                HashSet::new(),
+            )
             .await
-            .unwrap();
-
-        data_folder
-            .create_normal_table("normal_table_2", &normal_table_schema)
-            .await
-            .unwrap();
-
-        (temp_dir, data_folder)
+            .unwrap()
     }
 
-    async fn create_data_folder_and_create_time_series_table() -> (TempDir, DataFolder) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
+    async fn active_file_count(data_folder: &DataFolder) -> usize {
+        let delta_table = data_folder.delta_table(TABLE_NAME).await.unwrap();
+        delta_table.get_file_uris().unwrap().count()
+    }
 
-        let time_series_table_metadata = test_table::time_series_table_metadata();
-        data_folder
-            .create_time_series_table(&time_series_table_metadata)
-            .await
-            .unwrap();
+    async fn file_paths(data_folder: &DataFolder) -> Vec<String> {
+        let delta_table = data_folder.delta_table(TABLE_NAME).await.unwrap();
 
-        (temp_dir, data_folder)
+        delta_table
+            .snapshot()
+            .unwrap()
+            .log_data()
+            .iter()
+            .map(|file| file.path().to_string())
+            .collect()
+    }
+
+    async fn row_count(data_folder: &DataFolder) -> usize {
+        let delta_table = data_folder.delta_table(TABLE_NAME).await.unwrap();
+        let (_table, stream) = delta_table.scan_table().await.unwrap();
+
+        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+        batches.iter().map(|batch| batch.num_rows()).sum()
     }
 }
