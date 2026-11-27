@@ -48,10 +48,10 @@ use modelardb_types::types::{
     CloudCredentials, ColumnMetadata, ErrorBound, GeneratedColumn, MAX_RETENTION_PERIOD_IN_SECONDS,
     TableMetadata,
 };
+use object_store::ObjectStore;
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
-use object_store::ObjectStore;
 use url::Url;
 
 use crate::data_folder::delta_table_writer::DeltaTableWriter;
@@ -958,14 +958,12 @@ mod tests {
     use super::*;
 
     use arrow::compute;
-    use arrow::datatypes::{ArrowPrimitiveType, Field};
-    use datafusion::arrow::datatypes::DataType;
-    use datafusion::common::ScalarValue::Int64;
-    use datafusion::logical_expr::Expr::Literal;
-    use modelardb_test::table as test_table;
-    use modelardb_test::table::{NoOpDataSink, TIME_SERIES_TABLE_NAME};
+    use arrow::datatypes::ArrowPrimitiveType;
+    use modelardb_test::table::{self, NoOpDataSink, TABLE_NAME};
     use modelardb_types::types::ArrowTimestamp;
     use tempfile::TempDir;
+
+    const ROW_COUNT: usize = 5;
 
     // Tests for DataFolder.
     #[tokio::test]
@@ -1011,14 +1009,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_metadata_data_folder_tables() {
+    async fn test_create_metadata_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_folder = DataFolder::open_local(temp_dir.path()).await.unwrap();
 
         assert!(
             data_folder
                 .session_context
-                .sql("SELECT table_name FROM metadata.normal_table_metadata")
+                .sql("SELECT table_name, query_schema FROM metadata.table_metadata")
                 .await
                 .is_ok()
         );
@@ -1026,110 +1024,87 @@ mod tests {
         assert!(
             data_folder
                 .session_context
-                .sql("SELECT table_name, query_schema FROM metadata.time_series_table_metadata")
+                .sql(
+                    "SELECT table_name, column_name, column_index, error_bound_value, \
+                     error_bound_is_relative, generated_column_expr FROM metadata.column_metadata"
+                )
                 .await
                 .is_ok()
         );
-
-        assert!(data_folder
-            .session_context
-            .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
-                  generated_column_expr FROM metadata.time_series_table_field_columns")
-            .await
-            .is_ok());
     }
 
     #[tokio::test]
     async fn test_register_tables() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
-
-        data_folder
-            .create_time_series_table(&test_table::time_series_table_metadata())
-            .await
-            .unwrap();
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
         data_folder
             .register_tables(Arc::new(NoOpDataSink {}))
             .await
             .unwrap();
 
-        // Verify the tables are queryable through the session context.
+        // Verify the table is queryable through the session context.
         assert!(
             data_folder
                 .session_context
-                .table_provider("normal_table_1")
-                .await
-                .is_ok()
-        );
-        assert!(
-            data_folder
-                .session_context
-                .table_provider(TIME_SERIES_TABLE_NAME)
+                .table_provider(TABLE_NAME)
                 .await
                 .is_ok()
         );
     }
 
     #[tokio::test]
-    async fn test_create_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+    async fn test_create_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        assert!(data_folder.delta_table("normal_table_1").await.is_ok());
+        assert!(data_folder.delta_table(TABLE_NAME).await.is_ok());
 
-        // Retrieve the normal table metadata from the Delta Lake.
-        let sql = "SELECT table_name FROM metadata.normal_table_metadata ORDER BY table_name";
+        // Check that a row has been added to the table_metadata table.
+        let sql = "SELECT table_name, query_schema FROM metadata.table_metadata";
         let batch = sql_and_concat(&data_folder.session_context, sql)
             .await
             .unwrap();
 
-        assert_eq!(
-            **batch.column(0),
-            StringViewArray::from(vec!["normal_table_1", "normal_table_2"])
-        );
-    }
-
-    #[tokio::test]
-    async fn test_create_existing_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
-
-        let result = data_folder
-            .create_normal_table("normal_table_1", &test_table::normal_table_schema())
-            .await;
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Delta Lake Error: Generic error: A Delta Lake table already exists at that location."
-        );
-    }
-
-    #[tokio::test]
-    async fn test_create_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
-
-        assert!(
-            data_folder
-                .delta_table(TIME_SERIES_TABLE_NAME)
-                .await
-                .is_ok()
-        );
-
-        // Check that a row has been added to the time_series_table_metadata table.
-        let sql = "SELECT table_name, query_schema FROM metadata.time_series_table_metadata";
-        let batch = sql_and_concat(&data_folder.session_context, sql)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            **batch.column(0),
-            StringViewArray::from(vec![TIME_SERIES_TABLE_NAME])
-        );
+        assert_eq!(**batch.column(0), StringViewArray::from(vec![TABLE_NAME]));
         assert_eq!(
             **batch.column(1),
             BinaryViewArray::from_iter_values([&try_convert_schema_to_bytes(
-                &test_table::time_series_table_metadata().query_schema
+                &table::table_metadata().query_schema
             )
             .unwrap()])
         );
+
+        // Check that a row has been added to the column_metadata table for each column with an
+        // error bound or a generated column expression.
+        let sql = "SELECT table_name, column_name, column_index, error_bound_value, \
+                   error_bound_is_relative, generated_column_expr FROM metadata.column_metadata \
+                   ORDER BY column_index";
+        let batch = sql_and_concat(&data_folder.session_context, sql)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringViewArray::from(vec![TABLE_NAME, TABLE_NAME, TABLE_NAME])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringViewArray::from(vec!["absolute_value", "generated_value", "relative_value"])
+        );
+        assert_eq!(**batch.column(2), Int32Array::from(vec![1, 2, 3]));
+        assert_eq!(
+            **batch.column(3),
+            Float32Array::from(vec![Some(1.0), None, Some(5.0)])
+        );
+        assert_eq!(
+            **batch.column(4),
+            BooleanArray::from(vec![Some(false), None, Some(true)])
+        );
+
+        let generated_column_exprs = batch.column(5);
+        assert!(generated_column_exprs.is_null(0));
+        assert!(generated_column_exprs.is_valid(1));
+        assert!(generated_column_exprs.is_null(2));
+    }
 
         // Check that a row has been added to the time_series_table_field_columns table for each field column.
         let sql = "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative, \
