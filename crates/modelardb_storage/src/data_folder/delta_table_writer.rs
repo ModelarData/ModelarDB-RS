@@ -243,7 +243,7 @@ mod tests {
 
     use crate::test::{
         ROW_COUNT, create_data_folder_with_table, create_data_folder_with_table_metadata,
-        file_paths, row_count, write_record_batch,
+        file_paths, files_in_table_folder, row_count, write_record_batch,
     };
 
     // Tests for DeltaTableWriter.
@@ -395,11 +395,13 @@ mod tests {
             .write_all_and_commit(&[table::table_record_batch(ROW_COUNT), invalid_record_batch])
             .await;
 
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .starts_with("Delta Lake Error: Data does not match the schema or partitions")
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Delta Lake Error: Data does not match the schema or partitions of the table: \
+             Unexpected Arrow schema: got: Field { \"timestamp\": nullable Timestamp(µs) }, \
+             expected: Field { \"timestamp\": nullable Timestamp(µs) }, \
+             Field { \"absolute_value\": nullable Float32 }, \
+             Field { \"relative_value\": nullable Float32 }"
         );
 
         // The valid record batch should be rolled back, so no files are left and nothing is
@@ -483,12 +485,5 @@ mod tests {
         let commit = history.try_next().await.unwrap().unwrap();
 
         commit.info.get(key).cloned()
-    }
-
-    fn files_in_table_folder(temp_dir: &TempDir) -> Vec<String> {
-        std::fs::read_dir(temp_dir.path().join("tables").join(TABLE_NAME))
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .collect()
     }
 }
