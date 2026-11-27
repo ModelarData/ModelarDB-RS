@@ -20,6 +20,8 @@ pub mod data_folder;
 pub mod error;
 pub mod parser;
 mod query;
+#[cfg(test)]
+mod test;
 pub mod write_ahead_log;
 
 use std::any::Any;
