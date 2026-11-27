@@ -1389,50 +1389,46 @@ mod tests {
         assert!(file_sizes.iter().all(|file_size| *file_size > 0));
     }
 
-        // Read the data back and verify the content.
-        let table_provider = delta_table.table_provider().build().await.unwrap();
-        data_folder
-            .session_context
-            .register_table("normal_table_1", Arc::new(table_provider))
-            .unwrap();
-
-        let read_batch =
-            sql_and_concat(&data_folder.session_context, "SELECT * FROM normal_table_1")
-                .await
-                .unwrap();
-
-        assert_eq!(read_batch, batch_to_write);
-    }
-
     #[tokio::test]
-    async fn test_write_record_batches_to_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+    async fn test_remove_files() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let batch_to_write = test_table::compressed_segments_record_batch();
-        let delta_table = data_folder
-            .write_record_batches(TIME_SERIES_TABLE_NAME, vec![batch_to_write.clone()])
+        write_record_batch(&data_folder).await;
+        let file_paths_to_remove = file_paths(&data_folder).await;
+        write_record_batch(&data_folder).await;
+
+        data_folder
+            .remove_files(TABLE_NAME, &file_paths_to_remove)
             .await
             .unwrap();
 
-        // Verify the write produced a Parquet file.
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+        // Only the file written after the file paths were read should remain.
+        let remaining_file_paths = file_paths(&data_folder).await;
+        assert_eq!(remaining_file_paths.len(), 1);
+        assert!(!file_paths_to_remove.contains(&remaining_file_paths[0]));
+        assert_eq!(row_count(&data_folder).await, ROW_COUNT);
+    }
 
-        // Read the data back and verify the content. Partition columns are moved to the end by
-        // Delta Lake, so SELECT the columns in the original schema order.
-        let schema = test_table::time_series_table_metadata()
-            .compressed_schema
-            .clone();
-        let column_names: Vec<String> = schema
-            .fields()
-            .iter()
-            .map(|field| format!("\"{}\"", field.name()))
-            .collect();
+    #[tokio::test]
+    async fn test_remove_files_with_missing_file() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let table_provider = delta_table.table_provider().build().await.unwrap();
-        data_folder
-            .session_context
-            .register_table(TIME_SERIES_TABLE_NAME, Arc::new(table_provider))
-            .unwrap();
+        write_record_batch(&data_folder).await;
+        let mut file_paths_to_remove = file_paths(&data_folder).await;
+        file_paths_to_remove.push("missing_file.parquet".to_owned());
+
+        let result = data_folder
+            .remove_files(TABLE_NAME, &file_paths_to_remove)
+            .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid State Error: Some of the files to remove are no longer in the table 'test_table'."
+        );
+
+        // Nothing should be removed if any of the files are missing.
+        assert_eq!(active_file_count(&data_folder).await, 1);
+    }
 
         let read_batch = sql_and_concat(
             &data_folder.session_context,
