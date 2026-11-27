@@ -390,4 +390,27 @@ mod tests {
 
         (temp_dir, data_folder)
     }
+
+    async fn plan_has_generated_as_exec(session_context: &SessionContext, sql: &str) -> bool {
+        let physical_plan = session_context
+            .sql(sql)
+            .await
+            .unwrap()
+            .create_physical_plan()
+            .await
+            .unwrap();
+
+        displayable(physical_plan.as_ref())
+            .indent(true)
+            .to_string()
+            .contains("GeneratedAsExec")
+    }
+
+    fn float32_values(record_batch: &RecordBatch, column_index: usize) -> Vec<f32> {
+        record_batch
+            .column(column_index)
+            .as_primitive::<Float32Type>()
+            .values()
+            .to_vec()
+    }
 }
