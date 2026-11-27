@@ -298,4 +298,20 @@ mod tests {
         // The optimized rows and the rows written by the writer should all remain.
         assert_eq!(row_count(&data_folder).await, 3 * ROW_COUNT);
     }
+    async fn last_commit_metadata(
+        delta_table: &DeltaTable,
+        key: &str,
+    ) -> Option<serde_json::Value> {
+        let mut history = delta_table.history(Some(1));
+        let commit = history.try_next().await.unwrap().unwrap();
+
+        commit.info.get(key).cloned()
+    }
+
+    fn files_in_table_folder(temp_dir: &TempDir) -> Vec<String> {
+        std::fs::read_dir(temp_dir.path().join("tables").join(TABLE_NAME))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect()
+    }
 }

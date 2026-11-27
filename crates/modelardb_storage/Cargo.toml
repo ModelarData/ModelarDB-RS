@@ -41,5 +41,6 @@ uuid.workspace = true
 [dev-dependencies]
 futures.workspace = true
 modelardb_test.workspace = true
+parquet.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
