@@ -1292,122 +1292,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_optimize_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+    async fn test_optimize_table() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
         // Each write is a separate commit, so four writes produce four small files.
         for _ in 0..4 {
-            data_folder
-                .write_record_batches(
-                    "normal_table_1",
-                    vec![test_table::normal_table_record_batch()],
-                )
-                .await
-                .unwrap();
+            write_record_batch(&data_folder).await;
         }
 
-        let rows_before = row_count(&data_folder, "normal_table_1").await;
-        assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 4);
+        assert_eq!(active_file_count(&data_folder).await, 4);
 
-        data_folder
-            .optimize_table("normal_table_1", None)
-            .await
-            .unwrap();
+        data_folder.optimize_table(TABLE_NAME, None).await.unwrap();
 
         // The small files should be merged into a single active file with no rows lost or
         // duplicated.
-        assert_eq!(active_file_count(&data_folder, "normal_table_1").await, 1);
-        assert_eq!(row_count(&data_folder, "normal_table_1").await, rows_before);
+        assert_eq!(active_file_count(&data_folder).await, 1);
+        assert_eq!(row_count(&data_folder).await, 4 * ROW_COUNT);
     }
 
     #[tokio::test]
-    async fn test_optimize_time_series_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_time_series_table().await;
+    async fn test_optimize_table_commits_alongside_append() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
         // Each write is a separate commit, so four writes produce four small files.
         for _ in 0..4 {
-            data_folder
-                .write_record_batches(
-                    TIME_SERIES_TABLE_NAME,
-                    vec![test_table::compressed_segments_record_batch()],
-                )
-                .await
-                .unwrap();
+            write_record_batch(&data_folder).await;
         }
 
-        let rows_before = row_count(&data_folder, TIME_SERIES_TABLE_NAME).await;
-        assert_eq!(
-            active_file_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
-            4
-        );
+        // The append is committed after the snapshot that OPTIMIZE plans from is loaded, as if it
+        // happened while OPTIMIZE was running.
+        let delta_table = data_folder.delta_table(TABLE_NAME).await.unwrap();
+        write_record_batch(&data_folder).await;
+        delta_table.optimize().await.unwrap();
 
-        data_folder
-            .optimize_table(TIME_SERIES_TABLE_NAME, None)
-            .await
-            .unwrap();
-
-        // The small files should be merged into a single active file with no rows lost or
-        // duplicated.
-        assert_eq!(
-            active_file_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
-            1
-        );
-        assert_eq!(
-            row_count(&data_folder, TIME_SERIES_TABLE_NAME).await,
-            rows_before
-        );
-    }
-
-    async fn row_count(data_folder: &DataFolder, table_name: &str) -> usize {
-        let delta_table = data_folder.delta_table(table_name).await.unwrap();
-        let (_table, stream) = delta_table.scan_table().await.unwrap();
-
-        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
-        batches.iter().map(|batch| batch.num_rows()).sum()
+        // The four files are merged and the appended file is kept, so no rows are lost.
+        assert_eq!(active_file_count(&data_folder).await, 2);
+        assert_eq!(row_count(&data_folder).await, 5 * ROW_COUNT);
     }
 
     #[tokio::test]
     async fn test_optimize_table_with_small_target_file_size() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
         // Each write is a separate commit, so four writes produce four small files.
         for _ in 0..4 {
-            data_folder
-                .write_record_batches(
-                    "normal_table_1",
-                    vec![test_table::normal_table_record_batch()],
-                )
-                .await
-                .unwrap();
+            write_record_batch(&data_folder).await;
         }
-
-        let files_before = active_file_count(&data_folder, "normal_table_1").await;
-        assert_eq!(files_before, 4);
 
         // A one-byte target is smaller than every existing file, so none of them are candidates for
         // merging, and the files should be left untouched.
         data_folder
-            .optimize_table("normal_table_1", Some(1))
+            .optimize_table(TABLE_NAME, Some(1))
             .await
             .unwrap();
 
-        assert_eq!(
-            active_file_count(&data_folder, "normal_table_1").await,
-            files_before
-        );
-    }
-
-    async fn active_file_count(data_folder: &DataFolder, table_name: &str) -> usize {
-        let delta_table = data_folder.delta_table(table_name).await.unwrap();
-
-        delta_table.get_file_uris().unwrap().count()
+        assert_eq!(active_file_count(&data_folder).await, 4);
     }
 
     #[tokio::test]
     async fn test_optimize_table_with_zero_target_file_size() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let result = data_folder.optimize_table("normal_table_1", Some(0)).await;
+        let result = data_folder.optimize_table(TABLE_NAME, Some(0)).await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -1417,7 +1363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_optimize_missing_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
         let result = data_folder.optimize_table("missing_table", None).await;
 
