@@ -13,40 +13,37 @@
  * limitations under the License.
  */
 
-//! Implementation of table related functions and constants used throughout ModelarDB for testing purposes.
+//! Implementation of table-related functions and constants used throughout ModelarDB for testing
+//! purposes.
 
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 
-use arrow::array::{
-    BinaryViewArray, Float32Array, Int8Array, Int16Array, RecordBatch, StringViewArray,
-};
-use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+use arrow::array::RecordBatch;
+use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
 use async_trait::async_trait;
+use datafusion::common::ToDFSchema;
 use datafusion::datasource::sink::DataSink;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
+use datafusion::prelude::col;
 use modelardb_types::types::{
-    ArrowTimestamp, ArrowValue, ErrorBound, TimeSeriesTableMetadata, Timestamp, TimestampArray,
-    Value, ValueArray,
+    ArrowTimestamp, ArrowValue, ColumnMetadata, ErrorBound, GeneratedColumn, TableMetadata,
+    Timestamp, TimestampArray, Value, ValueArray,
 };
 
-use crate::{ERROR_BOUND_FIVE, ERROR_BOUND_ONE};
+/// SQL to create a table with a timestamp column, a column with an absolute error bound, a
+/// generated column, and a column with a relative error bound. The table has the metadata returned
+/// by [`table_metadata()`].
+pub const TABLE_SQL: &str = "CREATE TABLE test_table(timestamp TIMESTAMP, \
+    absolute_value REAL ERROR BOUND 1, \
+    generated_value REAL AS (absolute_value + relative_value), \
+    relative_value REAL ERROR BOUND 5%)";
 
-/// SQL to create a normal table with a timestamp column and two floating point columns.
-pub const NORMAL_TABLE_SQL: &str =
-    "CREATE TABLE normal_table(timestamp TIMESTAMP, values REAL, metadata REAL)";
-
-/// Name of the normal table used in tests.
-pub const NORMAL_TABLE_NAME: &str = "normal_table";
-
-/// SQL to create a time series table with a timestamp column, two field columns, and a tag column.
-pub const TIME_SERIES_TABLE_SQL: &str = "CREATE TIME SERIES TABLE time_series_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
-
-/// Name of the time series table used in tests.
-pub const TIME_SERIES_TABLE_NAME: &str = "time_series_table";
+/// Name of the table used in tests.
+pub const TABLE_NAME: &str = "test_table";
 
 /// [`DataSink`] implementation that does nothing.
 pub struct NoOpDataSink {}
@@ -82,143 +79,51 @@ impl DisplayAs for NoOpDataSink {
     }
 }
 
-/// Return protobuf message bytes containing metadata for a normal table.
-pub fn normal_table_metadata_protobuf_bytes() -> Vec<u8> {
-    modelardb_types::flight::encode_and_serialize_normal_table_metadata(
-        NORMAL_TABLE_NAME,
-        &normal_table_schema(),
-    )
-    .unwrap()
+/// Return protobuf message bytes containing the metadata of the table created by [`TABLE_SQL`].
+pub fn table_metadata_protobuf_bytes() -> Vec<u8> {
+    modelardb_types::flight::encode_and_serialize_table_metadata(&table_metadata()).unwrap()
 }
 
-/// Return protobuf message bytes containing metadata for a time series table.
-pub fn time_series_table_metadata_protobuf_bytes() -> Vec<u8> {
-    modelardb_types::flight::encode_and_serialize_time_series_table_metadata(
-        &time_series_table_metadata(),
-    )
-    .unwrap()
-}
-
-/// Return a [`Schema`] for a normal table with a timestamp column and two floating point columns.
-pub fn normal_table_schema() -> Schema {
-    Schema::new(vec![
-        Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("values", ArrowValue::DATA_TYPE, false),
-        Field::new("metadata", ArrowValue::DATA_TYPE, false),
-    ])
-}
-
-/// Return a [`RecordBatch`] containing five rows for a normal table with a timestamp column and
-/// two floating point columns.
-pub fn normal_table_record_batch() -> RecordBatch {
-    let timestamps = TimestampArray::from(vec![0, 1, 2, 3, 4]);
-    let values = ValueArray::from(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
-    let metadata = ValueArray::from(vec![6.0, 7.0, 8.0, 9.0, 10.0]);
-
-    RecordBatch::try_new(
-        Arc::new(normal_table_schema()),
-        vec![Arc::new(timestamps), Arc::new(values), Arc::new(metadata)],
-    )
-    .unwrap()
-}
-
-/// Return [`TimeSeriesTableMetadata`] for a time series table with a schema containing a tag column,
-/// a timestamp column, and two field columns.
-pub fn time_series_table_metadata() -> TimeSeriesTableMetadata {
+/// Return the [`TableMetadata`] of the table created by [`TABLE_SQL`].
+pub fn table_metadata() -> TableMetadata {
     let query_schema = Arc::new(Schema::new(vec![
-        Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("field_1", ArrowValue::DATA_TYPE, false),
-        Field::new("field_2", ArrowValue::DATA_TYPE, false),
-        Field::new("tag", DataType::Utf8View, false),
+        Field::new("timestamp", ArrowTimestamp::DATA_TYPE, true),
+        Field::new("absolute_value", ArrowValue::DATA_TYPE, true),
+        Field::new("generated_value", ArrowValue::DATA_TYPE, true),
+        Field::new("relative_value", ArrowValue::DATA_TYPE, true),
     ]));
 
-    let error_bounds = vec![
-        ErrorBound::Lossless,
-        ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap(),
-        ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
-        ErrorBound::Lossless,
+    let df_query_schema = query_schema.clone().to_dfschema().unwrap();
+    let generated_column = GeneratedColumn::try_from_expr(
+        col("absolute_value") + col("relative_value"),
+        &df_query_schema,
+    )
+    .unwrap();
+
+    let column_metadata = vec![
+        ColumnMetadata::Stored(ErrorBound::Lossless),
+        ColumnMetadata::Stored(ErrorBound::try_new_absolute(1.0).unwrap()),
+        ColumnMetadata::Generated(generated_column),
+        ColumnMetadata::Stored(ErrorBound::try_new_relative(5.0).unwrap()),
     ];
 
-    let generated_columns = vec![None, None, None, None];
-
-    TimeSeriesTableMetadata::try_new(
-        TIME_SERIES_TABLE_NAME.to_owned(),
-        query_schema,
-        error_bounds,
-        generated_columns,
-    )
-    .unwrap()
+    TableMetadata::try_new(TABLE_NAME.to_owned(), query_schema, column_metadata).unwrap()
 }
 
-/// Return [`TimeSeriesTableMetadata`] in an [`Arc`] for a time series table with a schema containing
-/// a tag column, a timestamp column, and two field columns.
-pub fn time_series_table_metadata_arc() -> Arc<TimeSeriesTableMetadata> {
-    Arc::new(time_series_table_metadata())
-}
-
-/// Create a [`RecordBatch`] with data that resembles uncompressed data with a single tag and two
-/// field columns. The returned data has `row_count` rows, with a different tag for each row.
-pub fn uncompressed_time_series_table_record_batch(row_count: usize) -> RecordBatch {
-    let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
-    let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
+/// Return a [`RecordBatch`] with `row_count` rows in the stored schema of the table created by
+/// [`TABLE_SQL`]. The timestamps and the values in each row are the index of the row.
+pub fn table_record_batch(row_count: usize) -> RecordBatch {
+    let timestamps: Vec<Timestamp> = (0..row_count)
+        .map(|timestamp| timestamp as Timestamp)
+        .collect();
     let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
 
     RecordBatch::try_new(
-        time_series_table_metadata().schema.clone(),
+        table_metadata().stored_schema,
         vec![
             Arc::new(TimestampArray::from(timestamps)),
             Arc::new(ValueArray::from(values.clone())),
             Arc::new(ValueArray::from(values)),
-            Arc::new(StringViewArray::from(tags)),
-        ],
-    )
-    .unwrap()
-}
-
-/// Return a [`RecordBatch`] containing three compressed segments.
-pub fn compressed_segments_record_batch() -> RecordBatch {
-    compressed_segments_record_batch_with_time(0, 0, 0.0)
-}
-
-/// Return a [`RecordBatch`] containing three compressed segments. The compressed segments time
-/// range is from `time_ms` to `time_ms` + 3, while the value range is from`offset` + 5.2 to
-/// `offset` + 34.2.
-pub fn compressed_segments_record_batch_with_time(
-    field_column: i16,
-    time_ms: i64,
-    offset: f32,
-) -> RecordBatch {
-    let start_times = vec![time_ms, time_ms + 2, time_ms + 4];
-    let end_times = vec![time_ms + 1, time_ms + 3, time_ms + 5];
-    let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];
-    let max_values = vec![offset + 20.2, offset + 12.2, offset + 34.2];
-
-    let model_type_id = Int8Array::from(vec![1, 1, 2]);
-    let start_time = TimestampArray::from(start_times);
-    let end_time = TimestampArray::from(end_times);
-    let timestamps = BinaryViewArray::from_iter_values([b"", b"", b""]);
-    let min_value = ValueArray::from(min_values);
-    let max_value = ValueArray::from(max_values);
-    let values = BinaryViewArray::from_iter_values([b"", b"", b""]);
-    let residuals = BinaryViewArray::from_iter_values([b"", b"", b""]);
-    let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
-    let field_column = Int16Array::from(vec![field_column, field_column, field_column]);
-    let tag_column = StringViewArray::from(vec!["tag", "tag", "tag"]);
-
-    RecordBatch::try_new(
-        time_series_table_metadata().compressed_schema,
-        vec![
-            Arc::new(model_type_id),
-            Arc::new(start_time),
-            Arc::new(end_time),
-            Arc::new(timestamps),
-            Arc::new(min_value),
-            Arc::new(max_value),
-            Arc::new(values),
-            Arc::new(residuals),
-            Arc::new(error),
-            Arc::new(field_column),
-            Arc::new(tag_column),
         ],
     )
     .unwrap()
