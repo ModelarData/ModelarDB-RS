@@ -1377,17 +1377,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_record_batches_to_normal_table() {
-        let (_temp_dir, data_folder) = create_data_folder_and_create_normal_tables().await;
+    async fn test_table_file_sizes() {
+        let (_temp_dir, data_folder) = create_data_folder_with_table().await;
 
-        let batch_to_write = test_table::normal_table_record_batch();
-        let delta_table = data_folder
-            .write_record_batches("normal_table_1", vec![batch_to_write.clone()])
-            .await
-            .unwrap();
+        write_record_batch(&data_folder).await;
+        write_record_batch(&data_folder).await;
 
-        // Verify the write produced a Parquet file.
-        assert_eq!(delta_table.get_file_uris().unwrap().count(), 1);
+        let file_sizes = data_folder.table_file_sizes(TABLE_NAME).await.unwrap();
+
+        assert_eq!(file_sizes.len(), 2);
+        assert!(file_sizes.iter().all(|file_size| *file_size > 0));
+    }
 
         // Read the data back and verify the content.
         let table_provider = delta_table.table_provider().build().await.unwrap();
