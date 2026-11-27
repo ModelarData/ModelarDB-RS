@@ -239,7 +239,6 @@ mod tests {
     };
     use parquet::basic::{Compression, Encoding, ZstdLevel};
     use parquet::file::reader::{FileReader, SerializedFileReader};
-    use tempfile::TempDir;
 
     use crate::test::{
         ROW_COUNT, create_data_folder_with_table, create_data_folder_with_table_metadata,
