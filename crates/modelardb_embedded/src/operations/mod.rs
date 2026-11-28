@@ -177,71 +177,8 @@ fn try_new_time_series_table_metadata(
     .map_err(|error| error.into())
 }
 
-/// Constructs an SQL query to read data from the time series table with the name in `table_name`.
-/// The remaining parameters optionally specify which subset of the data to read.
-pub(super) fn generate_read_time_series_table_sql(
-    table_name: &str,
-    schema: &Schema,
-    columns: &[(String, Aggregate)],
-    group_by: &[String],
-    maybe_start_time: Option<&str>,
-    maybe_end_time: Option<&str>,
-    mut tags: HashMap<String, String>,
-) -> String {
-    // Construct the SELECT clause.
-    let mut select_clause_values = vec![];
-
-    for (column, aggregate) in columns {
-        match aggregate {
-            Aggregate::None => select_clause_values.push(column.to_owned()),
-            Aggregate::Count => select_clause_values.push(format!("COUNT({column})")),
-            Aggregate::Min => select_clause_values.push(format!("MIN({column})")),
-            Aggregate::Max => select_clause_values.push(format!("MAX({column})")),
-            Aggregate::Sum => select_clause_values.push(format!("SUM({column})")),
-            Aggregate::Avg => select_clause_values.push(format!("AVG({column})")),
-        }
     }
 
-    // Construct the WHERE clause.
-    let mut where_clause_values: Vec<String> = tags
-        .drain()
-        .map(|(name, value)| format!("{name} = '{value}'"))
-        .collect();
-
-    if let Some(start_time) = maybe_start_time {
-        where_clause_values.push(format!("'{start_time}' <= timestamp"));
     }
 
-    if let Some(end_time) = maybe_end_time {
-        where_clause_values.push(format!("timestamp <= '{end_time}'"));
-    }
-
-    // Set default value if no value is provided.
-    if select_clause_values.is_empty() {
-        schema
-            .fields()
-            .iter()
-            .for_each(|field| select_clause_values.push(field.name().to_owned()));
-    }
-
-    // Construct the full SQL query.
-    let where_clause = if where_clause_values.is_empty() {
-        "".to_owned()
-    } else {
-        "WHERE ".to_owned() + &where_clause_values.join(" AND ")
-    };
-
-    let group_by_clause = if group_by.is_empty() {
-        "".to_owned()
-    } else {
-        "GROUP BY ".to_owned() + &group_by.join(", ")
-    };
-
-    format!(
-        "SELECT {} FROM {} {} {}",
-        select_clause_values.join(", "),
-        table_name,
-        where_clause,
-        group_by_clause
-    )
 }
