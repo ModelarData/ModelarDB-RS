@@ -142,7 +142,8 @@ pub trait Operations: Sync + Send {
 
 /// Return the [`TableMetadata`] of the table with `table_name`, the columns in `schema`, the error
 /// bounds in `error_bounds`, and the generated column expressions in `generated_columns`. Columns
-/// without an error bound or a generated column expression are stored losslessly. If a column has
+/// without an error bound or a generated column expression are stored losslessly. Strings and
+/// binaries use view types since Delta Lake writes and returns them as view types. If a column has
 /// both an error bound and a generated column expression, a name in `error_bounds` or
 /// `generated_columns` is not a column in `schema`, or the metadata is invalid,
 /// [`ModelarDbEmbeddedError`] is returned.
@@ -152,7 +153,21 @@ fn try_new_table_metadata(
     mut error_bounds: HashMap<String, ErrorBound>,
     mut generated_columns: HashMap<String, String>,
 ) -> Result<TableMetadata> {
-    let query_schema = Arc::new(schema);
+    let fields: Vec<Field> = schema
+        .fields()
+        .iter()
+        .map(|field| {
+            let data_type = match field.data_type() {
+                DataType::Utf8 | DataType::LargeUtf8 => DataType::Utf8View,
+                DataType::Binary | DataType::LargeBinary => DataType::BinaryView,
+                data_type => data_type.clone(),
+            };
+
+            field.as_ref().clone().with_data_type(data_type)
+        })
+        .collect();
+
+    let query_schema = Arc::new(Schema::new_with_metadata(fields, schema.metadata().clone()));
     let df_query_schema: DFSchema = query_schema.clone().try_into()?;
 
     let mut column_metadata = Vec::with_capacity(query_schema.fields().len());
