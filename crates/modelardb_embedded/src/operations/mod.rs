@@ -139,46 +139,53 @@ pub trait Operations: Sync + Send {
     ) -> Result<()>;
 }
 
-/// Use the time series table metadata in `table_name`, `schema`, `error_bounds`, and `generated_columns`
-/// to create [`TimeSeriesTableMetadata`]. If the metadata is valid, return [`TimeSeriesTableMetadata`],
-/// otherwise return [`ModelarDbEmbeddedError`].
-fn try_new_time_series_table_metadata(
+/// Return the [`TableMetadata`] of the table with `table_name`, the columns in `schema`, the error
+/// bounds in `error_bounds`, and the generated column expressions in `generated_columns`. Columns
+/// without an error bound or a generated column expression are stored losslessly. If a column has
+/// both an error bound and a generated column expression, a name in `error_bounds` or
+/// `generated_columns` is not a column in `schema`, or the metadata is invalid,
+/// [`ModelarDbEmbeddedError`] is returned.
+fn try_new_table_metadata(
     table_name: &str,
     schema: Schema,
     mut error_bounds: HashMap<String, ErrorBound>,
-    generated_columns: HashMap<String, String>,
-) -> Result<TimeSeriesTableMetadata> {
-    let schema = Arc::new(schema);
-    let df_schema: DFSchema = schema.clone().try_into()?;
+    mut generated_columns: HashMap<String, String>,
+) -> Result<TableMetadata> {
+    let query_schema = Arc::new(schema);
+    let df_query_schema: DFSchema = query_schema.clone().try_into()?;
 
-    let mut error_bounds_all = Vec::with_capacity(schema.fields().len());
-    let mut generated_columns_all = Vec::with_capacity(schema.fields().len());
-    for field in schema.fields() {
-        error_bounds_all.push(
-            error_bounds
-                .remove(field.name())
-                .unwrap_or(ErrorBound::Lossless),
-        );
+    let mut column_metadata = Vec::with_capacity(query_schema.fields().len());
+    for field in query_schema.fields() {
+        let maybe_error_bound = error_bounds.remove(field.name());
+        let maybe_sql_expr = generated_columns.remove(field.name());
 
-        if let Some(sql_expr) = generated_columns.get(field.name()) {
-            let expr = tokenize_and_parse_sql_expression(sql_expr, &df_schema)?;
-            generated_columns_all.push(Some(GeneratedColumn::try_from_expr(expr, &df_schema)?));
-        } else {
-            generated_columns_all.push(None);
-        }
+        let metadata = match (maybe_error_bound, maybe_sql_expr) {
+            (Some(_error_bound), Some(_sql_expr)) => {
+                return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
+                    "The column '{}' cannot have both an error bound and a generated column \
+                     expression.",
+                    field.name()
+                )));
+            }
+            (Some(error_bound), None) => ColumnMetadata::Stored(error_bound),
+            (None, Some(sql_expr)) => {
+                let expr = tokenize_and_parse_sql_expression(&sql_expr, &df_query_schema)?;
+                let generated_column = GeneratedColumn::try_from_expr(expr, &df_query_schema)?;
+                ColumnMetadata::Generated(generated_column)
+            }
+            (None, None) => ColumnMetadata::Stored(ErrorBound::Lossless),
+        };
+
+        column_metadata.push(metadata);
     }
 
-    TimeSeriesTableMetadata::try_new(
-        table_name.to_owned(),
-        schema,
-        error_bounds_all,
-        generated_columns_all,
-    )
-    .map_err(|error| error.into())
-}
-
+    // The names that are left are not columns in the schema.
+    if let Some(column_name) = error_bounds.keys().chain(generated_columns.keys()).next() {
+        return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
+            "The column '{column_name}' is not in the schema."
+        )));
     }
 
-    }
-
+    TableMetadata::try_new(table_name.to_owned(), query_schema, column_metadata)
+        .map_err(|error| error.into())
 }
