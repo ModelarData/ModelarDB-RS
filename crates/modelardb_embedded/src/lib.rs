@@ -19,8 +19,6 @@ mod capi;
 pub mod error; // Public because public functions return ModelarDbEmbeddedError.
 pub mod operations;
 
-use std::collections::HashMap;
-use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -29,27 +27,8 @@ use arrow::compute;
 use arrow::datatypes::Schema;
 use datafusion::execution::RecordBatchStream;
 use datafusion::physical_plan::common;
-use modelardb_types::types::ErrorBound;
 
 use crate::error::Result;
-
-/// Types of tables supported by [`create()`](operations::Operations::create).
-#[derive(Clone)]
-pub enum TableType {
-    NormalTable(Schema),
-    TimeSeriesTable(Schema, HashMap<String, ErrorBound>, HashMap<String, String>),
-}
-
-/// Aggregate operations supported by [`read_time_series_table()`](operations::Operations::read_time_series_table).
-#[derive(Debug)]
-pub enum Aggregate {
-    None,
-    Count,
-    Min,
-    Max,
-    Sum,
-    Avg,
-}
 
 /// Collects a [`RecordBatchStream`] into a [`RecordBatch`]`and returns it. If the
 /// [`RecordBatchStream`] cannot be collected or the [`RecordBatches`](RecordBatch) cannot be
