@@ -87,15 +87,16 @@ pub trait Operations: Sync + Send {
     /// Returns the schema of the table with the name in `table_name`.
     async fn schema(&mut self, table_name: &str) -> Result<Schema>;
 
-    /// Writes the data in `uncompressed_data` to the table with the name in `table_name`.
-    async fn write(&mut self, table_name: &str, uncompressed_data: RecordBatch) -> Result<()>;
+    /// Writes the data in `data` to the table with the name in `table_name`. The error bounds of
+    /// the table are applied to the data.
+    async fn write(&mut self, table_name: &str, data: RecordBatch) -> Result<()>;
 
     /// Executes the SQL in `sql` and returns the result as a [`RecordBatchStream`].
     async fn read(&mut self, sql: &str) -> Result<Pin<Box<dyn RecordBatchStream + Send>>>;
 
-    /// Executes the SQL in `sql` and writes the result to the normal table with the name in
-    /// `target_table_name` in `target`. Note that data can be copied from both normal tables and
-    /// time series tables but only to normal tables. This is to not lossy compress data multiple times.
+    /// Executes the SQL in `sql` and writes the result to the table with the name in
+    /// `target_table_name` in `target`. The error bounds of the target table are applied to the
+    /// result, so data copied from a table with error bounds can deviate more than either bound.
     async fn copy(
         &mut self,
         sql: &str,
@@ -103,34 +104,9 @@ pub trait Operations: Sync + Send {
         target_table_name: &str,
     ) -> Result<()>;
 
-    /// Reads data from the time series table with the name in `table_name` and returns it as a
-    /// [`RecordBatchStream`]. The remaining parameters optionally specify which subset of the data
-    /// to read.
-    async fn read_time_series_table(
-        &mut self,
-        table_name: &str,
-        columns: &[(String, Aggregate)],
-        group_by: &[String],
-        maybe_start_time: Option<&str>,
-        maybe_end_time: Option<&str>,
-        tags: HashMap<String, String>,
-    ) -> Result<Pin<Box<dyn RecordBatchStream + Send>>>;
-
-    /// Copy the data from the time series table with the name in `source_table_name` in `self` to the
-    /// time series table with the name in `target_table_name` in `target`. Note that duplicate
-    /// data is not deleted.
-    async fn copy_time_series_table(
-        &self,
-        source_table_name: &str,
-        target: &dyn Operations,
-        target_table_name: &str,
-        maybe_start_time: Option<&str>,
-        maybe_end_time: Option<&str>,
-        tags: HashMap<String, String>,
-    ) -> Result<()>;
-
     /// Move all data from the table with the name in `source_table_name` in `self` to the table with
-    /// the name in `target_table_name` in `target`.
+    /// the name in `target_table_name` in `target` by copying the stored columns and then
+    /// truncating the source table.
     async fn r#move(
         &mut self,
         source_table_name: &str,
