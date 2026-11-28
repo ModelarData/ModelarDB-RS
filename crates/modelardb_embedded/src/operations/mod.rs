@@ -24,7 +24,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow::datatypes::Schema;
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::common::DFSchema;
@@ -104,9 +104,10 @@ pub trait Operations: Sync + Send {
         target_table_name: &str,
     ) -> Result<()>;
 
-    /// Move all data from the table with the name in `source_table_name` in `self` to the table with
-    /// the name in `target_table_name` in `target` by copying the stored columns and then
-    /// truncating the source table.
+    /// Move all data from the table with the name in `source_table_name` in `self` to the table
+    /// with the name in `target_table_name` in `target` by writing the stored columns to `target`
+    /// and then truncating the source table. The error bounds of the target table are applied to
+    /// the data, so data moved from a table with error bounds can deviate more than either bound.
     async fn r#move(
         &mut self,
         source_table_name: &str,
