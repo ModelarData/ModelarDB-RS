@@ -195,10 +195,21 @@ fn try_new_table_metadata(
         column_metadata.push(metadata);
     }
 
-    // The names that are left are not columns in the schema.
-    if let Some(column_name) = error_bounds.keys().chain(generated_columns.keys()).next() {
+    // The names that are left are not columns in the schema. They are sorted so the error message
+    // does not depend on the order of the maps.
+    let mut unknown_column_names: Vec<String> = error_bounds
+        .into_keys()
+        .chain(generated_columns.into_keys())
+        .map(|column_name| format!("'{column_name}'"))
+        .collect();
+
+    if !unknown_column_names.is_empty() {
+        unknown_column_names.sort();
+        unknown_column_names.dedup();
+
         return Err(ModelarDbEmbeddedError::InvalidArgument(format!(
-            "The column '{column_name}' is not in the schema."
+            "The schema does not contain {}.",
+            unknown_column_names.join(", ")
         )));
     }
 
