@@ -30,10 +30,9 @@ use async_trait::async_trait;
 use datafusion::common::DFSchema;
 use datafusion::execution::RecordBatchStream;
 use modelardb_storage::parser::tokenize_and_parse_sql_expression;
-use modelardb_types::types::{ErrorBound, GeneratedColumn, TimeSeriesTableMetadata};
+use modelardb_types::types::{ColumnMetadata, ErrorBound, GeneratedColumn, TableMetadata};
 
 use crate::error::{ModelarDbEmbeddedError, Result};
-use crate::{Aggregate, TableType};
 
 /// Different types of ModelarDB instances that the Operations API can interact with.
 #[derive(Debug)]
@@ -71,8 +70,16 @@ pub trait Operations: Sync + Send {
     /// Returns the type of the ModelarDB instance that this [`Operations`] instance interacts with.
     async fn modelardb_type(&mut self) -> Result<ModelarDBType>;
 
-    /// Creates a table with the name in `table_name` and the information in `table_type`.
-    async fn create(&mut self, table_name: &str, table_type: TableType) -> Result<()>;
+    /// Creates a table with the name in `table_name`, the columns in `schema`, the error bounds in
+    /// `error_bounds`, and the generated column expressions in `generated_columns`. Columns without
+    /// an error bound or a generated column expression are stored losslessly.
+    async fn create(
+        &mut self,
+        table_name: &str,
+        schema: Schema,
+        error_bounds: HashMap<String, ErrorBound>,
+        generated_columns: HashMap<String, String>,
+    ) -> Result<()>;
 
     /// Returns the name of all the tables.
     async fn tables(&mut self) -> Result<Vec<String>>;
